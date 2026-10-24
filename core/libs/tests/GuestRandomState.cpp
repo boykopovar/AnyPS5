@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -9,23 +10,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-extern "C" {
-std::int64_t APS5_VABI random_nid_postfix();
-void APS5_VABI srandom_nid_postfix(std::uint64_t);
-char* APS5_VABI initstate_nid_postfix(std::uint64_t, char*, std::int64_t);
-char* APS5_VABI setstate_nid_postfix(char*);
-int* APS5_VABI __error_nid_postfix();
-double APS5_VABI erand48_nid_postfix(std::uint16_t*);
-std::int64_t APS5_VABI nrand48_nid_postfix(std::uint16_t*);
-std::int64_t APS5_VABI jrand48_nid_postfix(std::uint16_t*);
-double APS5_VABI drand48_nid_postfix();
-std::int64_t APS5_VABI lrand48_nid_postfix();
-std::int64_t APS5_VABI mrand48_nid_postfix();
-void APS5_VABI srand48_nid_postfix(std::int64_t);
-std::uint16_t* APS5_VABI seed48_nid_postfix(const std::uint16_t*);
-void APS5_VABI lcong48_nid_postfix(const std::uint16_t*);
-}
 
 static int failures = 0;
 
@@ -78,6 +62,7 @@ static void CheckRand48() {
 
     const std::uint16_t parameters[7] = {1, 0, 0, 3, 0, 0, 5};
     lcong48_nid_postfix(parameters);
+
     Require(lrand48_nid_postfix() == 0 && mrand48_nid_postfix() == 0, "lcong48 sets seed, multiplier and addend");
     std::uint16_t high[3] = {0, 0, 1};
     Require(jrand48_nid_postfix(high) == 196608 && SeedIs(high, 5, 0, 3), "lcong48 multiplier scales the seed");
@@ -90,6 +75,7 @@ static void CheckRand48() {
     Require(drand48_nid_postfix() == erand48_nid_postfix(again), "seed48 restores the default multiplier and addend");
     lcong48_nid_postfix(parameters);
     srand48_nid_postfix(0x1234abcd);
+
     std::uint16_t reset[3] = {0x330e, 0xabcd, 0x1234};
     Require(lrand48_nid_postfix() == nrand48_nid_postfix(reset), "srand48 restores the default multiplier and addend");
 
@@ -101,6 +87,7 @@ static void CheckRand48() {
     Require(jrand48_nid_postfix(ones) == 4294582547, "jrand48 matches the console for an all-ones seed");
     constexpr std::array<std::int64_t, 6> consoleMrand48 {178800969, 1952030186, 3585512650, 1443049011, 2428758494, 7588830};
     srand48_nid_postfix(1);
+
     for (const std::int64_t expected : consoleMrand48) Require(mrand48_nid_postfix() == expected, "mrand48 matches the console after srand48(1)");
 
 #ifndef _WIN32
@@ -113,6 +100,7 @@ static void CheckRand48() {
     }
     ::srand48(1234567);
     srand48_nid_postfix(1234567);
+
     for (int round = 0; round < 32; ++round) {
         Require(drand48_nid_postfix() == ::drand48(), "drand48 matches the host");
         Require(lrand48_nid_postfix() == ::lrand48(), "lrand48 matches the host");
@@ -136,10 +124,13 @@ int main() {
 
     Require(Draw() == seedOne, "unseeded random must match srandom(1)");
     srandom_nid_postfix(1);
+
     Require(Draw() == seedOne, "srandom(1) sequence");
     srandom_nid_postfix(0x100000001ull);
+
     Require(Draw() == seedOne, "srandom must use the low 32 bits of the seed");
     srandom_nid_postfix(12345);
+
     Require(Draw() == seed12345, "srandom(12345) sequence");
 
     struct SizeCase {
@@ -173,8 +164,10 @@ int main() {
     alignas(4) std::array<char, 32> small{};
     alignas(4) std::array<char, 64> large{};
     initstate_nid_postfix(7, small.data(), static_cast<std::int64_t>(small.size()));
+
     for (std::size_t i = 0; i < 3; ++i) Require(random_nid_postfix() == seed7Type1[i], "initstate(7) on 32 bytes");
     initstate_nid_postfix(7, large.data(), static_cast<std::int64_t>(large.size()));
+
     Require(setstate_nid_postfix(small.data()) == large.data(), "setstate must return the 64-byte state");
     Require(setstate_nid_postfix(large.data()) == small.data(), "setstate must return the 32-byte state");
     Require(Word(small.data(), 0) == 5 * 3 + 1, "setstate must save the rear position of the old state");
@@ -203,6 +196,7 @@ int main() {
     bool threw = false;
     try {
         initstate_nid_postfix(1, nullptr, 128);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -210,6 +204,7 @@ int main() {
     threw = false;
     try {
         setstate_nid_postfix(nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -218,9 +213,11 @@ int main() {
     constexpr std::size_t threadCount = 4;
     constexpr std::size_t callsPerThread = 2000;
     srandom_nid_postfix(99);
+
     std::vector<std::int64_t> serial(threadCount * callsPerThread);
     for (auto& value : serial) value = random_nid_postfix();
     srandom_nid_postfix(99);
+
     std::vector<std::int64_t> concurrent(threadCount * callsPerThread);
     std::vector<std::thread> threads;
     for (std::size_t t = 0; t < threadCount; ++t)
@@ -231,6 +228,26 @@ int main() {
     std::sort(serial.begin(), serial.end());
     std::sort(concurrent.begin(), concurrent.end());
     Require(serial == concurrent, "concurrent calls must draw the serial sequence");
+
+    for (const std::int64_t size : {8, 32, 64, 128, 256}) {
+        std::array<char, 256> entropyState{};
+        char* previous = initstate_nid_postfix(42, entropyState.data(), size);
+        srandomdev_nid_postfix();
+        const std::size_t separation = size == 32 || size == 128 ? 3 : 1;
+        std::int64_t expected;
+        if (size == 8) {
+            std::int64_t x = static_cast<std::int32_t>(Word(entropyState.data(), 1));
+            if (x == 0) x = 123459876;
+            x = 16807 * (x % 127773) - 2836 * (x / 127773);
+            if (x < 0) x += 0x7fffffff;
+            expected = x;
+        } else {
+            const std::uint32_t sum = Word(entropyState.data(), 1) + Word(entropyState.data(), 1 + separation);
+            expected = sum >> 1;
+        }
+        Require(random_nid_postfix() == expected, "srandomdev seeds the shared library's active state from host entropy");
+        setstate_nid_postfix(previous);
+    }
 
     return failures == 0 ? 0 : 1;
 }

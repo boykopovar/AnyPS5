@@ -1,3 +1,5 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -20,8 +22,6 @@
 #include <type_traits>
 #include <vector>
 #include "GuestResolver.hpp"
-
-extern "C" int* APS5_VABI sceNetErrnoLoc();
 
 namespace {
 struct HostLookup {

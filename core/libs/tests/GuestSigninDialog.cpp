@@ -1,17 +1,8 @@
+#include "prx/libSceSigninDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceSigninDialogInitialize(void);
-int APS5_VABI sceSigninDialogOpen(const void* param);
-int APS5_VABI sceSigninDialogUpdateStatus(void);
-int APS5_VABI sceSigninDialogGetStatus(void);
-int APS5_VABI sceSigninDialogGetResult(void* result);
-int APS5_VABI sceSigninDialogClose(void);
-int APS5_VABI sceSigninDialogTerminate(void);
-}
 
 namespace {
 

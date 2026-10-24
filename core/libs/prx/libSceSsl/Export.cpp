@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -465,8 +466,6 @@ struct Session {
         throw std::runtime_error(message + "; the console's error code is unknown");
     }
 };
-
-using SslVerifyCallback = int (APS5_VABI *)(int, unsigned int, void**, int, void*);
 
 constexpr int SslVersionSsl30 = 2;
 constexpr int SslVersionTls12 = 5;

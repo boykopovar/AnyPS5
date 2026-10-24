@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -10,13 +11,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-extern "C" {
-char* APS5_VABI realpath_nid_postfix(const char*, char*);
-int APS5_VABI chdir_nid_postfix(const char*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

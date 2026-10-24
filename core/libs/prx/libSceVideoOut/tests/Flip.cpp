@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
@@ -24,11 +25,6 @@
 #include <vector>
 
 #undef main
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-extern "C" int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-extern "C" int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 
 namespace {
 

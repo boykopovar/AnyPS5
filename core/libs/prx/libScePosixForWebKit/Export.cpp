@@ -1,3 +1,7 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -7,15 +11,6 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI clock_gettime_nid_postfix(int, KernelTimespec*);
-char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
-char* APS5_VABI getenv_nid_postfix(const char*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-}
 
 namespace {
 
@@ -188,6 +183,7 @@ void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
 std::uint32_t APS5_VABI arc4random_nid_postfix() {
     std::uint32_t value;
     arc4random_buf_nid_postfix(&value, sizeof(value));
+
     return value;
 }
 

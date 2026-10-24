@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 
 #include <cmath>
@@ -13,19 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOut2UserCreate(std::uint32_t, AudioOut2UserHandle*);
-int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle);
-int APS5_VABI sceAudioOut2UserGetSupportedAttributes(AudioOut2UserHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

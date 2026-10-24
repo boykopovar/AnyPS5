@@ -607,6 +607,11 @@ constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
 constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
 
+bool staticAnchors(const Registers& cx, std::uint32_t depthSamples) {
+    const auto eqaa = find(cx, 0x201);
+    return eqaa != cx.end() && (eqaa->second & 7u) == static_cast<std::uint32_t>(std::countr_zero(depthSamples)) && (eqaa->second & 0x100000u) != 0;
+}
+
 bool overrasterized(const Registers& cx, std::uint32_t samples) {
     const auto eqaa = find(cx, 0x201);
     const auto mode = find(cx, 0x292);
@@ -730,15 +735,19 @@ void rasterizeSampleZero(State& state) {
     state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
 }
 
+bool documentedRop(std::uint32_t rop) {
+    return (rop >> 4u) == (rop & 0xfu) || ((rop >> 2u) & 0x33u) == (rop & 0x33u);
+}
+
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
     colorControl &= ~1u;
-    return colorControl == 0xcc0010u || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
+    return ((colorControl & ~0xff0000u) == 0x10u && documentedRop((colorControl >> 16u) & 0xffu)) || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
 }
 
 std::string colorControlMessage(std::uint32_t colorControl) {
     static constexpr const char* modes[8] = {"disable", "normal", "eliminate fast clear", "resolve", "decompress", "FMASK decompress", "DCC decompress", "reserved"};
     char text[160];
-    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with copy ROP is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
+    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with a ROP3 code of the source or brush form is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
     return text;
 }
 
@@ -1110,6 +1119,21 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrd
     if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
+}
+
+VkLogicOp LogicOpFromRop(std::uint8_t rop) {
+    if (!documentedRop(rop)) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "AGC graphics: ROP3 code 0x%02x combines source and brush, which is not implemented", rop);
+        throw std::runtime_error(text);
+    }
+    static constexpr std::array<VkLogicOp, 16> operations{
+        VK_LOGIC_OP_CLEAR, VK_LOGIC_OP_NOR, VK_LOGIC_OP_AND_INVERTED, VK_LOGIC_OP_COPY_INVERTED,
+        VK_LOGIC_OP_AND_REVERSE, VK_LOGIC_OP_INVERT, VK_LOGIC_OP_XOR, VK_LOGIC_OP_NAND,
+        VK_LOGIC_OP_AND, VK_LOGIC_OP_EQUIVALENT, VK_LOGIC_OP_NO_OP, VK_LOGIC_OP_OR_INVERTED,
+        VK_LOGIC_OP_COPY, VK_LOGIC_OP_OR_REVERSE, VK_LOGIC_OP_OR, VK_LOGIC_OP_SET};
+    const std::uint32_t index = (rop & 3u) | ((rop >> 4u) & 4u) | ((rop >> 4u) & 8u);
+    return operations[index];
 }
 
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state) {
@@ -1492,6 +1516,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
 
     // CB_COLOR_CONTROL mode 0 disables color writes, which only matters when a target is written.
     if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
+    if (const auto colorControl = read(cx, 0x202); ((colorControl >> 4u) & 7u) == 1u) result.colorRop = static_cast<std::uint8_t>(colorControl >> 16u);
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
     const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
@@ -1521,10 +1546,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
-        const bool merged = color.samples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
-        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        const bool merged = color.samples == 1u && color.coverageSamples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
+        if (!merged && color.samples == 1 && color.coverageSamples == 1u && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        Require(color.coverageSamples == color.samples || color.coverageSamples == result.samples || (result.samples == 1u && (read(cx, 0x292) & 1u) == 0), "a one-fragment color target's sample count differs from the rasterizer's");
         const bool truncated = color.samples == 1u && result.samples > 1u && result.depth && result.depth->samples == result.samples && (result.colors.empty() || result.truncatedCoverage) && !overrasterized(cx, result.samples);
         Require((color.samples == result.samples && !result.mergedCoverage && !result.truncatedCoverage) || merged || truncated, "a color target's sample count differs from the rasterizer's");
+        Require(color.coverageSamples == color.samples || result.samples == 1u || staticAnchors(cx, result.depth->samples), "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
         result.mergedCoverage = merged;
         result.truncatedCoverage = truncated;
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
@@ -1707,6 +1734,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (!result.colors.empty()) {
         result.color = result.colors.front();
         result.blend = result.blends[result.colors.front().exportIndex];
+    }
+    if (LogicOpFromRop(result.colorRop) != VK_LOGIC_OP_COPY) {
+        for (const auto& blend : result.blends) Require(blend.blendEnable == VK_FALSE, "a color logic operation together with blending is not implemented");
     }
     Require(result.reversedBlend == 0 || (exportSlots.size() == 1 && exportCount == 1), "blending into a color target with a reversed component order through a second source color needs that target to be the shader's only color export");
     if (result.dualSourceBlend) {
@@ -1900,10 +1930,12 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     const auto decoded = DecodeColorFormat(format, number, swap);
     const auto attrib = read(cx, 0x31d + stride);
     zero(cx, 0x31d + stride, ~0x3f000u, "color destination alpha override or other CB_COLOR_ATTRIB modes");
-    color.samples = 1u << ((attrib >> 12u) & 7u);
-    Require(color.samples <= 8u, "color targets with more than eight samples are unsupported");
-    Require((1u << ((attrib >> 15u) & 3u)) == color.samples, "color targets with fewer fragments than samples (EQAA) are unsupported");
-    const auto multisampleInfo = color.samples > 1 ? 0x0c006000u : 0u;
+    color.coverageSamples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.coverageSamples <= 8u, "color targets with more than eight samples are unsupported");
+    color.samples = 1u << ((attrib >> 15u) & 3u);
+    Require(color.samples <= color.coverageSamples, "color targets with more fragments than samples are unsupported");
+    Require(color.samples == color.coverageSamples || color.samples == 1u, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    const auto multisampleInfo = color.coverageSamples > 1 ? 0x0c006000u : 0u;
     // ROUND_MODE (bit 18) only affects unorm rounding and packed float truncation. With DCC_ENABLE (bit 28) the target is written
     if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u | 0x00002000u | multisampleInfo)) != 0) throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or color optimization is unsupported (CB_COLOR_INFO 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%08x", info); return std::string(text); }() + ")");
     Require((info & 0x8000u) != 0 || number <= 1u || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
@@ -2042,6 +2074,11 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.fmaskPipeBankXor = static_cast<std::uint32_t>(address & 0xffffu);
             color.fmaskAddress = address - color.fmaskPipeBankXor;
         }
+    }
+    if (color.coverageSamples > color.samples && (info & 0x4000u) != 0) {
+        const auto fmaskHigh = find(cx, 0x3a0 + slot);
+        color.fmaskAddress = (((fmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(fmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x321 + stride)) << 8u)) & ~0xffffull;
+        Require(color.fmaskAddress != 0, "a compressed one-fragment color target without an FMASK address is unsupported");
     }
     if ((info & 0x10000000u) != 0) {
         if (maxMip == 0) {

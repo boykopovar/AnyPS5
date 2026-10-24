@@ -1,4 +1,6 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -179,6 +181,16 @@ std::int64_t APS5_VABI random_nid_postfix() {
 void APS5_VABI srandom_nid_postfix(std::uint64_t seed) {
     std::lock_guard lock(g_randomLock);
     SeedLocked(static_cast<std::uint32_t>(seed));
+}
+
+void APS5_VABI srandomdev_nid_postfix() {
+    std::lock_guard lock(g_randomLock);
+    const auto words = g_random.type == LinearCongruentialType ? 1 : g_random.degree;
+    HostEntropy_nid_no_patch(g_random.table + sizeof(std::uint32_t), static_cast<std::size_t>(words) * sizeof(std::uint32_t));
+    if (g_random.type != LinearCongruentialType) {
+        g_random.front = g_random.separation;
+        g_random.rear = 0;
+    }
 }
 
 char* APS5_VABI initstate_nid_postfix(std::uint64_t seed, char* state, std::int64_t size) {

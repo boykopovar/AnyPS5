@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cinttypes>
 #include <cstdio>
 #include <cstddef>

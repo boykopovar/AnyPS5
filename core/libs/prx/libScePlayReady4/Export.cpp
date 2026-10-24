@@ -1,3 +1,4 @@
+#include "prx/libScePlayReady4/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

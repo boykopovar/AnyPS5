@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -17,7 +18,7 @@
 
 extern "C" {
 extern FileStream* __stdinp_nid_postfix;
-int* APS5_VABI __error_nid_postfix();
+
 }
 
 namespace {

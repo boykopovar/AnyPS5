@@ -1,3 +1,4 @@
+#include "prx/libSceNpSignaling/include/Api.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>

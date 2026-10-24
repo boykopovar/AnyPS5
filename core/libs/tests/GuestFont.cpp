@@ -1,3 +1,5 @@
+#include "prx/libSceFontFt/include/Api.hpp"
+#include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libc/include/General.hpp"
 #include "tests/FontFixture.hpp"
@@ -16,76 +18,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*, FontMemoryDestroyFunction, void*);
-int APS5_VABI sceFontMemoryTerm(FontMemory*);
-int APS5_VABI sceFontCreateLibrary(const FontMemory*, const void*, FontLibrary*);
-int APS5_VABI sceFontDestroyLibrary(FontLibrary*);
-int APS5_VABI sceFontCreateRenderer(const FontMemory*, const void*, FontRenderer*);
-int APS5_VABI sceFontDestroyRenderer(FontRenderer*);
-int APS5_VABI sceFontGetPixelResolution(FontLibrary, std::uint32_t*);
-int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary, void*, std::uint32_t);
-int APS5_VABI sceFontClearDeviceCache(FontLibrary);
-int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary, void**, std::uint32_t*);
-int APS5_VABI sceFontSupportSystemFonts(FontLibrary);
-int APS5_VABI sceFontSupportExternalFonts(FontLibrary, std::uint32_t, std::uint32_t);
-int APS5_VABI sceFontOpenFontSet(FontLibrary, std::uint32_t, std::uint32_t, const FontOpenDetail*, FontHandle*);
-int APS5_VABI sceFontOpenFontMemory(FontLibrary, const void*, std::uint32_t, const FontOpenDetail*, FontHandle*);
-int APS5_VABI sceFontOpenFontFile(FontLibrary, const char*, std::uint32_t, const FontOpenDetail*, FontHandle*);
-int APS5_VABI sceFontCloseFont(FontHandle);
-int APS5_VABI sceFontOpenFontInstance(FontHandle, FontHandle, FontHandle*);
-int APS5_VABI sceFontSetScriptLanguage(FontHandle, int, int);
-int APS5_VABI sceFontGetScriptLanguage(FontHandle, int, int*);
-int APS5_VABI sceFontSetTypographicDesign(FontHandle, int, int);
-int APS5_VABI sceFontGetTypographicDesign(FontHandle, int, int*);
-int APS5_VABI sceFontDefineAttribute(FontHandle, int, int*);
-int APS5_VABI sceFontGetAttribute(FontHandle, int, int*);
-int APS5_VABI sceFontSetResolutionDpi(FontHandle, std::uint32_t, std::uint32_t);
-int APS5_VABI sceFontGetResolutionDpi(FontHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceFontSetScalePixel(FontHandle, float, float);
-int APS5_VABI sceFontSetScalePoint(FontHandle, float, float);
-int APS5_VABI sceFontGetScalePixel(FontHandle, float*, float*);
-int APS5_VABI sceFontGlyphGetScalePixel(FontGlyph, float*, float*);
-int APS5_VABI sceFontBindRenderer(FontHandle, FontRenderer);
-int APS5_VABI sceFontUnbindRenderer(FontHandle);
-int APS5_VABI sceFontSetupRenderScalePixel(FontHandle, float, float);
-int APS5_VABI sceFontSetupRenderScalePoint(FontHandle, float, float);
-int APS5_VABI sceFontGetKerning(FontHandle, std::uint32_t, std::uint32_t, FontKerning*);
-int APS5_VABI sceFontGetFontGlyphsCount(FontHandle, std::uint32_t*);
-int APS5_VABI sceFontGetCharGlyphCode(FontHandle, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceFontGetFontResolution(FontHandle, std::uint32_t*, float*);
-int APS5_VABI sceFontGetRenderScaledKerning(FontHandle, std::uint32_t, std::uint32_t, FontKerning*);
-int APS5_VABI sceFontGenerateCharGlyph(FontHandle, std::uint32_t, const FontGenerateGlyphDetail*, FontGlyph*);
-int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph, std::int32_t, std::int32_t*);
-int APS5_VABI sceFontGlyphGetAttribute(FontGlyph, int, int*);
-int APS5_VABI sceFontDeleteGlyph(const FontMemory*, FontGlyph*);
-int APS5_VABI sceFontTextSourceInit(FontTextSource*, const void*, std::uint32_t, FontTextParseFunction, void*);
-int APS5_VABI sceFontCreateString(const FontMemory*, FontTextSource*, const FontCreateStringDetail*, FontString*);
-int APS5_VABI sceFontDestroyString(FontString*);
-FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString, std::uint32_t*);
-int APS5_VABI sceFontWritingInit(FontWriting*, FontString, const FontTextCharacter*);
-const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting*);
-FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting*, const FontWritingLetterStep**);
-const void* APS5_VABI sceFontSelectLibraryFt(int);
-const void* APS5_VABI sceFontSelectRendererFt(int);
-int APS5_VABI sceFontFtSupportBdf(FontLibrary library);
-int APS5_VABI sceFontFtSupportCid(FontLibrary library);
-int APS5_VABI sceFontFtSupportOpenType(FontLibrary library);
-int APS5_VABI sceFontFtSupportOpenTypeOtf(FontLibrary library);
-int APS5_VABI sceFontFtSupportOpenTypeTtf(FontLibrary library);
-int APS5_VABI sceFontFtSupportPcf(FontLibrary library);
-int APS5_VABI sceFontFtSupportPfr(FontLibrary library);
-int APS5_VABI sceFontFtSupportTrueType(FontLibrary library);
-int APS5_VABI sceFontFtSupportTrueTypeGx(FontLibrary library);
-int APS5_VABI sceFontFtSupportType1(FontLibrary library);
-int APS5_VABI sceFontFtSupportType42(FontLibrary library);
-int APS5_VABI sceFontFtSupportWinFonts(FontLibrary library);
-int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter*, int*);
-FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacter*, const FontTextCharacter*, FontTextCodes*);
-FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes*);
-FontTextCodes* APS5_VABI sceFontTextCodesStepBack(FontTextCodes*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -202,6 +134,7 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     bool threw = false;
     try {
         sceFontCharactersRefersTextCodes(nullptr, nullptr, &codes);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -410,11 +343,13 @@ int main() {
         bool getThrew = false;
         try {
             sceFontSetScriptLanguage(font, script, script);
+
         } catch (const std::logic_error&) {
             setThrew = true;
         }
         try {
             sceFontGetScriptLanguage(font, script, &setting);
+
         } catch (const std::logic_error&) {
             getThrew = true;
         }
@@ -436,6 +371,7 @@ int main() {
         bool getThrew = false;
         try {
             sceFontGetTypographicDesign(font, selector, &setting);
+
         } catch (const std::logic_error&) {
             getThrew = true;
         }
@@ -445,6 +381,7 @@ int main() {
             bool setThrew = false;
             try {
                 sceFontSetTypographicDesign(font, selector, feature);
+
             } catch (const std::logic_error&) {
                 setThrew = true;
             }
@@ -469,6 +406,7 @@ int main() {
     bool typographyQueryThrew = false;
     try {
         sceFontGetTypographicDesign(font, 65537, &setting);
+
     } catch (const std::logic_error&) {
         typographyQueryThrew = true;
     }

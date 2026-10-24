@@ -1,3 +1,4 @@
+#include "prx/libSceUsbd/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <chrono>
@@ -12,49 +13,6 @@
 
 namespace {
 
-struct UsbdTimeval {
-    std::int64_t seconds;
-    std::int64_t microseconds;
-};
-
-}
-
-extern "C" {
-std::int32_t APS5_VABI sceUsbdInit();
-void APS5_VABI sceUsbdExit();
-std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list);
-void APS5_VABI sceUsbdFreeDeviceList(void** list, std::int32_t unrefDevices);
-std::int32_t APS5_VABI sceUsbdHandleEventsTimeout(const UsbdTimeval* timeout);
-std::int32_t APS5_VABI sceUsbdOpen(void* device, void** deviceHandle);
-void APS5_VABI sceUsbdClose(void* deviceHandle);
-void* APS5_VABI sceUsbdRefDevice(void* device);
-void APS5_VABI sceUsbdUnrefDevice(void* device);
-std::uint8_t APS5_VABI sceUsbdGetBusNumber(void* device);
-std::uint8_t APS5_VABI sceUsbdGetDeviceAddress(void* device);
-std::int32_t APS5_VABI sceUsbdGetDeviceDescriptor(void* device, void* descriptor);
-std::int32_t APS5_VABI sceUsbdGetConfigDescriptor(void* device, std::uint8_t configIndex, void** config);
-std::int32_t APS5_VABI sceUsbdGetActiveConfigDescriptor(void* device, void** config);
-std::int32_t APS5_VABI sceUsbdClaimInterface(void* deviceHandle, std::int32_t interfaceNumber);
-std::int32_t APS5_VABI sceUsbdReleaseInterface(void* deviceHandle, std::int32_t interfaceNumber);
-std::int32_t APS5_VABI sceUsbdSetConfiguration(void* deviceHandle, std::int32_t configuration);
-std::int32_t APS5_VABI sceUsbdResetDevice(void* deviceHandle);
-std::int32_t APS5_VABI sceUsbdCheckConnected(void* deviceHandle);
-std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_t interfaceNumber);
-std::int32_t APS5_VABI sceUsbdAttachKernelDriver(void* deviceHandle, std::int32_t interfaceNumber);
-std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint8_t* data, std::uint16_t length, std::uint32_t timeout);
-std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* data, std::int32_t length);
-std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length);
-std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length);
-std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration);
-std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config);
-std::int32_t APS5_VABI sceUsbdSubmitTransfer(void* transfer);
-void* APS5_VABI sceUsbdAllocTransfer(std::int32_t isoPackets);
-void APS5_VABI sceUsbdFreeTransfer(void* transfer);
-void APS5_VABI sceUsbdFillInterruptTransfer(void* transfer, void* deviceHandle, std::uint8_t endpoint, std::uint8_t* buffer, std::int32_t length, void* callback, void* userData, std::uint32_t timeout);
-std::int32_t APS5_VABI sceUsbdCancelTransfer(void* transfer);
-std::int32_t APS5_VABI sceUsbdEventHandlingOk();
-void APS5_VABI sceUsbdFreeConfigDescriptor(void* config);
-void APS5_VABI sceUsbdFillControlSetup(std::uint8_t* buffer, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint16_t length);
 }
 
 namespace {
@@ -78,26 +36,11 @@ bool Throws(TCall call) {
     return false;
 }
 
-struct HostTransfer {
-    void* deviceHandle;
-    std::uint8_t flags;
-    std::uint8_t endpoint;
-    std::uint8_t type;
-    std::uint32_t timeout;
-    std::int32_t status;
-    std::int32_t length;
-    std::int32_t actualLength;
-    void (APS5_VABI* callback)(HostTransfer*);
-    void* userData;
-    std::uint8_t* buffer;
-    std::int32_t numIsoPackets;
-};
-
-void APS5_VABI MarkDone(HostTransfer* transfer) {
+void APS5_VABI MarkDone(UsbdTransfer* transfer) {
     *static_cast<int*>(transfer->userData) += 1;
 }
 
-void APS5_VABI MarkDoneThenSignal(HostTransfer* transfer) {
+void APS5_VABI MarkDoneThenSignal(UsbdTransfer* transfer) {
     auto* notified = static_cast<std::atomic<bool>*>(transfer->userData);
     notified->store(true, std::memory_order_release);
 }
@@ -123,6 +66,7 @@ void Device() {
         if ((descriptor[8] | descriptor[9] << 8) == vendor && (descriptor[10] | descriptor[11] << 8) == product) device = sceUsbdRefDevice(list[index]);
     }
     sceUsbdFreeDeviceList(list, 1);
+
     Require(device != nullptr, "the APS5_USBD_DEVICE device was not listed");
     std::printf("device bus %u address %u\n", sceUsbdGetBusNumber(device), sceUsbdGetDeviceAddress(device));
     void* config = nullptr;
@@ -132,6 +76,7 @@ void Device() {
     const std::uint8_t interfaces = raw[4];
     const std::uint8_t activeValue = raw[5];
     sceUsbdFreeConfigDescriptor(config);
+
     Require(Throws([&] { sceUsbdFreeConfigDescriptor(config); }), "a config descriptor was freed twice");
     Require(sceUsbdGetConfigDescriptor(device, 0, &config) == 0, "config descriptor 0 failed");
     sceUsbdFreeConfigDescriptor(config);
@@ -205,7 +150,7 @@ void Device() {
     Require(interruptAddress != 0 && interruptMax != 0, "the device has no interrupt IN endpoint");
     sceUsbdFreeConfigDescriptor(config);
 
-    auto* transfer = static_cast<HostTransfer*>(sceUsbdAllocTransfer(0));
+    auto* transfer = reinterpret_cast<UsbdTransfer*>(sceUsbdAllocTransfer(0));
     std::uint8_t setup[8 + 18] = {0x80, 6, 0x00, 0x01, 0x00, 0x00, 18, 0};
     int done = 0;
     transfer->deviceHandle = handle;
@@ -215,8 +160,8 @@ void Device() {
     transfer->length = sizeof(setup);
     transfer->callback = MarkDone;
     transfer->userData = &done;
-    Require(sceUsbdSubmitTransfer(transfer) == 0, "submitting an asynchronous control transfer failed");
-    Require(Throws([&] { sceUsbdFreeTransfer(transfer); }), "an in-flight transfer was freed");
+    Require(sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == 0, "submitting an asynchronous control transfer failed");
+    Require(Throws([&] { sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer)); }), "an in-flight transfer was freed");
     Pump(done);
     Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "asynchronous control transfer did not complete");
     Require(std::memcmp(setup + 8, descriptor, 18) == 0, "asynchronous device descriptor differs from the cached one");
@@ -226,14 +171,15 @@ void Device() {
         for (int round = 0; round < 300 && !broken; ++round) {
             std::atomic<bool> notified{false};
             std::uint8_t blink[64] = {};
-            sceUsbdFillInterruptTransfer(transfer, handle, interruptAddress, blink, interruptMax, reinterpret_cast<void*>(&MarkDoneThenSignal), &notified, 0);
-            const int submitResult = sceUsbdSubmitTransfer(transfer);
+            sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, interruptAddress, blink, interruptMax, &MarkDoneThenSignal, &notified, 0);
+
+            const int submitResult = sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
             if (submitResult != 0) {
                 broken = true;
                 break;
             }
             std::thread canceller([&] {
-                const int outcome = sceUsbdCancelTransfer(transfer);
+                const int outcome = sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
                 if (outcome != 0 && outcome != static_cast<std::int32_t>(0x80240005)) broken = true;
             });
             while (!notified.load(std::memory_order_acquire)) {
@@ -245,11 +191,13 @@ void Device() {
     }
     Require(!broken, "the cancel race failed");
 
-    Require(sceUsbdCancelTransfer(transfer) == static_cast<std::int32_t>(0x80240005), "cancelling a completed transfer did not report not found");
-    sceUsbdFreeTransfer(transfer);
+    Require(sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == static_cast<std::int32_t>(0x80240005), "cancelling a completed transfer did not report not found");
+    sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
     sceUsbdClose(handle);
+
     Require(Throws([&] { sceUsbdClose(handle); }), "a handle was closed twice");
     sceUsbdUnrefDevice(device);
+
     std::puts("USBD device tests passed");
 }
 
@@ -265,8 +213,10 @@ int main(int argc, char** argv) {
         Require(sceUsbdGetDeviceDescriptor(list[index], deviceDescriptor) == 0 && deviceDescriptor[0] == 18 && deviceDescriptor[1] == 1, "listed device has no device descriptor");
         Require(sceUsbdRefDevice(list[index]) == list[index], "listed device was not referenced");
         sceUsbdUnrefDevice(list[index]);
+
     }
     sceUsbdFreeDeviceList(list, 1);
+
     Require(Throws([&] { sceUsbdFreeDeviceList(list, 1); }), "a device list was freed twice");
     Require(sceUsbdGetDeviceList(nullptr) == invalidArgument, "null list accepted");
     Require(sceUsbdHandleEventsTimeout(nullptr) == invalidArgument, "null timeout accepted");
@@ -282,9 +232,11 @@ int main(int argc, char** argv) {
     Require(Throws([&] { sceUsbdOpen(nullptr, &handle); }), "opening a null device did not throw");
     Require(Throws([&] { sceUsbdOpen(&foreign, &handle); }), "opening a device that was never listed did not throw");
     sceUsbdClose(nullptr);
+
     Require(Throws([&] { sceUsbdClose(&foreign); }), "closing a handle that was never opened did not throw");
     Require(sceUsbdRefDevice(nullptr) == nullptr, "null device was referenced");
     sceUsbdUnrefDevice(nullptr);
+
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
     Require(Throws([&] { sceUsbdUnrefDevice(&foreign); }), "unreferencing a device that was never listed did not throw");
     Require(sceUsbdGetBusNumber(nullptr) == 0 && sceUsbdGetDeviceAddress(nullptr) == 0, "null device reported a bus or address");
@@ -321,34 +273,40 @@ int main(int argc, char** argv) {
     Require(sceUsbdGetConfigDescriptorByValue(nullptr, 1, &config) == invalidArgument && sceUsbdGetConfigDescriptorByValue(&foreign, 1, nullptr) == invalidArgument, "null config by value argument accepted");
     Require(Throws([&] { sceUsbdGetConfigDescriptorByValue(&foreign, 1, &config); }), "config by value of a device that was never listed did not throw");
     Require(Throws([&] { sceUsbdClaimInterface(&foreign, 0); }), "claiming on a handle that was never opened did not throw");
-    auto* transfer = static_cast<std::uint8_t*>(sceUsbdAllocTransfer(2));
+    auto* transfer = reinterpret_cast<std::uint8_t*>(sceUsbdAllocTransfer(2));
     Require(transfer != nullptr, "transfer allocation failed");
     Require(*reinterpret_cast<std::int32_t*>(transfer + 56) == 2, "iso packet count not stored");
     Require(sceUsbdAllocTransfer(-1) == nullptr, "negative iso packet count accepted");
     std::uint8_t buffer[8] = {};
     int user = 0;
-    sceUsbdFillInterruptTransfer(transfer, nullptr, 0x81, buffer, 8, reinterpret_cast<void*>(&Require), &user, 250);
+    sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), nullptr, 0x81, buffer, 8, reinterpret_cast<UsbdTransferCallback>(&Require), &user, 250);
+
     Require(transfer[9] == 0x81 && transfer[10] == 3, "endpoint or interrupt type not filled");
     Require(*reinterpret_cast<std::uint32_t*>(transfer + 12) == 250 && *reinterpret_cast<std::int32_t*>(transfer + 20) == 8, "timeout or length not filled");
     Require(*reinterpret_cast<void**>(transfer + 40) == &user && *reinterpret_cast<std::uint8_t**>(transfer + 48) == buffer, "user data or buffer not filled");
-    Require(sceUsbdCancelTransfer(transfer) == static_cast<std::int32_t>(0x80240005), "cancelling an unsubmitted transfer did not report not found");
+    Require(sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == static_cast<std::int32_t>(0x80240005), "cancelling an unsubmitted transfer did not report not found");
     Require(sceUsbdSubmitTransfer(nullptr) == invalidArgument, "null transfer submitted");
-    Require(sceUsbdSubmitTransfer(transfer) == invalidArgument, "transfer without a handle submitted");
-    sceUsbdFillInterruptTransfer(transfer, &foreign, 0x81, buffer, 8, reinterpret_cast<void*>(&Require), &user, 250);
-    Require(Throws([&] { sceUsbdSubmitTransfer(transfer); }), "submitting on a handle that was never opened did not throw");
-    sceUsbdFreeTransfer(transfer);
+    Require(sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == invalidArgument, "transfer without a handle submitted");
+    sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), &foreign, 0x81, buffer, 8, reinterpret_cast<UsbdTransferCallback>(&Require), &user, 250);
+
+    Require(Throws([&] { sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer)); }), "submitting on a handle that was never opened did not throw");
+    sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
     sceUsbdFreeTransfer(nullptr);
+
     Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
     sceUsbdFreeConfigDescriptor(nullptr);
+
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0x80, 6, 0x0100, 0, 18); }), "null control setup buffer accepted");
     std::uint8_t setupBuffer[8] = {};
     sceUsbdFillControlSetup(setupBuffer, 0x80, 6, 0x0100, 0x0409, 18);
+
     Require(setupBuffer[0] == 0x80 && setupBuffer[1] == 6, "request type or request not filled");
     Require(setupBuffer[2] == 0x00 && setupBuffer[3] == 0x01, "value not filled little-endian");
     Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
     Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
     sceUsbdExit();
+
     std::puts("USBD tests passed");
     return 0;
 }

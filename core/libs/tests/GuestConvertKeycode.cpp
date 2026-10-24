@@ -1,3 +1,4 @@
+#include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
@@ -11,12 +12,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-
-extern "C" {
-int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t, std::uint32_t, std::uint16_t*);
-int APS5_VABI sceConvertKeycodeGetImeKeyboardType(std::int32_t, std::uint32_t*);
-int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t, std::uint32_t, std::uint32_t, char16_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -146,6 +141,7 @@ int main() {
         bool rejected = false;
         try {
             sceConvertKeycodeGetVirtualKeycode(28, layout, &virtualKey);
+
         } catch (const std::runtime_error&) {
             rejected = true;
         }

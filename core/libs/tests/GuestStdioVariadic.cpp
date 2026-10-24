@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -15,16 +16,7 @@
 
 extern "C" {
 extern FileStream* __stdinp_nid_postfix;
-int APS5_VABI fscanf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
-int APS5_VABI vfscanf_nid_postfix(FileStream*, const char*, void*);
-int APS5_VABI vscanf_nid_postfix(const char*, void*);
-int APS5_VABI scanf_nid_postfix(const char*, ...);
-int APS5_VABI vfwprintf_nid_postfix(FileStream*, const char16_t*, void*);
-int APS5_VABI fwprintf_nid_postfix(FileStream*, const char16_t*, ...);
-int APS5_VABI vswscanf_nid_postfix(const char16_t*, const char16_t*, void*);
-int APS5_VABI vswscanf_s_nid_postfix(const char16_t*, const char16_t*, void*);
-void APS5_VABI _Vacopy_nid_postfix(void*, const void*);
+
 }
 
 #ifdef _WIN32
@@ -58,7 +50,7 @@ static int APS5_VABI ScanStream(FileStream* stream, const char* format, ...) {
     APS5_VA_BEGIN(format);
     VaList original;
     std::memcpy(&original, args, sizeof(original));
-    const int result = vfscanf_nid_postfix(stream, format, args);
+    const int result = vfscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
     Require(std::memcmp(&original, args, sizeof(original)) == 0, "vfscanf preserves the caller argument cursor");
     APS5_VA_END();
     return result;
@@ -66,28 +58,28 @@ static int APS5_VABI ScanStream(FileStream* stream, const char* format, ...) {
 
 static int APS5_VABI ScanInput(const char* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vscanf_nid_postfix(format, args);
+    const int result = vscanf_nid_postfix(format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI PrintWide(FileStream* stream, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vfwprintf_nid_postfix(stream, format, args);
+    const int result = vfwprintf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanWide(const char16_t* input, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vswscanf_nid_postfix(input, format, args);
+    const int result = vswscanf_nid_postfix(input, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanWideSized(const char16_t* input, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vswscanf_s_nid_postfix(input, format, args);
+    const int result = vswscanf_s_nid_postfix(input, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
@@ -101,7 +93,8 @@ static long APS5_VABI SumThroughCopy(int count, ...) {
 #else
     std::va_list copy;
 #endif
-    _Vacopy_nid_postfix(&copy, &args);
+    _Vacopy_nid_postfix(reinterpret_cast<unsigned char*>(&copy), reinterpret_cast<const unsigned char*>(&args));
+
     Require(std::memcmp(&copy, &args, sizeof(before)) == 0, "_Vacopy copies all 24 bytes");
     long sum = 0;
     for (int index = 0; index < count; ++index) sum += __builtin_va_arg(copy, long) * (index + 1);
@@ -118,6 +111,7 @@ static void CheckVacopy() {
     unsigned char overlap[32];
     for (int index = 0; index < 32; ++index) overlap[index] = static_cast<unsigned char>(index);
     _Vacopy_nid_postfix(overlap + 8, overlap);
+
     const unsigned char shifted[32] = {0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
     Require(std::memcmp(overlap, shifted, sizeof(overlap)) == 0, "_Vacopy copies the overflow area before the offsets");
 }

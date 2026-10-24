@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include <cstddef>
@@ -6,12 +7,6 @@
 #include <string>
 #include <initializer_list>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance);
-extern "C" int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, std::size_t bufSize);
-extern "C" int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char* path, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int handle);
 
 namespace {
 
@@ -39,27 +34,6 @@ bool LaunchAppThrows(const char* titleId, const char* const* arguments, const vo
 }
 
 }
-
-extern "C" int APS5_VABI sceSystemServicePowerTick(void);
-extern "C" int APS5_VABI sceSystemServiceIsBgmPlaying(void);
-extern "C" int APS5_VABI sceShellCoreUtilIsBgmPlaying(void);
-extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
-extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceDisableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri);
-extern "C" int APS5_VABI sceSystemServiceShowControllerSettings(void);
-extern "C" int APS5_VABI sceSystemServiceShowDisplaySafeAreaSettings(void);
-extern "C" int APS5_VABI sceSystemServiceOpenChallengeActivity(void);
-extern "C" int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status);
-extern "C" int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info);
-extern "C" int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value);
-extern "C" int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void);
-extern "C" int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void);
-extern "C" int APS5_VABI sceSystemServiceHideSplashScreen(void);
-extern "C" int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event);
-extern "C" void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param);
 
 namespace {
 

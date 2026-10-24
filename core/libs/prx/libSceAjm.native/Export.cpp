@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -12,32 +13,6 @@ static void AjmStub(const char* name) {
     std::fprintf(stderr, "[ajm] unimplemented %s called\n", name);
     NotImplemented_nid_no_patch(name);
 }
-
-struct WVorbisHeaderPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t sampleRate;
-    std::int32_t bytesPerSecond;
-    std::int32_t shortBlockExponent;
-    std::int32_t longBlockExponent;
-    std::uint32_t reserved;
-    const void* setupPacket;
-    std::size_t setupPacketSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
-
-struct WVorbisSetupPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t reserved;
-    const void* input;
-    std::size_t inputSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
 
 static_assert(sizeof(WVorbisHeaderPacketParameter) == 72);
 static_assert(offsetof(WVorbisHeaderPacketParameter, setupPacket) == 32);

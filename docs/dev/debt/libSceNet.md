@@ -8,6 +8,8 @@
 
 ### Unknown function info
 
+- [sceNetRecv, sceNetRecvfrom and sceNetRecvmsg](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - zero-length TCP receives while connecting, after disconnect, or with a pending host error still use the host receive path. Error and output precedence in those states is unmeasured on a console. The established, error-free case follows FreeBSD 11.4's [`soreceive_generic`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_socket.c#L1568-L1583).
+
 - [sceNetConfigAddIfaddr](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - disassembly confirms the same interface/address/broadcast/netmask arguments as SetIfaddr, entering its shared handler with add mode selected. GetIfaddr copies up to two 16-byte interface-address records. GetRouteInfo uses a family, record buffer, signed capacity and byte flags; internal statistics output is 16 bytes. The address-record and internal-statistics fields remain incomplete.
 
 - [Resolver-connect, interface and diagnostic queries, WLAN configuration and DHCP queries](../../../core/libs/prx/libSceNet/Export.cpp) retain unsupported implementations. Their restored argument lists still reference incomplete connection, interface, route, WLAN and statistics types. Kernel ioctl payloads need reconstruction from their handlers or consumers; buffer lengths alone do not establish field types.

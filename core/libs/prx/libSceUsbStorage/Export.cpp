@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

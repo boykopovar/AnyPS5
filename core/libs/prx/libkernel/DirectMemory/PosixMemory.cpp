@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "DirectMemory.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -20,16 +22,6 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI sceKernelMunmap(std::uint64_t address, std::size_t length);
-extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlockall_nid_postfix();
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
-extern "C" std::int64_t APS5_VABI sceKernelPread(int descriptor, void* buffer, std::size_t length, std::int64_t offset);
-extern "C" int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept;
-extern "C" int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
@@ -131,6 +123,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
         const auto read = sceKernelPread(descriptor, static_cast<unsigned char*>(mapped) + done, static_cast<std::size_t>(copied - done), static_cast<std::int64_t>(start + done));
         if (read <= 0) {
             munmap_nid_postfix(mapped, rounded);
+
             return failed(read < 0 ? static_cast<int>(read & 0xffff) : GuestIoError);
         }
         done += static_cast<std::uint64_t>(read);
@@ -138,6 +131,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     if (protection != 3 && mprotect_nid_postfix(mapped, rounded, protection) != 0) {
         const int error = *__error_nid_postfix();
         munmap_nid_postfix(mapped, rounded);
+
         return failed(error);
     }
     return mapped;
@@ -369,6 +363,7 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     for (auto cursor = first; cursor < end;) {
         VirtualQueryInfo info{};
         sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info));
+
         const auto extentEnd = std::min<std::uintptr_t>(info.end, end);
         std::fill_n(vec + (cursor - first) / PS5_PAGE_SIZE, (extentEnd - cursor) / PS5_PAGE_SIZE, static_cast<char>(info.is_committed != 0 ? 1 : 0));
         cursor = extentEnd;

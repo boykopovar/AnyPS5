@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "Triangle_frag_spv.h"
@@ -78,14 +79,6 @@
 #include <vector>
 
 namespace {
-
-extern "C" {
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-}
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
@@ -1331,7 +1324,7 @@ void directCompletionLabelTests(Recorder& recorder) {
         std::int64_t physical = -1;
         ~Release() {
             recorder.Sync();
-            if (mapping != nullptr) sceKernelMunmap(mapping, size);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), size);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, size);
         }
     } release{recorder};
@@ -2694,8 +2687,8 @@ void secondMappingImportTests(const Device& device) {
         void* alias = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (alias != nullptr) sceKernelMunmap(alias, page);
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (alias != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     } release;
@@ -2766,7 +2759,7 @@ int reimportBench(const Device& device) {
         void* mapping = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2916,8 +2909,8 @@ int hostImportCutTests(const Device& device) {
         std::size_t holeBytes = 0;
         ~Backing() {
             auto* memory = static_cast<std::byte*>(mapping);
-            if (memory != nullptr && hole != 0) sceKernelMunmap(memory, hole);
-            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(memory + hole + holeBytes, bytes - hole - holeBytes);
+            if (memory != nullptr && hole != 0) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), hole);
+            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + hole + holeBytes), bytes - hole - holeBytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2946,7 +2939,7 @@ int hostImportCutTests(const Device& device) {
         auto* cut = memory + test.offset;
         gpu.unlock();
         if (test.unmap) {
-            Require(sceKernelMunmap(cut, test.length) == 0, name + ": the unmap failed");
+            Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(cut), test.length) == 0, name + ": the unmap failed");
             backing.hole = test.offset;
             backing.holeBytes = test.length;
         } else {
@@ -2996,7 +2989,7 @@ int hostImportCutTests(const Device& device) {
         Require(whole != nullptr && whole->base == address && whole->bytes == bytes && whole->alias == nullptr && !whole->unwatched, name + ": the range was not imported whole, settled and watched");
         gpu.unlock();
         Require(sceKernelMprotect(memory, run, 0x03) == 0, name + ": the protection of the head failed");
-        Require(sceKernelMunmap(memory + run, bytes - run) == 0, name + ": the unmap of the kept side failed");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + run), bytes - run) == 0, name + ": the unmap of the kept side failed");
         backing.hole = run;
         backing.holeBytes = bytes - run;
         void* again = memory + run;
@@ -3955,10 +3948,11 @@ void drawSnapshotTableSetTests(const Device& device, Recorder& recorder) {
     }
     constexpr std::uint32_t width = 4;
     constexpr std::uint32_t height = 4;
-    alignas(256) static std::array<float, width * height> texels{};
+    alignas(256) static std::array<float, width * height * 16u> texels{};
     texels.fill(1.0f);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels.data()));
     const std::array<std::uint32_t, 8> texture{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (22u << 20u) | (((width - 1u) & 3u) << 30u), ((width - 1u) >> 2u) | ((height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    Require(DescribeSurface(DecodeTextureResource(texture)).guestBytes <= sizeof(texels), "the draw snapshot table set test T# reads past its texels");
     constexpr auto bindingCount = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
     const auto addTable = [&](ShaderRecompiler::RecompileResult& program, ShaderRecompiler::RuntimeAbi::Stage stage, std::uint32_t set, std::uint32_t elements) {
         ShaderRecompiler::DescriptorBinding map{};
@@ -6943,7 +6937,6 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-
 void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     constexpr std::uint32_t side = 256;
@@ -7093,7 +7086,7 @@ void keptUnitSettleTests(const Device& device, Recorder& recorder) {
                     return;
                 }
                 if (direct) {
-                    if (block != nullptr) sceKernelMunmap(block, surfaceBytes);
+                    if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), surfaceBytes);
                     if (physical >= 0) sceKernelReleaseDirectMemory(physical, surfaceBytes);
                     return;
                 }
@@ -8751,6 +8744,106 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void oneFragmentFmaskGuardTests(const Device& device) {
+    const auto& base = device.GetContext();
+    if (!device.NullDescriptors()) {
+        std::cout << "nullDescriptor unavailable: one-fragment FMASK guard not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 64;
+    constexpr std::size_t bytes = 3u * 65536u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the one-fragment FMASK block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    const auto refused = [](const std::function<void()>& access, const std::string& what) {
+        std::string message;
+        try {
+            access();
+        } catch (const std::exception& error) {
+            message = error.what();
+        }
+        Require(message.find("FMASK") != std::string::npos && message.find("one-fragment color target") != std::string::npos, what + " of a host-drawn one-fragment target's FMASK did not throw: " + message);
+    };
+    ColorTarget target{};
+    target.extent = {128, 128};
+    target.samples = 1;
+    target.coverageSamples = 4;
+    target.fmaskAddress = address;
+    GuardOneFragmentFmask(context, target);
+    GuardOneFragmentFmask(context, target);
+    std::array<std::byte, 64> words{};
+    refused([&] { AgcDriver::GuestMemory::Read(address + 256u, words); }, "a CPU read");
+    refused([&] { RequireNoMultisampleTarget(address + 65535u, 1u, "a DMA copy"); }, "a DMA copy of the last guarded byte");
+    RequireNoMultisampleTarget(address + 65536u, 64u, "a DMA copy");
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageSamplers = {0};
+    binding.guestDescriptor = {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((side - 1u) & 3u) << 30u),
+        ((side - 1u) >> 2u) | ((side - 1u) << 14u),
+        0xfacu | (9u << 28u),
+        0u,
+        0u,
+        0u,
+        0u,
+    };
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    for (const char* what : {"a texture read", "a repeated texture read"}) {
+        refused([&] {
+            std::lock_guard gpu(GpuMutex());
+            ShaderResources resources(context, compute);
+        }, what);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(block, bytes, [](const void*, std::size_t, const void*, bool) {});
+        mutation.Add(block, bytes, true, true, true);
+    }
+    AgcDriver::GuestMemory::Read(address + 256u, words);
+    RequireNoMultisampleTarget(address, 65536u, "a DMA copy");
+    std::cout << "One-fragment FMASK guard tests passed\n";
+}
+
 void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || base.hostImportAlignment == 0) {
@@ -9907,7 +10000,7 @@ int pipelineCacheFileTests(const Device& device) {
     } removeDirectory{directory};
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.wstring().c_str());
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
     setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
@@ -11205,6 +11298,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-only") {
             multisampleGuestAccessTests(device, recorder);
+            oneFragmentFmaskGuardTests(device);
             fmaskDecompressMsaaTests(device, recorder);
             return 0;
         }
@@ -11266,6 +11360,7 @@ int main(int argc, char** argv) {
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);
         fmaskDecompressMsaaTests(device, recorder);
         misalignedSnapshotTests(device, recorder);

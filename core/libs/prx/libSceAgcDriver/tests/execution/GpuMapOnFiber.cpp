@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -16,15 +17,6 @@
 #include <exception>
 #include <iostream>
 #include <string>
-
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
-
-extern "C" {
-std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, GuestFiberEntry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t);
-std::int32_t APS5_VABI sceFiberFinalize(FiberObject*);
-std::int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject*, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberReturnToThread(std::uint64_t, std::uint64_t*);
-}
 
 namespace {
 
@@ -77,6 +69,7 @@ void MapForGpu() {
 void APS5_VABI MapOnFiber(std::uint64_t, std::uint64_t) {
     MapForGpu();
     sceFiberReturnToThread(0, nullptr);
+
 }
 
 void ReleaseMapping() {
