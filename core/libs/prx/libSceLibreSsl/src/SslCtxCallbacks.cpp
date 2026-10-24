@@ -57,4 +57,10 @@ void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(LibreSslCallbackCtx* ctx, voi
     Callbacks(ctx, __func__).newSessionCb = callback;
 }
 
+void APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(LibreSslCallbackCtx* ctx, void* callback, void* arg) {
+    LibreSslCtxCallbacks& callbacks = Callbacks(ctx, __func__);
+    callbacks.appVerifyCallback = callback;
+    callbacks.appVerifyArg = arg;
+}
+
 }
