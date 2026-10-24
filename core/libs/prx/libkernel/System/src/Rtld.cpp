@@ -16,7 +16,11 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <mach-o/loader.h>
+#else
 #include <link.h>
+#endif
 #endif
 
 #ifdef _WIN32
@@ -39,6 +43,16 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
         throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
     if (reference) handle = module;
     return module;
+#elif defined(__APPLE__)
+    Dl_info info{};
+    if (!dladdr(address, &info) || !info.dli_fbase)
+        throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
+    const auto* header = static_cast<const mach_header_64*>(info.dli_fbase);
+    if (reference && header->filetype != MH_EXECUTE && info.dli_fname && *info.dli_fname) {
+        handle = dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+        if (!handle) throw std::runtime_error(std::string(caller) + ": cannot reference " + info.dli_fname);
+    }
+    return info.dli_fbase;
 #else
     Dl_info info{};
     link_map* image = nullptr;

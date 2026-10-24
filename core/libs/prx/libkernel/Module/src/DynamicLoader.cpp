@@ -23,9 +23,14 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#else
 #include <link.h>
 #ifdef __linux__
 #include <unistd.h>
+#endif
 #endif
 #endif
 
@@ -34,7 +39,11 @@ extern "C" void ForgetUnloadedUnwindImages_nid_no_patch();
 #endif
 
 namespace {
+#ifdef __APPLE__
+thread_local std::array<char, 4096> loaderError{};
+#else
 thread_local std::array<char, 512> loaderError{};
+#endif
 thread_local bool pendingError = false;
 void Error(const char* message) {
     std::snprintf(loaderError.data(), loaderError.size(), "%s", message);
@@ -70,6 +79,9 @@ struct Module {
 #ifdef _WIN32
     std::uintptr_t globalOrder = 0;
 #endif
+#ifdef __APPLE__
+    const void* image = nullptr;
+#endif
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
@@ -92,7 +104,49 @@ void* Symbol(Module& module, const char* name) {
     return ::dlsym(module.native, name);
 #endif
 }
-#ifndef _WIN32
+#ifdef __APPLE__
+bool FromGuestModule(void* address) {
+    Dl_info info{};
+    if (address == nullptr || !::dladdr(address, &info) || info.dli_fname == nullptr || info.dli_fbase == nullptr) return false;
+    if (static_cast<const mach_header_64*>(info.dli_fbase)->filetype == MH_EXECUTE) return true;
+    const std::string path(info.dli_fname);
+    return path.ends_with(".prx");
+}
+
+const void* ImageBase(void* native) {
+    const auto count = _dyld_image_count();
+    void* self = ::dlopen(nullptr, RTLD_LAZY | RTLD_NOLOAD);
+    if (self != nullptr) ::dlclose(self);
+    if (native == self) {
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
+            if (header != nullptr && header->filetype == MH_EXECUTE) return header;
+        }
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const char* name = _dyld_get_image_name(index);
+        if (name == nullptr) continue;
+        void* probe = ::dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
+        if (probe == nullptr) continue;
+        ::dlclose(probe);
+        if (probe == native) return _dyld_get_image_header(index);
+    }
+    throw std::runtime_error("dlclose: cannot find the image of a module handle");
+}
+
+void* DefaultScopeSymbol(const char* symbolName) {
+    auto* result = ::dlsym(RTLD_DEFAULT, symbolName);
+    if (!FromGuestModule(result)) return nullptr;
+    Dl_info info{};
+    if (::dladdr(result, &info) && info.dli_fbase != nullptr) {
+        std::lock_guard lock(modulesMutex);
+        for (const auto& [key, module] : modules) {
+            if (!module->global && module->image == info.dli_fbase) return nullptr;
+        }
+    }
+    return result;
+}
+#elif !defined(_WIN32)
 const link_map* MainProgramMap() {
     static const link_map* const map = [] {
         void* handle = ::dlopen(nullptr, RTLD_LAZY);
@@ -274,8 +328,12 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 #else
         const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
         const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
+#ifdef __APPLE__
+        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | RTLD_GLOBAL;
+#else
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
+#endif
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
         if (!module->native) {
             if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
@@ -283,6 +341,16 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         }
 #ifdef __linux__
         if (path) InitializeLinuxGuestModule(module->native);
+#endif
+#ifdef __APPLE__
+        if (path && !module->global) {
+            for (std::uint32_t index = 0; index < _dyld_image_count() && module->image == nullptr; ++index) {
+                void* loaded = ::dlopen(_dyld_get_image_name(index), RTLD_LAZY | RTLD_NOLOAD);
+                if (loaded == nullptr) continue;
+                if (loaded == module->native) module->image = _dyld_get_image_header(index);
+                ::dlclose(loaded);
+            }
+        }
 #endif
 #endif
         std::lock_guard lock(modulesMutex);
@@ -354,6 +422,8 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
         GuestAllocations::Mutation mutation;
 #ifdef _WIN32
         mutation.UnregisterImage(module->native);
+#elif defined(__APPLE__)
+        mutation.UnregisterImage(ImageBase(module->native));
 #else
         mutation.UnregisterImage(reinterpret_cast<const void*>(static_cast<link_map*>(module->native)->l_addr));
 #endif
