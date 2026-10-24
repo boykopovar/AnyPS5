@@ -3237,6 +3237,40 @@ void verifyImageTableMaskedOffset() {
     require(codes.size() == 4u && codes[0] == codes[3] && codes[2] == Abi::NullCode && codes[1] != codes[0] && (codes[1] & Abi::PoisonFlag) == 0u, "image table masked offset: the whole table map is wrong");
 }
 
+void verifyImageTableFirstLaneScale() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[3] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[9] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 12u);
+    const auto userData = TableUserData(guest);
+    const auto scaled = [](std::initializer_list<std::uint32_t> offset) {
+        std::vector<std::uint32_t> code(TableWholeCode);
+        const auto first = std::find(code.begin(), code.end(), 0x7e200500u);
+        require(first != code.end() && first[1] == 0x8f108510u, "image table first-lane scale: the program has no v_readfirstlane_b32 and s_lshl_b32");
+        code.insert(code.erase(first, first + 2), offset);
+        return code;
+    };
+    const auto code = scaled({0x34020085u, 0xd7460001u, 0x04050301u, 0x7e200501u});
+    const auto request = TableRequest(code, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.images[0].tableOperation == TableOperation::Supported, "image table first-lane scale: the T# was not planned as a table");
+    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.has_value() && column->stride == 96u && column->addend == 0u && column->offset == 0u && column->dwordCount == 8u && column->unkeyed, "image table first-lane scale: the column is wrong");
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    require(snapshot.records == 4u && snapshot.keys == 4u && snapshot.fault == 0u, "image table first-lane scale: the snapshot does not hold the four 96-byte records");
+    const auto codes = TableCodes(TableMap(*compiled.result), 0);
+    require(codes.size() == 4u && codes[0] == codes[3] && codes[2] == Abi::NullCode && codes[1] != codes[0] && (codes[0] & Abi::PoisonFlag) == 0u && (codes[1] & Abi::PoisonFlag) == 0u, "image table first-lane scale: the table map is wrong");
+    const auto unscaled = scaled({0x7e200500u});
+    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(unscaled, userData))); }, "GetImageResource dword 0 is not a valid runtime value", "image table first-lane scale: a first-lane offset with no dword multiple was accepted");
+}
+
 void verifyImageTableRegistration() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -8353,6 +8387,7 @@ int main(int argc, char** argv) {
             verifyImageTableBulkKeyScan();
             verifyImageTableSrtKey();
             verifyImageTableMaskedOffset();
+            verifyImageTableFirstLaneScale();
             verifyImageTableKeyUnion();
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
