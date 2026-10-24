@@ -258,6 +258,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_blob_reads.py)
         add_test(NAME conventions_agent_files COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
+        add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile COMMAND ${Python3_EXECUTABLE}

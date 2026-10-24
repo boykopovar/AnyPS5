@@ -24,6 +24,7 @@ RULES = {
     "system-dependency": ("error", "CONTRIBUTING.md#code", "Third-party code is a submodule under 3rdparty/ built from source, not found on the system"),
     "title-specific": ("error", "CONTRIBUTING.md#code", "Implement the general behaviour, not what one title needs; title-specific code belongs in its sce_module"),
     "extension": ("error", "CONTRIBUTING.md#code", "Avoid non-standard extensions where standard C++ is enough"),
+    "alignment": ("error", "CONTRIBUTING.md#code", "MinGW GCC rejects static objects aligned above 8192 bytes; align a larger block at run time inside a bigger buffer"),
     "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
@@ -59,6 +60,10 @@ STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s
 SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
+INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
+ALIGNAS = re.compile(rf"\balignas\s*\(\s*(?:{INTEGER}|([A-Za-z_][A-Za-z0-9_]*))\s*\)")
+CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*|\{{\s*){INTEGER}\s*[;}}]")
+ALIGNMENT_LIMIT = 8192
 LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
@@ -178,6 +183,9 @@ class Check:
                     self.report("comment", path, number)
                 if EXTENSION.search(bare):
                     self.report("extension", path, number, EXTENSION.search(bare).group(0))
+                alignment = over_aligned(bare, named_constants("\n".join(masked))) if "alignas" in bare else None
+                if alignment:
+                    self.report("alignment", path, number, alignment)
                 if core and TITLE.search(text):
                     self.report("title-specific", path, number, TITLE.search(text).group(0))
                 if core and path.startswith("core/libs/prx/"):
@@ -578,6 +586,25 @@ def cpp_text(text, preserve_comments=False):
         return blank if match.group("comment") is not None else '""' + blank[2:]
 
     return CPP_TOKEN.sub(mask, text)
+
+
+def integer_literal(text):
+    digits = text.replace("'", "").lower()
+    if digits.startswith(("0x", "0b")):
+        return int(digits, 0)
+    return int(digits, 8 if len(digits) > 1 and digits[0] == "0" else 10)
+
+
+def named_constants(text):
+    return {name: integer_literal(value) for name, value in CONSTANT.findall(text)}
+
+
+def over_aligned(text, constants={}):
+    for match in ALIGNAS.finditer(text):
+        value = integer_literal(match.group(1)) if match.group(1) else constants.get(match.group(2), 0)
+        if value > ALIGNMENT_LIMIT:
+            return match.group(0)
+    return None
 
 
 def function_body(lines, start):
