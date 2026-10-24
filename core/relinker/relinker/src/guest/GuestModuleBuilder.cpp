@@ -378,7 +378,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     for (const auto index : order) if (!windows && !deferred(index)) addNeeded("$ORIGIN/" + appDirectory(images[index]) + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
-    if (!windows && runPath != "$ORIGIN" && !runPath.starts_with("$ORIGIN/") && !runPath.starts_with("$ORIGIN:") && !runPath.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+    if (!windows) for (std::size_t begin = 0; begin <= runPath.size();) {
+        const auto end = std::min(runPath.find(':', begin), runPath.size());
+        const auto component = std::string_view(runPath).substr(begin, end - begin);
+        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+        begin = end + 1;
+    }
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
     std::vector<GuestArtifact> artifacts;
     for (const auto index : order) {

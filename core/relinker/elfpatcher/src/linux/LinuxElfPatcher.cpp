@@ -347,6 +347,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::vector<Codegen::TrampolineSite>& trampolines)
 {
     const auto dynSection = ImportsByNid(sourceDynSection);
+    if (runPath.empty() || runPath.front() == ':' || runPath.back() == ':' || runPath.find("::") != std::string::npos)
+        throw Domain::RelinkerException("Empty Linux run path component is not supported");
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
     if (_fixedBase && lazyBinding)
