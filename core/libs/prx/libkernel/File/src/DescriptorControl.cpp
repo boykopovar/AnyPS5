@@ -402,6 +402,7 @@ void SetCloseOnExec(int fd, bool value) {
 }
 
 int RecordLock(int fd, int command, std::intptr_t argument) {
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
     const int current = old ? command + (GetLock - OldGetLock) : command;
     const std::size_t size = old ? OldGuestLockSize : sizeof(GuestLock);
@@ -557,6 +558,7 @@ bool IoctlRequestMalformed(std::uint64_t request) {
 
 int Ioctl(int fd, std::uint64_t request, void* argument) {
     if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & RequestIn) && length != 0 && argument == nullptr) return Fail(GuestEfault);
