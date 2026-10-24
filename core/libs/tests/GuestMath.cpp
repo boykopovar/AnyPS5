@@ -145,6 +145,8 @@ float APS5_VABI asinhf_nid_postfix(float);
 double APS5_VABI acosh_nid_postfix(double);
 float APS5_VABI acoshf_nid_postfix(float);
 double APS5_VABI atanh_nid_postfix(double);
+double APS5_VABI atan_nid_postfix(double);
+double APS5_VABI atan2_nid_postfix(double, double);
 float APS5_VABI atanhf_nid_postfix(float);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
 std::int64_t APS5_VABI llround_nid_postfix(double);
@@ -684,6 +686,44 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckAtanConsoleBits() {
+    constexpr std::uint64_t atanCases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull},
+        {0x3e3fffffffffffffull, 0x3e3fffffffffffffull}, {0x3fdbffffffffffffull, 0x3fda64eec3cc23fcull},
+        {0x3fdc000000000000ull, 0x3fda64eec3cc23fdull}, {0x3fe6000000000000ull, 0x3fe345f01cce37bbull},
+        {0xbff0000000000000ull, 0xbfe921fb54442d18ull}, {0x3ff3000000000000ull, 0x3febde70ed439fe7ull},
+        {0x4003800000000000ull, 0x3ff2e75728833a54ull}, {0xc010000000000000ull, 0xbff5368c951e9cfdull},
+        {0x4410000000000000ull, 0x3ff921fb54442d18ull}, {0x7ff0000000000000ull, 0x3ff921fb54442d18ull},
+        {0xfff0000000000000ull, 0xbff921fb54442d18ull}, {0x3fad508ceb7f682cull, 0x3fad485dbf410edfull},
+        {0x3fa082f78cc13f61ull, 0x3fa08180a68db531ull}, {0x3faeddbbe09a8750ull, 0x3faed42ea4a74ad3ull},
+        {0x3fac3936c3cca451ull, 0x3fac31e8af531a27ull},
+    };
+    for (const auto& [input, expected] : atanCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(atan_nid_postfix(std::bit_cast<double>(input))) == expected && errno == 1234);
+    }
+    constexpr std::uint64_t atan2Cases[][3] = {
+        {0x0000000000000000ull, 0xbff0000000000000ull, 0x400921fb54442d18ull}, {0x8000000000000000ull, 0xbff0000000000000ull, 0xc00921fb54442d18ull},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0x3ff921fb54442d18ull}, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0x3fe921fb54442d18ull},
+        {0xfff0000000000000ull, 0xfff0000000000000ull, 0xc002d97c7f3321d2ull}, {0x3ff0000000000000ull, 0xfff0000000000000ull, 0x400921fb54442d18ull},
+        {0xbff0000000000000ull, 0x7ff0000000000000ull, 0x8000000000000000ull}, {0x4400000000000000ull, 0x3ff8000000000000ull, 0x3ff921fb54442d18ull},
+        {0x3c00000000000000ull, 0xc000000000000000ull, 0x400921fb54442d18ull}, {0x4008000000000000ull, 0x3ff0000000000000ull, 0x3ff3fc176b7a8560ull},
+        {0xc000000000000000ull, 0xc008000000000000ull, 0xc0046dc09ec29433ull}, {0x3fe774163fc8a61cull, 0xbfa03b1919b0841eull, 0x3ff9d308efab3d4eull},
+        {0x3f89168e4bb7028dull, 0xbf770218cd6ae2acull, 0x40000181c1e22d3cull}, {0x4001cb803efd1d84ull, 0x403006a063c24f8eull, 0x3fc1a744f5606d17ull},
+        {0x40482af634e7d295ull, 0xbfc02d27b8b994d8ull, 0x3ff92cb0ec26f870ull}, {0xbf7313a5e3168694ull, 0x406689afeebd4e09ull, 0xbefb15f897fdbebbull},
+        {0xbfc6d4284a7ef189ull, 0xbfa287cd540b2831ull, 0xbffc560b5133f96cull},
+        {0x7ff0000000000001ull, 0x7ff8000000000456ull, 0x7ff8000000000001ull}, {0x7ff8000000000456ull, 0xfff4000000000123ull, 0x7ff8000000000456ull},
+        {0x7ff8000000000123ull, 0xfff8000000000456ull, 0x7ff8000000000123ull}, {0xfff8000000000456ull, 0x7ff8000000000123ull, 0xfff8000000000456ull},
+        {0x3ff0000000000000ull, 0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0x4000000000000000ull, 0xfffc000000000123ull},
+    };
+    for (const auto& [y, x, expected] : atan2Cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(atan2_nid_postfix(std::bit_cast<double>(y), std::bit_cast<double>(x))) == expected && errno == 1234);
+    }
+    Require(std::isnan(atan_nid_postfix(std::numeric_limits<double>::quiet_NaN())));
+    Require(std::isnan(atan2_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && std::isnan(atan2_nid_postfix(1.0, std::numeric_limits<double>::quiet_NaN())));
 }
 
 static void CheckExpm1ConsoleBits() {
@@ -1708,6 +1748,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckAtanConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
