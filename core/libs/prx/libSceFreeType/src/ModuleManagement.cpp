@@ -22,4 +22,8 @@ int APS5_VABI FT_Remove_Module_nid_postfix(GuestLibrary* library, void* module) 
     return FT_Remove_Module(library ? library->host : nullptr, static_cast<FT_Module>(module));
 }
 
+void APS5_VABI FT_Add_Default_Modules_nid_postfix(GuestLibrary* library) {
+    FT_Add_Default_Modules(library ? library->host : nullptr);
+}
+
 }
