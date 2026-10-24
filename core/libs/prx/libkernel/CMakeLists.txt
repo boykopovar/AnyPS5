@@ -244,7 +244,7 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_module_fixture)
     set_target_properties(guest_module_fixture PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
     if(Python3_Interpreter_FOUND)
-        if(NOT WIN32)
+        if(NOT WIN32 AND NOT APPLE)
             target_link_options(guest_module_fixture PRIVATE -Wl,--no-as-needed)
             add_test(NAME nid_patcher_dynamic_strings COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/nid/tests/test_dynamic_strings.py $<TARGET_FILE:guest_module_fixture>)
