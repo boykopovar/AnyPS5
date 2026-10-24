@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -381,15 +382,18 @@ private:
         const std::string field = Field(directive.width, FloatFit);
         if (FloatFit(field) != Fit::Valid) return Outcome::Matching;
         if (target != nullptr) {
+            const int savedError = errno;
             if (directive.length == "L") {
                 const long double value = std::strtold(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
             } else if (directive.length == "l") {
                 const double value = std::strtod(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
+                errno = savedError;
             } else {
                 const float value = std::strtof(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
+                errno = savedError;
             }
             ++assigned;
         }
