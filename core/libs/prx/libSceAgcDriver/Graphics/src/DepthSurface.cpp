@@ -2494,6 +2494,31 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     }
 }
 
+std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    if (!DepthPlanesStale()) return 0;
+    std::lock_guard lock(surfacesMutex());
+    std::size_t discarded = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
+    for (const auto& surface : surfaces()) {
+        if (!surface->AnyStale()) continue;
+        const auto& target = surface->target;
+        const auto plane = stalePlaneRange(*surface);
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const bool cleared = target.samples == 1u && surface->active->load(std::memory_order_acquire) && PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes) && DepthFillValue(pattern, d16).has_value();
+        if (!surface->syncing && cleared && PlaneFillCovers(plane.first, plane.second - plane.first, address, bytes)) {
+            surface->ClearStale();
+            ++discarded;
+        }
+        if (surface->AnyStale()) remaining.push_back(plane);
+    }
+    if (discarded == 0) return 0;
+    auto& planes = stalePlanes();
+    std::lock_guard staleLock(planes.mutex);
+    planes.ranges = std::move(remaining);
+    publishStaleHull(planes);
+    return discarded;
+}
+
 bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource) {
     std::lock_guard lock(surfacesMutex());
     const auto* found = planeSurface(context.device, resource.baseAddress);
