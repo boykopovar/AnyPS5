@@ -104,6 +104,24 @@ int APS5_VABI sceVideoOutClose(int handle) try {
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size) try {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (info == nullptr || size != sizeof(std::uint64_t)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    const std::uint64_t capabilities = 1;
+    std::memcpy(info, &capabilities, sizeof(capabilities));
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size) {
+    if (mode == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    std::memcpy(mode, &size, sizeof(size));
+    if (size > sizeof(size)) std::memset(static_cast<std::byte*>(mode) + sizeof(size), 0xFF, size - sizeof(size));
+}
+
 int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle) try {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
