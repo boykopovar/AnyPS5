@@ -4,6 +4,7 @@
 #include FT_BITMAP_H
 
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -89,6 +90,20 @@ int APS5_VABI FT_Bitmap_Convert_nid_postfix(GuestLibrary* library, const GuestBi
     FT_Bitmap nativeTarget = NativeBitmap(*target);
     const FT_Error error = FT_Bitmap_Convert(library->host, &nativeSource, &nativeTarget, alignment);
     SyncBitmap(*target, nativeTarget);
+    return error;
+}
+
+int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary* library, GuestBitmap* bitmap, std::int64_t xStrength, std::int64_t yStrength) {
+    if (!library) return FT_Err_Invalid_Library_Handle;
+    if (!bitmap) return FT_Err_Invalid_Argument;
+    for (const std::int64_t strength : {xStrength, yStrength}) {
+        if (strength < std::numeric_limits<FT_Pos>::min() || strength > std::numeric_limits<FT_Pos>::max()) {
+            throw std::runtime_error("FT_Bitmap_Embolden: a strength outside the host FT_Pos range is not implemented");
+        }
+    }
+    FT_Bitmap native = NativeBitmap(*bitmap);
+    const FT_Error error = FT_Bitmap_Embolden(library->host, &native, static_cast<FT_Pos>(xStrength), static_cast<FT_Pos>(yStrength));
+    SyncBitmap(*bitmap, native);
     return error;
 }
 
