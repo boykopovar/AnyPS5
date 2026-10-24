@@ -45,12 +45,15 @@ namespace AgcDriver::Graphics {
 
 OwnedImage::~OwnedImage() {
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    ReleaseImageMemory(context, memory, memoryBytes, memoryType);
+    if (allocation) allocation.Reset();
+    else ReleaseImageMemory(context, memory, memoryBytes, memoryType);
 }
 
-void OwnedImage::Allocate(const Context& device, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, bool newImage) {
-    memory = AllocateImageMemory(device, allocation, mask, operation, &memoryType, newImage);
-    memoryBytes = allocation.allocationSize;
+void OwnedImage::Allocate(const Context& device, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage, bool budgeted) {
+    Require(memory == VK_NULL_HANDLE && !allocation, "an owned image already has memory");
+    allocation = AllocateImageMemory(device, image, imageInfo, operation, newImage, budgeted);
+    memoryBytes = allocation.Size();
+    memoryType = allocation.MemoryType();
     context.bufferPool = device.bufferPool;
 }
 
@@ -275,16 +278,12 @@ ExpandImage CreateExpandImage(const Context& context, const GuestTextureResource
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    result.owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
     Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &result.image), "vkCreateImage sRGB copy");
-    result.owned = std::make_shared<OwnedImage>(context, result.image, VK_NULL_HANDLE);
-    VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, result.image, &requirements);
-    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "texture");
-    result.owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory sRGB copy", true);
-    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, result.image, result.owned->memory, 0), "vkBindImageMemory sRGB copy");
-    result.bytes = requirements.size;
+    result.owned->image = result.image;
+    result.owned->Allocate(context, imageInfo, "vkAllocateMemory sRGB copy", true, true);
+    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, result.image, result.owned->allocation.Memory(), result.owned->allocation.Offset()), "vkBindImageMemory sRGB copy");
+    result.bytes = result.owned->memoryBytes;
     return result;
 }
 
@@ -357,17 +356,12 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | (srgbExpand ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "texture");
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory texture", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory texture", true, true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory");
 
         const VkImage uploadImage = image;
         std::shared_ptr<OwnedImage> uploadOwned;
@@ -634,16 +628,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage repacked copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory repacked copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory repacked copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory repacked copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory repacked copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -693,16 +683,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage block copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory block copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory block copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory block copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory block copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -752,16 +738,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage depth copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory depth copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory depth copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory depth copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory depth copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -1449,14 +1431,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        memoryBytes = requirements.size;
-        allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "storage texture");
-        memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory storage texture", &memoryType, true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory storage");
+        imageAllocation = AllocateImageMemory(context, image, imageInfo, "vkAllocateMemory storage texture", true, true);
+        memoryBytes = imageAllocation.Size();
+        this->context.bufferPool = context.bufferPool;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, imageAllocation.Memory(), imageAllocation.Offset()), "vkBindImageMemory storage");
     } catch (...) {
         release();
         throw;
@@ -1906,13 +1884,8 @@ VkImageView StorageTexture::AttachmentProxyView() {
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &proxyImage), "vkCreateImage attachment proxy");
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, proxyImage, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        proxyMemory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory attachment proxy");
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, proxyImage, proxyMemory, 0), "vkBindImageMemory attachment proxy");
+        proxyAllocation = AllocateImageMemory(context, proxyImage, imageInfo, "vkAllocateMemory attachment proxy");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, proxyImage, proxyAllocation.Memory(), proxyAllocation.Offset()), "vkBindImageMemory attachment proxy");
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = proxyImage;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -1922,9 +1895,8 @@ VkImageView StorageTexture::AttachmentProxyView() {
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &proxyView), "vkCreateImageView attachment proxy");
     } catch (...) {
         if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
-        if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
+        proxyAllocation.Reset();
         proxyImage = VK_NULL_HANDLE;
-        proxyMemory = VK_NULL_HANDLE;
         proxyView = VK_NULL_HANDLE;
         throw;
     }
@@ -5931,10 +5903,10 @@ void StorageTexture::release() noexcept {
     attachmentViews.clear();
     if (proxyView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, proxyView, nullptr);
     if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
-    if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
+    proxyAllocation.Reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    ReleaseImageMemory(context, memory, memoryBytes, memoryType);
+    imageAllocation.Reset();
 }
 
 std::uint64_t StorageTexture::GuestBytes() const {

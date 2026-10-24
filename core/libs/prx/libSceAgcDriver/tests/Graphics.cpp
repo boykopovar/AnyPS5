@@ -5023,6 +5023,13 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
 
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) { *image = makeHandle<VkImage>(); ++mock.live; return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) { *requirements = {4096, 1, 1}; }
+
+VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* info, VkMemoryRequirements2* requirements) {
+    mockGetImageMemoryRequirements(device, info->image, &requirements->memoryRequirements);
+    auto* dedicated = static_cast<VkMemoryDedicatedRequirements*>(requirements->pNext);
+    dedicated->prefersDedicatedAllocation = VK_FALSE;
+    dedicated->requiresDedicatedAllocation = VK_FALSE;
+}
 VKAPI_ATTR VkResult VKAPI_CALL mockBindImageMemory(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL mockDestroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) { mock.destroyedImages.insert(image); --mock.live; }
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) { *view = makeHandle<VkImageView>(); ++mock.live; return VK_SUCCESS; }
@@ -5323,6 +5330,7 @@ PFN_vkVoidFunction VKAPI_CALL mockDepthCopyProc(VkDevice device, const char* nam
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements2)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindImageMemory)},
         {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImage)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImageView)},
@@ -7535,6 +7543,13 @@ VKAPI_ATTR VkResult VKAPI_CALL depthOrderCreateImage(VkDevice, const VkImageCrea
 
 VKAPI_ATTR void VKAPI_CALL depthOrderDestroyImage(VkDevice, VkImage, const VkAllocationCallbacks*) { --mock.live; }
 VKAPI_ATTR void VKAPI_CALL depthOrderImageRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) { *requirements = {256, 1, 1}; }
+
+VKAPI_ATTR void VKAPI_CALL depthOrderImageRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* info, VkMemoryRequirements2* requirements) {
+    depthOrderImageRequirements(device, info->image, &requirements->memoryRequirements);
+    auto* dedicated = static_cast<VkMemoryDedicatedRequirements*>(requirements->pNext);
+    dedicated->prefersDedicatedAllocation = VK_FALSE;
+    dedicated->requiresDedicatedAllocation = VK_FALSE;
+}
 VKAPI_ATTR VkResult VKAPI_CALL depthOrderBindImage(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
 
 VKAPI_ATTR VkResult VKAPI_CALL depthOrderCreateView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
@@ -7571,6 +7586,7 @@ PFN_vkVoidFunction VKAPI_CALL depthOrderProc(VkDevice device, const char* name) 
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(depthOrderCreateImage)},
         {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(depthOrderDestroyImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(depthOrderImageRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(depthOrderImageRequirements2)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(depthOrderBindImage)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(depthOrderCreateView)},
         {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(depthOrderDestroyView)},
