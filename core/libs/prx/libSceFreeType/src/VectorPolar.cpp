@@ -60,4 +60,12 @@ void APS5_VABI FT_Vector_Polarize_nid_postfix(const GuestVector* vector, std::in
     *angle = nativeAngle;
 }
 
+void APS5_VABI FT_Vector_From_Polar_nid_postfix(GuestVector* vector, std::int64_t length, std::int64_t angle) {
+    if (!vector) return;
+    FT_Vector native{};
+    FT_Vector_From_Polar(&native, HostValue(length, __func__), HostValue(angle, __func__));
+    GuestArena::HostWrite write(vector, sizeof(*vector));
+    *vector = {native.x, native.y};
+}
+
 }
