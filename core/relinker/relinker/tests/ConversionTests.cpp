@@ -342,7 +342,7 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()).find("Unsupported relocation type 0x99") != std::string::npos, "Wrong error for unsupported relocation");
+            require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
             require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
         }
     }
