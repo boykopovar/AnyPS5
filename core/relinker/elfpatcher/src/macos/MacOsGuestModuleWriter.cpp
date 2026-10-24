@@ -111,7 +111,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
     for (const auto slot : guest.InitArray) input.InitArrayRvas.push_back(image.GetRva(slot, 8));
     for (const auto slot : guest.FiniArray) input.FiniArrayRvas.push_back(image.GetRva(slot, 8));
     input.InitRva = guest.HasInit ? image.GetRva(guest.Init) : 0;
-    input.FiniRva = guest.Fini == 0 ? 0 : image.GetRva(guest.Fini);
+    input.FiniRva = guest.HasFini ? image.GetRva(guest.Fini) : 0;
     input.Trampolines = &guest.Trampolines;
     try {
         return WriteMacOsImage(input);

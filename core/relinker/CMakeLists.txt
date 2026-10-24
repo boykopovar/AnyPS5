@@ -638,6 +638,11 @@ if(BUILD_TESTING)
         add_test(NAME guest_export_lookup COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_export_lookup.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_export_lookup PROPERTIES TIMEOUT 30)
+        add_test(NAME guest_zero_finalizer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_finalizer.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host> ${CMAKE_CXX_COMPILER})
+        set_tests_properties(guest_zero_finalizer PROPERTIES TIMEOUT 30)
+        add_asan_test_options(guest_zero_finalizer verify_asan_link_order=0)
         add_test(NAME guest_module_fini COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_fini.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
