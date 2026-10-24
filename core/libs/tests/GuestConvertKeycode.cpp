@@ -16,6 +16,7 @@ extern "C" {
 int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t, std::uint32_t, std::uint16_t*);
 int APS5_VABI sceConvertKeycodeGetImeKeyboardType(std::int32_t, std::uint32_t*);
 int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t, std::uint32_t, std::uint32_t, char16_t*);
+int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData*, std::int32_t, std::uint32_t, std::uint32_t, char16_t*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -214,5 +215,17 @@ int main() {
             Require(sceConvertKeycodeGetCharacter(key, 0xFFFFFFFFu, layout, &character) == 0 && character == 0);
         }
     }
+    KeyboardData keyData{};
+    keyData.length = 1;
+    keyData.key_code[0] = 4;
+    char16_t kbdChar = u'?';
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(nullptr, 0, 0, 4, &kbdChar) == static_cast<int>(0x80BC0031u));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, nullptr) == static_cast<int>(0x80BC0031u));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, -1, 0, 4, &kbdChar) == static_cast<int>(0x80BC0031u));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 1, 0, 4, &kbdChar) == static_cast<int>(0x80BC0031u));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 0, &kbdChar) == static_cast<int>(0x80BC001Du));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 40, &kbdChar) == static_cast<int>(0x80BC001Du));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, &kbdChar) == 0 && kbdChar == u'a');
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0x200, 4, &kbdChar) == 0 && kbdChar == u'A');
     return 0;
 }

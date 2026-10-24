@@ -2436,7 +2436,14 @@ int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uin
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData* keyData, std::int32_t index, std::uint32_t state, std::uint32_t keyboardType, char16_t* character) {
-    NotImplemented_nid_no_patch(__func__);
+    if (keyData == nullptr || character == nullptr) return kErrInvalidAddress;
+    if (keyboardType == 0 || keyboardType > 39) return kErrInvalidKeyboardType;
+    if (keyboardType >= 31) throw std::runtime_error("sceConvertKeycodeGetCharacterFromKeyboardData: guest sdk version is unavailable");
+    if (index < 0 || index >= keyData->length || index >= static_cast<std::int32_t>(KEYBOARD_MAX_KEYCODES)) {
+        return kErrInvalidAddress;
+    }
+    const std::uint16_t keycode = keyData->key_code[index];
+    *character = ConvertCharacter(keycode, state, keyboardType);
     return 0;
 }
 
