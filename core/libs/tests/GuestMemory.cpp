@@ -1389,6 +1389,39 @@ static void CheckGuestModuleImageProtection() {
 }
 #endif
 
+static void CheckFixedRemapReprotectsHost() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page, 3, 0, phys, 0) == 0);
+    static_cast<unsigned char*>(mapped)[0] = 0xAB;
+    void* readonlyView = mapped;
+    Require(sceKernelMapDirectMemory(&readonlyView, page, 1, 0x10, phys, 0) == 0 && readonlyView == mapped);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(static_cast<unsigned char*>(mapped)[0] == 0xAB);
+#ifdef _WIN32
+    Require((ImageProtection(mapped) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) == 0);
+#elif defined(__linux__)
+    const auto readonlyPerms = MappingPermissions(mapped);
+    Require(readonlyPerms.size() == 4 && readonlyPerms[0] == 'r' && readonlyPerms[1] == '-');
+#endif
+    void* writableView = mapped;
+    Require(sceKernelMapDirectMemory(&writableView, page, 3, 0x10, phys, 0) == 0 && writableView == mapped);
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+#ifdef _WIN32
+    Require((ImageProtection(mapped) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0);
+#elif defined(__linux__)
+    const auto writablePerms = MappingPermissions(mapped);
+    Require(writablePerms.size() == 4 && writablePerms[1] == 'w');
+#endif
+    static_cast<unsigned char*>(mapped)[0] = 0xCD;
+    Require(static_cast<unsigned char*>(mapped)[0] == 0xCD);
+    Require(sceKernelMunmap(mapped, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
 static void CheckUnhintedKernelMappingsLandInTheWindow() {
     constexpr std::size_t page = 0x4000;
     std::uintptr_t windowStart = 0;
@@ -3443,6 +3476,7 @@ int main(int argc, char** argv) {
     CheckConcurrentCheckedReleasesUnmapViewsOnce();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();
+    CheckFixedRemapReprotectsHost();
 #if defined(__linux__)
     CheckWriteWatch();
     CheckWriteWatchArmedCollect();
