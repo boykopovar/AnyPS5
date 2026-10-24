@@ -141,8 +141,31 @@ public:
         return directory;
     }
 
+    bool Adopt(std::FILE* handle) {
+        _handle = handle;
+        _guest = {};
+        guestError = false;
+        randomDevice = false;
+        if (!_handle) return false;
+        _guest.flags = 0x10;
+#ifdef _WIN32
+        const int descriptor = _fileno(_handle);
+#else
+        const int descriptor = ::fileno(_handle);
+#endif
+        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
+        return true;
+    }
+
     bool Reopen(const std::filesystem::path& filename, const char* mode,
         [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr) {
+        if (!_handle) {
+            if (!open || filename.empty()) {
+                errno = ENOENT;
+                return false;
+            }
+            return Adopt(open(filename, mode));
+        }
         auto* previous = GetHandle();
         _guest = {};
         guestError = false;
@@ -202,15 +225,7 @@ public:
         _handle = std::freopen(filename.c_str(), mode, previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
-        if (!_handle) return false;
-        _guest.flags = 0x10;
-#ifdef _WIN32
-        const int descriptor = _fileno(_handle);
-#else
-        const int descriptor = ::fileno(_handle);
-#endif
-        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
-        return true;
+        return Adopt(_handle);
     }
     void PublishStatus(bool endOfFile, bool error) {
         __atomic_store_n(&_guest.readRemaining, 0, __ATOMIC_RELAXED);

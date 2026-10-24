@@ -577,6 +577,46 @@ static void CheckClosedStreamWrites() {
     Require(fclose_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
 }
 
+static std::string FileText(const std::string& filename) {
+    std::ifstream input(filename, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+static void CheckClosedStreamReopen() {
+    const auto filename = "anyps5-closed-reopen-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    FileStream stream(std::tmpfile());
+    Require(fclose_nid_postfix(&stream) == 0);
+    Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr && *__error_nid_postfix() == 2);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    const std::string overlong(300, 'n');
+    Require(freopen_nid_postfix(overlong.c_str(), "w", &stream) == nullptr && *__error_nid_postfix() == 63);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    Require(freopen_nid_postfix(nullptr, "w", &stream) == nullptr && *__error_nid_postfix() == 22);
+    Require(freopen_nid_postfix(filename.c_str(), "w", &stream) == &stream);
+    Require(fputs_nid_postfix("reopened\n", &stream) >= 0 && fflush_nid_postfix(&stream) == 0);
+    Require(fileno_nid_postfix(&stream) >= 0);
+    Require(freopen_nid_postfix(filename.c_str(), "r", &stream) == &stream);
+    Require(fgetc_nid_postfix(&stream) == 'r');
+    Require(fclose_nid_postfix(&stream) == 0);
+    Require(FileText(filename) == "reopened\n");
+    Require(std::filesystem::remove(filename));
+}
+
+static int CheckReopenedClosedStandardOutput() {
+    const auto filename = "anyps5-closed-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(fclose_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    const std::string overlong(300, 'n');
+    Require(freopen_nid_postfix(overlong.c_str(), "w", __stdoutp_nid_postfix) == nullptr && *__error_nid_postfix() == 63);
+    Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    Require(freopen_nid_postfix(filename.c_str(), "w", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
+    Require(printf_nid_postfix("%d\n", 1) == 2 && puts_nid_postfix("text") >= 0 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(fclose_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(FileText(filename) == "1\ntext\n");
+    Require(std::filesystem::remove(filename));
+    return 0;
+}
+
 static int CheckClosedStandardOutput() {
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", __stdoutp_nid_postfix) == nullptr);
     Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
@@ -622,7 +662,9 @@ static void CheckStandardStreamDeleteSharing() {
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
+    if (argc > 1 && std::string_view(argv[1]) == "--reopen-closed-stdout") return CheckReopenedClosedStandardOutput();
     CheckClosedStreamWrites();
+    CheckClosedStreamReopen();
     CheckDescriptorAccessModes();
     Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();
