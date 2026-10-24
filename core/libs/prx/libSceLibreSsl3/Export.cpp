@@ -40,26 +40,6 @@ int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, s
     return static_cast<int>(difference);
 }
 
-int APS5_VABI DH_get0_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI DH_get0_pqg_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI DSA_get0_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI DSA_get0_pqg_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EC_KEY_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -261,11 +241,6 @@ int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void) {
 }
 
 int APS5_VABI RSA_check_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_get0_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
