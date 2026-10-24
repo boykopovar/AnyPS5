@@ -2244,6 +2244,64 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 }
 
+void retiredImportWatchTests(const Context& context) {
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the write watch of retired imports not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t bytes = 2 * piece;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x5a, bytes);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(bytes);
+    SetHostImportDeferredSettles(false);
+    ClearHostImports(importing.device);
+    const auto decided = PrepareImportWatch(importing);
+    SetImportWatch(importing, ImportWatch::Unwatch);
+    const auto registry = [&](std::size_t offset, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, piece, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    registry(0, true);
+    build();
+    Require(HostImportCovers(importing, address, piece), "the first 64 KiB piece was not imported on its own");
+    Require(!AgcDriver::GuestMemory::Watched(address, piece), "an unwatched 64 KiB import kept its piece in the write watch");
+    registry(piece, true);
+    SetHostImportBudget(4096);
+    const auto before = MirrorCounters();
+    build();
+    Require(!HostImportCovers(importing, address, piece), "the piece's import outlived the run that grew past it, or a 128 KiB block fit a 4 KiB budget");
+    Require(AgcDriver::GuestMemory::Watched(address, piece), "a 64 KiB piece whose import retired when its run grew into a block stayed outside the write watch");
+    Require(MirrorCounters().heapMirrors == before.heapMirrors + 2, "a 64 KiB piece whose import retired when its run grew into a block was copied, not heap mirrored, once no import fit");
+    registry(piece, false);
+    registry(0, false);
+    build();
+    SetImportWatch(importing, decided);
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    SetHostImportDeferredSettles(true);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+#else
+    static_cast<void>(context);
+#endif
+}
+
 void importedFreshTests(const Context& context) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
@@ -3726,6 +3784,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     sparseImportedHeapTests(context, access);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
+    retiredImportWatchTests(context);
     importWatchTests();
     importedFreshTests(context);
     gpuMappingTests(context);
