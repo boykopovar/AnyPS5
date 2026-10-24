@@ -224,6 +224,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
         Run(*device, block.Data(), Layers);
+        Run(*device, block.Data(), 2u);
         block.Reregister(LayerBytes * 2u);
         Run(*device, block.Data(), 2u);
         GuestBlock chain;

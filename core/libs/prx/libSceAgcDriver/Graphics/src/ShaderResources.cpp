@@ -1257,12 +1257,12 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto& counters = TextureCounts();
-    const auto resource = StorageSurface(context, viewed);
+    auto resource = StorageSurface(context, viewed);
     if (resource.depthOrLastArray != viewed.depthOrLastArray || resource.baseArray != viewed.baseArray) {
         guestBytes = 0;
         if (!layers) layers = std::pair{viewed.baseArray, viewed.depthOrLastArray - viewed.baseArray + 1u};
     }
-    const StorageKey key{context.device, SurfaceKey(context, resource)};
+    StorageKey key{context.device, SurfaceKey(context, resource)};
     auto& cache = StorageTextures();
     std::vector<std::shared_ptr<StorageTexture>> evicted;
     std::shared_ptr<StorageTexture> texture;
@@ -1274,16 +1274,25 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             allocated.mipCount = AllocatedLevels(resource);
             if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
         }
-        auto it = findStorage(cache, key);
+        const auto lookup = [&] {
+            auto found = findStorage(cache, key);
+            if (found != cache.entries.end() && MetadataMoved(*found->texture, resource)) {
+                evicted.push_back(evictStorage(cache, found));
+                found = cache.entries.end();
+            }
+            return found;
+        };
+        auto it = lookup();
+        while (it == cache.entries.end() && resource.depthOrLastArray > viewed.depthOrLastArray) {
+            --resource.depthOrLastArray;
+            key = {context.device, SurfaceKey(context, resource)};
+            it = lookup();
+        }
         if (it == cache.entries.end() && ArrayWidens(resource) && resource.baseArray == 0) {
             auto narrower = resource;
             for (narrower.depthOrLastArray = 0; narrower.depthOrLastArray < resource.depthOrLastArray; ++narrower.depthOrLastArray) {
                 if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, narrower)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
             }
-        }
-        if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
-            evicted.push_back(evictStorage(cache, it));
-            it = cache.entries.end();
         }
         if (it != cache.entries.end()) {
             if (layers) it->texture->RefreshLayers(layers->first, layers->second);
