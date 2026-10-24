@@ -1387,11 +1387,6 @@ int APS5_VABI SSL_read_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_select_next_proto_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
