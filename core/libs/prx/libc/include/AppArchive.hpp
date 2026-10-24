@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -42,6 +43,9 @@ void AppArchiveDetach_nid_no_patch(int descriptor);
 bool AppArchiveDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node, std::uint64_t* position);
 bool AppArchiveDescriptorRead_nid_no_patch(int descriptor, const AppArchiveBuffer* buffers, int count, const std::int64_t* offset, std::uint64_t* read);
 bool AppArchiveDescriptorSeek_nid_no_patch(int descriptor, std::int64_t offset, int whence, std::int64_t* position);
+std::FILE* AppArchiveOpenStream_nid_no_patch(const std::filesystem::path& hostPath, const char* nativeMode);
+void AppArchiveAttachMaterialized_nid_no_patch(int descriptor, const AppArchiveNode& node);
+bool AppArchiveMaterializedDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node);
 
 }
 

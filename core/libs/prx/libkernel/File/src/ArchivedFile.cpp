@@ -66,7 +66,7 @@ bool IsArchivedFile(int fd) {
 }
 
 void RefuseArchivedFile(int fd, const char* operation) {
-    if (IsArchivedFile(fd)) NotImplemented_nid_no_patch((std::string(operation) + " on a file read from app0.zar, fd=" + std::to_string(fd)).c_str());
+    if (IsArchivedFile(fd) || AppArchiveMaterializedDescriptor_nid_no_patch(fd, nullptr)) NotImplemented_nid_no_patch((std::string(operation) + " on a file read from app0.zar, fd=" + std::to_string(fd)).c_str());
 }
 
 std::optional<std::int64_t> ReadArchivedFile(int fd, void* buf, std::size_t nbytes, const std::int64_t* offset) {
@@ -105,7 +105,7 @@ bool FillArchivedStat(const std::filesystem::path& native, FileStat* sb) {
 
 bool FillArchivedStatFromDescriptor(int fd, FileStat* sb) {
     AppArchiveNode node{};
-    if (!AppArchiveDescriptor_nid_no_patch(fd, &node, nullptr)) return false;
+    if (!AppArchiveDescriptor_nid_no_patch(fd, &node, nullptr) && !AppArchiveMaterializedDescriptor_nid_no_patch(fd, &node)) return false;
     FillNode(node, sb);
     return true;
 }

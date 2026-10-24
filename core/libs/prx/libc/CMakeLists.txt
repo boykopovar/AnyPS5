@@ -39,6 +39,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchive.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchiveStream.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CreationMask.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
@@ -173,6 +174,19 @@ if(BUILD_TESTING)
         if(WIN32)
             set_tests_properties(guest_app_archive_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    add_test_executable(guest_archive_stdio_tests ${LIBS_INCLUDE_DIR}/tests/GuestArchiveStdio.cpp)
+    target_include_directories(guest_archive_stdio_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_archive_stdio_tests PRIVATE libkernel libc zarchive)
+    configure_windows_unwind(guest_archive_stdio_tests)
+    foreach(mode basic descriptors errors absent damaged)
+        add_test(NAME guest_archive_stdio_${mode} COMMAND guest_archive_stdio_tests ${mode})
+        set_tests_properties(guest_archive_stdio_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_archive_stdio_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
 

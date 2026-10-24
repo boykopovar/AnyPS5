@@ -77,6 +77,7 @@ struct OpenFile {
 
 std::mutex g_descriptorMutex;
 std::map<int, std::shared_ptr<OpenFile>> g_descriptors;
+std::map<int, AppArchiveNode> g_materializedDescriptors;
 
 std::shared_ptr<OpenFile> Attached(int descriptor) {
     std::lock_guard lock(g_descriptorMutex);
@@ -175,18 +176,42 @@ void AppArchiveAttach_nid_no_patch(int descriptor, const AppArchiveNode& node) {
     file->node = node;
     std::lock_guard lock(g_descriptorMutex);
     g_descriptors[descriptor] = std::move(file);
+    g_materializedDescriptors.erase(descriptor);
+}
+
+void AppArchiveAttachMaterialized_nid_no_patch(int descriptor, const AppArchiveNode& node) {
+    if (node.Directory) throw std::invalid_argument("AppArchiveAttachMaterialized: descriptor " + std::to_string(descriptor) + " cannot hold an app0.zar directory");
+    std::lock_guard lock(g_descriptorMutex);
+    g_descriptors.erase(descriptor);
+    g_materializedDescriptors[descriptor] = node;
+}
+
+bool AppArchiveMaterializedDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node) {
+    std::lock_guard lock(g_descriptorMutex);
+    const auto found = g_materializedDescriptors.find(descriptor);
+    if (found == g_materializedDescriptors.end()) return false;
+    if (node != nullptr) *node = found->second;
+    return true;
 }
 
 void AppArchiveShare_nid_no_patch(int from, int to) {
     std::lock_guard lock(g_descriptorMutex);
     const auto found = g_descriptors.find(from);
-    if (found == g_descriptors.end()) g_descriptors.erase(to);
-    else g_descriptors[to] = found->second;
+    if (found != g_descriptors.end()) {
+        g_materializedDescriptors.erase(to);
+        g_descriptors[to] = found->second;
+        return;
+    }
+    g_descriptors.erase(to);
+    const auto materialized = g_materializedDescriptors.find(from);
+    if (materialized == g_materializedDescriptors.end()) g_materializedDescriptors.erase(to);
+    else g_materializedDescriptors[to] = materialized->second;
 }
 
 void AppArchiveDetach_nid_no_patch(int descriptor) {
     std::lock_guard lock(g_descriptorMutex);
     g_descriptors.erase(descriptor);
+    g_materializedDescriptors.erase(descriptor);
 }
 
 bool AppArchiveDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node, std::uint64_t* position) {
