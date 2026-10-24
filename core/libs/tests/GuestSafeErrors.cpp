@@ -1,9 +1,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <thread>
@@ -15,6 +19,10 @@ int APS5_VABI strerror_r_nid_postfix(int, char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
 void APS5_VABI ignore_handler_s_nid_postfix(const char*, void*, int);
+FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
+int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
+int APS5_VABI fflush_nid_postfix(FileStream*);
+extern FileStream* __stderrp_nid_postfix;
 }
 
 namespace {
@@ -100,6 +108,22 @@ void CheckConstraints() {
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(Constraint));
 }
 
+void CheckDefaultHandler() {
+    const auto filename = "anyps5-default-constraint-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(freopen_nid_postfix(filename.c_str(), "w", __stderrp_nid_postfix) == __stderrp_nid_postfix, "redirect guest stderr");
+    Require(setvbuf_nid_postfix(__stderrp_nid_postfix, nullptr, 2, 0) == 0, "unbuffered guest stderr");
+    auto previous = set_constraint_handler_s_nid_postfix(nullptr);
+    Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "default handler returns to the caller");
+    Require(strerror_s_nid_postfix(nullptr, 0, 2) == 22, "default handler returns again");
+    Require(fflush_nid_postfix(__stderrp_nid_postfix) == 0, "flush guest stderr");
+    std::ifstream written(filename, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
+    written.close();
+    Require(text == "strerror_s\nstrerror_s\n", "default handler writes the message and a newline to stderr");
+    set_constraint_handler_s_nid_postfix(previous);
+    std::remove(filename.c_str());
+}
+
 void CheckThreads() {
     const auto worker = [](int error, const char* message) {
         for (int iteration = 0; iteration < 100; ++iteration) {
@@ -122,5 +146,6 @@ int main() {
     CheckConstraints();
     CheckThreads();
     set_constraint_handler_s_nid_postfix(previous);
+    CheckDefaultHandler();
     std::puts("safe error message checks passed");
 }

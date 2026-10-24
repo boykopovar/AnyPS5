@@ -18,15 +18,22 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+class FileStream;
+
+extern "C" {
+GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
+int APS5_VABI fputc_nid_postfix(int value, FileStream* stream);
+extern FileStream* __stderrp_nid_postfix;
+}
 
 using SonyConstraintHandler = void (APS5_VABI *)(const char* message, void* pointer, int error);
 
 inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
-    (void)message;
     (void)pointer;
     (void)error;
-    std::abort();
+    fputs_nid_postfix(message, __stderrp_nid_postfix);
+    fputc_nid_postfix('\n', __stderrp_nid_postfix);
 }
 
 inline std::mutex& SonyConstraintMutex() {
@@ -137,40 +144,91 @@ inline void* SonySetConstraintHandlerS(void* handler) {
     return previous;
 }
 
-inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr std::size_t rsizeMax = (SIZE_MAX >> 1) / sizeof(std::uint16_t);
-    if (!dest || size == 0) {
-        SonyInvokeConstraintHandler("wcscpy_s", dest, GuestEinval);
-        return GuestEinval;
-    }
-    if (size > rsizeMax) {
-        SonyInvokeConstraintHandler("wcscpy_s", dest, GuestErange);
-        return GuestErange;
-    }
-    if (!src) {
+constexpr std::size_t SonyRsizeMax = (std::size_t{1} << 61) - 1;
+
+inline int SonySafeViolation(const char* function, const char* reason, int error) {
+    char message[64];
+    std::snprintf(message, sizeof(message), "%s: %s", function, reason);
+    SonyInvokeConstraintHandler(message, nullptr, error);
+    return error;
+}
+
+template<typename TChar>
+bool SonySafeOverlaps(const TChar* first, std::size_t firstCount, const TChar* second, std::size_t secondCount) {
+    const auto left = reinterpret_cast<std::uintptr_t>(first);
+    const auto right = reinterpret_cast<std::uintptr_t>(second);
+    return left < right + secondCount * sizeof(TChar) && right < left + firstCount * sizeof(TChar);
+}
+
+template<typename TChar>
+int SonyCopyStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted) {
+    if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    if (!src || (counted && count > SonyRsizeMax)) {
         dest[0] = 0;
-        SonyInvokeConstraintHandler("wcscpy_s", dest, GuestEinval);
-        return GuestEinval;
+        return SonySafeViolation(function, "bad argument", 22);
     }
     std::size_t length = 0;
-    while (length < size && src[length] != 0) ++length;
-    if (length >= size) {
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz) {
         dest[0] = 0;
-        SonyInvokeConstraintHandler("wcscpy_s", dest, GuestErange);
-        return GuestErange;
+        return SonySafeViolation(function, "buffer too small", 34);
     }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (length != 0 && distance < (length + 1) * sizeof(std::uint16_t)) {
+    if (SonySafeOverlaps(dest, length + 1, src, length < count ? length + 1 : length)) {
         dest[0] = 0;
-        SonyInvokeConstraintHandler("wcscpy_s", dest, GuestEinval);
-        return GuestEinval;
+        return SonySafeViolation(function, "buffer overlap", 22);
     }
-    std::memcpy(dest, src, (length + 1) * sizeof(std::uint16_t));
+    std::memcpy(dest, src, length * sizeof(TChar));
+    dest[length] = 0;
     return 0;
+}
+
+template<typename TChar>
+int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted, bool terminators) {
+    if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    std::size_t used = 0;
+    while (used < destsz && dest[used] != 0) ++used;
+    if (used == destsz || !src || (counted && count > SonyRsizeMax)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "bad argument", 22);
+    }
+    std::size_t length = 0;
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz - used) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer too small", 34);
+    }
+    const std::size_t written = terminators ? length + 1 : length;
+    const std::size_t read = terminators && length < count ? length + 1 : length;
+    if (SonySafeOverlaps(dest + used, written, src, read)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer overlap", 22);
+    }
+    std::memcpy(dest + used, src, length * sizeof(TChar));
+    dest[used + length] = 0;
+    return 0;
+}
+
+template<typename TChar>
+int SonyCopyMemoryS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool overlapping) {
+    if (!dest || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    if (!src || count > SonyRsizeMax) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "bad argument", 22);
+    }
+    if (count > destsz) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "buffer too small", 34);
+    }
+    if (!overlapping && SonySafeOverlaps(dest, count, src, count)) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "buffer overlap", 22);
+    }
+    std::memmove(dest, src, count * sizeof(TChar));
+    return 0;
+}
+
+inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
+    return SonyCopyStringS("wcscpy_s", dest, size, src, SIZE_MAX, false);
 }
 
 inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_t size) {

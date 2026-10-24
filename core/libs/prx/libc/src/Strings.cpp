@@ -483,102 +483,27 @@ int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
 }
 
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src) {
-        dest[0] = '\0';
-        return GuestEinval;
-    }
-    size_t length = 0;
-    while (length < count && src[length] != '\0') ++length;
-    if (length >= destsz) {
-        dest[0] = '\0';
-        return GuestErange;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    if (destination < source + (length + 1) && source < destination + length + 1) {
-        dest[0] = '\0';
-        return GuestEinval;
-    }
-    std::memcpy(dest, src, length);
-    dest[length] = '\0';
-    return 0;
+    return SonyCopyStringS("strncpy_s", dest, destsz, src, count, true);
 }
 
 int APS5_VABI strcpy_s_nid_postfix(char* dest, size_t destsz, const char* src) {
-    return strncpy_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+    return SonyCopyStringS("strcpy_s", dest, destsz, src, SIZE_MAX, false);
 }
 
 int APS5_VABI strncat_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    size_t used = 0;
-    while (used < destsz && dest[used] != '\0') ++used;
-    if (used == destsz || !src) {
-        dest[0] = '\0';
-        return used == destsz ? GuestErange : GuestEinval;
-    }
-    size_t length = 0;
-    while (length < count && src[length] != '\0') ++length;
-    if (length >= destsz - used) {
-        dest[0] = '\0';
-        return GuestErange;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    if (destination < source + (length + 1) && source < destination + used + length + 1) {
-        dest[0] = '\0';
-        return GuestEinval;
-    }
-    std::memcpy(dest + used, src, length);
-    dest[used + length] = '\0';
-    return 0;
+    return SonyAppendStringS("strncat_s", dest, destsz, src, count, true, true);
 }
 
 int APS5_VABI strcat_s_nid_postfix(char* dest, size_t destsz, const char* src) {
-    return strncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+    return SonyAppendStringS("strcat_s", dest, destsz, src, SIZE_MAX, false, true);
 }
 
 int APS5_VABI memcpy_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src || count > destsz) {
-        std::memset(dest, 0, destsz);
-        return src ? GuestErange : GuestEinval;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (count != 0 && distance < count) {
-        std::memset(dest, 0, destsz);
-        return GuestEinval;
-    }
-    std::memcpy(dest, src, count);
-    return 0;
+    return SonyCopyMemoryS("memcpy_s", static_cast<unsigned char*>(dest), destsz, static_cast<const unsigned char*>(src), count, false);
 }
 
 int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src || count > destsz) {
-        std::memset(dest, 0, destsz);
-        return src ? GuestErange : GuestEinval;
-    }
-    std::memmove(dest, src, count);
-    return 0;
+    return SonyCopyMemoryS("memmove_s", static_cast<unsigned char*>(dest), destsz, static_cast<const unsigned char*>(src), count, true);
 }
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
@@ -804,66 +729,15 @@ char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** contex
 }
 
 int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src || count > destsz) {
-        wmemset_nid_postfix(dest, 0, destsz);
-        return src ? GuestErange : GuestEinval;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (count != 0 && distance < count * sizeof(char16_t)) {
-        wmemset_nid_postfix(dest, 0, destsz);
-        return GuestEinval;
-    }
-    if (count != 0) std::memcpy(dest, src, count * sizeof(char16_t));
-    return 0;
+    return SonyCopyMemoryS("wmemcpy_s", dest, destsz, src, count, false);
 }
 
 int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src || count > destsz) {
-        wmemset_nid_postfix(dest, 0, destsz);
-        return src ? GuestErange : GuestEinval;
-    }
-    if (count != 0) std::memmove(dest, src, count * sizeof(char16_t));
-    return 0;
+    return SonyCopyMemoryS("wmemmove_s", dest, destsz, src, count, true);
 }
 
 int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    if (!src) {
-        dest[0] = 0;
-        return GuestEinval;
-    }
-    size_t length = 0;
-    while (length < count && src[length] != 0) ++length;
-    if (length >= destsz) {
-        dest[0] = 0;
-        return GuestErange;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (length != 0 && distance < (length + 1) * sizeof(char16_t)) {
-        dest[0] = 0;
-        return GuestEinval;
-    }
-    std::memcpy(dest, src, length * sizeof(char16_t));
-    dest[length] = 0;
-    return 0;
+    return SonyCopyStringS("wcsncpy_s", dest, destsz, src, count, true);
 }
 
 char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
@@ -875,37 +749,11 @@ char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, siz
 }
 
 int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
-    size_t used = 0;
-    while (used < destsz && dest[used] != 0) ++used;
-    if (used == destsz || !src) {
-        dest[0] = 0;
-        return used == destsz ? GuestErange : GuestEinval;
-    }
-    size_t length = 0;
-    while (length < count && src[length] != 0) ++length;
-    if (length >= destsz - used) {
-        dest[0] = 0;
-        return GuestErange;
-    }
-    const auto destination = reinterpret_cast<std::uintptr_t>(dest + used);
-    const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto bytes = length * sizeof(char16_t);
-    if (destination < source + bytes && source < destination + bytes) {
-        dest[0] = 0;
-        return GuestEinval;
-    }
-    std::memcpy(dest + used, src, length * sizeof(char16_t));
-    dest[used + length] = 0;
-    return 0;
+    return SonyAppendStringS("wcsncat_s", dest, destsz, src, count, true, false);
 }
 
 int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src) {
-    return wcsncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+    return SonyAppendStringS("wcscat_s", dest, destsz, src, SIZE_MAX, false, false);
 }
 
 }
