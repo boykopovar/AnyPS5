@@ -50,4 +50,12 @@ int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline* outline, std::int64_
     return error;
 }
 
+int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline* outline, std::int64_t xStrength, std::int64_t yStrength) {
+    if (!outline) return FT_Outline_EmboldenXY(nullptr, 0, 0);
+    NativeOutline native(*outline, __func__);
+    const FT_Error error = FT_Outline_EmboldenXY(&native.outline, HostCoordinate(xStrength, __func__), HostCoordinate(yStrength, __func__));
+    native.Publish(*outline);
+    return error;
+}
+
 }
