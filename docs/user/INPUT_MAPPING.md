@@ -114,6 +114,17 @@ With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presse
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
 
+## Per-game profiles
+
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA16064.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+
+For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
+
+```ini
+MouseSensitivity = 0.6
+Cross = KEY:F
+```
+
 ## Mouse as the right stick
 
 `ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the right stick from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.

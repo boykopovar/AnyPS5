@@ -17,8 +17,18 @@
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
-PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+namespace {
+
+std::string appTitleId() {
+    const auto titleId = GetAppTitleId_nid_postfix();
+    return std::string(titleId.value, std::find(titleId.value, titleId.value + sizeof(titleId.value), '\0'));
+}
+
+}
+
+PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
 }
 
 PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)) {
