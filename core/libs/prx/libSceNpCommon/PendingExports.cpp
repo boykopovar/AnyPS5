@@ -5,11 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI sceNpCloseEventFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpCloseSema(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

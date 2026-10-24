@@ -19,6 +19,8 @@ int APS5_VABI sceNpPollSema(KernelSema sema);
 int APS5_VABI sceNpSignalSema(KernelSema sema);
 int APS5_VABI sceNpCreateEventFlag(KernelEventFlag* flag, const char* name, std::uint32_t attr, std::uint64_t pattern);
 int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag);
+int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name);
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag);
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern);
 int APS5_VABI sceNpPollEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result);
 int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, int priority, std::size_t stackSize, KernelCpumask affinity, const char* name);
@@ -157,6 +159,9 @@ constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
+constexpr std::uint32_t EventFlagAttrShared = 0x100;
+constexpr int KernelErrorEperm = static_cast<int>(0x80020001);
+constexpr int KernelErrorEsrch = static_cast<int>(0x80020003);
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -191,6 +196,17 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+
+    KernelEventFlag shared {};
+    Require(sceNpCreateEventFlag(&shared, "NpSharedFlag", EventFlagAttrShared, 0) == 0, "a shared event flag is created");
+    KernelEventFlag opened {};
+    Require(sceNpOpenEventFlag(&opened, "NpSharedFlag") == 0, "a shared event flag is opened by name");
+    Require(sceNpSetEventFlag(opened, 2) == 0 && sceNpPollEventFlag(shared, 2, EventFlagWaitAnd, &result) == 0 && result == 2, "an opened handle reaches the shared flag");
+    Require(sceNpCloseEventFlag(shared) == KernelErrorEperm, "the creating handle is not closed");
+    Require(sceNpCloseEventFlag(opened) == 0, "the opened handle is closed");
+    Require(sceNpCloseEventFlag(opened) == KernelErrorEsrch, "a closed handle is not closed again");
+    Require(sceNpPollEventFlag(shared, 2, EventFlagWaitAnd, &result) == 0, "closing the opened handle keeps the flag");
+    Require(sceNpDeleteEventFlag(shared) == 0, "the shared event flag is deleted");
 }
 
 void TestThreads() {

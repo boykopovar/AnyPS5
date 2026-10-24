@@ -38,6 +38,7 @@ int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
 int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, uint32_t attr, uint64_t init_pattern, const void* param);
 int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
 int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name);
+int APS5_VABI sceKernelCloseEventFlag(KernelEventFlag ef);
 int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern);
 int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, uint64_t bit_pattern);
 int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat);
@@ -432,6 +433,10 @@ int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag) {
 
 int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name) {
     return NpResult(sceKernelOpenEventFlag(flag, name));
+}
+
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag) {
+    return NpResult(sceKernelCloseEventFlag(flag));
 }
 
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern) {
