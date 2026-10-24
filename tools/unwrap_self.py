@@ -30,6 +30,7 @@ usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 """
 
 import argparse
+import io
 import math
 import secrets
 import struct
@@ -329,7 +330,7 @@ def unwrap(path, output, verbose=False):
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = destination.parent / (".unwrap-self-" + secrets.token_hex(16))
-    temporary = temporary_path.open("xb")
+    temporary = io.open(temporary_path, "xb")
     try:
         with temporary:
             temporary.write(result)
