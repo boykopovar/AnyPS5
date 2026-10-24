@@ -126,7 +126,7 @@ bool halvesRejoin() {
     return rejoined == &word && fieldBack;
 }
 
-bool factorFieldKept(bool multiplied) {
+bool factorFieldKept(bool multiplied, bool negated) {
     IrProgram program;
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
@@ -137,13 +137,14 @@ bool factorFieldKept(bool multiplied) {
     auto& sum = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&builder.Constant(1u), &lane});
     auto& masked = builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&sum, &builder.Constant(0xffffu)});
     auto& field = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&masked, &builder.Constant(0u), &builder.Constant(24u)});
-    auto& used = multiplied ? builder.IMul(field, field) : field;
+    auto& factor = negated ? builder.Emit(IrOpcode::BitwiseXor32, IrType::U32, {&field, &builder.Constant(0x8000u)}) : field;
+    auto& used = multiplied ? builder.IMul(factor, factor) : factor;
     auto& user = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&used});
     static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
     ConstantFolder().Fold(program);
     const IrValue* result = user.Argument(0)->Resolve();
     if (!multiplied) return result == &masked;
-    return result->Opcode() == IrOpcode::IMul32 && result->Argument(0)->Resolve() == &field && field.Opcode() == IrOpcode::BitFieldUExtract && field.Argument(0)->Resolve() == &masked;
+    return result->Opcode() == IrOpcode::IMul32 && result->Argument(0)->Resolve() == &factor && field.Opcode() == IrOpcode::BitFieldUExtract && field.Argument(0)->Resolve() == &masked;
 }
 
 bool reversesTo(std::uint32_t word, std::uint32_t expected) {
@@ -317,8 +318,9 @@ int main() {
         passed &= run("a mask under a merge of the halves reads through it", mergedHalfMask());
         passed &= run("half extractions read the half that was merged in", halfExtractions());
         passed &= run("the two halves of one word rejoin into the word", halvesRejoin());
-        passed &= run("a 24-bit field read of a value masked to 16 bits folds into the value", factorFieldKept(false));
-        passed &= run("a 24-bit field read that a multiply uses is kept, even for a factor masked to 16 bits", factorFieldKept(true));
+        passed &= run("a 24-bit field read of a value masked to 16 bits folds into the value", factorFieldKept(false, false));
+        passed &= run("a 24-bit field read that a multiply uses is kept, even for a factor masked to 16 bits", factorFieldKept(true, false));
+        passed &= run("a 24-bit field read that a multiply uses through a negating xor is kept, even for a factor masked to 16 bits", factorFieldKept(true, true));
         return passed ? 0 : 1;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
