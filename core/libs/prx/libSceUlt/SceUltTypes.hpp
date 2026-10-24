@@ -276,6 +276,7 @@ struct UltMutexState {
     bool _alive = true;
     std::uint32_t _attribute = 0;
     void* _waitingPool = nullptr;
+    char _name[32]{};
 };
 
 struct UltConditionWaiter {
@@ -288,6 +289,8 @@ struct UltConditionState {
     std::list<UltConditionWaiter*> _queue;
     std::uint32_t _waiters = 0;
     bool _alive = true;
+    void* _mutexObject = nullptr;
+    char _name[32]{};
 };
 
 struct UltSemaphoreState {
@@ -297,12 +300,14 @@ struct UltSemaphoreState {
     std::uint32_t _waiters = 0;
     bool _alive = true;
     void* _waitingPool = nullptr;
+    char _name[32]{};
 };
 
 struct UltResourcePoolState {
     std::uint32_t _numThreads = 0;
     std::uint32_t _numSyncObjects = 0;
     void* _workArea = nullptr;
+    char _name[32]{};
 };
 
 struct UltQueueDataPoolState {
@@ -317,6 +322,7 @@ struct UltQueueDataPoolState {
     std::uint32_t _numQueueObject = 0;
     void* _waitingPool = nullptr;
     void* _workArea = nullptr;
+    char _name[32]{};
 };
 
 struct UltQueueState {
@@ -324,15 +330,21 @@ struct UltQueueState {
     std::condition_variable _dataAvailable;
     std::uint32_t _head = UINT32_MAX;
     std::uint32_t _tail = UINT32_MAX;
-    std::uint32_t _waiters = 0;
+    std::uint32_t _waitingPushers = 0;
+    std::uint32_t _waitingPoppers = 0;
     bool _alive = true;
     std::uint64_t _dataSize = 0;
+    void* _waitingPool = nullptr;
+    void* _dataPool = nullptr;
+    std::uint32_t _queuedItems = 0;
+    char _name[32]{};
 };
 
 struct UltRuntimeState {
     std::uint32_t _maxNumUlthread = 0;
     std::uint32_t _numWorkerThread = 0;
     void* _workArea = nullptr;
+    char _name[32]{};
 };
 
 struct UltUlthreadState {
@@ -342,6 +354,8 @@ struct UltUlthreadState {
     Pthread _thread = nullptr;
     void* _runtime = nullptr;
     std::atomic<bool> _exited{false};
+    char _name[32]{};
+    std::uint32_t _contextAttribute = 0;
 };
 
 #endif

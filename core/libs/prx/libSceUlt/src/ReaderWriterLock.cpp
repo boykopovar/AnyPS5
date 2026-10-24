@@ -1,5 +1,6 @@
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 #include "prx/libSceUlt/SceUltTypes.hpp"
+#include <algorithm>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -19,6 +20,7 @@ struct UltReaderWriterLockState {
     std::uint32_t _waiters = 0;
     bool _alive = true;
     void* _waitingPool = nullptr;
+    char _name[32]{};
 };
 
 std::mutex gLocksMutex;
@@ -78,7 +80,6 @@ int APS5_VABI sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, st
 }
 
 int APS5_VABI sceUltReaderWriterLockCreate(void* rwlock, const char* name, void* waitingQueueResourcePool, const UltOptParam* optParam, std::uint32_t buildVersion) {
-    (void)name;
     (void)optParam;
     (void)buildVersion;
     if (rwlock == nullptr) {
@@ -89,6 +90,9 @@ int APS5_VABI sceUltReaderWriterLockCreate(void* rwlock, const char* name, void*
     }
     auto state = std::make_shared<UltReaderWriterLockState>();
     state->_waitingPool = waitingQueueResourcePool;
+    if (name != nullptr) {
+        std::strncpy(state->_name, name, sizeof(state->_name) - 1);
+    }
     std::lock_guard<std::mutex> lock(gLocksMutex);
     if (gLocks.contains(rwlock)) {
         return ULT_ERROR_STATE;
@@ -195,6 +199,29 @@ int APS5_VABI sceUltReaderWriterLockUnlockWrite(void* rwlock) {
     state->_writing = false;
     state->_writer = {};
     state->_released.notify_all();
+    return ULT_OK;
+}
+
+int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
+    if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
+    if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
+    std::shared_ptr<UltReaderWriterLockState> state;
+    if (const int found = FindLock(object, state); found != ULT_OK) return found;
+    std::lock_guard<std::mutex> lock(state->_mutex);
+    if (!state->_alive) return ULT_ERROR_STATE;
+    std::memset(info, 0, sizeof(*info));
+    info->size = sizeof(UltReaderWriterLockInfo);
+    info->object = object;
+    std::memcpy(info->name, state->_name, sizeof(info->name));
+    info->waitingQueuePool = state->_waitingPool;
+    info->readers = state->_readers;
+    info->waitingThreads = state->_waiters;
+    info->lockType = state->_writing ? 1 : (state->_readers > 0 ? 2 : 0);
+    const auto toCopy = std::min(capacity, info->waitingThreads);
+    for (std::uint32_t i = 0; i < toCopy; ++i) {
+        std::memset(&waitingThreads[i], 0, sizeof(UltWaitingThreadInfo));
+        waitingThreads[i].size = sizeof(UltWaitingThreadInfo);
+    }
     return ULT_OK;
 }
 

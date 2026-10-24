@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "SceUltTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -44,6 +46,26 @@ int APS5_VABI sceUltUlthreadTryJoin(void*, std::int32_t*);
 int APS5_VABI sceUltUlthreadGetSelf(void**);
 int APS5_VABI sceUltUlthreadYield();
 int APS5_VABI sceUltUlthreadExit(std::int32_t);
+int APS5_VABI sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltConditionVariableDestroy(void*);
+int APS5_VABI sceUltSemaphoreCreate(void*, const char*, std::uint32_t, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltSemaphoreDestroy(void*);
+int APS5_VABI sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
+int APS5_VABI sceUltQueueCreate(void*, const char*, std::uint64_t, void*, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltQueuePush(void*, const void*);
+int APS5_VABI sceUltQueuePop(void*, void*);
+int APS5_VABI sceUltQueueDestroy(void*);
+int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltGetConditionVariableInfo(void*, UltConditionVariableInfo*, UltWaitingThreadInfo*, std::uint32_t);
+int APS5_VABI sceUltGetMutexInfo(void*, UltMutexInfo*, UltWaitingThreadInfo*, std::uint32_t);
+int APS5_VABI sceUltGetSemaphoreInfo(void*, UltSemaphoreInfo*, UltWaitingThreadInfo*, std::uint32_t);
+int APS5_VABI sceUltGetReaderWriterLockInfo(void*, UltReaderWriterLockInfo*, UltWaitingThreadInfo*, std::uint32_t);
+int APS5_VABI sceUltGetQueueInfo(void*, UltQueueInfo*, UltWaitingThreadInfo*, std::uint32_t);
+int APS5_VABI sceUltGetWaitingQueueResourcePoolInfo(void*, UltWaitingQueueResourcePoolInfo*);
+int APS5_VABI sceUltGetQueueDataResourcePoolInfo(void*, UltQueueDataResourcePoolInfo*);
+int APS5_VABI sceUltGetUlthreadInfo(void*, UltUlthreadInfo*);
+int APS5_VABI sceUltGetUlthreadRuntimeInfo(void*, UltUlthreadRuntimeInfo*, void**, std::uint32_t, Pthread*, std::uint32_t);
 }
 
 namespace {
@@ -305,6 +327,238 @@ void Ulthreads() {
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
 }
 
+void GetInfoTests() {
+    alignas(8) std::uint8_t dummy[512]{};
+    alignas(8) std::uint8_t poolObj[256]{};
+    alignas(8) std::uint8_t mutexObj[256]{};
+    alignas(8) std::uint8_t condObj[256]{};
+    alignas(8) std::uint8_t semObj[256]{};
+    alignas(8) std::uint8_t rwObj[256]{};
+    alignas(8) std::uint8_t dataPoolObj[512]{};
+    alignas(8) std::uint8_t queueObj[512]{};
+    alignas(8) std::uint8_t rtObj[4096]{};
+
+    UltMutexInfo mutexInfo{};
+    UltConditionVariableInfo condInfo{};
+    UltSemaphoreInfo semInfo{};
+    UltReaderWriterLockInfo rwInfo{};
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    UltQueueDataResourcePoolInfo dataPoolInfo{};
+    UltQueueInfo queueInfo{};
+    UltUlthreadRuntimeInfo rtInfo{};
+    UltUlthreadInfo threadInfo{};
+    UltWaitingThreadInfo waitThreads[4]{};
+
+    CHECK(sceUltGetMutexInfo(nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetMutexInfo(mutexObj, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetMutexInfo(nullptr, &mutexInfo, nullptr, 0) == Null);
+    CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, nullptr, 1) == Null);
+    CHECK(sceUltGetConditionVariableInfo(nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetSemaphoreInfo(nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetReaderWriterLockInfo(nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetQueueInfo(nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(nullptr, nullptr) == Null);
+    CHECK(sceUltGetQueueDataResourcePoolInfo(nullptr, nullptr) == Null);
+    CHECK(sceUltGetUlthreadInfo(nullptr, nullptr) == Null);
+    CHECK(sceUltGetUlthreadRuntimeInfo(nullptr, nullptr, nullptr, 0, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadRuntimeInfo(nullptr, &rtInfo, nullptr, 1, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadRuntimeInfo(nullptr, &rtInfo, nullptr, 0, nullptr, 1) == Null);
+
+    CHECK(sceUltGetMutexInfo(dummy, &mutexInfo, nullptr, 0) == State);
+    CHECK(sceUltGetConditionVariableInfo(dummy, &condInfo, nullptr, 0) == State);
+    CHECK(sceUltGetSemaphoreInfo(dummy, &semInfo, nullptr, 0) == State);
+    CHECK(sceUltGetReaderWriterLockInfo(dummy, &rwInfo, nullptr, 0) == State);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(dummy, &poolInfo) == State);
+    CHECK(sceUltGetQueueDataResourcePoolInfo(dummy, &dataPoolInfo) == State);
+    CHECK(sceUltGetQueueInfo(dummy, &queueInfo, nullptr, 0) == State);
+    CHECK(sceUltGetUlthreadInfo(dummy, &threadInfo) == State);
+    CHECK(sceUltGetUlthreadRuntimeInfo(dummy, &rtInfo, nullptr, 0, nullptr, 0) == State);
+
+    CHECK(sceUltWaitingQueueResourcePoolCreate(poolObj, "test-pool", 4, 4, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(poolObj, &poolInfo) == Ok);
+    CHECK(poolInfo.size == sizeof(UltWaitingQueueResourcePoolInfo));
+    CHECK(poolInfo.object == poolObj);
+    CHECK(std::strcmp(poolInfo.name, "test-pool") == 0);
+    CHECK(poolInfo.maxThreads == 4);
+    CHECK(poolInfo.maxSyncObjects == 4);
+
+    CHECK(sceUltMutexCreate(mutexObj, "test-mutex", poolObj, nullptr, 0) == Ok);
+    CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, waitThreads, 4) == Ok);
+    CHECK(mutexInfo.size == sizeof(UltMutexInfo));
+    CHECK(mutexInfo.object == mutexObj);
+    CHECK(std::strcmp(mutexInfo.name, "test-mutex") == 0);
+    CHECK(mutexInfo.waitingQueuePool == poolObj);
+    CHECK(mutexInfo.lockCount == 0);
+    CHECK(mutexInfo.waitingThreads == 0);
+
+    CHECK(sceUltMutexLock(mutexObj) == Ok);
+    CHECK(sceUltGetMutexInfo(mutexObj, &mutexInfo, nullptr, 0) == Ok);
+    CHECK(mutexInfo.lockCount == 1);
+    CHECK(sceUltMutexUnlock(mutexObj) == Ok);
+
+    CHECK(sceUltConditionVariableCreate(condObj, "test-cnd", mutexObj, nullptr, 0) == Ok);
+    CHECK(sceUltGetConditionVariableInfo(condObj, &condInfo, waitThreads, 4) == Ok);
+    CHECK(condInfo.size == sizeof(UltConditionVariableInfo));
+    CHECK(condInfo.object == condObj);
+    CHECK(condInfo.mutex == mutexObj);
+    CHECK(std::strcmp(condInfo.name, "test-cnd") == 0);
+    CHECK(condInfo.waitingThreads == 0);
+
+    CHECK(sceUltSemaphoreCreate(semObj, "test-sem", 3, poolObj, nullptr, 0) == Ok);
+    CHECK(sceUltGetSemaphoreInfo(semObj, &semInfo, waitThreads, 4) == Ok);
+    CHECK(semInfo.size == sizeof(UltSemaphoreInfo));
+    CHECK(semInfo.object == semObj);
+    CHECK(std::strcmp(semInfo.name, "test-sem") == 0);
+    CHECK(semInfo.waitingQueuePool == poolObj);
+    CHECK(semInfo.resources == 3);
+
+    CHECK(sceUltReaderWriterLockCreate(rwObj, "test-rw", poolObj, nullptr, 0) == Ok);
+    CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, waitThreads, 4) == Ok);
+    CHECK(rwInfo.size == sizeof(UltReaderWriterLockInfo));
+    CHECK(rwInfo.object == rwObj);
+    CHECK(std::strcmp(rwInfo.name, "test-rw") == 0);
+    CHECK(rwInfo.waitingQueuePool == poolObj);
+    CHECK(rwInfo.readers == 0);
+    CHECK(rwInfo.lockType == 0);
+
+    CHECK(sceUltReaderWriterLockLockRead(rwObj) == Ok);
+    CHECK(sceUltGetReaderWriterLockInfo(rwObj, &rwInfo, nullptr, 0) == Ok);
+    CHECK(rwInfo.readers == 1);
+    CHECK(rwInfo.lockType == 2);
+    CHECK(sceUltReaderWriterLockUnlockRead(rwObj) == Ok);
+
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPoolObj, "test-datapool", 8, 64, 2, poolObj, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltGetQueueDataResourcePoolInfo(dataPoolObj, &dataPoolInfo) == Ok);
+    CHECK(dataPoolInfo.size == sizeof(UltQueueDataResourcePoolInfo));
+    CHECK(dataPoolInfo.object == dataPoolObj);
+    CHECK(std::strcmp(dataPoolInfo.name, "test-datapool") == 0);
+    CHECK(dataPoolInfo.waitingQueuePool == poolObj);
+    CHECK(dataPoolInfo.dataSize == 64);
+    CHECK(dataPoolInfo.maxItems == 8);
+    CHECK(dataPoolInfo.availableItems == 8);
+    CHECK(dataPoolInfo.maxQueues == 2);
+
+    CHECK(sceUltQueueCreate(queueObj, "test-queue", 64, poolObj, dataPoolObj, nullptr, 0) == Ok);
+    CHECK(sceUltGetQueueInfo(queueObj, &queueInfo, waitThreads, 4) == Ok);
+    CHECK(queueInfo.size == sizeof(UltQueueInfo));
+    CHECK(queueInfo.object == queueObj);
+    CHECK(std::strcmp(queueInfo.name, "test-queue") == 0);
+    CHECK(queueInfo.waitingQueuePool == poolObj);
+    CHECK(queueInfo.dataPool == dataPoolObj);
+    CHECK(queueInfo.dataSize == 64);
+    CHECK(queueInfo.queuedItems == 0);
+
+    std::uint8_t itemData[64]{0x42};
+    CHECK(sceUltQueuePush(queueObj, itemData) == Ok);
+    CHECK(sceUltGetQueueInfo(queueObj, &queueInfo, nullptr, 0) == Ok);
+    CHECK(queueInfo.queuedItems == 1);
+    CHECK(sceUltQueuePop(queueObj, itemData) == Ok);
+    CHECK(sceUltGetQueueInfo(queueObj, &queueInfo, nullptr, 0) == Ok);
+    CHECK(queueInfo.queuedItems == 0);
+
+    CHECK(sceUltUlthreadRuntimeCreate(rtObj, "test-rt", 2, 1, nullptr, nullptr, 0) == Ok);
+    void* activeThreads[4]{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, activeThreads, 4, nullptr, 0) == Ok);
+    CHECK(rtInfo.size == sizeof(UltUlthreadRuntimeInfo));
+    CHECK(rtInfo.object == rtObj);
+    CHECK(std::strcmp(rtInfo.name, "test-rt") == 0);
+    CHECK(rtInfo.maxUlthreads == 2);
+    CHECK(rtInfo.workerThreads == 1);
+    CHECK(rtInfo.activeUlthreads == 0);
+
+    Pthread workerHandles[2]{};
+    bool workerQueryThrew = false;
+    try {
+        sceUltGetUlthreadRuntimeInfo(rtObj, &rtInfo, nullptr, 0, workerHandles, 2);
+    } catch (const std::runtime_error&) {
+        workerQueryThrew = true;
+    }
+    CHECK(workerQueryThrew);
+
+    UltUlthreadRuntimeInfo untouchedInfo{};
+    std::memset(&untouchedInfo, 0xEE, sizeof(untouchedInfo));
+    CHECK(sceUltGetUlthreadRuntimeInfo(rtObj, &untouchedInfo, nullptr, 0, nullptr, 1) == Null);
+    const auto* infoBytes = reinterpret_cast<const std::uint8_t*>(&untouchedInfo);
+    for (std::size_t i = 0; i < sizeof(untouchedInfo); ++i) {
+        CHECK(infoBytes[i] == 0xEE);
+    }
+
+    CHECK(sceUltConditionVariableDestroy(condObj) == Ok);
+    CHECK(sceUltMutexDestroy(mutexObj) == Ok);
+    CHECK(sceUltSemaphoreDestroy(semObj) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(rwObj) == Ok);
+    CHECK(sceUltQueueDestroy(queueObj) == Ok);
+    CHECK(sceUltQueueDataResourcePoolDestroy(dataPoolObj) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(poolObj) == Ok);
+    CHECK(sceUltUlthreadRuntimeDestroy(rtObj) == Ok);
+}
+
+void WaitForQueueWaiters(std::uint8_t* queue, UltQueueInfo* info, std::uint32_t pushers, std::uint32_t poppers) {
+    for (int attempt = 0; attempt < 4000; ++attempt) {
+        CHECK(sceUltGetQueueInfo(queue, info, nullptr, 0) == Ok);
+        if (info->waitingPushers == pushers && info->waitingPoppers == poppers) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(false);
+}
+
+void QueueWaiters() {
+    alignas(8) std::uint8_t poolObj[256]{};
+    alignas(8) std::uint8_t dataPoolObj[512]{};
+    alignas(8) std::uint8_t queueObj[512]{};
+    UltQueueInfo info{};
+    UltWaitingThreadInfo waiters[4]{};
+
+    CHECK(sceUltWaitingQueueResourcePoolCreate(poolObj, "waiter-pool", 4, 4, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPoolObj, "waiter-data", 2, 64, 1, poolObj, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltQueueCreate(queueObj, "waiter-queue", 64, poolObj, dataPoolObj, nullptr, 0) == Ok);
+
+    std::uint8_t item[64]{0x11};
+    std::uint8_t popped[64]{};
+
+    std::atomic<int> popResult{1};
+    std::thread popper([&] { popResult.store(sceUltQueuePop(queueObj, popped)); });
+    WaitForQueueWaiters(queueObj, &info, 0, 1);
+    CHECK(info.queuedItems == 0);
+    std::memset(waiters, 0xAA, sizeof(waiters));
+    CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 4) == Ok);
+    CHECK(info.waitingPushers == 0);
+    CHECK(info.waitingPoppers == 1);
+    CHECK(waiters[0].size == sizeof(UltWaitingThreadInfo));
+    for (std::size_t i = 1; i < sizeof(waiters) / sizeof(waiters[0]); ++i) {
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(&waiters[i]);
+        for (std::size_t j = 0; j < sizeof(UltWaitingThreadInfo); ++j) CHECK(bytes[j] == 0xAA);
+    }
+    CHECK(sceUltQueueDestroy(queueObj) == State);
+    CHECK(sceUltQueuePush(queueObj, item) == Ok);
+    popper.join();
+    CHECK(popResult.load() == Ok);
+    CHECK(popped[0] == 0x11);
+    WaitForQueueWaiters(queueObj, &info, 0, 0);
+
+    CHECK(sceUltQueuePush(queueObj, item) == Ok);
+    CHECK(sceUltQueuePush(queueObj, item) == Ok);
+
+    std::atomic<int> pushResult{1};
+    std::thread pusher([&] { pushResult.store(sceUltQueuePush(queueObj, item)); });
+    WaitForQueueWaiters(queueObj, &info, 1, 0);
+    CHECK(info.queuedItems == 2);
+    CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 0) == Ok);
+    CHECK(info.waitingPushers == 1);
+    CHECK(info.waitingPoppers == 0);
+    CHECK(sceUltQueuePop(queueObj, popped) == Ok);
+    pusher.join();
+    CHECK(pushResult.load() == Ok);
+    WaitForQueueWaiters(queueObj, &info, 0, 0);
+    CHECK(info.queuedItems == 2);
+
+    CHECK(sceUltQueuePop(queueObj, popped) == Ok);
+    CHECK(sceUltQueuePop(queueObj, popped) == Ok);
+    CHECK(sceUltQueueDestroy(queueObj) == Ok);
+    CHECK(sceUltQueueDataResourcePoolDestroy(dataPoolObj) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(poolObj) == Ok);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -318,6 +572,8 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "rwlock-pool") == 0) ReaderWriterPool();
     else if (std::strcmp(argv[1], "rwlock-finalize") == 0) ReaderWriterFinalize();
     else if (std::strcmp(argv[1], "ulthreads") == 0) Ulthreads();
+    else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
+    else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else return 2;
     CHECK(sceUltFinalize() == Ok);
     std::puts("ULT sync tests passed");
