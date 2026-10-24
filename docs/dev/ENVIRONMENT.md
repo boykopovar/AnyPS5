@@ -410,7 +410,6 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | prints one line per draw with its phases and inputs |
 | `APS5_TRACE_DRAW_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCacheStatistics.cpp` |  | reports draw-cache entries whose key changed |
 | `APS5_TRACE_DRAW_PROGRAMS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | prints one line per recorded draw with the stage, role and code address of each program |
-| `APS5_TRACE_DRAW_STATE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCapture.cpp` |  | prints each fragment draw's decoded color target, target mask, shader export format, viewport, scissor and pixel input registers |
 | `APS5_TRACE_EVENTS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceTrace.cpp` |  | number of events a windowed trace keeps in its buffer |
 | `APS5_TRACE_FILL_COVER` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | prints the first fills that meet images without covering them |
 | `APS5_TRACE_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | names what forces pending storage-image results into guest memory |

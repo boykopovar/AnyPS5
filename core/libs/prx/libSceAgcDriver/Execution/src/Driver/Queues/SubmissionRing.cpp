@@ -31,8 +31,6 @@ constexpr std::size_t KeptWords = 512;
 constexpr std::size_t MaximumCapacity = 4096;
 constexpr std::size_t MaximumStallSeconds = 86400;
 constexpr std::size_t PayloadWordsShown = 8;
-constexpr std::size_t ShaderUsesKept = 512;
-constexpr std::size_t ShaderUsesShown = 256;
 
 struct Entry {
     std::uint64_t tenthsOfMs = 0;
@@ -44,24 +42,11 @@ struct Entry {
     std::array<std::uint32_t, KeptWords> words{};
 };
 
-struct ShaderUse {
-    std::uint64_t tenthsOfMs = 0;
-    std::uint64_t serial = 0;
-    std::uint64_t target = 0;
-    std::uint64_t codeAddress = 0;
-    std::uint64_t entryAddress = 0;
-    std::uint32_t stage = 0;
-    std::array<std::uint32_t, 3> groups{};
-};
-
 struct Ring {
     std::mutex mutex;
     std::once_flag allocated;
     std::atomic<std::uint64_t> recorded{0};
-    std::atomic<std::uint64_t> shaderUses{0};
-    std::atomic<bool> shaderUsesReady{false};
     std::unique_ptr<Entry[]> entries;
-    std::unique_ptr<ShaderUse[]> shaderUseEntries;
 };
 
 void reportFailure() noexcept;
@@ -228,21 +213,6 @@ bool dump(std::string_view reason, bool failing) {
             written = line.Write() && written;
             written = writePackets(entry, line) && written;
         }
-        const auto shaderUses = ring.shaderUses.load(std::memory_order_acquire);
-        if (shaderUses != 0 && ring.shaderUseEntries != nullptr) {
-            const auto firstUse = shaderUses > ShaderUsesShown ? shaderUses - ShaderUsesShown : 0;
-            line.Add("[pm4 ring] queue 0x%zx: %llu shader uses recorded, last %llu shown", queue, static_cast<unsigned long long>(shaderUses), static_cast<unsigned long long>(shaderUses - firstUse));
-            written = line.Write() && written;
-            for (auto use = firstUse; use < shaderUses; ++use) {
-                const auto& entry = ring.shaderUseEntries[use % ShaderUsesKept];
-                line.Add("[pm4 ring]   shader serial=%llu t=%llu.%llu ms stage=%s target=0x%llx code=0x%llx entry=0x%llx",
-                         static_cast<unsigned long long>(entry.serial), static_cast<unsigned long long>(entry.tenthsOfMs / 10), static_cast<unsigned long long>(entry.tenthsOfMs % 10),
-                         stageName(entry.stage), static_cast<unsigned long long>(entry.target), static_cast<unsigned long long>(entry.codeAddress), static_cast<unsigned long long>(entry.entryAddress));
-                if (entry.stage == 0 && (entry.groups[0] != 0 || entry.groups[1] != 0 || entry.groups[2] != 0))
-                    line.Add(" groups=%ux%ux%u", entry.groups[0], entry.groups[1], entry.groups[2]);
-                written = line.Write() && written;
-            }
-        }
     }
     return written;
 }
@@ -282,8 +252,6 @@ void PrepareSubmissionRing(std::uint32_t queue) {
     std::call_once(ring.allocated, [&] {
         std::lock_guard lock(ring.mutex);
         ring.entries = std::make_unique<Entry[]>(capacity);
-        ring.shaderUseEntries = std::make_unique<ShaderUse[]>(ShaderUsesKept);
-        ring.shaderUsesReady.store(true, std::memory_order_release);
     });
 }
 
@@ -305,25 +273,6 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
     entry.rewindTail = rewindTail;
     std::copy_n(commands.begin(), entry.kept, entry.words.begin());
     ring.recorded.store(recorded + 1, std::memory_order_release);
-}
-
-void RecordShaderUse(std::uint32_t queue, std::uint64_t serial, std::uint32_t stage, std::uint64_t target, std::uint64_t codeAddress, std::uint64_t entryAddress, const std::array<std::uint32_t, 3>& groups) {
-    if (queue >= SubmissionQueueEnd) return;
-    auto& ring = rings().queues[queue];
-    if (!ring.shaderUsesReady.load(std::memory_order_acquire)) return;
-    const auto tenthsOfMs = static_cast<std::uint64_t>(std::max(TraceMs(), 0.0) * 10.0 + 0.5);
-    std::lock_guard lock(ring.mutex);
-    if (ring.shaderUseEntries == nullptr) return;
-    const auto recorded = ring.shaderUses.load(std::memory_order_relaxed);
-    auto& entry = ring.shaderUseEntries[recorded % ShaderUsesKept];
-    entry.tenthsOfMs = tenthsOfMs;
-    entry.serial = serial;
-    entry.target = target;
-    entry.codeAddress = codeAddress;
-    entry.entryAddress = entryAddress;
-    entry.stage = stage;
-    entry.groups = groups;
-    ring.shaderUses.store(recorded + 1, std::memory_order_release);
 }
 
 void DumpSubmissionRings(std::string_view reason) {

@@ -430,16 +430,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     else if (graphics.stages.mesh) setMeshIndexBuffer(Pm4::DrawParameters{drawParameters.indexAddress, std::max(drawParameters.indexCount, 1u), drawParameters.indexSize, 1, 0, drawParameters.indexed});
     const std::vector<Role>& roles = decode->roles;
     static const bool tracePrograms = std::getenv("APS5_TRACE_DRAW_PROGRAMS") != nullptr;
-    if (!tracePrograms) {
-        for (std::size_t i = 0; i < programs.size(); ++i) {
-            RecordShaderUse(submission.queue, submission.serial, static_cast<std::uint32_t>(programs[i].binary.stage), graphics.color.address, programs[i].snapshot->codeAddress, programs[i].binary.codeAddress);
-        }
-    } else {
+    if (tracePrograms) {
         std::vector<DrawProgramTraceEntry> identities;
         identities.reserve(programs.size());
         for (std::size_t i = 0; i < programs.size(); ++i) {
             identities.push_back({programs[i].binary.stage, roles[i], programs[i].snapshot->codeAddress, programs[i].binary.codeAddress});
-            RecordShaderUse(submission.queue, submission.serial, static_cast<std::uint32_t>(programs[i].binary.stage), graphics.color.address, programs[i].snapshot->codeAddress, programs[i].binary.codeAddress);
         }
         const auto line = FormatDrawProgramTrace(submission.serial, submission.queue, identities);
         std::fprintf(stderr, "%s\n", line.c_str());

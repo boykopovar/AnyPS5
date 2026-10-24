@@ -1524,7 +1524,6 @@ void testInvalidStallWatchdog() {
 
 void testSubmissionRingFailureReport() {
     submitWrites(0, 0x5a000001u, 3);
-    AgcDriver::DriverDetail::RecordShaderUse(0, 3, 5, 0x1234, 0x2a85bc100, 0x2a85bc180);
     std::vector<std::string> lines;
     {
         CapturedStderr capture;
@@ -1533,10 +1532,6 @@ void testSubmissionRingFailureReport() {
     }
     check(!lines.empty() && lines.front() == "[pm4 ring] failure report: 1 queue(s), up to 2 submissions each, oldest first", "the failure report does not dump the rings");
     check(recordedWrites(lines) == std::vector<std::string>{"0x0 #2 5a000002", "0x0 #3 5a000003"}, "the failure report does not hold the last submissions in order");
-    check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x0: 1 shader uses recorded, last 1 shown") != lines.end(), "the failure report does not count the shader uses");
-    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
-        return line.starts_with("[pm4 ring]   shader serial=3 ") && line.ends_with("stage=fragment target=0x1234 code=0x2a85bc100 entry=0x2a85bc180");
-    }), "the failure report does not name the last shader use");
     {
         CapturedStderr capture;
         AgcDriver::DriverDetail::DumpSubmissionRingsAfterFailure();
