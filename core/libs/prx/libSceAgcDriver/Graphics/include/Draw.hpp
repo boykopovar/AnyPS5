@@ -14,10 +14,18 @@ namespace AgcDriver::Graphics {
 
 struct HostImport;
 
+struct DrawTraceContext {
+    std::uint64_t token = 0;
+    std::uint64_t submission = 0;
+    std::uint32_t queue = 0;
+    std::size_t offset = 0;
+    std::uint64_t target = 0;
+};
+
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr);
 
 struct PixelFunctionLdsLayouts {
     VkDescriptorSetLayout empty = VK_NULL_HANDLE;
@@ -92,7 +100,7 @@ struct DrawRecipeOutcome {
 // the template's proof (ProveCurrent) with the alias checks repeated, the pipeline and framebuffer
 // from the recipe, then the record as Draw's (pass continued or begun, Kept, MarkGpuWrites). A
 // miss records nothing.
-DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe);
+DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace = nullptr);
 // Whether recorded draws build recipes and draw-cache hits use them (APS5_NO_DRAW_RECIPE unset).
 bool DrawRecipes();
 
