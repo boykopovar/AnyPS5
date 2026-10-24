@@ -67,6 +67,7 @@ std::string _foldCase(std::string text) {
 
 std::mutex& g_hostDirectoriesLock = *new std::mutex();
 std::unordered_map<std::string, std::filesystem::path>& g_hostDirectories = *new std::unordered_map<std::string, std::filesystem::path>();
+std::uint64_t g_hostDirectoriesGeneration = 0;
 
 bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes) {
     {
@@ -130,8 +131,14 @@ bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::ui
     if (name.empty() || name == "." || name == ".." || name.find('\\') != std::string::npos) return false;
     const std::string directory(text.substr(0, separator));
     std::filesystem::path hostDirectory;
+    std::uint64_t generation = 0;
     {
         std::lock_guard lock(g_hostDirectoriesLock);
+        generation = PathAliasGeneration_nid_no_patch();
+        if (generation != g_hostDirectoriesGeneration) {
+            g_hostDirectories.clear();
+            g_hostDirectoriesGeneration = generation;
+        }
         if (const auto found = g_hostDirectories.find(directory); found != g_hostDirectories.end()) hostDirectory = found->second;
     }
     if (hostDirectory.empty()) {
@@ -139,7 +146,7 @@ bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::ui
         std::error_code error;
         if (!std::filesystem::is_directory(hostDirectory, error)) return false;
         std::lock_guard lock(g_hostDirectoriesLock);
-        g_hostDirectories.emplace(directory, hostDirectory);
+        if (PathAliasGeneration_nid_no_patch() == generation && g_hostDirectoriesGeneration == generation) g_hostDirectories.emplace(directory, hostDirectory);
     }
     hostPath = hostDirectory / name;
     return _listedSize(hostPath, bytes);

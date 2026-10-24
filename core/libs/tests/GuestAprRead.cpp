@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
@@ -133,6 +134,19 @@ void TestResolve() {
     std::array<std::uint64_t, 2> missingSizes{};
     failed = 0;
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(missing.data(), 2, missingIds.data(), missingSizes.data(), &failed) == -1 && failed == 1 && missingSizes[1] == 0, "APR resolved a missing file");
+    std::filesystem::create_directories(directory / "first");
+    std::filesystem::create_directories(directory / "second");
+    WriteBytes(directory / "first" / "x.bin", 3);
+    WriteBytes(directory / "second" / "x.bin", 9);
+    const char* aliased = "/apr_alias/x.bin";
+    AddPathAlias_nid_no_patch("/apr_alias", std::filesystem::absolute(directory / "first").string().c_str());
+    std::uint32_t firstId = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&aliased, 1, &firstId, &size, &failed) == 0 && size == 3, "APR did not resolve a file under an alias");
+    RemovePathAlias_nid_no_patch("/apr_alias");
+    AddPathAlias_nid_no_patch("/apr_alias", std::filesystem::absolute(directory / "second").string().c_str());
+    std::uint32_t secondId = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&aliased, 1, &secondId, &size, &failed) == 0 && size == 9 && secondId != firstId, "APR kept resolving an alias to its previous directory");
+    RemovePathAlias_nid_no_patch("/apr_alias");
     std::filesystem::remove_all(directory, ignored);
 }
 
