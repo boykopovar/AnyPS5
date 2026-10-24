@@ -118,6 +118,11 @@ void CheckMatching(int context) {
     Add(context, "http://www.example.com/", "late=1; Max-Age=86400; Expires=Thu, 01 Jan 1970 00:00:01 GMT");
     Add(context, "http://www.example.com/", "bad=1; Expires=Feb 31 2099 10:00:00");
     Require(Get(context, "http://www.example.com/") == "keep=1; late=1; bad=1", "expiry dates and Max-Age");
+    Add(context, "http://www.example.com/", "huge=1; Max-Age=10000000000");
+    Add(context, "http://www.example.com/", "huger=1; Max-Age=99999999999999999999999999");
+    Add(context, "http://www.example.com/", "far=1; Expires=Fri, 31 Dec 9999 23:59:59 GMT");
+    Add(context, "http://www.example.com/", "early=1; Expires=Mon, 01 Jan 1601 00:00:00 GMT");
+    Require(Get(context, "http://www.example.com/") == "keep=1; late=1; bad=1; huge=1; huger=1; far=1", "expiries beyond the clock range saturate");
     Require(sceHttpAddCookie(context, "http://www.example.com/", "cut=1234; Path=/x", 8) == 0, "the length bounds the cookie");
     Require(Get(context, "http://www.example.com/x").ends_with("cut=1234"), "only the given length is parsed");
     Require(sceHttpCookieFlush(context) == 0 && Stats(context).currentInuseNum == 0, "flush empties the store");

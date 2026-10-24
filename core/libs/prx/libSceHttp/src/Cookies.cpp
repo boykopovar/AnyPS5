@@ -147,6 +147,12 @@ bool parseTime(std::string_view token, int& hour, int& minute, int& second) {
     return true;
 }
 
+Clock::time_point clampedTime(std::chrono::sys_seconds time) {
+    if (time >= std::chrono::floor<std::chrono::seconds>(Clock::time_point::max())) return Clock::time_point::max();
+    if (time <= std::chrono::ceil<std::chrono::seconds>(Clock::time_point::min())) return Clock::time_point::min();
+    return std::chrono::time_point_cast<Clock::duration>(time);
+}
+
 std::optional<Clock::time_point> parseCookieDate(std::string_view text) {
     constexpr std::string_view months[] = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"};
     bool foundTime = false;
@@ -187,7 +193,7 @@ std::optional<Clock::time_point> parseCookieDate(std::string_view text) {
     if (day < 1 || day > 31 || year < 1601 || hour > 23 || minute > 59 || second > 59) return std::nullopt;
     const std::chrono::year_month_day date{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month)}, std::chrono::day{static_cast<unsigned>(day)}};
     if (!date.ok()) return std::nullopt;
-    return std::chrono::sys_days{date} + std::chrono::hours{hour} + std::chrono::minutes{minute} + std::chrono::seconds{second};
+    return clampedTime(std::chrono::sys_days{date} + std::chrono::hours{hour} + std::chrono::minutes{minute} + std::chrono::seconds{second});
 }
 
 std::optional<Clock::time_point> parseMaxAge(std::string_view text, Clock::time_point now) {
@@ -196,10 +202,11 @@ std::optional<Clock::time_point> parseMaxAge(std::string_view text, Clock::time_
     if (negative) text.remove_prefix(1);
     if (text.empty() || text.find_first_not_of("0123456789") != std::string_view::npos) return std::nullopt;
     if (negative) return Clock::time_point::min();
+    const std::int64_t remaining = std::chrono::duration_cast<std::chrono::seconds>(Clock::time_point::max() - now).count() - 1;
     std::int64_t seconds = 0;
     for (const char c : text) {
         seconds = seconds * 10 + (c - '0');
-        if (seconds > 0x7FFFFFFFFFLL) return Clock::time_point::max();
+        if (seconds >= remaining) return Clock::time_point::max();
     }
     if (seconds == 0) return Clock::time_point::min();
     return now + std::chrono::seconds{seconds};
