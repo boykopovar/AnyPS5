@@ -55,6 +55,9 @@
 [submodule "3rdparty/vgmstream"]
 	path = 3rdparty/vgmstream
 	url = https://github.com/vgmstream/vgmstream.git
+[submodule "3rdparty/jemalloc"]
+	path = 3rdparty/jemalloc
+	url = https://github.com/jemalloc/jemalloc.git
 [submodule "3rdparty/ogg"]
 	path = 3rdparty/ogg
 	url = https://github.com/xiph/ogg.git

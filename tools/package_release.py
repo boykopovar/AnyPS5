@@ -54,6 +54,8 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libSceJemspace.prx" in expected:
+        licenses.append((ROOT / "3rdparty/jemalloc/COPYING", "libs/licenses/jemalloc.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
