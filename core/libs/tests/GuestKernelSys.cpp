@@ -164,8 +164,26 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     Require(linkat_nid_postfix(-100, file.c_str(), -100, other.c_str(), 0x200) == -1 && Error() == 22);
     Require(linkat_nid_postfix(-100, nullptr, -100, other.c_str(), 0) == -1 && Error() == 14);
     Require(linkat_nid_postfix(-100, "", -100, other.c_str(), 0) == -1 && Error() == 2);
-    Require(ThrowsNaming([&] { linkat_nid_postfix(directory, "owned.txt", -100, other.c_str(), 0); }, "linkat: a relative path"));
-    Require(ThrowsNaming([&] { linkat_nid_postfix(-100, file.c_str(), directory, "other.txt", 0); }, "linkat: a relative path"));
+    Require(linkat_nid_postfix(directory, "owned.txt", -100, other.c_str(), 0) == 0);
+    Require(std::filesystem::hard_link_count(file) == 3 && std::filesystem::remove(other));
+    Require(linkat_nid_postfix(-100, file.c_str(), directory, "other.txt", 0) == 0);
+    Require(std::filesystem::hard_link_count(file) == 3);
+    Require(linkat_nid_postfix(directory, "owned.txt", directory, "other.txt", 0) == -1 && Error() == 17);
+    Require(linkat_nid_postfix(directory, "missing.txt", directory, "absent.txt", 0) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(4321, "owned.txt", directory, "absent.txt", 0) == -1 && Error() == 9);
+    Require(linkat_nid_postfix(directory, "owned.txt", 4321, "absent.txt", 0) == -1 && Error() == 9);
+    Require(linkat_nid_postfix(directory, "missing.txt", 4321, "absent.txt", 0) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(directory, "missing.txt", -100, nullptr, 0) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(-100, root.string().c_str(), 4321, "absent.txt", 0) == -1 && Error() == 1);
+    Require(linkat_nid_postfix(-100, root.string().c_str(), -100, "", 0) == -1 && Error() == 1);
+    Require(linkat_nid_postfix(directory, "owned.txt", -100, nullptr, 0) == -1 && Error() == 14);
+    Require(linkat_nid_postfix(directory, "owned.txt", -100, "", 0) == -1 && Error() == 2);
+    const int plain = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(plain >= 0);
+    Require(linkat_nid_postfix(plain, "owned.txt", directory, "absent.txt", 0) == -1 && Error() == 20);
+    Require(linkat_nid_postfix(directory, "owned.txt", plain, "absent.txt", 0) == -1 && Error() == 20);
+    Require(sceKernelClose(plain) == 0 && std::filesystem::remove(other));
+    Require(!std::filesystem::exists(root / "absent.txt"));
     const auto symbolic = (root / "owned.link").string();
     const auto dangling = (root / "dangling.link").string();
     if (symlink_nid_postfix("owned.txt", symbolic.c_str()) == 0) {
