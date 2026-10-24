@@ -712,6 +712,41 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckExpm1OverflowEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const std::uint64_t inputs[] = {0x40862e42fefa39f0ull, 0x40862e42fefa39f1ull, 0x408f400000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull};
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = expm1_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (std::uint64_t input : inputs) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    const int seedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                    Require(std::feraiseexcept(seedFlags) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    const unsigned raised = input == 0x7ff0000000000000ull ? 0u : 0x28u;
+                    const int expectedError = raised == 0 ? 1234 : ERANGE;
+                    if (result != 0x7ff0000000000000ull || after.mxcsr != (control | sticky | raised) || (after.status & 0x3fu) != ((before.status & 0x3fu) | raised) || after.control != before.control || error != expectedError) {
+                        std::fprintf(stderr, "expm1 overflow: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -1669,6 +1704,7 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckExpm1OverflowEnvironment();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

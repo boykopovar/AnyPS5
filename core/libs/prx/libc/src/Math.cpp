@@ -462,6 +462,8 @@ double APS5_VABI log2_nid_postfix(double x) { return std::log2(x); }
 double APS5_VABI log_nid_postfix(double x) { return std::log(x); }
 double APS5_VABI log1p_nid_postfix(double x) { return std::log1p(x); }
 float APS5_VABI log1pf_nid_postfix(float x) { return std::log1p(x); }
+void APS5_VABI _Feraise_nid_postfix(int exceptions);
+
 static double Expm1(double x) {
     const double tiny = 1.0e-300;
     const double o_threshold = 7.09782712893383973096e+02;
@@ -484,7 +486,10 @@ static double Expm1(double x) {
                 if (((hx & 0xfffff) | static_cast<std::uint32_t>(bits)) != 0) return x + x;
                 return xsb == 0 ? x : -1.0;
             }
-            if (x > o_threshold) return huge * huge;
+            if (x > o_threshold) {
+                _Feraise_nid_postfix(0x08);
+                return std::numeric_limits<double>::infinity();
+            }
         }
         if (xsb != 0 && x + tiny < 0.0) return tiny - 1.0;
     }
