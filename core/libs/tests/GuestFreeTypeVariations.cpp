@@ -16,6 +16,7 @@ using namespace FreeType;
 
 extern "C" {
 int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec*, void**);
+int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary*, void*);
 }
 
 static void Check(bool value, int line) {
@@ -91,6 +92,19 @@ static void TestGetMMVar() {
     Require(FT_Get_MM_Var_nid_postfix(nullptr, &actual) == FT_Get_MM_Var(nullptr, &expected));
 }
 
+static void TestDoneMMVar() {
+    FacePair pair(VariableFont());
+    for (int round = 0; round < 3; ++round) {
+        void* actual = nullptr;
+        FT_MM_Var* expected = nullptr;
+        Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == 0 && FT_Get_MM_Var(pair.oracle, &expected) == 0);
+        Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, actual) == FT_Done_MM_Var(Shared().native, expected));
+    }
+    Require(FT_Done_MM_Var_nid_postfix(&Shared().guest, nullptr) == FT_Done_MM_Var(Shared().native, nullptr));
+    Require(FT_Done_MM_Var_nid_postfix(nullptr, nullptr) == FT_Done_MM_Var(nullptr, nullptr));
+}
+
 int main() {
     TestGetMMVar();
+    TestDoneMMVar();
 }
