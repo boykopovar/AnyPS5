@@ -7,6 +7,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include <cstdio>
 #include <cstdlib>
+#undef main
 
 namespace {
 
