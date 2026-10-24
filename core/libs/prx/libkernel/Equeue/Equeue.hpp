@@ -138,4 +138,6 @@ int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, in
 
 }
 
+extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
+
 #endif
