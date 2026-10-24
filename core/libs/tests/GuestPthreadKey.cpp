@@ -1,21 +1,11 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-void* APS5_VABI scePthreadGetspecific(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
 

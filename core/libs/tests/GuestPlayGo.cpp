@@ -1,3 +1,4 @@
+#include "prx/libScePlayGo/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -13,20 +14,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-extern "C" {
-int APS5_VABI scePlayGoInitialize(const PlayGoInitParams*);
-int APS5_VABI scePlayGoOpen(int*, const void*);
-int APS5_VABI scePlayGoClose(int);
-int APS5_VABI scePlayGoGetLanguageMask(int, std::uint64_t*);
-int APS5_VABI scePlayGoSetLanguageMask(int, std::uint64_t);
-int APS5_VABI scePlayGoGetSupportedOptionalChunk(int, std::uint32_t, PlayGoOptionalChunk*);
-int APS5_VABI scePlayGoGetOptionalChunk(int, std::uint32_t, PlayGoOptionalChunk*);
-int APS5_VABI scePlayGoSetToDoList(int, const PlayGoToDo*, std::uint32_t);
-int APS5_VABI scePlayGoGetToDoList(int, PlayGoToDo*, std::uint32_t, std::uint32_t*);
-int APS5_VABI scePlayGoGetLocus(int, const std::uint16_t*, std::uint32_t, std::int8_t*);
-int APS5_VABI scePlayGoGetChunkId(int, std::uint16_t*, std::uint32_t, std::uint32_t*);
-}
 
 static void Require(bool value, const std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -175,6 +162,7 @@ static int CheckRejectedLayout(const char* root, const char* fileName) {
     bool threw = false;
     try {
         scePlayGoGetLocus(handle, &chunk, 1, &locus);
+
     } catch (const std::runtime_error& error) {
         threw = std::string_view(error.what()).find(fileName) != std::string_view::npos;
     }
@@ -221,6 +209,7 @@ static int CheckUnknownUnlistedChunkAnswer(const char* root) {
     bool threw = false;
     try {
         scePlayGoGetLocus(handle, &unlisted, 1, &locus);
+
     } catch (const std::runtime_error& error) {
         threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed or absent") != std::string_view::npos;
     }

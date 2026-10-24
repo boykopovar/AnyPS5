@@ -1,3 +1,4 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -146,16 +147,6 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     case 4: (*attr)->type = MutexType::Adaptive; break;
     default: return SCE_KERNEL_ERROR_EINVAL;
     }
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {
-    if (!attr || !*attr)
-        return SCE_KERNEL_ERROR_EINVAL;
-    constexpr int PrioNone = 0;
-    constexpr int PrioProtect = 2;
-    if (protocol < PrioNone || protocol > PrioProtect)
-        return SCE_KERNEL_ERROR_EINVAL;
     return 0;
 }
 

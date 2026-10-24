@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import os
 import struct
@@ -115,6 +116,239 @@ class UnwrapTest(unittest.TestCase):
             code = unwrap_self.main([str(source), str(output)])
         self.assertEqual(code, 0)
         self.assertTrue(output.exists())
+
+    def test_write_failure_preserves_output_and_removes_temporary_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return stream
+            writer = mock.MagicMock(wraps=stream)
+            writer.__enter__.return_value = writer
+            writer.__exit__.side_effect = lambda *args: stream.close()
+
+            def fail_after_partial_write(data):
+                stream.write(data[:16])
+                stream.flush()
+                raise OSError(errno.ENOSPC, "simulated write failure")
+
+            writer.write.side_effect = fail_after_partial_write
+            return writer
+
+        for previous in (None, b"previous output"):
+            with self.subTest(previous=previous):
+                output.unlink(missing_ok=True)
+                if previous is not None:
+                    output.write_bytes(previous)
+                before = set(directory.iterdir())
+                errors = io.StringIO()
+                with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+                    status = unwrap_self.main([str(source), str(output)])
+                self.assertEqual(status, 2)
+                self.assertIn("simulated write failure", errors.getvalue())
+                self.assertEqual(set(directory.iterdir()), before)
+                if previous is not None:
+                    self.assertEqual(output.read_bytes(), previous)
+                self.assertEqual(source.read_bytes(), container)
+
+    def test_replace_failure_preserves_output_and_removes_temporary_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        with mock.patch.object(Path, "replace", side_effect=OSError("simulated replacement failure")), \
+                contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated replacement failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(source.read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_successful_conversion_replaces_existing_output_without_temporary_files(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        before = set(Path(self.directory).iterdir())
+        output.write_bytes(b"previous output")
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = unwrap_self.main([str(Path(self.directory) / "input.self"), str(output)])
+        self.assertEqual(status, 0)
+        self.assertEqual(output.read_bytes(), expected)
+        self.assertEqual(set(Path(self.directory).iterdir()), before)
+
+    def test_close_failure_preserves_existing_output(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return stream
+            writer = mock.MagicMock(wraps=stream)
+            writer.__enter__.return_value = writer
+
+            def fail_on_close(*args):
+                stream.close()
+                raise OSError("simulated close failure")
+
+            writer.__exit__.side_effect = fail_on_close
+            return writer
+
+        errors = io.StringIO()
+        with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated close failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_temporary_file_creation_failure_preserves_existing_output(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            if "x" in mode:
+                raise OSError("simulated creation failure")
+            return real_open(path, mode, *args, **kwargs)
+
+        with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated creation failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_temporary_name_collision_preserves_all_existing_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        collision = directory / ".unwrap-self-collision"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+        collision.write_bytes(b"unrelated file")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        with mock.patch.object(unwrap_self.secrets, "token_hex", return_value="collision"), \
+                contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(collision.read_bytes(), b"unrelated file")
+        self.assertEqual(source.read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), before)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows ACL inheritance")
+    def test_new_output_inherits_the_destination_directory_acl(self):
+        directory = Path(self.directory)
+        grant = subprocess.run(["icacls.exe", str(directory), "/grant", "*S-1-1-0:(OI)(CI)(RX)"],
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(grant.returncode, 0, grant.stdout + grant.stderr)
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        permissions = directory / "output-acl.txt"
+        saved = subprocess.run(["icacls.exe", str(output), "/save", str(permissions)],
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(saved.returncode, 0, saved.stdout + saved.stderr)
+        self.assertIn(";;;WD)", permissions.read_text(encoding="utf-16-le"))
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual((directory / "input.self").read_bytes(), container)
+        self.assertFalse(any(path.name.startswith(".unwrap-self-") for path in directory.iterdir()))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission bits")
+    def test_new_output_permissions_follow_the_process_umask(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        for mask in (0o000, 0o022, 0o027, 0o077, 0o200, 0o777):
+            with self.subTest(umask=oct(mask)):
+                output = directory / f"output-{mask:o}.elf"
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30, umask=mask)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                mode = output.stat().st_mode & 0o777
+                self.assertEqual(mode, 0o666 & ~mask)
+                output.chmod(mode | 0o400)
+                self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+                self.assertFalse(any(path.name.startswith(".unwrap-self-") for path in directory.iterdir()))
+        self.assertEqual(source.read_bytes(), container)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX group inheritance")
+    def test_new_output_inherits_the_destination_directory_group(self):
+        groups = [group for group in os.getgroups() if group != os.getegid()]
+        if not groups:
+            self.skipTest("requires a supplementary group")
+        directory = Path(self.directory)
+        group = groups[0]
+        try:
+            os.chown(directory, -1, group)
+            directory.chmod(0o2700)
+        except PermissionError as error:
+            self.skipTest(str(error))
+        if not directory.stat().st_mode & 0o2000:
+            self.skipTest("filesystem does not retain the setgid bit")
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.stat().st_gid, group)
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual((directory / "input.self").read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), {directory / "input.self", output})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission bits")
+    def test_replacing_output_preserves_existing_permissions(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        output.chmod(0o640)
+        unwrap_self.unwrap(source, output)
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+
+    def test_output_symlink_is_kept_and_its_target_is_replaced(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        output.unlink()
+        target = Path(self.directory) / "target.elf"
+        target.write_bytes(b"previous output")
+        try:
+            output.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        before = set(Path(self.directory).iterdir())
+        unwrap_self.unwrap(Path(self.directory) / "input.self", output)
+        self.assertTrue(output.is_symlink())
+        self.assertEqual(target.read_bytes(), expected)
+        self.assertEqual(set(Path(self.directory).iterdir()), before)
 
     def convert(self, container, name="input.self"):
         directory = Path(self.directory)

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -10,7 +11,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -64,8 +64,6 @@
 #include <type_traits>
 #include <thread>
 #include <vector>
-
-extern "C" std::terminate_handler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(std::terminate_handler handler);
 
 namespace {
 
@@ -824,7 +822,7 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with PS_ITER_SAMPLE, a sample index or coverage input, or a sample-mask export";
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
     for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
         queue = drawC();
         queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
@@ -832,6 +830,10 @@ void msaaEnableClearOneSampleTargetTests() {
     }
     queue = drawC();
     queue.context[0x293] = 0x10000u;
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
+    requireOneSample(queue, "draw C with PS_ITER_SAMPLE and a sample-interpolated input");
+    Require(!DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample color target without MSAA_ENABLE asked for sample shading");
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     expectFailure([&] { DecodeState(queue); }, refused);
     queue = drawC();
     queue.context[0x1c4] = 9;
@@ -906,38 +908,24 @@ void msaaEnableClearOneSampleTargetTests() {
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
     Require(AgcDriver::Graphics::PixelProgramSkipped(queue), "the depth-only draw did not skip its pixel program");
     requireOneSampleDepth(queue, 0, "a one-sample depth target whose skipped pixel program has PS_ITER_SAMPLE and sample index and coverage inputs");
-    constexpr std::string_view depthRefused = "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA Z interpolation or overrasterization";
     for (const bool color : {false, true}) {
-        for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-            queue = depthTarget(color);
-            queue.context[0x203] |= 0x40u;
-            queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
-        }
+        queue = depthTarget(color);
+        queue.context[0x203] |= 0x40u;
+        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+        Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the ANCILLARY draw skipped its pixel program");
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+        queue.context[0x1b3] = queue.context[0x1b4] = 0x2b01u;
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads PERSP_SAMPLE, the position and ANCILLARY without PS_ITER_SAMPLE");
         queue = depthTarget(color);
         queue.context[0x203] |= 0x40u;
         queue.context[0x293] = 0x10000u;
         Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the PS_ITER_SAMPLE draw skipped its pixel program");
         requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program has PS_ITER_SAMPLE and no sample index or coverage input");
         Require(!DecodeState(queue).perSampleShading, "a PS_ITER_SAMPLE program drawn as one sample still shades per sample");
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x1c4] = 9;
-        queue.context[0x203] |= 0x100u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x2dc] = 0x0000aa01u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        for (const auto primitive : {2u, 3u}) {
-            queue = depthTarget(color);
-            queue.userConfig[0x242] = primitive;
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
-        }
-        for (const auto eqaa : {0x00050002u, 0x00090002u, 0x01010002u, 0x08010002u}) {
+        for (const auto eqaa : {0x00040000u, 0x00050000u}) {
             queue = depthTarget(color);
             queue.context[0x201] = eqaa;
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
+            requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target under a 4x PA_SC_AA_CONFIG without MSAA_ENABLE with DB_EQAA INTERPOLATE_COMP_Z");
         }
     }
     queue = depthTarget(true);
@@ -1936,8 +1924,35 @@ void TuningFieldTests() {
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "DISABLE_DUAL_QUAD was rejected");
     Require(state.hasColorTarget && state.blend.colorWriteMask == baseline.blend.colorWriteMask, "DISABLE_DUAL_QUAD changed color output");
     queue.context[0x202] = 0xcc0013;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "copy ROP");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5b0010;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5a0010;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "an XOR ROP was rejected");
+    Require(state.hasColorTarget && state.colorRop == 0x5a && AgcDriver::Graphics::LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_XOR, "an XOR ROP did not decode");
     queue.context[0x202] = 0xcc0010;
+    Require(AgcDriver::Graphics::DecodeState(queue).colorRop == AgcDriver::Graphics::CopyRop, "the copy ROP did not decode as the copy operation");
+    const std::array<std::pair<std::uint8_t, VkLogicOp>, 14> ropOperations{{
+        {0x0f, VK_LOGIC_OP_COPY_INVERTED}, {0xa0, VK_LOGIC_OP_AND}, {0xf0, VK_LOGIC_OP_COPY}, {0xfa, VK_LOGIC_OP_OR},
+        {0x00, VK_LOGIC_OP_CLEAR}, {0x11, VK_LOGIC_OP_NOR}, {0x33, VK_LOGIC_OP_COPY_INVERTED}, {0x55, VK_LOGIC_OP_INVERT}, {0x66, VK_LOGIC_OP_XOR},
+        {0x88, VK_LOGIC_OP_AND}, {0xaa, VK_LOGIC_OP_NO_OP}, {0xcc, VK_LOGIC_OP_COPY}, {0xee, VK_LOGIC_OP_OR}, {0xff, VK_LOGIC_OP_SET}}};
+    for (const auto& [rop, operation] : ropOperations) Require(AgcDriver::Graphics::LogicOpFromRop(rop) == operation, "a ROP3 code mapped to the wrong logic operation");
+    std::uint32_t documentedRops = 0;
+    for (std::uint32_t rop = 0; rop < 256u; ++rop) {
+        try {
+            static_cast<void>(AgcDriver::Graphics::LogicOpFromRop(static_cast<std::uint8_t>(rop)));
+            ++documentedRops;
+        } catch (const std::runtime_error&) {
+        }
+    }
+    Require(documentedRops == 28u, "a ROP3 code outside the source and brush forms was accepted, or one inside them was refused");
+    auto blendedLogic = queue;
+    blendedLogic.context[0x202] = 0x5a0010;
+    blendedLogic.context[0x1e0] = 0x40000101u;
+    for (std::uint32_t index = 0; index < 4u; ++index) blendedLogic.context[0x105 + index] = 0u;
+    blendedLogic.context[0x31c] |= 0x8000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(blendedLogic); }, "logic operation together with blending");
     for (const auto groups : {1u, 2u, 15u}) {
         queue.context[0x2d5] = 0x2000u | (groups << 15u);
         state = AgcDriver::Graphics::DecodeState(queue);
@@ -2977,7 +2992,12 @@ void depthCopyPassTests() {
     queue.context[0x31c] = 0x40710;
     queue.context[0x8e] = 1;
     auto pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 && pass->samples == 2 && pass->sample == 0 && pass->extent.width == 64 && pass->extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.samples == 2 && pass->sample == 0 && pass->source.extent.width == 64 && pass->source.extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && resource.samples == 2 && resource.width == 64 && resource.height == 4 && resource.tileMode == AgcDriver::Graphics::TextureTileMode::kZ64KBX && resource.pipeBankXor == pass->source.pipeBankXor && resource.dccAddress == pass->source.htileAddress, "the DB depth copy source descriptor of a two-sample plane decoded differently");
+    }
     Require(pass->color.format == VK_FORMAT_R32_SFLOAT && pass->color.samples == 1 && pass->color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "the DB depth copy target decoded differently");
     queue.context[0x000] = 0x104;
     Require(DecodeDepthCopyPass(queue)->sample == 1, "COPY_SAMPLE without COPY_CENTROID did not select the sample");
@@ -3002,23 +3022,31 @@ void depthCopyPassTests() {
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "single-sample R32 float");
     queue.context[0x31c] = 0x40710;
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
-    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "over part of the depth surface");
+    Require(DecodeDepthCopyPass(queue).has_value(), "a DB depth copy whose viewport covers part of the depth surface was refused");
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
+    queue.context[0x1e0] = 1u << 30u;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "blending");
+    queue.context[0x1e0] = 0;
     queue.context[0x010] = 0x80001187;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "mipmapped or partially resident");
     queue.context[0x010] = 0x80000187;
     queue.context[0x012] = 0x00001003;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.pipeBankXor == 0x300, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
     queue.context[0x012] = 0x00001000;
     queue.context[0x002] = 1u | (1u << 13u);
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
+    Require(pass.has_value() && pass->source.address == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
     queue.context[0x002] = 0;
     Require(DecodeDepthCopyPass(queue).has_value(), "the restored DB depth copy was refused");
     queue.context[0x010] = 0x80000183;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2D && resource.samples == 1 && resource.width == 64 && resource.height == 4 && resource.dccAddress == 0, "the DB depth copy source descriptor of a one-sample plane decoded differently");
+    }
     queue.context[0x000] = 0x104;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "a sample the depth plane does not have");
 }
@@ -3842,7 +3870,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -4337,6 +4365,53 @@ void multisampledDepthTests() {
     Require(state.truncatedCoverage && state.perSampleShading && state.samples == 2 && state.colors[0].samples == 1, "PS_ITER_SAMPLE into a one-sample color target beside a 2x depth target (PPSA02225's registers) did not run per sample with sample 0's color");
     queue = truncatedTwoSample();
     queue.context[0x31d] = 0x12000;
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    const auto oneFragment = [&] {
+        auto queue = singleSampleScan();
+        queue.context[0x2f8] = 0x00210002;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6ae;
+        queue.context[0x31d] = 0x2000;
+        queue.context[0x201] = 0x112202;
+        return queue;
+    };
+    queue = oneFragment();
+    state = DecodeState(queue);
+    Require(state.samples == 4 && !state.customSampleLocations && state.depth && state.depth->samples == 4 && state.colors.size() == 1 && state.colors[0].samples == 1 && state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment beside a 4x depth target (PPSA02015's registers) did not keep sample 0's color in its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment beside a 4x depth target");
+    queue = oneFragment();
+    queue.context[0x31c] |= 0x4000u;
+    queue.context[0x321] = 0x00c3a1b2u;
+    queue.context[0x3a0] = 0x01u;
+    state = DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].fmaskAddress == ((1ull << 40u) | 0xc3a10000ull), "a compressed one-fragment color target did not decode its FMASK address");
+    queue.context[0x321] = 0u;
+    queue.context[0x3a0] = 0u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue.context[0x321] = 0xa5u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue = oneFragment();
+    Require(DecodeState(queue).colors[0].fmaskAddress == 0u, "an uncompressed one-fragment color target noted an FMASK address");
+    queue = oneFragment();
+    queue.context[0x31d] = 0xa000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    queue = oneFragment();
+    queue.context[0x31d] = 0x8000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more fragments than samples are unsupported");
+    queue = oneFragment();
+    queue.context[0x201] = 0x012202;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x201] = 0x112201;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x2f8] = 0x00100001;
+    queue.context[0x010] = 0x22900987;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target's sample count differs from the rasterizer's");
+    queue = oneFragment();
+    queue.context[0x010] = 0;
+    queue.context[0x011] = 0;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
@@ -5904,6 +5979,7 @@ void descriptorPoolResetFailureTest() {
     });
     cache.Free(allocation);
     _ZSt13set_terminatePFvvE_nid_postfix(previous);
+
 }
 
 void pushConstantTests() {
@@ -6914,8 +6990,37 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 5 * GiB + 128 * MiB, "a 15 GiB budget with 4 GiB used outside the texture caches does not leave 5 GiB 128 MiB after the 4 GiB storage cache and 1 GiB 896 MiB of headroom");
     reported.heapUsage[2] = 3 * GiB;
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 9 * GiB + 128 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    reported.heapUsage[2] = 9 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 4 * GiB + 512 * MiB) == 4 * GiB + 640 * MiB, "a storage image cache larger than TextureCacheBudget was not reserved in full");
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 1 * GiB) == 5 * GiB + 128 * MiB, "a storage image cache smaller than TextureCacheBudget did not keep the TextureCacheBudget reservation");
     reported.heapUsage[2] = 12 * GiB;
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
+        auto small = memory;
+        small.memoryHeaps[2].size = 8 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        example.heapBudget[2] = 7373 * MiB;
+        example.heapUsage[2] = 2 * GiB + 3686 * MiB;
+        Require(SampledTextureBudget(small, &example, 3686 * MiB, 3686 * MiB) == 2 * GiB, "3686 MiB of storage images on an 8 GiB heap with a 7373 MiB budget and 2 GiB of other use left the sampled cache above its floor");
+        for (const auto heapGiB : {8u, 16u}) {
+            small.memoryHeaps[2].size = heapGiB * GiB;
+            for (std::uint64_t budget = 4 * GiB; budget <= heapGiB * GiB; budget += GiB) {
+                example.heapBudget[2] = budget;
+                for (std::uint64_t other = 0; other <= budget; other += GiB) {
+                    for (std::uint64_t sampled = 0; sampled <= 4 * GiB; sampled += 512 * MiB) {
+                        for (std::uint64_t storage = 0; storage <= heapGiB * GiB / 2u; storage += 512 * MiB) {
+                            example.heapUsage[2] = other + sampled + storage;
+                            const auto sampledLimit = SampledTextureBudget(small, &example, sampled + storage, storage);
+                            const auto storageLimit = StorageTextureBudget(small, &example, sampled, storage);
+                            if (sampledLimit > 2 * GiB) Require(other + storage + sampledLimit + budget / 8u <= budget, "the sampled cache budget and the storage images held exceed the reported budget less its eighth");
+                            if (storageLimit > 512 * MiB) Require(other + sampled + storageLimit + budget / 8u <= budget, "the storage cache budget and the sampled textures held exceed the reported budget less its eighth");
+                        }
+                    }
+                }
+            }
+        }
+    }
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
@@ -6936,29 +7041,29 @@ void storageTextureBudgetTests() {
     reported.heapBudget[1] = 100 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a zero budget for the largest device-local heap did not fall back to a quarter of the heap");
     reported.heapBudget[2] = 10 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 2560 * MiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 5 * GiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapUsage[2] = 5 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its quarter");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its half");
     reported.heapUsage[2] = 8 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2304 * MiB, "a 10 GiB budget with 5632 MiB used outside the texture caches does not leave 2304 MiB after 1 GiB of sampled textures and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB;
     Require(StorageTextureBudget(memory, &reported, 3 * GiB, 2 * GiB) == 1792 * MiB, "3 GiB of sampled textures were not reserved in full");
     reported.heapUsage[2] = 1 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "usage below the cached bytes is not read as no other device memory in use");
     Require(StorageTextureBudget(memory, &reported, 7 * GiB, 1 * GiB) == 1792 * MiB, "7 GiB of sampled textures with the usage below the cached bytes do not leave 1792 MiB after their reservation and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 512 * MiB) == 512 * MiB, "a heap whose other users leave no room does not keep the 512 MiB floor");
     reported.heapUsage[2] = 0;
     reported.heapBudget[2] = 6 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 1536 * MiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 3 * GiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapBudget[2] = 1 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 512 * MiB, "a 1 GiB budget does not keep the 512 MiB floor");
     reported.heapBudget[2] = 40 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a budget above the heap size raised the storage image cache past a quarter of the heap");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 8 * GiB, "a budget above the heap size raised the storage image cache past half of the heap");
     memory.memoryHeaps[2].size = 8 * GiB;
     reported.heapBudget[2] = 7189 * MiB;
     reported.heapUsage[2] = 4491 * MiB;
-    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB / 4u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches held the storage image cache below a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB - 3936 * MiB - 49 * MiB - 7189 * MiB / 8u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not leave the storage image cache what the budget has left after them and its eighth");
     reported.heapUsage[2] = 6490 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 506 * MiB) == 512 * MiB, "2 GiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not take the storage image cache back to its 512 MiB floor");
     memory.memoryHeaps[2].size = 10 * GiB;
@@ -6975,8 +7080,8 @@ void storageTextureBudgetTests() {
                     reported.heapUsage[2] = outside + sampled + 512 * MiB;
                     const auto limit = StorageTextureBudget(memory, &reported, sampled, 512 * MiB);
                     Require(limit >= 512 * MiB, "pressure sweep lost the storage cache floor");
-                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 4u), "pressure sweep exceeded a quarter of the reported budget above the floor");
-                    Require(limit <= std::max<std::uint64_t>(2 * GiB, heapGiB * GiB / 4u), "pressure sweep exceeded the heap storage cache cap");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 2u), "pressure sweep exceeded half of the reported budget above the floor");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, heapGiB * GiB / 2u), "pressure sweep exceeded half of the heap");
                     if (outside != 0) Require(limit <= previous, "additional non-cache memory usage grew the storage cache budget");
                     if (limit > 512 * MiB) Require(outside + sampled + budget / 8u + limit <= budget, "storage cache budget consumed live sampled memory or pressure headroom");
                     previous = limit;
@@ -10709,6 +10814,21 @@ void validationTests() {
         attribute.components = 2;
         attribute.resource.fields[1] |= 0x80000000u;
         expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "descriptor flags");
+        attribute.resource.fields = {0x1000, 8u << 16u, 3, 71u << 12u};
+        attribute.components = 3;
+        context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+            *properties = {};
+            if (format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R8G8B8A8_UNORM) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+        };
+        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_R16G16B16_SFLOAT && AgcDriver::Graphics::DecodeVertexFormat(attribute).bytes == 6, "a 3-component 16_16_16_16 float attribute was not decoded as 3 components");
+        const auto widened = AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1));
+        Require(widened.attributes[0].format == VK_FORMAT_R16G16B16A16_SFLOAT && widened.bindings[0].stride == 8 && AgcDriver::Graphics::VertexReadBytes(attribute, widened.attributes[0].format) == 8, "a 3-component 16_16_16_16 float attribute was not widened to the format the device supports");
+        Require(AgcDriver::Graphics::VertexAttributeSignature(attribute) == "f32x3", "widening the vertex format changed the shader input");
+        attribute.resource.fields = {0x1000, 4u << 16u, 3, 56u << 12u};
+        Require(AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)).attributes[0].format == VK_FORMAT_R8G8B8A8_UNORM, "a 3-component 8_8_8_8 unorm attribute was not widened to the format the device supports");
+        attribute.resource.fields = {0x1000, 12u << 16u, 3, 74u << 12u};
+        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "device does not support vertex format 106");
+        expectFailure([&] { AgcDriver::Graphics::VertexReadBytes(attribute, VK_FORMAT_R32G32B32A32_SFLOAT); }, "is not a form of");
     }
     for (const auto capability : {spv::CapabilityInt64Atomics, spv::CapabilityInt64ImageEXT}) {
         ShaderRecompiler::RecompileResult vertex;
@@ -10841,7 +10961,6 @@ void validationTests() {
         expectFailure([&] { validate(vertex, 0); }, "absent from recompiler binding metadata");
     }
 }
-
 
 }
 

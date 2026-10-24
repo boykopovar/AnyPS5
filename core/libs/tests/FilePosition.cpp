@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
@@ -11,12 +12,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI fgetpos_nid_postfix(FileStream*, std::int64_t*);
-int APS5_VABI fsetpos_nid_postfix(FileStream*, const std::int64_t*);
-std::int64_t APS5_VABI ftello_nid_postfix(FileStream*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

@@ -445,6 +445,26 @@ void verifyProgram(const Program& program) {
     }
 }
 
+const std::vector<std::uint32_t> TestedHeaderLatchStore{
+    0xbe880380u, 0x7e020280u, 0xbf0a8408u, 0xbf840004u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf82fffau, 0xbf810000u};
+const std::vector<std::uint32_t> SelfLoopLatchStore{
+    0xbe880380u, 0x7e020280u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf0a8408u, 0xbf85fffbu, 0xbf810000u};
+
+void verifyEmptyLoopContinues() {
+    for (const auto& [name, code] : {std::pair{"a loop whose latch stores behind a tested header", &TestedHeaderLatchStore}, std::pair{"a single-block loop that stores", &SelfLoopLatchStore}}) {
+        auto graph = GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(*code));
+        Structurizer{}.Structurize(graph);
+        bool loops = false;
+        for (const auto& block : graph.blocks) {
+            if (!block.terminator.loopHeader) continue;
+            loops = true;
+            const auto& continueTarget = graph.FindBlock(block.terminator.continueBlock);
+            require(continueTarget.instructionBegin == continueTarget.instructionEnd, std::string(name) + ": the continue block " + std::to_string(continueTarget.id) + " of the loop at block " + std::to_string(block.id) + " holds instructions");
+        }
+        require(loops, std::string(name) + ": no loop was structured");
+    }
+}
+
 const std::vector<std::uint32_t> DwordTableGetpcFirst{
     0xbe8c1f00u, 0x800cff0cu, 0x00000058u, 0x820d800du, 0x83928202u, 0xd4c40016u, 0x02000500u, 0x8f128212u, 0xf4000386u, 0x24000000u,
     0xbf8cc07fu, 0x7d820003u, 0x808c0e0cu, 0x828d800du, 0xbefd210cu, 0x7e020281u, 0xbf820003u, 0x7e020282u, 0xbf820001u, 0x7e020283u,
@@ -711,6 +731,18 @@ loop:
   s_cbranch_scc1 loop
   s_endpgm)",
          {0xbe880380u, 0x7e020280u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf0a8408u, 0xbf85fffbu, 0xbf810000u}, Split::None},
+        {"memory access in a loop latch behind a tested header", R"(
+  s_mov_b32 s8, 0
+  v_mov_b32 v1, 0
+loop:
+  s_cmp_lt_u32 s8, 4
+  s_cbranch_scc0 done
+  buffer_store_dword v1, off, s[0:3], 0
+  s_add_u32 s8, s8, 1
+  s_branch loop
+done:
+  s_endpgm)",
+         TestedHeaderLatchStore, Split::None},
         {"shared tail in a loop", R"(
   s_mov_b32 s8, 0
   v_mov_b32 v1, 0
@@ -1421,6 +1453,7 @@ done:
         verifyCallLinkMaskReadByScalarInstruction();
         verifyLargeLoopExitFallback();
         verifyNestedExitForwarders();
+        verifyEmptyLoopContinues();
         verifyIrreducibleLoopEntry();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

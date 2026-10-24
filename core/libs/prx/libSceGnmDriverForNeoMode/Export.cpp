@@ -1,9 +1,12 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
+#include <initializer_list>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
 namespace {
 
@@ -25,6 +28,23 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
     if (size != packetWords) return 0;
     std::copy(state.begin(), state.end(), cmdbuf);
     return static_cast<int>(packetWords);
+}
+
+constexpr std::uint32_t OpSetContextReg = 0x69;
+constexpr std::uint32_t OpSetShReg = 0x76;
+
+std::uint32_t* EmitPacket(std::uint32_t* at, std::uint32_t opcode, std::initializer_list<std::uint32_t> body) {
+    *at++ = 0xc0000000u | ((static_cast<std::uint32_t>(body.size()) - 1) << 16) | (opcode << 8);
+    for (const auto word : body) *at++ = word;
+    return at;
+}
+
+std::uint32_t AddressLo(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
+}
+
+std::uint32_t AddressHi(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 40);
 }
 
 constexpr int Failure = static_cast<int>(0x8EEE00FFu);
@@ -69,13 +89,25 @@ bool IndexedIndirectStage(std::uint32_t stage) {
 constexpr std::uint32_t OpSetUconfigReg = 0x79;
 constexpr std::uint32_t IaMultiVgtParam = 0x40000258u;
 
+std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* regs) {
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {10, regs[2], regs[3]});
+    at = EmitPacket(at, OpNop, {0xc01e01c4u, regs[4], regs[5]});
+    at = EmitPacket(at, OpNop, {0xc01e01b3u, regs[6], regs[7]});
+    at = EmitPacket(at, OpNop, {0xc01e01b6u, regs[8]});
+    at = EmitPacket(at, OpNop, {0xc01e01b8u, regs[9]});
+    at = EmitPacket(at, OpNop, {0xc01e0203u, regs[10]});
+    return EmitPacket(at, OpNop, {0xc01e008fu, regs[11]});
+}
+
 } // namespace
 
 extern "C" {
 
-int APS5_VABI sceGnmBeginWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload) {
+    if (!workload) return 3;
+    *workload = stream < 0x10 ? 1 : 0;
+    return stream < 0x10 ? 0 : 1;
 }
 
 int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference) {
@@ -103,8 +135,9 @@ int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t si
     return 0;
 }
 
-int APS5_VABI sceGnmCreateWorkloadStream(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmCreateWorkloadStream(std::uint64_t name, std::uint32_t* stream) {
+    if (name == 0 || !stream) return 3;
+    *stream = 1;
     return 0;
 }
 
@@ -340,9 +373,9 @@ int APS5_VABI sceGnmDriverTraceInProgress(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmEndWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmEndWorkload(std::uint64_t workload) {
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmFindResources(void) {
@@ -378,8 +411,7 @@ int APS5_VABI sceGnmGetGpuBlockStatus(void) {
 }
 
 int APS5_VABI sceGnmGetGpuCoreClockFrequency(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 911000000;
 }
 
 int APS5_VABI sceGnmGetGpuInfoStatus(void) {
@@ -398,8 +430,7 @@ int APS5_VABI sceGnmGetNumTcaUnits(void) {
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 0x800000;
 }
 
 int APS5_VABI sceGnmGetOwnerName(void) {
@@ -578,23 +609,65 @@ int APS5_VABI sceGnmSdmaOpen(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmSetCsShaderWithModifier(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
+    if (!cmdbuf || size <= 0x18 || !regs || (modifier & 0xfffffc3fu) != 0 || regs[1] != 0) return CommandFailed;
+    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfffffc3fu) | modifier;
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x20c, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {0x212, rsrc1, regs[3]});
+    at = EmitPacket(at, OpSetShReg, {0x207, regs[4], regs[5], regs[6]});
+    Nop(at, 11);
     return 0;
 }
 
-int APS5_VABI sceGnmSetEmbeddedPsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (shaderId > 1) return Failure;
+    const bool black = shaderId == 0;
+    const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, AddressLo(code), AddressHi(code)});
+    at = EmitPacket(at, OpSetShReg, {10, black ? 0xc0000u : 0x2000u, black ? 4u : 0u});
+    at = EmitPacket(at, OpSetContextReg, {0x1c4, 0, black ? 4u : 2u});
+    at = EmitPacket(at, OpSetContextReg, {0x1b3, 2, 2});
+    at = EmitPacket(at, OpSetContextReg, {0x1b6, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1b8, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x203, 0x10});
+    at = EmitPacket(at, OpSetContextReg, {0x8f, black ? 0xfu : 3u});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
     return 0;
 }
 
-int APS5_VABI sceGnmSetEmbeddedVsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (shaderId != 0) return Failure;
+    const auto* code = GnmNeo::FullscreenVs.data();
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
+    at = EmitPacket(at, OpSetShReg, {0x4a, 0xc0000, 4});
+    at = EmitPacket(at, OpSetContextReg, {0x207, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1b1, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1c3, 4});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
     return 0;
 }
 
-int APS5_VABI sceGnmSetPsShader350(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetPsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    if (!cmdbuf || size <= 0x27) return CommandFailed;
+    if (!regs) {
+        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
+        at = EmitPacket(at, OpSetContextReg, {0x203, 0});
+        at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
+        Nop(at, 0x1d);
+        return 0;
+    }
+    if (regs[1] != 0) return CommandFailed;
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {10, regs[2], regs[3]});
+    at = EmitPacket(at, OpSetContextReg, {0x1c4, regs[4], regs[5]});
+    at = EmitPacket(at, OpSetContextReg, {0x1b3, regs[6], regs[7]});
+    at = EmitPacket(at, OpSetContextReg, {0x1b6, regs[8]});
+    at = EmitPacket(at, OpSetContextReg, {0x1b8, regs[9]});
+    at = EmitPacket(at, OpSetContextReg, {0x203, regs[10]});
+    at = EmitPacket(at, OpSetContextReg, {0x8f, regs[11]});
+    Nop(at, 11);
     return 0;
 }
 
@@ -659,28 +732,64 @@ int APS5_VABI sceGnmUnregisterResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmUpdateGsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    if (!cmdbuf || size < 0x1d || !regs || regs[1] != 0) return CommandFailed;
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x88, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {0x8a, regs[2], regs[3]});
+    at = EmitPacket(at, OpNop, {0xc01e02e5u, regs[4]});
+    at = EmitPacket(at, OpNop, {0xc01e029bu, regs[5]});
+    at = EmitPacket(at, OpNop, {0xc01e02e4u, regs[6]});
+    Nop(at, 11);
     return 0;
 }
 
-int APS5_VABI sceGnmUpdateHsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
+    if (!cmdbuf || size <= 0x1c || !regs || regs[1] != 0) return CommandFailed;
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x108, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {0x10a, regs[2], regs[3]});
+    at = EmitPacket(at, OpNop, {0xc01e0286u, regs[5], regs[6]});
+    at = EmitPacket(at, OpNop, {0xc01e02dbu, regs[4]});
+    at = EmitPacket(at, OpNop, {0xc01e02d6u, lsHsConfig});
+    Nop(at, 11);
     return 0;
 }
 
-int APS5_VABI sceGnmUpdatePsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUpdatePsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    if (!cmdbuf || size <= 0x27) return CommandFailed;
+    if (!regs) {
+        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
+        at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
+        Nop(at, 0x20);
+        return 0;
+    }
+    if (regs[1] != 0) return CommandFailed;
+    Nop(UpdatePsRegisters(cmdbuf, regs), 11);
     return 0;
 }
 
-int APS5_VABI sceGnmUpdatePsShader350(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUpdatePsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
+    if (!cmdbuf || size <= 0x27) return CommandFailed;
+    if (!regs) {
+        auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, 0, 0});
+        at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
+        at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
+        Nop(at, 0x1d);
+        return 0;
+    }
+    if (regs[1] != 0) return CommandFailed;
+    Nop(UpdatePsRegisters(cmdbuf, regs), 11);
     return 0;
 }
 
-int APS5_VABI sceGnmUpdateVsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUpdateVsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
+    if (!cmdbuf || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) != 0 || regs[1] != 0) return CommandFailed;
+    const std::uint32_t rsrc1 = modifier == 0 ? regs[2] : (regs[2] & 0xfcfffc3fu) | modifier;
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, regs[0], 0});
+    at = EmitPacket(at, OpSetShReg, {0x4a, rsrc1, regs[3]});
+    at = EmitPacket(at, OpNop, {0xc01e0207u, regs[6]});
+    at = EmitPacket(at, OpNop, {0xc01e01b1u, regs[4]});
+    at = EmitPacket(at, OpNop, {0xc01e01c3u, regs[5]});
+    Nop(at, 11);
     return 0;
 }
 

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -11,17 +14,6 @@
 #include <source_location>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
-
-extern "C" {
-int APS5_VABI sceNetInit_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetSocketClose(int);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockopt(int, int, int, void*, std::uint32_t*);
-int* APS5_VABI sceNetErrnoLoc();
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {

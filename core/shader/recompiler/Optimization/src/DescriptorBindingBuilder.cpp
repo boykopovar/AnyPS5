@@ -139,6 +139,7 @@ std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_
 
 std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
+    result.reserve(resources.size() * 4u);
     std::uint32_t dwordCount = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
         const std::uint32_t r = resources[i];
@@ -567,6 +568,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState) : std::vector<std::uint32_t>{};
     allocation.shaderDataUserWords.clear();
     if (needsShaderData) {
+        allocation.shaderDataUserWords.reserve(layout.userDataRegisters.size());
         for (const auto reg : layout.userDataRegisters) allocation.shaderDataUserWords.push_back(reg - userDataBase);
     }
     std::vector<DescriptorBinding> bindings;
@@ -613,7 +615,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
-                physical.imageAtomic.push_back(false);
+                physical.imageAtomic.push_back(element.atomic);
                 std::uint32_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];

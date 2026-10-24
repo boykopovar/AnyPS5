@@ -1,3 +1,4 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <algorithm>
@@ -1359,15 +1360,15 @@ int APS5_VABI sceCesEucJpToUtf8(const void* profile, const uint8_t* eucBuffer, u
     return 0;
 }
 
-int APS5_VABI sceCesEucKrToUtf8(void* profile, uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+int APS5_VABI sceCesEucKrToUtf8(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
     return mbcsToUtf8(isEucKr(profile), profile, eucBuffer, eucMax, eucLength, utf8Buffer, utf8Max, utf8Length);
 }
 
-int APS5_VABI sceCesBig5ToUtf8(void* profile, uint8_t* big5Buffer, uint32_t big5Max, uint32_t* big5Length, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+int APS5_VABI sceCesBig5ToUtf8(const void* profile, const uint8_t* big5Buffer, uint32_t big5Max, uint32_t* big5Length, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
     return mbcsToUtf8(isBig5(profile), profile, big5Buffer, big5Max, big5Length, utf8Buffer, utf8Max, utf8Length);
 }
 
-int APS5_VABI sceCesUhcToUtf8(void* profile, uint8_t* uhcBuffer, uint32_t uhcMax, uint32_t* uhcLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+int APS5_VABI sceCesUhcToUtf8(const void* profile, const uint8_t* uhcBuffer, uint32_t uhcMax, uint32_t* uhcLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
     return mbcsToUtf8(isUhc(profile), profile, uhcBuffer, uhcMax, uhcLength, utf8Buffer, utf8Max, utf8Length);
 }
 
