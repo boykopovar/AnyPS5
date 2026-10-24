@@ -840,6 +840,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAcm>")
     endif()
 
+    add_test_executable(guest_kernel_sys_rtld_printf_tests tests/GuestKernelSysRtldPrintf.cpp)
+    target_include_directories(guest_kernel_sys_rtld_printf_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_rtld_printf_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_rtld_printf_tests)
+    add_test(NAME guest_kernel_sys_rtld_printf COMMAND guest_kernel_sys_rtld_printf_tests)
+    set_tests_properties(guest_kernel_sys_rtld_printf PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_rtld_printf PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_voice_chat_tests tests/GuestVoiceChat.cpp)
     target_include_directories(guest_voice_chat_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_voice_chat_tests PRIVATE libSceVoiceChat libc)
