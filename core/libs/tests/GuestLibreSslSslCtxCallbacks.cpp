@@ -31,6 +31,7 @@ void APS5_VABI SSL_CTX_set_info_callback_nid_postfix(TestCtx*, void*);
 void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(TestCtx*, void*);
 void APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(TestCtx*, void*, void*);
 void APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(TestCtx*, void*);
+void APS5_VABI SSL_CTX_set_next_proto_select_cb_nid_postfix(TestCtx*, void*, void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -94,10 +95,25 @@ static void TestClientCertCallback() {
     Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
 }
 
+static void TestNextProtoSelectCallback() {
+    TestCallbacks callbacks {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_set_next_proto_select_cb_nid_postfix(nullptr, &Marker[0], &Marker[1]); });
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, &Marker[0], &Marker[1]); });
+    ctx.internal = &callbacks;
+    SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, &Marker[0], &Marker[1]);
+    Require(OnlySlots(callbacks, 48, &Marker[0], 49, &Marker[1]));
+    SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, nullptr, &Marker[2]);
+    Require(OnlySlots(callbacks, 48, nullptr, 49, &Marker[2]));
+    SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, nullptr, nullptr);
+    Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
+}
+
 int main() {
     TestInfoCallback();
     TestNewSessionCallback();
     TestCertVerifyCallback();
     TestClientCertCallback();
+    TestNextProtoSelectCallback();
     return 0;
 }
