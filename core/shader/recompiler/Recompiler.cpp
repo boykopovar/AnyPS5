@@ -239,7 +239,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
     translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
-    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
+    const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
+    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst;
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
@@ -316,7 +317,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
         program = translator.Translate(decoded, cfg, translateOptions);
-        program.Metadata().barycentricEmulation = true;
+        program.Metadata().barycentricEmulation = !hostInterpolationFirst;
         simplify();
     }
 
