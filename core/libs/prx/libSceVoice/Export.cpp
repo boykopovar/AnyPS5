@@ -26,6 +26,9 @@ constexpr auto NotInitialized = static_cast<std::int32_t>(0x804e0801u);
 constexpr auto InvalidPort = static_cast<std::int32_t>(0x804e0804u);
 constexpr auto InvalidArgument = static_cast<std::int32_t>(0x804e0805u);
 constexpr auto PortNotFound = static_cast<std::int32_t>(0x804e0807u);
+constexpr std::int32_t ThreadPriorityHighest = 256;
+constexpr std::int32_t ThreadPriorityLowest = 767;
+constexpr std::uint64_t ThreadAffinityAll = 0x1fff;
 
 struct Port {
     std::int32_t type;
@@ -55,6 +58,10 @@ Voice& State() {
 
 [[noreturn]] void Fail(const char* function, const std::string& why) {
     throw std::logic_error(std::string(function) + ": " + why);
+}
+
+bool IsThreadSetting(std::int32_t priority, std::uint64_t affinity) {
+    return priority >= ThreadPriorityHighest && priority <= ThreadPriorityLowest && affinity != 0 && (affinity & ~ThreadAffinityAll) == 0;
 }
 
 Port& RequirePort(Voice& voice, std::uint32_t id, const char* function) {
@@ -106,7 +113,10 @@ int APS5_VABI sceVoiceSetThreadsParams(const VoiceThreadsParams* params) {
     if (voice.started) return static_cast<std::int32_t>(0x804e080bu);
     if (params->mode == 0) return 0;
     if (params->mode != 1) return InvalidArgument;
-    Fail(__func__, "worker priority and affinity are not implemented");
+    if (!IsThreadSetting(params->firstPriority, params->firstAffinity) || !IsThreadSetting(params->secondPriority, params->secondAffinity) || !IsThreadSetting(params->thirdPriority, params->thirdAffinity)) {
+        Fail(__func__, "the result for a priority outside 256-767 or an affinity mask outside 0x1fff is unknown");
+    }
+    return 0;
 }
 
 int APS5_VABI sceVoiceStart(const VoiceStartParam* param) {
@@ -417,9 +427,8 @@ int APS5_VABI sceVoiceDisableChat(void) {
     Fail(__func__, "audio chat backend is not implemented");
 }
 
-int APS5_VABI sceVoiceInitHQ(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceInitHQ(const VoiceInitParam* param, std::int32_t version) {
+    return sceVoiceInit(param, version);
 }
 
 int APS5_VABI sceVoiceGetMemorySize(void) {
@@ -447,9 +456,8 @@ int APS5_VABI sceVoiceVADPVTAdjustment(void) {
     return 0;
 }
 
-int APS5_VABI sceVoiceVADSetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceVADSetVersion(std::int32_t version) {
+    return version == 0 || version == 1 ? 0 : InvalidArgument;
 }
 
 int APS5_VABI sceVoiceSetMuteFlagAll(bool muted) {

@@ -163,6 +163,14 @@ int GetConnection(std::int32_t handle, bool* isConnected) {
     return KEYBOARD_OK;
 }
 
+int DisconnectAll() {
+    KeyboardInputEvent event{};
+    event.connectionChange = true;
+    event.connected = false;
+    Publish(event);
+    return KEYBOARD_OK;
+}
+
 int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledState, std::uint32_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData) {
     {
         std::lock_guard lock(keyboardMutex);

@@ -209,7 +209,7 @@ int main() {
     rgba.image_pitch = pitch;
     rgba.compression_ratio = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(info.height == 16);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
@@ -225,7 +225,7 @@ int main() {
     JpegEncEncodeParam bgra = rgba;
     bgra.pixel_format = 1;
     info = {};
-    Require(sceJpegEncEncode(handle, &bgra, &info) == 0);
+    Require(sceJpegEncEncode(handle, &bgra, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
 
@@ -242,7 +242,7 @@ int main() {
     yuv.image_pitch = 16 * 2;
     yuv.pixel_format = 10;
     info = {};
-    Require(sceJpegEncEncode(handle, &yuv, &info) == 0);
+    Require(sceJpegEncEncode(handle, &yuv, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(AverageError(std::vector<std::uint8_t>(16 * 16 * 3, 100), DecodeOutput(info)) < 3);
 
     static unsigned char gray[16 * 16];
@@ -257,7 +257,7 @@ int main() {
     y8.color_space = 2;
     y8.sampling_type = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &y8, &info) == 0);
+    Require(sceJpegEncEncode(handle, &y8, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{1, std::uint8_t{0x11}});
     const auto decodedGray = DecodeOutput(info, 1);
     Require(AverageError(std::vector<std::uint8_t>(gray, gray + sizeof(gray)), decodedGray) < 6);
@@ -265,11 +265,11 @@ int main() {
     rgba.sampling_type = 1;
     rgba.compression_ratio = 0;
     info = {};
-    Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x21}});
 
     std::memset(jpeg, 0, sizeof(jpeg));
-    Require(sceJpegEncEncode(handle, &rgba, nullptr) == 0);
+    Require(sceJpegEncEncode(handle, &rgba, nullptr) == static_cast<std::int32_t>(info.size));
     Require(jpeg[0] == 0xFF && jpeg[1] == 0xD8);
 
     JpegEncEncodeParam tooSmall = rgba;
@@ -303,7 +303,7 @@ int main() {
         p.jpeg_size = sizeof(restarted);
         p.restart_interval = restart;
         JpegEncOutputInfo out{};
-        Require(sceJpegEncEncode(handle, &p, &out) == 0);
+        Require(sceJpegEncEncode(handle, &p, &out) == static_cast<std::int32_t>(out.size));
         Require(IsJpeg(restarted, out.size) && out.height == wideHeight);
         const auto decoded = Decoder::Jpeg::Decode({restarted, out.size});
         Require(decoded.has_value() && decoded->width == wideWidth && decoded->height == wideHeight);

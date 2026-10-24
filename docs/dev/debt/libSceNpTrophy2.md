@@ -2,16 +2,15 @@
 
 ### Silent stubs
 
+- [sceNpTrophy2GetRewardIcon](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - zeroes size and returns `SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND` (-2141898479): the `(int context, int handle, int reward_id, void* buffer, size_t* size)` signature and two-stage query pattern follow the bundled `Media/Plugins/PSNCore.prx` of PPSA06888 and SharpProspero; returning -2141898479 (0x80553911) when icons are unavailable is inferred from sibling calls (sceNpTrophy2GetGameIcon, sceNpTrophy2GetGroupIcon, sceNpTrophy2GetTrophyIcon) in KytyPS5 (libTrophy.cpp:464/483/502)
 - [libSceNpTrophy2](../../../core/libs/prx/libSceNpTrophy2/src/GameInfo.cpp): `sceNpTrophy2RegisterUnlockCallback` accepts a callback that is never called, as the callback's signature and when the console calls it are not known, `sceNpTrophy2UnregisterUnlockCallback` only returns success, and `sceNpTrophy2ShowTrophyList` returns success without showing a list (there is no system trophy UI; seen on PPSA15552).
 
 ### Unknown function info
 
 - [Query structures](../../../core/libs/prx/libSceNpTrophy2/include/NpTrophy2Types.hpp): a progress value is a 16-byte `{int32 type, 4 reserved bytes, uint64 value}` and the game, group and trophy structures are 152, 24, 152, 32, 1312 and 32 bytes, as [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/9e41d8320a2774b303fbad344c2347e8d0292e83/src/libs/libTrophy.cpp) asserts; no other public source confirms the layout. Progress type 1 marks a progressive trophy's target and progress, as in KytyPS5. Trophies without a `groupId` belong to group -1, KytyPS5's base game group.
 
-- [sceNpTrophy2GetRewardIcon](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) takes `(int context, int handle, int reward_id, void* buffer, size_t* size)`, from the call sites in the bundled `Media/Plugins/PSNCore.prx` of PPSA06888, the same shape as `sceNpTrophy2GetTrophyIcon`. The title calls it twice: first with a null buffer to read the size, then with a buffer of that size allocated with `malloc`. The meaning of the third argument is unverified, and the reward icon data is unknown, so every call throws
-
-
 - [libSceNpTrophy2 pending exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - 23 named callable exports were identified in the PS5 3.20 export table and cross-checked against firmware 13.60. Signatures and behavior remain unverified; declarations use the unknown-signature convention and throw through `NotImplemented_nid_no_patch`. Evidence: [3.20 export list](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpTrophy2.c).
+
 ### Functional
 
 - [Trophy queries](../../../core/libs/prx/libSceNpTrophy2/src/TrophyInfo.cpp) - not confirmed on the console: `sceNpTrophy2GetTrophyInfo` of a trophy id that is not in the title's [trophy data](../../../core/libs/prx/libSceNpTrophy2/src/TrophyPackage.cpp) (`sce_sys/trophy2/trophyNN.ucp`) returns `0x8055390A` (KytyPS5's `NP_TROPHY2_ERROR_INVALID_TROPHY_ID`) and writes nothing; a context not created or destroyed reports placeholders and no unlocks and returns success; hidden trophies report their names and descriptions before the unlock; `progress_percentage` weighs gold 6, silver 2 and bronze 1 and leaves the platinum out, as KytyPS5 does (the ratio of the published PSN trophy points). A group that is not in the data throws. Without the file, or when it is malformed, the queries report the old placeholders and `sceNpTrophy2GetTrophyInfoArray` lists only trophy 0. Icons are not read. Unlocks come from the [trophy store](../../../core/libs/prx/libSceNpTrophy2/src/TrophyStore.cpp).

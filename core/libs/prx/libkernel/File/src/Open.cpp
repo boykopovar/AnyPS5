@@ -115,11 +115,7 @@ static std::filesystem::path NativeMetadataPath(const std::filesystem::path& pat
                                             : std::filesystem::path(L"\\\\?\\" + native);
 }
 static bool NativeSymbolicLinkLoop(const std::filesystem::path& path) {
-    const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_CANT_RESOLVE_FILENAME;
-    CloseHandle(handle);
-    return false;
+    return File::WindowsSymbolicLinkLoop(path);
 }
 static int MapFlags(int sceFlags) {
     int f = 0;
@@ -298,7 +294,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 }
 
 int APS5_VABI sceKernelClose(int d) {
-    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EBADF;
+    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
@@ -447,6 +443,9 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     std::error_code error;
     if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) return SceErrorFromErrno(GuestEperm);
     if (NativeUnlink(native) != 0) {
+#ifdef _WIN32
+        if (NativeSymbolicLinkLoop(native.parent_path())) return SCE_KERNEL_ERROR_ELOOP;
+#endif
         return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno);
     }
     RecordWrittenPath_nid_no_patch(native);

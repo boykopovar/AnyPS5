@@ -119,6 +119,10 @@ int APS5_VABI fegettrapenable_nid_postfix() {
     return ~control & Exceptions;
 }
 
+int APS5_VABI fegetexcept_nid_postfix() {
+    return fegettrapenable_nid_postfix();
+}
+
 int APS5_VABI fesettrapenable_nid_postfix(int exceptions) {
     const auto mask = static_cast<std::uint16_t>(exceptions);
     if (mask > Exceptions) return 1;

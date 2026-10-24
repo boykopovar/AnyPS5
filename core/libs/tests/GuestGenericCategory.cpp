@@ -9,14 +9,19 @@
 #include <stdexcept>
 
 struct Category { void* const* vtable; };
-struct ErrorCode { int value; const Category* category; };
+struct ErrorCode { int reserved; int value; const Category* category; };
 using Message = GuestLocale::String* (APS5_VABI *)(GuestLocale::String*, const Category*, int);
 using Name = const char* (APS5_VABI *)(const Category*);
 using Condition = ErrorCode (APS5_VABI *)(const Category*, int);
+using EquivalentCondition = bool (APS5_VABI *)(const Category*, int, const ErrorCode*);
+using EquivalentCode = bool (APS5_VABI *)(const Category*, const ErrorCode*, int);
+using Delete = void (APS5_VABI *)(const Category*);
+struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 
 extern "C" {
 const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value);
 const Category* APS5_VABI _ZSt16generic_categoryv_nid_postfix();
+const Category* APS5_VABI _ZSt15system_categoryv_nid_postfix();
 GuestLocale::String* APS5_VABI _ZNKSt23_Generic_error_category7messageEi_nid_postfix(
     GuestLocale::String* result, const Category* self, int value);
 int* APS5_VABI __error_nid_postfix();
@@ -48,6 +53,36 @@ static void CheckMessage(Message message, const Category* category, int value, c
     if (length > 15) _ZdlPv_nid_postfix(guarded.result.pointer);
 }
 
+static void CheckSystemCategory(const Category* generic) {
+    const Category* system = _ZSt15system_categoryv_nid_postfix();
+    REQUIRE(system && system != generic && system == _ZSt15system_categoryv_nid_postfix());
+    const auto* type = static_cast<const TypeRecord*>(system->vtable[-1]);
+    REQUIRE(std::strcmp(type->name, "St22_System_error_category") == 0);
+    REQUIRE(type->base && std::strcmp(type->base->name, "St14error_category") == 0);
+    REQUIRE(std::strcmp(reinterpret_cast<Name>(system->vtable[2])(system), "system") == 0);
+    const auto condition = reinterpret_cast<Condition>(system->vtable[4]);
+    const ErrorCode known = condition(system, 2);
+    std::uint64_t head = 0;
+    std::memcpy(&head, &known, sizeof(head));
+    REQUIRE(head == std::uint64_t{2} << 32 && known.value == 2 && known.category == generic);
+    const ErrorCode unknown = condition(system, 44);
+    REQUIRE(unknown.reserved == 0 && unknown.value == 44 && unknown.category == system);
+    const auto equivalentCondition = reinterpret_cast<EquivalentCondition>(system->vtable[5]);
+    REQUIRE(equivalentCondition(system, 2, &known));
+    const ErrorCode sameCategory {0, 2, system};
+    REQUIRE(!equivalentCondition(system, 2, &sameCategory));
+    REQUIRE(equivalentCondition(system, 44, &unknown));
+    const auto equivalentCode = reinterpret_cast<EquivalentCode>(system->vtable[6]);
+    REQUIRE(equivalentCode(system, &sameCategory, 2) && !equivalentCode(system, &known, 2));
+    const auto message = reinterpret_cast<Message>(system->vtable[3]);
+    CheckMessage(message, system, 2, "no such file or directory");
+    CheckMessage(message, system, 44, "unknown error");
+    bool rejected = false;
+    try { reinterpret_cast<Delete>(system->vtable[1])(system); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+}
+
 int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
@@ -56,7 +91,10 @@ int main() {
     REQUIRE(std::strcmp(reinterpret_cast<Name>(category->vtable[2])(category), "generic") == 0);
     const auto message = reinterpret_cast<Message>(category->vtable[3]);
     const auto condition = reinterpret_cast<Condition>(category->vtable[4])(category, 35);
-    REQUIRE(condition.value == 35 && condition.category == category);
+    REQUIRE(condition.reserved == 0 && condition.value == 35 && condition.category == category);
+    const auto equivalent = reinterpret_cast<EquivalentCondition>(category->vtable[5]);
+    REQUIRE(equivalent(category, 35, &condition));
+    CheckSystemCategory(category);
 
     struct Expected { int value; const char* text; };
     const Expected expected[] {
@@ -95,5 +133,5 @@ int main() {
     try { message(nullptr, category, 22); }
     catch (const std::invalid_argument&) { rejected = true; }
     REQUIRE(rejected);
-    std::puts("guest generic category, FreeBSD error map and message ownership: PASS");
+    std::puts("guest generic and system categories, FreeBSD error map and message ownership: PASS");
 }

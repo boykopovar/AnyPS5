@@ -16,6 +16,7 @@ int APS5_VABI vfwprintf_nid_postfix(FileStream*, const char16_t*, void*);
 int APS5_VABI fwprintf_nid_postfix(FileStream*, const char16_t*, ...);
 int APS5_VABI vswscanf_nid_postfix(const char16_t*, const char16_t*, void*);
 int APS5_VABI vswscanf_s_nid_postfix(const char16_t*, const char16_t*, void*);
+void APS5_VABI _Vacopy_nid_postfix(void*, const void*);
 }
 
 #ifdef _WIN32
@@ -67,6 +68,36 @@ static int APS5_VABI ScanWideSized(const char16_t* input, const char16_t* format
     return result;
 }
 
+static long APS5_VABI SumThroughCopy(int count, ...) {
+    APS5_VA_BEGIN(count);
+    unsigned char before[24];
+    std::memcpy(before, &args, sizeof(before));
+#ifdef _WIN32
+    __builtin_sysv_va_list copy;
+#else
+    std::va_list copy;
+#endif
+    _Vacopy_nid_postfix(&copy, &args);
+    Require(std::memcmp(&copy, &args, sizeof(before)) == 0, "_Vacopy copies all 24 bytes");
+    long sum = 0;
+    for (int index = 0; index < count; ++index) sum += __builtin_va_arg(copy, long) * (index + 1);
+    Require(std::memcmp(&args, before, sizeof(before)) == 0, "_Vacopy leaves the source untouched");
+    for (int index = 0; index < count; ++index) sum -= __builtin_va_arg(args, long);
+    APS5_VA_END();
+    return sum;
+}
+
+static void CheckVacopy() {
+    long expected = 0;
+    for (long index = 1; index <= 9; ++index) expected += index * 100 * index - index * 100;
+    Require(SumThroughCopy(9, 100L, 200L, 300L, 400L, 500L, 600L, 700L, 800L, 900L) == expected, "_Vacopy copy reads every argument");
+    unsigned char overlap[32];
+    for (int index = 0; index < 32; ++index) overlap[index] = static_cast<unsigned char>(index);
+    _Vacopy_nid_postfix(overlap + 8, overlap);
+    const unsigned char shifted[32] = {0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+    Require(std::memcmp(overlap, shifted, sizeof(overlap)) == 0, "_Vacopy copies the overflow area before the offsets");
+}
+
 static std::string Contents(FileStream& stream) {
     std::fflush(stream.GetHandle());
     std::rewind(stream.GetHandle());
@@ -110,5 +141,6 @@ int main() {
     char16_t letters[4]{};
     Require(ScanWideSized(u"abcdef", u"%3ls", letters, 4u) == 1 && std::u16string(letters) == u"abc", "vswscanf_s %ls with a size");
     Require(ScanWideSized(u"abcdef", u"%ls", letters, 4u) == 0 && letters[0] == 0, "vswscanf_s rejects a too small buffer");
+    CheckVacopy();
     return 0;
 }

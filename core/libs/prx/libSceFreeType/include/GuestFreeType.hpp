@@ -18,6 +18,13 @@ struct GuestVector {
     std::int64_t y;
 };
 
+struct GuestMatrix {
+    std::int64_t xx;
+    std::int64_t xy;
+    std::int64_t yx;
+    std::int64_t yy;
+};
+
 struct GuestBBox {
     std::int64_t xMin;
     std::int64_t yMin;
@@ -65,6 +72,14 @@ struct GuestSizeRec {
     GuestGeneric generic;
     GuestSizeMetrics metrics;
     void* internal;
+};
+
+struct GuestSizeRequestRec {
+    std::uint32_t type;
+    std::int64_t width;
+    std::int64_t height;
+    std::uint32_t horiResolution;
+    std::uint32_t vertResolution;
 };
 
 struct GuestGlyphMetrics {
@@ -158,12 +173,15 @@ struct GuestFaceRec {
     void* internal;
 };
 
+static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);
 static_assert(sizeof(GuestSfntName) == 24 && offsetof(GuestSfntName, string) == 8 && offsetof(GuestSfntName, string_len) == 16);
 static_assert(sizeof(GuestSizeMetrics) == 56 && offsetof(GuestSizeMetrics, x_scale) == 8);
 static_assert(sizeof(GuestSizeRec) == 88 && offsetof(GuestSizeRec, metrics) == 24);
+static_assert(sizeof(GuestSizeRequestRec) == 32 && offsetof(GuestSizeRequestRec, width) == 8 && offsetof(GuestSizeRequestRec, height) == 16);
+static_assert(offsetof(GuestSizeRequestRec, horiResolution) == 24 && offsetof(GuestSizeRequestRec, vertResolution) == 28);
 static_assert(sizeof(GuestBitmap) == 40 && offsetof(GuestBitmap, buffer) == 16 && offsetof(GuestBitmap, palette) == 32);
 static_assert(sizeof(GuestOutline) == 40 && offsetof(GuestOutline, points) == 8 && offsetof(GuestOutline, flags) == 32);
 static_assert(offsetof(GuestGlyphSlotRec, glyph_index) == 0x18 && offsetof(GuestGlyphSlotRec, metrics) == 0x30);
