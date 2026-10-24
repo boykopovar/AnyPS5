@@ -172,6 +172,34 @@ static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
 }
 
+template<typename TBody>
+static std::string CaptureStdout(TBody body) {
+    std::fflush(stdout);
+    std::FILE* capture = std::tmpfile();
+    Require(capture != nullptr);
+#ifdef _WIN32
+    const int saved = _dup(_fileno(stdout));
+    Require(saved >= 0 && _dup2(_fileno(capture), _fileno(stdout)) == 0);
+#else
+    const int saved = dup(fileno(stdout));
+    Require(saved >= 0 && dup2(fileno(capture), fileno(stdout)) >= 0);
+#endif
+    body();
+    std::fflush(stdout);
+#ifdef _WIN32
+    Require(_dup2(saved, _fileno(stdout)) == 0);
+    _close(saved);
+#else
+    Require(dup2(saved, fileno(stdout)) >= 0);
+    close(saved);
+#endif
+    std::string text;
+    std::rewind(capture);
+    for (int character = std::fgetc(capture); character != EOF; character = std::fgetc(capture)) text.push_back(static_cast<char>(character));
+    std::fclose(capture);
+    return text;
+}
+
 static void CheckSocketHostErrors() {
     Require(Failed(sceNetSocket(nullptr, 2, 1, 17), 43));
 }
@@ -1123,14 +1151,17 @@ static void CheckSystemTime() {
 }
 
 static void CheckUsleep() {
-    Require(sceNetUsleep(0) == 0);
+    Require(CaptureStdout([] { Require(sceNetUsleep(0) == 0); }).empty());
     const auto start = std::chrono::steady_clock::now();
     Require(sceNetUsleep(2000) == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::microseconds(2000));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(-1), 22));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    const std::string printed = CaptureStdout([] {
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(-1), 22));
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    });
+    Require(printed == "[LIBNET] usleep -1\n[LIBNET] usleep -2147483648\n");
 }
 
 static void CheckEpollIdent() {

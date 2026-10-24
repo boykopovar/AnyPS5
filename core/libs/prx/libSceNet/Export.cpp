@@ -2615,7 +2615,11 @@ int APS5_VABI sceNetThreadJoin(void* thread) {
 
 int APS5_VABI sceNetUsleep(int microseconds) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
-    if (microseconds < 0) return fail(NET_EINVAL);
+    if (microseconds < 0) {
+        std::fprintf(stdout, "[LIBNET] usleep %d\n", microseconds);
+        std::fflush(stdout);
+        return fail(NET_EINVAL);
+    }
     const int result = sceKernelUsleep_nid_postfix(static_cast<KernelUseconds>(microseconds));
     if (result < 0) set_errno((result & 0xFF00) == 0x100 ? result & 0xFF : 205);
     return result;
