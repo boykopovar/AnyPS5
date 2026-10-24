@@ -17,6 +17,7 @@ std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t, std::int64_t);
 std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector*);
 void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector*, std::int64_t);
 void APS5_VABI FT_Vector_Polarize_nid_postfix(const GuestVector*, std::int64_t*, std::int64_t*);
+void APS5_VABI FT_Vector_From_Polar_nid_postfix(GuestVector*, std::int64_t, std::int64_t);
 }
 
 static void Check(bool value, int line) {
@@ -83,9 +84,24 @@ static void TestPolarize() {
     Require(length == 3 && angle == 5);
 }
 
+static void TestFromPolar() {
+    const std::int64_t angles[] = {0, 1, -1, 0x10000, 45 << 16, 90 << 16, 180 << 16, 270 << 16, 360 << 16, 725 << 16, -90 << 16};
+    for (const std::int64_t length : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
+        for (const std::int64_t angle : angles) {
+            GuestVector guest{11, 13};
+            FT_Vector native{11, 13};
+            FT_Vector_From_Polar_nid_postfix(&guest, length, angle);
+            FT_Vector_From_Polar(&native, static_cast<FT_Fixed>(length), static_cast<FT_Angle>(angle));
+            Require(guest.x == native.x && guest.y == native.y);
+        }
+    }
+    FT_Vector_From_Polar_nid_postfix(nullptr, 64, 0);
+}
+
 int main() {
     TestAtan2();
     TestLength();
     TestRotate();
     TestPolarize();
+    TestFromPolar();
 }
