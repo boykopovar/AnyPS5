@@ -1788,12 +1788,26 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
             hashes[static_cast<std::size_t>((cursor - first) / page)] = HashPage(reinterpret_cast<const std::byte*>(cursor));
         }
     }
-    std::erase_if(spans, [&](const auto& span) { return !walkWrites(tracker, span.first, span.second, StampKind::Cpu, true); });
+    const auto saveBytes = [&](std::uint64_t begin, std::uint64_t end) {
+        lock.unlock();
+        beforeUnwatch(begin, static_cast<std::size_t>(end - begin));
+        lock.lock();
+    };
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> leaving;
+    std::erase_if(spans, [&](const auto& span) {
+        if (walkWrites(tracker, span.first, span.second, StampKind::Cpu, true)) return false;
+        leaving.push_back(span);
+        return true;
+    });
+    for (const auto& [begin, end] : leaving) saveBytes(begin, end);
     if (!runImport()) return false;
     const WindowCopy window{first, hashes};
     auto unwatchedFrom = first;
     for (const auto& [begin, end] : spans) {
-        if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) continue;
+        if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) {
+            saveBytes(begin, end);
+            continue;
+        }
         if (unwatchedFrom < begin) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(begin - unwatchedFrom));
         unwatchedFrom = end;
     }
