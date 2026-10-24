@@ -40,6 +40,13 @@ constexpr std::uint32_t SampleV8V2S0S8 = 0x00400802u;
 constexpr std::uint32_t AddV8V1V8 = 0x4a101101u;
 constexpr std::uint32_t BufferStoreDword = 0xe0700000u;
 constexpr std::uint32_t StoreV8WithS12 = 0x80030800u;
+constexpr std::uint32_t AndM0GroupXOne = 0x877c8104u;
+constexpr std::uint32_t MovreldV2V0 = 0x7e048500u;
+constexpr std::uint32_t MoveS16Two = 0xbe900382u;
+constexpr std::uint32_t BranchForwardTwo = 0xbf820002u;
+constexpr std::uint32_t SubtractS16One = 0x80908110u;
+constexpr std::uint32_t CompareS16NotZero = 0xbf078010u;
+constexpr std::uint32_t BranchBackFourOnScc = 0xbf85fffcu;
 
 struct Shape {
     std::size_t functionArrays = 0;
@@ -135,6 +142,57 @@ std::size_t WindowStores(std::span<const std::uint32_t> words) {
         cursor += count;
     }
     return stores;
+}
+
+constexpr std::array<std::uint32_t, 34> WindowInit{
+    0x34020086, 0x34060088, 0x4a140680, 0x4a160681, 0x4a180682, 0x4a1a0683, 0x4a1c0684, 0x4a1e0685,
+    0x4a200686, 0x4a220687, 0x4a240688, 0x4a260689, 0x4a28068a, 0x4a2a068b, 0x4a2c068c, 0x4a2e068d,
+    0x4a30068e, 0x4a32068f, 0x4a340690, 0x4a360691, 0x4a380692, 0x4a3a0693, 0x4a3c0694, 0x4a3e0695,
+    0x4a400696, 0x4a420697, 0x4a440698, 0x4a460699, 0x4a48069a, 0x4a4a069b, 0x4a4c069c, 0x4a4e069d,
+    0x4a50069e, 0x4a52069f,
+};
+constexpr std::uint32_t MoveM0BoundedS8 = 0x877c8308u;
+constexpr std::uint32_t MoveM0S9 = 0xbefc0309u;
+constexpr std::uint32_t MovrelsV4V10 = 0x7e08870au;
+
+std::vector<std::uint32_t> NarrowingProgram(std::uint32_t unbounded) {
+    std::vector<std::uint32_t> code(WindowInit.begin(), WindowInit.end());
+    code.push_back(MoveM0BoundedS8);
+    code.push_back(MovrelsV4V10);
+    code.push_back(0xe0701ffcu);
+    code.push_back(0x80010401u);
+    code.push_back(MoveM0S9);
+    for (std::uint32_t read = 0; read < unbounded; ++read) {
+        const std::uint32_t destination = 42u + read % 100u;
+        code.push_back((MovrelsV4V10 & ~(0xffu << 17u)) | (destination << 17u));
+        code.push_back(0xe0701000u | ((read * 4u) & 0xfffu));
+        code.push_back(0x80010001u | destination << 8u);
+    }
+    code.push_back(EndProgram);
+    return code;
+}
+
+std::vector<std::uint32_t> RecompileNarrowing(std::uint32_t unbounded) {
+    std::array<std::uint32_t, 10> userData{0u, 0u, 0u, 0u, 0x10000000u, 0u, 0x40u, 0x31016facu, 3u, 5u};
+    return RecompileProgram(NarrowingProgram(unbounded), userData);
+}
+
+struct Narrowing {
+    std::uint32_t functionVariables = 0;
+    std::uint32_t switchCases = 0;
+};
+
+Narrowing ScanNarrowing(std::span<const std::uint32_t> words) {
+    Narrowing result;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> spv::WordCountShift;
+        const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
+        Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if (op == spv::OpVariable && words[cursor + 3] == spv::StorageClassFunction) ++result.functionVariables;
+        if (op == spv::OpSwitch) result.switchCases += (count - 3u) / 2u;
+        cursor += count;
+    }
+    return result;
 }
 
 IrProgram TranslateStage(ShaderStageKind stage, std::uint32_t waveSize, std::uint32_t base = 0u, std::uint32_t fetchStart = 0u, std::uint32_t fetchCount = 0u) {
@@ -306,6 +364,35 @@ int main(int argc, char** argv) {
         return shape.functionArrays == 0 && shape.accessChains == 0;
     });
 
+    passed &= run("a sampler dword spilled into a window register with ordinary writes keeps its definition past a relative write", [] {
+        const std::array<std::uint32_t, 16> userData{};
+        const std::array<std::uint32_t, 14> spilled{AndM0GroupXOne, MoveV2Zero, MoveV3Zero, MoveV4One, WritelaneV4, FromS8Lane0, MovreldV2V0, ReadlaneS8, FromV4Lane0, ImageSampleLz2d, SampleV8V2S0S8, BufferStoreDword, StoreV8WithS12, EndProgram};
+        return Scan(RecompileProgram(spilled, userData)).functionArrays == 1;
+    });
+
+    passed &= run("a sampler dword spilled into a window register and overwritten by an ordinary write before its v_readlane stays a run-time value", [] {
+        const std::array<std::uint32_t, 16> userData{};
+        const std::array<std::uint32_t, 14> overwritten{AndM0GroupXOne, MoveV2Zero, MoveV3Zero, WritelaneV4, FromS8Lane0, MovreldV2V0, MoveV4One, ReadlaneS8, FromV4Lane0, ImageSampleLz2d, SampleV8V2S0S8, BufferStoreDword, StoreV8WithS12, EndProgram};
+        try {
+            RecompileProgram(overwritten, userData);
+        } catch (const std::exception& error) {
+            return std::string_view(error.what()).find("GetSamplerResource dword 0 is not a valid runtime value; chain: ReadLane(LoadVectorWindow(Immediate), Immediate)") != std::string_view::npos;
+        }
+        return false;
+    });
+
+    passed &= run("a sampler dword spilled into a window register before a loop entered at its condition keeps its definition past the loop's relative write", [] {
+        const std::array<std::uint32_t, 16> userData{};
+        const std::array<std::uint32_t, 18> code{AndM0GroupXOne, MoveV2Zero, MoveV3Zero, WritelaneV4, FromS8Lane0, MoveS16Two, BranchForwardTwo, MovreldV2V0, SubtractS16One, CompareS16NotZero, BranchBackFourOnScc, ReadlaneS8, FromV4Lane0, ImageSampleLz2d, SampleV8V2S0S8, BufferStoreDword, StoreV8WithS12, EndProgram};
+        return Scan(RecompileProgram(code, userData)).functionArrays == 1;
+    });
+
+    passed &= run("a sampler dword spilled into a window register with ordinary writes before a loop entered at its condition keeps its definition past the loop's relative write", [] {
+        const std::array<std::uint32_t, 16> userData{};
+        const std::array<std::uint32_t, 19> code{AndM0GroupXOne, MoveV2Zero, MoveV3Zero, MoveV4One, WritelaneV4, FromS8Lane0, MoveS16Two, BranchForwardTwo, MovreldV2V0, SubtractS16One, CompareS16NotZero, BranchBackFourOnScc, ReadlaneS8, FromV4Lane0, ImageSampleLz2d, SampleV8V2S0S8, BufferStoreDword, StoreV8WithS12, EndProgram};
+        return Scan(RecompileProgram(code, userData)).functionArrays == 1;
+    });
+
     passed &= run("a sampler dword spilled into a relatively read register keeps its definition through v_readlane", [] {
         const std::array<std::uint32_t, 14> code{MoveM0GroupX, MoveV2Zero, MoveV3Zero, WritelaneV4, FromS8Lane0, MovrelsV1V4, ReadlaneS8, FromV4Lane0, ImageSampleLz2d, SampleV8V2S0S8, AddV8V1V8, BufferStoreDword, StoreV8WithS12, EndProgram};
         const std::array<std::uint32_t, 16> userData{};
@@ -320,6 +407,19 @@ int main(int argc, char** argv) {
         const auto single = WindowStores(RecompileProgram(once));
         if (twice != single || single < 3u) std::fprintf(stderr, "  window stores: written twice %zu, written once %zu\n", twice, single);
         return twice == single && single >= 3u;
+    });
+
+    passed &= run("a window with a few unproven relative reads keeps its unindexed slots out of the array", [] {
+        const auto few = ScanNarrowing(RecompileNarrowing(2));
+        if (few.functionVariables <= 8u || few.switchCases == 0u) std::fprintf(stderr, "  two unproven reads: %u function variables, %u switch cases\n", few.functionVariables, few.switchCases);
+        return few.functionVariables > 8u && few.switchCases != 0u;
+    });
+
+    passed &= run("a window with hundreds of unproven relative reads does not grow a switch for each of them", [] {
+        const auto many = ScanNarrowing(RecompileNarrowing(300));
+        const auto few = ScanNarrowing(RecompileNarrowing(2));
+        if (many.switchCases > 4096u || many.functionVariables >= few.functionVariables) std::fprintf(stderr, "  300 unproven reads: %u function variables, %u switch cases (2 reads: %u, %u)\n", many.functionVariables, many.switchCases, few.functionVariables, few.switchCases);
+        return many.switchCases <= 4096u && many.functionVariables < few.functionVariables;
     });
 
     if (passed) std::puts("Vector window shape and SSA control tests passed");

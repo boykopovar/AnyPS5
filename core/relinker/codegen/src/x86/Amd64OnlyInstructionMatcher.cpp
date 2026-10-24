@@ -172,7 +172,8 @@ public:
 
     void EmitOutOfLine(
         StubBodyBuilder& body,
-        std::span<const std::uint8_t> instruction
+        std::span<const std::uint8_t> instruction,
+        bool allowInPlace = false
     ) const override;
 
 private:
@@ -355,8 +356,12 @@ const char* Amd64OnlyInstructionMatcher::_emitInPlace(StubBodyBuilder& body, con
     return nullptr;
 }
 
-void Amd64OnlyInstructionMatcher::EmitOutOfLine(StubBodyBuilder& body, const std::span<const std::uint8_t> instruction) const {
-    if (_emitOutOfLine(body, DecodedInstruction{instruction.data(), instruction.size()}) == nullptr)
+void Amd64OnlyInstructionMatcher::EmitOutOfLine(StubBodyBuilder& body, const std::span<const std::uint8_t> instruction, const bool allowInPlace) const {
+    const DecodedInstruction instr{instruction.data(), instruction.size()};
+    const auto* emitted = _emitOutOfLine(body, instr);
+    if (emitted == nullptr && allowInPlace)
+        emitted = _emitInPlace(body, instr);
+    if (emitted == nullptr)
         throw CodegenException("AMD-only instruction has no out-of-line lowering");
     body.Advance(instruction.size());
 }

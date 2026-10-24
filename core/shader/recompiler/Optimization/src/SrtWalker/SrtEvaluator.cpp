@@ -464,7 +464,36 @@ bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* va
 }
 
 template<typename TNode>
+EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const IrValue& value) {
+    if (value.IsIdentity()) {
+        return EvaluatorReads::Arguments;
+    }
+    if (value.HasImmediate()) {
+        return EvaluatorReads::Nothing;
+    }
+    switch (value.Opcode()) {
+        case IrOpcode::LoadAddressU32:
+        case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x2:
+        case IrOpcode::IAddCarry32:
+        case IrOpcode::GetUserData:
+        case IrOpcode::GetShaderBase:
+        case IrOpcode::Phi:
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
+        default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
+    }
+}
+
+template<typename TNode>
 bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& result) {
+    if (Reads(_program, *inst.Value()) == EvaluatorReads::Nothing) {
+        return false;
+    }
     std::uint64_t a = 0;
     std::uint64_t b = 0;
     std::uint64_t c = 0;

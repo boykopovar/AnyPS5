@@ -13,6 +13,8 @@ namespace Elfpatcher {
 
 namespace {
 
+constexpr std::size_t kExtendedProgramHeaderCount = 0xffff;
+
 bool hasWritableLoadCoverage(
     const std::vector<Domain::ProgramHeader>& headers,
     const Domain::ProgramHeader& relro
@@ -152,6 +154,8 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(co
     auto kept = _keptHeaders(originalHeaders);
     if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
         kept.push_back(Domain::ProgramHeader{PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
+    if (kept.size() >= kExtendedProgramHeaderCount - kSyntheticProgramHeaderCount)
+        throw Domain::RelinkerException("Extended program header counts are not supported");
     return kept;
 }
 

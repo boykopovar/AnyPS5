@@ -1,6 +1,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
@@ -25,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -1713,17 +1715,17 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
-                const auto hash = hashWords(element, (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
+                const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
                 auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
                     const auto& entry = out.elements[known];
-                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind;
+                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic;
                 });
                 if (!index.has_value() && out.elements.size() >= Abi::ImageElementBudget) {
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
                     if (!index.has_value()) {
                         index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
+                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic});
                         elementIndex.Insert(hash, *index);
                     }
                     out.elements[*index].samplers |= directSamplers[resource];
@@ -1872,6 +1874,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
+    if (image.targetMerge) return {image};
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
     std::vector<ImageResource> modes;
@@ -2198,63 +2201,141 @@ void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
 
 namespace {
 
+std::vector<const IrValue*> pathToMemoryRead(const IrValue& handle) {
+    std::unordered_map<const IrValue*, const IrValue*> parents;
+    std::vector<const IrValue*> queue;
+    const auto visit = [&](const IrValue* argument, const IrValue* parent) {
+        if (argument == nullptr) return;
+        argument = argument->Resolve();
+        if (!argument->HasImmediate() && parents.emplace(argument, parent).second) queue.push_back(argument);
+    };
+    for (const auto* argument : handle.Arguments()) visit(argument, nullptr);
+    for (std::size_t index = 0; index < queue.size(); ++index) {
+        const auto* value = queue[index];
+        if (Detail::IsMemoryRead(value->Opcode())) {
+            std::vector<const IrValue*> path;
+            for (const auto* step = parents.at(value); step != nullptr; step = parents.at(step)) path.push_back(step);
+            return path;
+        }
+        for (const auto* argument : value->Arguments()) visit(argument, value);
+    }
+    return {};
+}
+
 void ownPlanValues(IrResourcePlan& plan) {
     std::vector<IrValue**> roots;
     for (auto& source : plan.descriptorSources) {
         for (auto& dword : source.dwords) roots.push_back(&dword);
     }
     for (auto& read : plan.srtReads) roots.push_back(&read.value);
-    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
     for (auto& value : plan.uniformFill.values) roots.push_back(&value);
+    const auto closures = roots.size();
+    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
 
-    std::unordered_map<const IrValue*, IrValue*> clones;
-    std::vector<const IrValue*> order;
-    std::vector<const IrValue*> pending;
-    for (const auto* root : roots) {
-        if (*root != nullptr) pending.push_back(*root);
-    }
-    while (!pending.empty()) {
-        const auto* value = pending.back();
-        pending.pop_back();
-        if (!clones.emplace(value, nullptr).second) continue;
-        order.push_back(value);
-        for (const auto* argument : value->Arguments()) {
-            if (argument != nullptr) pending.push_back(argument);
+    std::unordered_set<const IrValue*> whole;
+    std::unordered_set<const IrValue*> linked;
+    for (;;) {
+        std::unordered_map<const IrValue*, IrValue*> clones;
+        std::unordered_set<const IrValue*> closed;
+        std::unordered_set<const IrValue*> opened;
+        std::unordered_set<const IrValue*> handles;
+        std::vector<const IrValue*> phis;
+        std::vector<const IrValue*> order;
+        std::vector<std::pair<const IrValue*, bool>> pending;
+        for (std::size_t index = 0; index < roots.size(); ++index) {
+            if (*roots[index] != nullptr) pending.emplace_back(*roots[index], index < closures);
         }
-    }
-    plan.valueStorage.Reserve(order.size());
-    for (const auto* value : order) {
-        auto* clone = plan.valueStorage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(plan.valueStorage.Size()));
-        clone->SetFlags(value->Flags<std::uint64_t>());
-        if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
-        clone->SetRegister(value->Register());
-        clones[value] = clone;
-    }
-    std::unordered_map<const IrBlock*, IrBlock*> blocks;
-    const auto blockFor = [&](const IrBlock* block) {
-        auto& clone = blocks[block];
-        if (clone == nullptr) {
-            plan.blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
-            clone = plan.blockStorage.back().get();
+        while (!pending.empty()) {
+            const auto value = pending.back().first;
+            const auto closure = pending.back().second || whole.contains(value);
+            pending.pop_back();
+            if (clones.emplace(value, nullptr).second) order.push_back(value);
+            auto reads = closure ? Detail::EvaluatorReads::Closure : Detail::Evaluator::Reads(plan, *value);
+            if (reads == Detail::EvaluatorReads::Nothing && linked.contains(value)) reads = Detail::EvaluatorReads::Arguments;
+            if (reads == Detail::EvaluatorReads::Nothing || closed.contains(value)) continue;
+            if (closure) {
+                closed.insert(value);
+            } else if (!opened.insert(value).second) {
+                continue;
+            } else if (value->IsPhi()) {
+                phis.push_back(value);
+            }
+            for (const auto* argument : value->Arguments()) {
+                if (argument != nullptr) pending.emplace_back(argument, closure);
+            }
+            if (!closure && reads == Detail::EvaluatorReads::Closure && value->ArgumentCount() != 0u && value->Argument(0) != nullptr) {
+                const auto* handle = value->Argument(0)->Resolve();
+                handles.insert(handle);
+                if (opened.insert(handle).second) {
+                    for (const auto* argument : handle->Arguments()) {
+                        if (argument != nullptr) pending.emplace_back(argument, false);
+                    }
+                }
+            }
         }
-        return clone;
-    };
-    for (const auto* value : order) {
-        std::vector<IrValue*> arguments;
-        std::vector<IrBlock*> phiBlocks;
-        arguments.reserve(value->ArgumentCount());
-        if (value->IsPhi()) phiBlocks.reserve(value->ArgumentCount());
-        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            const auto* argument = value->Argument(index);
-            arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
-            if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+        IrValueArena storage;
+        storage.Reserve(order.size());
+        for (const auto* value : order) {
+            auto* clone = storage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(storage.Size()));
+            clone->SetFlags(value->Flags<std::uint64_t>());
+            if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
+            clone->SetRegister(value->Register());
+            clones[value] = clone;
         }
-        clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        std::vector<std::unique_ptr<IrBlock>> blockStorage;
+        std::unordered_map<const IrBlock*, IrBlock*> blocks;
+        const auto blockFor = [&](const IrBlock* block) {
+            auto& clone = blocks[block];
+            if (clone == nullptr) {
+                blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
+                clone = blockStorage.back().get();
+            }
+            return clone;
+        };
+        for (const auto* value : order) {
+            const auto count = closed.contains(value) || opened.contains(value) ? value->ArgumentCount() : 0u;
+            std::vector<IrValue*> arguments;
+            std::vector<IrBlock*> phiBlocks;
+            arguments.reserve(count);
+            if (value->IsPhi()) phiBlocks.reserve(count);
+            for (std::size_t index = 0; index < count; index++) {
+                const auto* argument = value->Argument(index);
+                arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
+                if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+            }
+            clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        }
+        const auto resolvesAlike = [&](const IrValue* phi) {
+            try {
+                const auto* expected = ResolveInvariantPhi(plan, const_cast<IrValue*>(phi));
+                const auto* copied = ResolveInvariantPhi(plan, clones.at(phi));
+                if (expected == nullptr) return copied == nullptr;
+                const auto found = clones.find(expected);
+                return found != clones.end() && found->second == copied;
+            } catch (const std::exception&) {
+                return false;
+            }
+        };
+        bool grown = false;
+        for (const auto* phi : phis) {
+            if (!closed.contains(phi) && !resolvesAlike(phi)) grown = whole.insert(phi).second || grown;
+        }
+        for (const auto* handle : handles) {
+            if (closed.contains(handle) || Detail::LoadedFromMemory(*clones.at(handle))) continue;
+            const auto path = pathToMemoryRead(*handle);
+            bool linkedStep = false;
+            for (const auto* step : path) linkedStep = linked.insert(step).second || linkedStep;
+            if (!path.empty()) grown = (linkedStep || whole.insert(handle).second) || grown;
+        }
+        if (grown) continue;
+        plan.valueStorage = std::move(storage);
+        plan.blockStorage = std::move(blockStorage);
+        for (auto* root : roots) {
+            if (*root != nullptr) *root = clones.at(*root);
+        }
+        plan.denseValueIds = true;
+        return;
     }
-    for (auto* root : roots) {
-        if (*root != nullptr) *root = clones.at(*root);
-    }
-    plan.denseValueIds = true;
 }
 
 void buildCompactPlan(IrResourcePlan& plan) {
@@ -2336,7 +2417,6 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     for (auto& block : plan.controlFlow) {
         if (block.condition != nullptr && !Detail::Evaluator::MayDecide(source, block.condition)) block.condition = nullptr;
     }
-    ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
         if (index >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan resource references an unknown descriptor source");
@@ -2363,6 +2443,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     }
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
+    ownPlanValues(plan);
     buildCompactPlan(plan);
     return plan;
 }

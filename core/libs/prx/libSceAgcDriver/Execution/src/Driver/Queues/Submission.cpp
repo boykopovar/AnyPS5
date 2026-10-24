@@ -43,6 +43,15 @@ bool& submitsQueue0() {
     return HostThreadLocal<bool, SubmitsQueue0Storage>();
 }
 
+std::uint64_t& flipSubmissionsOfThread() {
+    struct FlipSubmissionsStorage {};
+    return HostThreadLocal<std::uint64_t, FlipSubmissionsStorage>();
+}
+
+}
+
+std::uint64_t Driver::FlipSubmissions() const {
+    return flipSubmissionsOfThread();
 }
 
 std::deque<const std::uint32_t*>& Driver::releasedTails() {
@@ -402,6 +411,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
         }
+        if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
         ++accepted;
     }
@@ -466,7 +476,18 @@ bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
+void Driver::noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet) {
+    const auto fields = Pm4::DecodeWait(packet);
+    auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+    slot.reference.store(fields.reference, std::memory_order_relaxed);
+    slot.mask.store(fields.mask, std::memory_order_relaxed);
+    slot.shape.store(static_cast<std::uint64_t>(fields.function) | static_cast<std::uint64_t>(fields.bytes) << 32u, std::memory_order_relaxed);
+}
+
 void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked) {
+    auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+    if (!blocked) slot.shape.store(0, std::memory_order_relaxed);
+    slot.address.store(blocked ? awaited : 0, std::memory_order_release);
     if (blocked) {
         if (runningWorkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             idleEpoch.fetch_add(1, std::memory_order_release);

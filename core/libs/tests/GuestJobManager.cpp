@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,6 +10,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 struct MemorySizeQueryParams {
     std::uint32_t version;
@@ -54,6 +58,10 @@ struct SequenceFactory {
 };
 
 extern "C" {
+Pthread APS5_VABI scePthreadSelf();
+int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId);
+int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* time);
+int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
 void APS5_VABI _ZN3sce3Job10JobManagerC1Ev(void*);
 void APS5_VABI _ZN3sce3Job10JobManagerD1Ev(void*);
 std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams*);
@@ -295,6 +303,61 @@ static void APS5_VABI LeaderJob(void* argument, std::uint32_t) {
     nested.leaderFinished = true;
 }
 
+static void RequireParked(int clock);
+
+struct WorkerWait {
+    int spareClock = 0;
+    Sequence* child;
+    std::atomic<bool> publisherEntered{false};
+    std::atomic<bool> spareEntered{false};
+    std::atomic<bool> publish{false};
+    std::atomic<bool> finished{false};
+    std::atomic<unsigned> childCalls{0};
+};
+
+static void APS5_VABI WorkerWaitChild(void* argument, std::uint32_t) {
+    ++static_cast<WorkerWait*>(argument)->childCalls;
+}
+
+static void APS5_VABI WorkerWaitPublisher(void* argument, std::uint32_t index) {
+    auto& state = *static_cast<WorkerWait*>(argument);
+    if (index != 0) {
+        Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), &state.spareClock) == 0);
+        state.spareEntered = true;
+        return;
+    }
+    state.publisherEntered = true;
+    while (!state.publish) std::this_thread::yield();
+    Require(state.child->Dispatch(WorkerWaitChild, &state, 1, "child") == 0);
+    Require(state.child->Wait() == 0);
+    state.finished = true;
+}
+
+static void WorkerWaitCase() {
+    Block block(SizeFor(2, 2, 4, 0, 4));
+    ManagerObject manager;
+    const ConfigParams config{0, 0x21fff, 0x10000, 0x2bc, "WorkerWait", 0, 0, 0, 0};
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
+    Require(SetPersistentThreadCount(manager.storage, 0) == 0);
+    SequenceFactory* factory = Factories(manager.storage, 0);
+    Sequence* publisher = nullptr;
+    WorkerWait state{};
+    Require(factory->Create(&publisher, 2, 1, 0, 1, "publisher") == 0);
+    Require(factory->Create(&state.child, 1, 1, 0, 1, "child") == 0);
+    Require(publisher->Dispatch(WorkerWaitPublisher, &state, 2, "park spare") == 0);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while ((!state.publisherEntered || !state.spareEntered) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(state.publisherEntered && state.spareEntered);
+    RequireParked(state.spareClock);
+    state.publish = true;
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!state.finished && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(state.finished && state.childCalls == 1);
+    Require(publisher->Wait() == 0);
+    Require(factory->Destroy(publisher) == 0 && factory->Destroy(state.child) == 0);
+    Require(Shutdown(manager.storage) == 0);
+}
+
 static void NestedCase() {
     Block block(SizeFor(2, 1, 4, 2, 2));
     ManagerObject manager;
@@ -348,6 +411,15 @@ static void LimitsCase() {
     Require(factory->Create(&sequence, 4, 2, 1, 1, "waits") == 0);
     Require(sequence->Wait() == 0 && sequence->Wait() == 0);
     Require(factory->Destroy(sequence) == 0);
+    Require(Shutdown(manager.storage) == 0);
+}
+
+static void NodePoolCase() {
+    Block block(SizeFor(2, 2, 2, 1, 1));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    SequenceFactory* factory = Factories(manager.storage, 0);
+    Sequence* sequence = nullptr;
     Require(factory->Create(&sequence, 0x7fff, 0x3ff, 0xff, 1, "nodes") == 0);
     int result = 0;
     int accepted = 0;
@@ -453,16 +525,257 @@ static void ShutdownCase() {
     }
 }
 
-int main(int argc, char** argv) {
-    const std::string name = argc > 1 ? argv[1] : "";
+static void APS5_VABI CaptureWorkerClock(void* argument, std::uint32_t) {
+    Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), static_cast<int*>(argument)) == 0);
+}
+
+static std::int64_t CpuNanos(int clock) {
+    KernelTimespec time{};
+    Require(sceKernelClockGettime(clock, &time) == 0);
+    return time.tv_sec * 1000000000LL + time.tv_nsec;
+}
+
+static void RequireParked(int clock) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    const auto start = CpuNanos(clock);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    Require(CpuNanos(clock) - start < 20000000);
+}
+
+static void WorkerPolicyCase() {
+    for (const std::uint32_t mode : {0x10000u, 0x20000u}) {
+        for (const std::uint32_t spin : {0u, 50u}) {
+            Block block(SizeFor(1, 1, 8, 2, 2));
+            ManagerObject manager;
+            const ConfigParams config{0, mode | 0x1fff, 0x10000, 0x2bc, "WorkerPolicy", spin, 0, 0, 0};
+            Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, &config) == 0);
+            auto* factory = Factories(manager.storage, 0);
+            Sequence* sequence = nullptr;
+            Require(factory->Create(&sequence, 8, 8, 2, 2, "worker policy") == 0);
+            int clock = 0;
+            Require(sequence->Dispatch(CaptureWorkerClock, &clock, 1, nullptr) == 0 && sequence->Wait() == 0);
+            RequireParked(clock);
+            for (int round = 0; round < 2; ++round) {
+                Require(SetPersistentThreadCount(manager.storage, 1) == 0);
+                RequireParked(clock);
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && sequence->Wait() == 0);
+                const auto start = CpuNanos(clock);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                while (CpuNanos(clock) - start < 30000000 && std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                Require(CpuNanos(clock) - start >= 30000000);
+                Require(SetPersistentThreadCount(manager.storage, 0) == 0);
+                RequireParked(clock);
+            }
+            Require(SetPersistentThreadCount(manager.storage, 1) == 0);
+            Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && sequence->Wait() == 0);
+            Require(Shutdown(manager.storage) == 0);
+        }
+    }
+}
+
+static void WorkerWakeCase() {
+    Block block(SizeFor(4, 1, 8, 2, 2));
+    ManagerObject manager;
+    for (const std::uint32_t mode : {0x10000u, 0x20000u}) {
+        const ConfigParams config{0, mode | 0x1fff, 0x10000, 0x2bc, "WorkerWake", 50, 0, 0, 0};
+        Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, &config) == 0);
+        Sequence* sequence = nullptr;
+        auto* factory = Factories(manager.storage, 0);
+        Require(factory->Create(&sequence, 1024, 8, 2, 2, "worker wake") == 0);
+        for (std::uint32_t round = 0; round < 60; ++round) {
+            Require(SetPersistentThreadCount(manager.storage, round % 5) == 0);
+            Tally tally(257);
+            Require(sequence->Dispatch(CountJob, &tally, 257, nullptr) == 0);
+            Require(sequence->SyncPoint() == 0);
+            Require(sequence->Dispatch(CountJob, &tally, 257, nullptr) == 0);
+            Require(sequence->Wait() == 0 && tally.calls == 514);
+            for (const auto& count : tally.seen) Require(count == 2);
+        }
+        Require(factory->Destroy(sequence) == 0);
+        Require(Shutdown(manager.storage) == 0);
+    }
+}
+
+struct HeldWorker {
+    std::atomic<bool> started{false};
+    std::atomic<bool> release{false};
+};
+
+struct SpinClock {
+    int guest = 0;
+    std::int64_t reference = 0;
+#ifdef _WIN32
+    HANDLE thread = nullptr;
+    ~SpinClock() { if (thread != nullptr) CloseHandle(thread); }
+#endif
+};
+
+static std::int64_t SpinCpuUnits(const SpinClock& clock);
+
+static void APS5_VABI CaptureSpinClock(void* argument, std::uint32_t) {
+    auto& clock = *static_cast<SpinClock*>(argument);
+    CaptureWorkerClock(&clock.guest, 0);
+#ifdef _WIN32
+    clock.thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, GetCurrentThreadId());
+    Require(clock.thread != nullptr);
+#endif
+    const auto before = SpinCpuUnits(clock);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(5);
+    while (std::chrono::steady_clock::now() < until) {}
+    clock.reference = SpinCpuUnits(clock) - before;
+    Require(clock.reference > 0);
+}
+
+static std::int64_t SpinCpuUnits(const SpinClock& clock) {
+#ifdef _WIN32
+    ULONG64 cycles = 0;
+    Require(QueryThreadCycleTime(clock.thread, &cycles));
+    return static_cast<std::int64_t>(cycles);
+#else
+    return CpuNanos(clock.guest);
+#endif
+}
+
+static void APS5_VABI HoldWorker(void* argument, std::uint32_t) {
+    auto& worker = *static_cast<HeldWorker*>(argument);
+    worker.started = true;
+    worker.started.notify_one();
+    worker.release.wait(false);
+}
+
+struct SpinSample {
+    std::int64_t consumed;
+    std::int64_t reference;
+};
+
+static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
+    Block block(SizeFor(2, 2, 4, 2, 2));
+    ManagerObject manager;
+    const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, "WorkerSpin", spin, 0, 0, 0};
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
+    auto* factory = Factories(manager.storage, 0);
+    Sequence* held = nullptr;
+    Sequence* pulse = nullptr;
+    Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
+    Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
+    HeldWorker worker;
+    Require(held->Dispatch(HoldWorker, &worker, 1, nullptr) == 0);
+    worker.started.wait(false);
+    if (pending) {
+        Require(held->SyncPoint() == 0);
+        Require(held->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+    }
+    SpinClock clock;
+    Require(pulse->Dispatch(CaptureSpinClock, &clock, 1, nullptr) == 0 && pulse->Wait() == 0);
+    RequireParked(clock.guest);
+    const auto before = SpinCpuUnits(clock);
+    for (std::uint32_t round = 0; round < rounds; ++round) {
+        Require(pulse->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && pulse->Wait() == 0);
+        Require(sceKernelUsleep_nid_postfix(1000) == 0);
+    }
+    const auto consumed = SpinCpuUnits(clock) - before;
+    RequireParked(clock.guest);
+    Require(!worker.release);
+    worker.release = true;
+    worker.release.notify_one();
+    Require(held->Wait() == 0);
+    Require(factory->Destroy(held) == 0 && factory->Destroy(pulse) == 0);
+    Require(Shutdown(manager.storage) == 0);
+    return {consumed, clock.reference};
+}
+
+static void WorkerSpinCase() {
+    constexpr std::uint32_t rounds = 512;
+    const auto parked = MeasureWorkerSpin(0, rounds, true);
+    const auto spinning = MeasureWorkerSpin(50, rounds, true);
+    const auto noPending = MeasureWorkerSpin(50, rounds, false);
+#ifdef _WIN32
+    constexpr const char* units = "cycles";
+#else
+    constexpr const char* units = "ns";
+#endif
+    std::fprintf(stderr, "idle worker CPU over %u pulses (%s): spin=0 %lld, spin=50 %lld, no pending work %lld, 5ms active reference %lld\n", rounds, units,
+        static_cast<long long>(parked.consumed), static_cast<long long>(spinning.consumed), static_cast<long long>(noPending.consumed), static_cast<long long>(spinning.reference));
+    const auto interval = spinning.reference * rounds / 100;
+    Require(spinning.consumed > parked.consumed + interval / 3);
+    Require(spinning.consumed < parked.consumed + interval * 5);
+    Require(noPending.consumed < parked.consumed + interval / 3);
+}
+
+struct WorkerClocks {
+    std::array<int, 4> clocks{};
+    std::atomic<unsigned int> arrived{0};
+    std::atomic<bool> release{false};
+};
+
+static void APS5_VABI CaptureWorkerClocks(void* argument, std::uint32_t index) {
+    auto& workers = *static_cast<WorkerClocks*>(argument);
+    CaptureWorkerClock(&workers.clocks[index], 0);
+    ++workers.arrived;
+    while (!workers.release) std::this_thread::yield();
+}
+
+static void WorkerCountCase() {
+    Block block(SizeFor(4, 1, 8, 2, 2));
+    ManagerObject manager;
+    const ConfigParams config{0, 0x1000f, 0x10000, 0x2bc, "WorkerCount", 0, 0, 0, 0};
+    Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, &config) == 0);
+    Sequence* sequence = nullptr;
+    Require(Factories(manager.storage, 0)->Create(&sequence, 8, 8, 2, 2, "worker count") == 0);
+    WorkerClocks workers;
+    Require(sequence->Dispatch(CaptureWorkerClocks, &workers, 4, nullptr) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (workers.arrived != 4 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(workers.arrived == 4);
+    workers.release = true;
+    Require(sequence->Wait() == 0);
+    for (const std::uint32_t persistent : {2u, 4u}) {
+        Require(SetPersistentThreadCount(manager.storage, 0) == 0);
+        for (const int clock : workers.clocks) RequireParked(clock);
+        Require(SetPersistentThreadCount(manager.storage, persistent) == 0);
+        for (std::uint32_t job = 0; job < persistent; ++job) {
+            Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && sequence->Wait() == 0);
+        }
+        std::array<std::int64_t, 4> starts{};
+        for (std::size_t index = 0; index < starts.size(); ++index) starts[index] = CpuNanos(workers.clocks[index]);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        unsigned int active = 0;
+        do {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            active = 0;
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                if (CpuNanos(workers.clocks[index]) - starts[index] >= 30000000) ++active;
+            }
+        } while (active < persistent && std::chrono::steady_clock::now() < until);
+        Require(active == persistent);
+    }
+    Require(Shutdown(manager.storage) == 0);
+}
+
+int RunJobManagerCase(const char* caseName) {
+    const std::string name = caseName;
     if (name == "memory") MemoryCase();
     else if (name == "validation") ValidationCase();
     else if (name == "dispatch") DispatchCase();
     else if (name == "ordering") OrderingCase();
     else if (name == "limits") LimitsCase();
+    else if (name == "node_pool") NodePoolCase();
     else if (name == "nested") NestedCase();
     else if (name == "priority") PriorityCase();
     else if (name == "shutdown") ShutdownCase();
+    else if (name == "worker_policy") WorkerPolicyCase();
+    else if (name == "worker_wait") WorkerWaitCase();
+    else if (name == "worker_wake") WorkerWakeCase();
+    else if (name == "worker_spin") WorkerSpinCase();
+    else if (name == "worker_count") WorkerCountCase();
     else return 2;
     return 0;
 }
+
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+int main(int argc, char** argv) {
+    return RunJobManagerCase(argc > 1 ? argv[1] : "");
+}
+#endif

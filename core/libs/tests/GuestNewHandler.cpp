@@ -19,6 +19,7 @@ void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t, std::size_t);
 void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
 void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
 void APS5_VABI _ZdlPv_nid_postfix(void*);
+void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void*, const void*) noexcept;
 void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void*, std::size_t);
 }
 
@@ -27,6 +28,7 @@ namespace {
 alignas(16) std::array<std::byte, 64> storage{};
 unsigned failuresLeft = 0;
 unsigned allocations = 0;
+unsigned releases = 0;
 unsigned handlerCalls = 0;
 std::size_t lastSize = 0;
 std::size_t lastAlignment = 0;
@@ -50,7 +52,7 @@ void* APS5_VABI allocate(std::size_t bytes) {
     return storage.data();
 }
 
-void APS5_VABI release(void*) {}
+void APS5_VABI release(void*) { ++releases; }
 void* APS5_VABI allocateZeroed(std::size_t count, std::size_t bytes) { return allocate(count * bytes); }
 void* APS5_VABI reallocate(void*, std::size_t bytes) { return allocate(bytes); }
 void* APS5_VABI align(std::size_t alignment, std::size_t bytes) {
@@ -80,6 +82,7 @@ void APS5_VABI allocatingHandler() {
 void Reset(unsigned failures) {
     failuresLeft = failures;
     allocations = 0;
+    releases = 0;
     handlerCalls = 0;
 }
 
@@ -137,6 +140,15 @@ int main(int argc, char** argv) {
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
+
+    Reset(0);
+    void* nothrowPointer = _Znwm_nid_postfix(8);
+    const int nothrowTag = 0;
+    REQUIRE(nothrowPointer == storage.data() && releases == 0);
+    _ZdlPvRKSt9nothrow_t_nid_postfix(nothrowPointer, &nothrowTag);
+    REQUIRE(releases == 1);
+    _ZdlPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
+    REQUIRE(releases == 1);
 
     Reset(1);
     REQUIRE(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);

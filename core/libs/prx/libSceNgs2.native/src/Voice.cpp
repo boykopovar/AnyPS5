@@ -369,18 +369,19 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             break;
         case SCE_NGS2_RACK_ID_MASTERING:
-            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP) {
+        case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
+            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }
-            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_GAIN) {
+            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_GAIN || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN) {
                 const auto& gain = ParamAs<Ngs2MasteringVoiceGainParam>(param);
                 if (!std::isfinite(gain.fbw_level) || !std::isfinite(gain.lfe_level)) APS5_INVALID_ARG_EX;
                 voice.fbwLevel = gain.fbw_level;
                 voice.lfeLevel = gain.lfe_level;
                 return;
             }
-            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT) {
+            if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {
                 voice.outputId = ParamAs<Ngs2MasteringVoiceOutputParam>(param).output_id;
                 return;
             }
@@ -470,6 +471,12 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             sampler = {};
             sampler.voice_state.state_flags = voice.stateFlags;
             sampler.num_decoded_samples = voice.decodedSamples;
+            return SCE_NGS2_OK;
+        }
+        case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
+            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            *state = {};
+            state->state_flags = voice.stateFlags;
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");

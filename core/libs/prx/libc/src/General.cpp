@@ -385,7 +385,11 @@ bool NotBefore(const WriteMark& time, const WriteMark& mark) {
 using WriteMark = timespec;
 WriteMark Now() {
     timespec now;
+#ifdef __APPLE__
+    clock_gettime(CLOCK_REALTIME, &now);
+#else
     clock_gettime(CLOCK_REALTIME_COARSE, &now);
+#endif
     return now;
 }
 bool NotBefore(const WriteMark& time, const WriteMark& mark) {
@@ -424,7 +428,11 @@ void FlushPath(const std::filesystem::path& path) {
 #else
 std::optional<WriteMark> WriteTime(const std::filesystem::path& path) {
     struct stat data;
+#ifdef __APPLE__
+    if (::stat(path.c_str(), &data) == 0) return data.st_mtimespec;
+#else
     if (::stat(path.c_str(), &data) == 0) return data.st_mtim;
+#endif
     if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
     throw std::system_error(errno, std::generic_category(), "Reading the write time of " + path.string());
 }
@@ -565,6 +573,36 @@ extern "C" std::FILE* HostStandardOutputFile_nid_no_patch() {
 extern "C" std::FILE* HostStandardErrorFile_nid_no_patch() {
     if (std::FILE* kept = g_hostStandardErrorFile.load(std::memory_order_acquire)) return kept;
     return __acrt_iob_func(2);
+}
+
+namespace {
+std::mutex g_hostStandardStreamMutex;
+
+int keepHostStandardStream(int standard) {
+    auto& slot = standard == 1 ? g_hostStandardOutputFile : g_hostStandardErrorFile;
+    if (auto* stream = slot.load(std::memory_order_acquire)) return ::_fileno(stream);
+    const std::unique_ptr<std::FILE, decltype(&::_unlock_file)> unlock(__acrt_iob_func(standard), ::_unlock_file);
+    ::_lock_file(unlock.get());
+    const std::lock_guard lock(g_hostStandardStreamMutex);
+    if (auto* stream = slot.load(std::memory_order_acquire)) return ::_fileno(stream);
+    const int saved = DuplicateHostDescriptor_nid_no_patch(standard);
+    if (saved < 0) return -1;
+    if (!AdoptHostStandardStream_nid_no_patch(standard, saved)) {
+        const int error = errno;
+        ::_close(saved);
+        errno = error;
+        return -1;
+    }
+    return saved;
+}
+}
+
+extern "C" int KeepHostStandardError_nid_no_patch() {
+    return keepHostStandardStream(2);
+}
+
+extern "C" int KeepHostStandardOutput_nid_no_patch() {
+    return keepHostStandardStream(1);
 }
 #endif
 

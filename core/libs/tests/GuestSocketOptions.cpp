@@ -14,6 +14,7 @@ int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
 int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
+int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
 int APS5_VABI fcntl_nid_postfix(int, int, ...);
 int APS5_VABI poll_nid_postfix(void*, std::uint32_t, int);
 int APS5_VABI close_nid_postfix(int);
@@ -35,6 +36,9 @@ constexpr int SoReusePort = 0x200;
 constexpr int SoTimestamp = 0x400;
 constexpr int SoNoSigpipe = 0x800;
 constexpr int SoSendBuffer = 0x1001;
+constexpr int SoReceiveBuffer = 0x1002;
+constexpr int SoSendLowWater = 0x1003;
+constexpr int SoReceiveLowWater = 0x1004;
 constexpr int SoError = 0x1007;
 constexpr int SoType = 0x1008;
 constexpr int ErrorInvalid = 22;
@@ -204,6 +208,64 @@ void LengthsFollowFreeBsd() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+void BuffersFollowThePs5() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(28, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0, "socket failed");
+    Require(GetInt(stream, SoSendBuffer) == 32768 && GetInt(stream, SoReceiveBuffer) == 65536, "a stream socket starts with 32768 and 65536 bytes");
+    Require(GetInt(stream, SoSendLowWater) == 2048 && GetInt(stream, SoReceiveLowWater) == 1, "the low-water marks start at 2048 and 1");
+    Require(GetInt(datagram, SoSendBuffer) == 9216 && GetInt(datagram, SoReceiveBuffer) == 42080, "a datagram socket starts with 9216 and 42080 bytes");
+    SetInt(stream, SoSendBuffer, 1000);
+    Require(GetInt(stream, SoSendBuffer) == 1000 && GetInt(stream, SoSendLowWater) == 1000, "a smaller buffer is kept and lowers its low-water mark");
+    SetInt(stream, SoReceiveBuffer, 524289);
+    Require(GetInt(stream, SoReceiveBuffer) == 524288, "a buffer above 512 KiB is limited to 524288 bytes");
+    SetInt(stream, SoSendBuffer, 5592405);
+    Require(GetInt(stream, SoSendBuffer) == 524288, "the largest reservation is accepted and limited");
+    const int tooLarge = 5592406;
+    Require(SetFails(stream, SolSocket, SoSendBuffer, &tooLarge, sizeof(tooLarge), 55), "a reservation above sb_max must fail with ENOBUFS (55)");
+    Require(GetInt(stream, SoSendBuffer) == 524288, "a failed reservation keeps the buffer");
+    SetInt(stream, SoReceiveLowWater, 600000);
+    Require(GetInt(stream, SoReceiveLowWater) == 524288, "a low-water mark above the buffer is limited to it");
+    SetInt(stream, SoReceiveBuffer, 50);
+    Require(GetInt(stream, SoReceiveLowWater) == 50, "a smaller buffer lowers the low-water mark");
+    const int zero = 0;
+    Require(SetFails(stream, SolSocket, SoReceiveLowWater, &zero, sizeof(zero), ErrorInvalid), "a low-water mark below 1 must fail with EINVAL (22)");
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
+    Require(GetInt(pair[0], SoSendBuffer) == 8192 && GetInt(pair[0], SoReceiveBuffer) == 8192, "an AF_UNIX stream socket starts with 8192 bytes each way");
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0, "close failed");
+    Require(socketpair_nid_postfix(1, Datagram, 0, pair) == 0, "socketpair failed");
+    Require(GetInt(pair[0], SoSendBuffer) == 2048 && GetInt(pair[0], SoReceiveBuffer) == 4096, "an AF_UNIX datagram socket starts with 2048 and 4096 bytes");
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0, "close failed");
+    Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+    const int listener = socket_nid_postfix(2, Stream, 0);
+    Require(listener >= 0, "socket failed");
+    auto address = Loopback(0);
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 1) == 0, "listen failed");
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0, "getsockname failed");
+    SetInt(listener, SoReceiveBuffer, 3000);
+    SetInt(listener, SoSendLowWater, 700);
+    const int client = socket_nid_postfix(2, Stream, 0);
+    Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0, "connect failed");
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0, "accept failed");
+    Require(GetInt(accepted, SoReceiveBuffer) == 3000 && GetInt(accepted, SoSendLowWater) == 700 && GetInt(accepted, SoSendBuffer) == 32768, "an accepted socket takes the listener's buffers");
+    Require(close_nid_postfix(accepted) == 0 && close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close failed");
+}
+
+void NullValues() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    Require(SetFails(stream, SolSocket, SoKeepAlive, nullptr, sizeof(int), 14), "a null value with a length must fail with EFAULT (14)");
+    Require(SetFails(-1, SolSocket, SoKeepAlive, nullptr, sizeof(int), 14), "the null value is checked before the descriptor");
+    Require(SetFails(stream, SolSocket, 0x7fff, nullptr, sizeof(int), 14), "the null value is checked before the option");
+    Require(SetFails(stream, SolSocket, SoKeepAlive, nullptr, 0, ErrorInvalid), "a null value without a length must fail with EINVAL (22)");
+    std::uint32_t size = sizeof(int);
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoSendBuffer, nullptr, &size) == 0 && size == 0, "getsockopt without a value succeeds with length 0");
+    Require(close_nid_postfix(stream) == 0, "close failed");
+}
+
 void UnknownRequestsFail() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     Require(stream >= 0, "socket failed");
@@ -224,6 +286,8 @@ int main() {
     BooleanOptionsReportTheirBit();
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
+    BuffersFollowThePs5();
+    NullValues();
     UnknownRequestsFail();
     return 0;
 }

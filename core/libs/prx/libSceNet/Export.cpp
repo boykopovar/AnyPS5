@@ -1962,20 +1962,32 @@ uint32_t APS5_VABI sceNetNtohl_nid_postfix(uint32_t net32) { return swap32(net32
 uint16_t APS5_VABI sceNetNtohs_nid_postfix(uint16_t net16) { return swap16(net16); }
 
 int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
-    if (src == nullptr || dst == nullptr) {
+    if (src == nullptr) {
         return fail(NET_EINVAL);
     }
     if (af != NET_AF_INET && af != NET_AF_INET6) {
         return fail(NET_EAFNOSUPPORT);
     }
-    const std::string text = af == NET_AF_INET ? std::string(src, std::strcspn(src, " \t\n\v\f\r")) : std::string(src);
-    std::array<unsigned char, 16> address{};
+    if (dst == nullptr && af == NET_AF_INET6) {
+        return fail(NET_EINVAL);
+    }
+    const auto convert = [](int family, const std::string& text, unsigned char* address) {
 #ifdef _WIN32
-    const int converted = InetPtonA(af == NET_AF_INET ? AF_INET : AF_INET6, text.c_str(), address.data());
+        return InetPtonA(family, text.c_str(), address);
 #else
-    const int converted = ::inet_pton(af == NET_AF_INET ? AF_INET : AF_INET6, text.c_str(), address.data());
+        return ::inet_pton(family, text.c_str(), address);
 #endif
-    if (converted == 1) {
+    };
+    const std::string head(src, std::strcspn(src, " \t\n\v\f\r"));
+    const auto colon = head.rfind(':');
+    const bool dottedTail = af == NET_AF_INET6 && colon != std::string::npos && head.find('.', colon) != std::string::npos;
+    std::array<unsigned char, 16> address{};
+    if (dottedTail && convert(AF_INET, head.substr(colon + 1), address.data()) != 1) {
+        return 0;
+    }
+    const std::string text = af == NET_AF_INET || dottedTail ? head : std::string(src);
+    const int converted = convert(af == NET_AF_INET ? AF_INET : AF_INET6, text, address.data());
+    if (converted == 1 && dst != nullptr) {
         std::memcpy(dst, address.data(), af == NET_AF_INET ? 4 : 16);
     }
     return converted;
@@ -2474,12 +2486,15 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
     if (af != NET_AF_INET) {
         return sceNetInetPton(af, src, dst);
     }
-    if (src == nullptr || dst == nullptr) {
+    if (src == nullptr) {
         return fail(NET_EINVAL);
     }
     std::uint32_t address = 0;
     if (!parse_ipv4_parts(src, address)) {
         return 0;
+    }
+    if (dst == nullptr) {
+        return 1;
     }
     const std::array<unsigned char, 4> bytes{static_cast<unsigned char>(address >> 24), static_cast<unsigned char>(address >> 16),
                                              static_cast<unsigned char>(address >> 8), static_cast<unsigned char>(address)};

@@ -456,6 +456,56 @@ bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
     return true;
 }
 
+VkDeviceSize BufferPool::ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now) {
+    if (bytes == 0) return 0;
+    const auto heaps = std::min<std::uint32_t>(memoryProperties.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
+    if (std::count_if(memoryProperties.memoryHeaps, memoryProperties.memoryHeaps + heaps, [](const auto& heap) { return (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0; }) != 1) return 0;
+    std::vector<BufferAllocation> evicted;
+    {
+        std::lock_guard lock(mutex);
+        if (!idleRead) {
+            idleRead = now;
+            idleClock = clock;
+            return 0;
+        }
+        if (now < *idleRead) return 0;
+        if (now - *idleRead >= std::chrono::seconds(1)) {
+            reclaimBefore = idleClock;
+            idleClock = clock;
+            idleRead = now;
+        }
+        if (reclaimBefore <= scannedIdleClock) return 0;
+        VkDeviceSize selected = 0;
+        while (selected < bytes) {
+            auto oldest = deviceTier.free.end();
+            for (auto it = deviceTier.free.begin(); it != deviceTier.free.end(); ++it) {
+                if (it->second.empty()) continue;
+                const auto& slot = it->second.front();
+                if (slot.allocation.buffer == VK_NULL_HANDLE || slot.allocation.slab || slot.lastUse > reclaimBefore) continue;
+                if (oldest == deviceTier.free.end() || slot.lastUse < oldest->second.front().lastUse) oldest = it;
+            }
+            if (oldest == deviceTier.free.end()) {
+                scannedIdleClock = reclaimBefore;
+                break;
+            }
+            if (evicted.empty()) evicted.reserve(deviceTier.slots);
+            const auto allocation = oldest->second.front().allocation;
+            evicted.push_back(allocation);
+            selected += allocation.allocationBytes;
+            deviceTier.retainedBytes -= allocation.allocationBytes;
+            oldest->second.pop_front();
+            if (oldest->second.empty()) deviceTier.free.erase(oldest);
+            --deviceTier.slots;
+            ++deviceTier.evictions;
+        }
+    }
+    VkDeviceSize released = 0;
+    for (const auto& allocation : evicted) released += destroy(allocation);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && released != 0) AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] idle device reclaim: %llu bytes released for %llu bytes of storage-cache pressure\n", static_cast<unsigned long long>(released), static_cast<unsigned long long>(bytes));
+    return released;
+}
+
 std::size_t BufferPool::MaxSlots() {
     // APS5_BUFFER_POOL_SLOTS=<n> bounds the retained allocations; 64 is the capacity the pool had
     // before least-recently-used retention, for A/B runs.
