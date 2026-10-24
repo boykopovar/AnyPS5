@@ -325,13 +325,45 @@ bool ExpectManyRows(AgcDriver::VulkanDevice& device) {
     return true;
 }
 
+bool ExpectWholeRows(AgcDriver::VulkanDevice& device) {
+    Block block(RegionBytes);
+    std::fill(block.data, block.data + block.bytes, Initial);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (AgcDriver::Graphics::HostImportFor(context, block.Address(), block.bytes) == nullptr) return false;
+    const auto tall = DecodeTarget(block, Tall);
+    constexpr VkRect2D band{{0, 64}, {Tall.width, 128}};
+    Draw(device, tall, Tall, Program(0, false), Seed);
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::TakeDrawnStoreCounts();
+    Draw(device, tall, Tall, Program(1, true), band);
+    device.WaitIdle();
+    const auto stored = AgcDriver::Graphics::StorageTexture::TakeDrawnStoreCounts();
+    std::size_t wrongDrawn = 0, wrongUntouched = 0;
+    for (std::uint32_t y = 0; y < Tall.height; ++y) {
+        for (std::uint32_t x = 0; x < Tall.width; ++x) {
+            const auto* pixel = Pixel(block, Tall, x, y);
+            if (Inside(band, x, y)) wrongDrawn += HoldsOutput(pixel, x, y, 1.0f) ? 0u : 1u;
+            else if (Inside(Seed, x, y)) wrongDrawn += HoldsOutput(pixel, x, y, 0.0f) ? 0u : 1u;
+            else wrongUntouched += Holds(pixel, Initial) ? 0u : 1u;
+        }
+    }
+    const bool watchedAtStore = AgcDriver::GuestMemory::Watched(block.Address(), block.bytes);
+    const std::uint64_t expectedRegions = watchedAtStore ? 1u : 2u;
+    std::printf("linear target rectangle bound, full-width band of %u rows, %s memory: %llu stores in %llu copy regions (expected 1 in %llu), wrong drawn pixels %zu, changed untouched pixels %zu\n", band.extent.height, watchedAtStore ? "write-watched" : "unwatched", static_cast<unsigned long long>(stored.stores), static_cast<unsigned long long>(stored.regions), static_cast<unsigned long long>(expectedRegions), wrongDrawn, wrongUntouched);
+    Require(wrongDrawn == 0, "a drawn linear target's store lost pixels its full-width draw wrote");
+    Require(wrongUntouched == 0, "a drawn linear target's store changed pixels outside its full-width draw");
+    Require(stored.stores == 1, "the full-width draw was not stored exactly once");
+    Require(stored.regions == expectedRegions, "a drawn linear target's store copied contiguous whole rows in more than one region per copy");
+    return true;
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!Expect(*device) || !ExpectManyRows(*device)) {
+        if (!Expect(*device) || !ExpectManyRows(*device) || !ExpectWholeRows(*device)) {
             std::puts("linear target rectangle bound test skipped: no host import on this device");
             return VulkanTestSkipped;
         }
