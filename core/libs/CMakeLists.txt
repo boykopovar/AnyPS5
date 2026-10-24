@@ -892,3 +892,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 endif()
+
+include(prx/libSceFreeType/CurveBounds.cmake)
