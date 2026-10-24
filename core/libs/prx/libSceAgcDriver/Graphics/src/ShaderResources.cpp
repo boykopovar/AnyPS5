@@ -1134,13 +1134,12 @@ std::uint32_t AllocatedLevels(const GuestTextureResource& resource) {
     return resource.allocatedMipCount != 0 ? resource.allocatedMipCount : resource.mipCount;
 }
 
-bool WidensToArray(const GuestTextureResource& viewed) {
-    if (viewed.dimension != TextureDimension::k2DArray || viewed.dccAddress != 0 || viewed.fmaskCmaskAddress != 0 || viewed.samples != 1) return false;
-    return !DescribeSurface(viewed).thick;
+bool ArrayWidens(const GuestTextureResource& surface) {
+    return surface.dimension == TextureDimension::k2DArray && surface.dccAddress == 0 && surface.fmaskCmaskAddress == 0 && surface.samples == 1;
 }
 
 GuestTextureResource StorageArraySurface(const Context& context, const GuestTextureResource& surface) {
-    if (!WidensToArray(surface)) return surface;
+    if (!ArrayWidens(surface)) return surface;
     auto identity = surface;
     identity.baseArray = 0;
     identity.depthOrLastArray = 0;
@@ -1153,12 +1152,13 @@ GuestTextureResource StorageArraySurface(const Context& context, const GuestText
         known = std::max(known, last);
         last = known;
     }
+    if (surface.baseArray == 0 && last == surface.depthOrLastArray) return surface;
     auto widened = surface;
     widened.baseArray = 0;
     widened.depthOrLastArray = last;
     const auto viewedGeometry = DescribeSurface(surface);
     const auto widenedGeometry = DescribeSurface(widened);
-    if (widenedGeometry.thick || widenedGeometry.layerBytes != viewedGeometry.layerBytes || widenedGeometry.GuestLayerOffset(surface.depthOrLastArray) != viewedGeometry.GuestLayerOffset(surface.depthOrLastArray)) return surface;
+    if (viewedGeometry.thick || widenedGeometry.thick || widenedGeometry.layerBytes != viewedGeometry.layerBytes || widenedGeometry.GuestLayerOffset(surface.depthOrLastArray) != viewedGeometry.GuestLayerOffset(surface.depthOrLastArray)) return surface;
     return widened;
 }
 
@@ -1167,6 +1167,7 @@ StorageTexture::LayerWindow StorageLayerWindow(const StorageTexture* texture, co
     const auto& own = texture->Descriptor();
     if (own.baseAddress != resource.baseAddress || own.dimension != TextureDimension::k2DArray || resource.dimension != TextureDimension::k2DArray) return {};
     if (own.baseArray == resource.baseArray && own.depthOrLastArray == resource.depthOrLastArray) return {};
+    if (own.baseArray != 0 || resource.baseArray > resource.depthOrLastArray || resource.depthOrLastArray > own.depthOrLastArray) return {};
     return {resource.baseArray, resource.depthOrLastArray - resource.baseArray + 1u};
 }
 
@@ -1263,6 +1264,12 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
         }
         auto it = findStorage(cache, key);
+        if (it == cache.entries.end() && ArrayWidens(resource) && resource.baseArray == 0) {
+            auto narrower = resource;
+            for (narrower.depthOrLastArray = 0; narrower.depthOrLastArray < resource.depthOrLastArray; ++narrower.depthOrLastArray) {
+                if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, narrower)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
+            }
+        }
         if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
             evicted.push_back(evictStorage(cache, it));
             it = cache.entries.end();
