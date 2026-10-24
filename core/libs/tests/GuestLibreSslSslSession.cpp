@@ -38,6 +38,7 @@ static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offseto
 extern "C" {
 TestSession* APS5_VABI SSL_get_session_nid_postfix(const TestSsl*);
 const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const TestSsl*);
+void* APS5_VABI SSL_get_certificate_nid_postfix(const TestSsl*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -74,8 +75,28 @@ static void TestCurrentCipher() {
     Require(SSL_get_current_cipher_nid_postfix(&ssl) == &cipher);
 }
 
+static void TestGetCertificate() {
+    int x509 = 0;
+    int other = 0;
+    int key = 0;
+    TestCert cert {};
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get_certificate_nid_postfix(nullptr); });
+    Require(SSL_get_certificate_nid_postfix(&ssl) == nullptr);
+    ssl.cert = &cert;
+    RequireThrows([&] { SSL_get_certificate_nid_postfix(&ssl); });
+    cert.pkeys[0].x509 = &other;
+    cert.pkeys[2].x509 = &x509;
+    cert.pkeys[2].privatekey = &key;
+    cert.key = &cert.pkeys[1];
+    Require(SSL_get_certificate_nid_postfix(&ssl) == nullptr);
+    cert.key = &cert.pkeys[2];
+    Require(SSL_get_certificate_nid_postfix(&ssl) == &x509);
+}
+
 int main() {
     TestGetSession();
     TestCurrentCipher();
+    TestGetCertificate();
     return 0;
 }
