@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -79,6 +80,18 @@ template<class TValue> void AppendNumber(std::u16string& out, const std::string&
     std::string text(static_cast<std::size_t>(size) + 1, '\0');
     std::snprintf(&text[0], text.size(), spec.c_str(), value);
     out.append(text.begin(), text.begin() + size);
+}
+
+std::u16string WideNanText(const std::string& spec, bool negative, bool upper) {
+    char16_t sign = negative ? u'-' : u'\0';
+    for (std::size_t index = 1; !negative && index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
+        if (spec[index] == '+') sign = u'+';
+        else if (spec[index] == ' ' && sign == u'\0') sign = u' ';
+    }
+    std::u16string text;
+    if (sign != u'\0') text.push_back(sign);
+    text += upper ? u"NAN" : u"nan";
+    return text;
 }
 
 void AppendPadded(std::u16string& out, const std::u16string& text, bool left, int width) {
@@ -171,10 +184,29 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 spec = spec.substr(0, spec.find('.')) + ".1";
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
-            if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
-            else {
+            const char narrow = static_cast<char>(conversion);
+            const bool hexadecimal = narrow == 'a' || narrow == 'A';
+            if (length == "L") {
+                const long double value = args.Next<long double>();
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + "L" + narrow, value);
+                }
+            } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                AppendNumber(out, spec + static_cast<char>(conversion), args.Next<double>());
+                const double value = args.Next<double>();
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + narrow, value);
+                }
             }
         } else if (conversion == u'p' && length.empty()) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
