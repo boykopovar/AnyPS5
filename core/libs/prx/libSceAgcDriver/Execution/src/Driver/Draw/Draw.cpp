@@ -942,15 +942,68 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (std::size_t record = 0; record < records.size(); ++record) {
             if (drawable(records[record])) lastDrawable = record;
         }
+        const bool pushWord = drawCachePushWord();
+        const bool verifyPushWord = pushWord && verifyDrawPushWord();
+        std::uint64_t wordsForwarded = 0, stagesRecompiled = 0, wordsRefused = 0, wordsVerified = 0;
+        struct RecordWord {
+            std::size_t program;
+            std::size_t index;
+            std::uint32_t value;
+        };
+        std::vector<RecordWord> recordWords;
+        const auto countRecordWords = [&] {
+            if (wordsForwarded == 0 && stagesRecompiled == 0 && wordsRefused == 0 && wordsVerified == 0) return;
+            std::lock_guard cacheLock(drawCacheMutex);
+            drawEntryCounters.recordWordsForwarded += wordsForwarded;
+            drawEntryCounters.recordStagesRecompiled += stagesRecompiled;
+            drawEntryCounters.recordWordsRefused += wordsRefused;
+            drawEntryCounters.recordWordsVerified += wordsVerified;
+        };
+        const auto sameInfo = [&](const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& a, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& b) { return a.has_value() == b.has_value() && (!a || sameVertexInfo(*a, *b)); };
+        const auto forwardRecordWords = [&](std::size_t programIndex, ShaderRecompiler::RecompileResult& result, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& previousInfo) {
+            std::uint64_t walked = 0;
+            if (stageCaptures[programIndex].capture != nullptr) walked = stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue;
+            else if (matched[programIndex] != nullptr) walked = matched[programIndex]->userWordsWalked;
+            else return false;
+            if ((graphics.stages.mesh && programIndex == 0) || !sameInfo(previousInfo, vertexInfos[programIndex])) return false;
+            std::vector<std::pair<std::uint32_t, std::uint32_t>> slots;
+            bool any = false;
+            for (const auto& word : recordWords) {
+                if (word.program != programIndex) continue;
+                any = true;
+                if (word.index >= ShaderRecompiler::SrtUserDataUse::TrackedWords || (walked >> word.index & 1u) != 0) return false;
+                const auto& forwarded = result.shaderDataUserWords;
+                const auto slot = std::find(forwarded.begin(), forwarded.end(), static_cast<std::uint32_t>(word.index));
+                if (slot != forwarded.end()) slots.emplace_back(static_cast<std::uint32_t>(slot - forwarded.begin()), word.value);
+            }
+            if (!any) return false;
+            for (const auto& [slot, value] : slots) patchForwardedWord(result, slot, value);
+            return true;
+        };
+        const auto verifyForwardedWords = [&](std::size_t programIndex, const ShaderRecompiler::RecompileResult& forwarded, const ShaderRecompiler::RecompileResult& fresh) {
+            const bool sameBindings = forwarded.bindings.size() == fresh.bindings.size() && std::equal(forwarded.bindings.begin(), forwarded.bindings.end(), fresh.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
+            std::uint64_t walked = 0;
+            for (const auto& word : recordWords) {
+                if (word.program == programIndex && word.index < ShaderRecompiler::SrtUserDataUse::TrackedWords) walked |= (stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue) >> word.index & 1u;
+            }
+            const char* what = forwarded.variantId != fresh.variantId ? "variant" : forwarded.pushConstants != fresh.pushConstants ? "push constants" : !sameBindings ? "bindings" : forwarded.shaderDataUserWords != fresh.shaderDataUserWords ? "forwarded words" : walked != 0 ? "walked user word" : nullptr;
+            ++wordsVerified;
+            if (what == nullptr) return;
+            char message[256];
+            std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_PUSH_WORD: stage %zu (program 0x%llx) with its record's user word forwarded as push data differs from its full build in its %s", programIndex, static_cast<unsigned long long>(programs[programIndex].binary.codeAddress), what);
+            throw std::runtime_error(message);
+        };
         for (std::uint32_t record = 0; record < records.size(); ++record) {
             const auto& arguments = records[record];
             if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
             if (arguments.count == 0 || arguments.instances == 0) continue;
             std::set<std::size_t> patched;
+            recordWords.clear();
             const auto patch = [&](const std::vector<std::pair<std::size_t, std::size_t>>& words, std::uint32_t value) {
                 for (const auto& [program, word] : words) {
                     programs[program].userData[word] = value;
                     patched.insert(program);
+                    recordWords.push_back({program, word, value});
                 }
             };
             patch(baseVertexWords, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
@@ -978,10 +1031,21 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             for (const auto programIndex : patched) {
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
+                const auto previousInfo = vertexInfos[programIndex];
                 decodeVertexInfo(programIndex);
+                if (pushWord && forwardRecordWords(programIndex, result, previousInfo)) {
+                    wordsForwarded += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
+                    if (!verifyPushWord) continue;
+                    const auto fresh = materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                    if (!rejected.empty()) return DrawVerdict::Rejected;
+                    verifyForwardedWords(programIndex, result, *fresh);
+                    continue;
+                }
+                if (pushWord) wordsRefused += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
                 result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                ++stagesRecompiled;
             }
             fold(*programResults[0], direct);
             if (graphics.rectList && patched.contains(0)) buildRectList();
@@ -1004,6 +1068,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 auto held = std::make_shared<decltype(commit)>(std::move(commit));
                 DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
                 phaseTiming.Phase(DrawRowLockWait);
+                countRecordWords();
                 timing.Mark("draw_enqueued");
                 return drawn();
             }
@@ -1014,6 +1079,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             localDevice->Draw(graphics, direct, stages, snapshots);
             phaseTiming.Phase(DrawRowGraphics);
         }
+        countRecordWords();
         timing.Mark("draw_and_resource_release");
         return drawn();
     }
