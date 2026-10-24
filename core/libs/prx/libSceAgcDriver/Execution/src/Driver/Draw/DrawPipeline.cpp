@@ -319,6 +319,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
     ++enqueued;
     heldReadRanges.fetch_add(reads.size(), std::memory_order_relaxed);
     countWrites(writes, true);
+    if (!reads.empty()) itemsWithReads.fetch_add(1, std::memory_order_release);
     items.push_back({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
     outstanding.fetch_add(1, std::memory_order_release);
     if (!thread.joinable()) {
@@ -410,6 +411,7 @@ void DrawPipeline::run() {
         }
         std::lock_guard lock(mutex);
         countWrites(items.front().writes, false);
+        if (!items.front().reads.empty()) itemsWithReads.fetch_sub(1, std::memory_order_release);
         retired.push_back(std::move(items.front()));
         items.pop_front();
         retiredItems.fetch_add(1, std::memory_order_release);
@@ -468,8 +470,10 @@ std::uint64_t DrawPipeline::DrainRequestsByOpcode(std::uint32_t opcode) {
 bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     static const bool unordered = std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") != nullptr;
     if (bytes == 0 || unordered) return false;
-    const auto end = address + bytes;
+    static const bool prefilter = std::getenv("APS5_NO_HELD_READ_PREFILTER") == nullptr;
     auto& pipeline = Queue0();
+    if (prefilter && pipeline.itemsWithReads.load(std::memory_order_acquire) == 0) return false;
+    const auto end = address + bytes;
     std::lock_guard lock(pipeline.mutex);
     heldReadQueries.fetch_add(1, std::memory_order_relaxed);
     for (const auto& item : pipeline.items) {
@@ -482,9 +486,15 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     return false;
 }
 
+std::uint64_t DrawPipeline::HeldReadQueries() {
+    return heldReadQueries.load(std::memory_order_relaxed);
+}
+
 void DrawPipeline::ReleaseRunningReads() {
     std::lock_guard lock(mutex);
-    if (!items.empty()) items.front().reads.clear();
+    if (items.empty() || items.front().reads.empty()) return;
+    items.front().reads.clear();
+    itemsWithReads.fetch_sub(1, std::memory_order_release);
 }
 
 std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, std::size_t bytes) {
