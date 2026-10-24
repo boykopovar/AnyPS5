@@ -261,7 +261,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileTests)
+        add_test(NAME check_compile_outputs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileOutputTests)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
