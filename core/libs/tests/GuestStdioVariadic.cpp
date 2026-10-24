@@ -9,6 +9,9 @@
 #include <cstring>
 #include <string>
 #include <stdexcept>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 extern "C" {
 extern FileStream* __stdinp_nid_postfix;
@@ -36,6 +39,19 @@ static void Require(bool value, const char* what) {
     std::fprintf(stderr, "failed: %s\n", what);
     std::abort();
 }
+
+#ifndef _WIN32
+static std::FILE* OpenPipe(const char* text) {
+    int descriptors[2];
+    Require(::pipe(descriptors) == 0, "create scanner input pipe");
+    const std::size_t length = std::strlen(text);
+    Require(::write(descriptors[1], text, length) == static_cast<ssize_t>(length), "seed scanner input pipe");
+    Require(::close(descriptors[1]) == 0, "finish scanner input pipe");
+    auto* stream = ::fdopen(descriptors[0], "r");
+    Require(stream != nullptr, "open scanner input pipe");
+    return stream;
+}
+#endif
 
 static int APS5_VABI ScanStream(FileStream* stream, const char* format, ...) {
     APS5_VA_BEGIN(format);
@@ -171,16 +187,96 @@ int main() {
     Require(ScanStream(&utf8Set, "%lc", pair) == 1 && pair[0] == u'é', "vfscanf scanset preserves multibyte input");
     utf8Set.Close();
 
-    for (const char* text : {"\xff", "\xc3", "\xf0\x9f\x98\x80"}) {
+    struct InvalidCase { const char* text; long consumed; };
+    for (const auto& test : {InvalidCase{"\xff", 0}, InvalidCase{"\xc3", 1}, InvalidCase{"\xf0\x9f\x98\x80", 0}}) {
         FileStream invalid(std::tmpfile());
-        Require(std::fputs(text, invalid.GetHandle()) >= 0, "seed unsupported wide input");
+        Require(std::fputs(test.text, invalid.GetHandle()) >= 0, "seed unsupported wide input");
         std::rewind(invalid.GetHandle());
         wideWord[0] = u'!';
         bool rejected = false;
         try { ScanStream(&invalid, "%ls", wideWord); } catch (const std::runtime_error&) { rejected = true; }
-        Require(rejected && wideWord[0] == u'!' && std::ftell(invalid.GetHandle()) == 0,
-            "vfscanf rejects unsupported encoding without writing or consuming input");
+        Require(rejected && wideWord[0] == u'!' && std::ftell(invalid.GetHandle()) == test.consumed,
+            "vfscanf rejects unsupported encoding and consumes only its accepted prefix");
         invalid.Close();
+    }
+
+    for (int variant = 0; variant < 3; ++variant) {
+        FileStream pipe(OpenPipe("abé7"));
+        longCount = -1;
+        __stdinp_nid_postfix = &pipe;
+        const int result = variant == 0 ? ScanStream(&pipe, "%l[a-z]%ln", wideWord, &longCount) :
+            variant == 1 ? fscanf_nid_postfix(&pipe, "%l[a-z]%ln", wideWord, &longCount) :
+            ScanInput("%l[a-z]%ln", wideWord, &longCount);
+        __stdinp_nid_postfix = standardInput;
+        Require(result == 1 && std::u16string(wideWord) == u"ab" && longCount == 2,
+            "nonseekable scanset counts only accepted bytes");
+        char unread[2]{};
+        Require(std::fread(unread, 1, 2, pipe.GetHandle()) == 2 && static_cast<unsigned char>(unread[0]) == 0xc3 &&
+            static_cast<unsigned char>(unread[1]) == 0xa9, "ordinary fread sees all rejected multibyte input");
+        Require(fscanf_nid_postfix(&pipe, "%d", &values[0]) == 1 && values[0] == 7,
+            "a following narrow scan sees the original stream");
+        Require(std::fgetc(pipe.GetHandle()) == EOF, "nonseekable stream reaches EOF after its input");
+        pipe.Close();
+    }
+    {
+        FileStream pipe(OpenPipe("é€Z"));
+        count = -1;
+        Require(ScanStream(&pipe, "%1lc%n", pair, &count) == 1 && pair[0] == u'é' && count == 2,
+            "first pipe scan counts UTF-8 bytes");
+        count = -1;
+        Require(ScanStream(&pipe, "%1lc%n", pair, &count) == 1 && pair[0] == u'€' && count == 3,
+            "second pipe scan retains the next multibyte character");
+        Require(std::fgetc(pipe.GetHandle()) == 'Z', "ordinary fgetc follows repeated wide scans");
+        pipe.Close();
+    }
+    {
+        FileStream pipe(OpenPipe("é€Z"));
+        longCount = -1;
+        Require(ScanStream(&pipe, "%*2lc%ln", &longCount) == 0 && longCount == 5,
+            "suppressed wide fields consume characters and count bytes");
+        Require(std::fgetc(pipe.GetHandle()) == 'Z', "suppression leaves the next byte in the host stream");
+        pipe.Close();
+    }
+    {
+        FileStream pipe(OpenPipe("é7\n"));
+        Require(ScanStream(&pipe, "%l[a-z]", wideWord) == 0, "nonseekable wide matching failure");
+        char unread[8]{};
+        Require(std::fgets(unread, sizeof(unread), pipe.GetHandle()) != nullptr && std::strcmp(unread, "é7\n") == 0,
+            "ordinary fgets sees bytes rejected by the scanner");
+        pipe.Close();
+    }
+    for (const char* text : {"\xc3X7", "\xe2\x82X7"}) {
+        FileStream pipe(OpenPipe(text));
+        int before = -1, after = -1;
+        wideWord[0] = u'!';
+        bool rejected = false;
+        try { ScanStream(&pipe, "%n%ls%n", &before, wideWord, &after); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected && before == 0 && after == -1 && wideWord[0] == u'!',
+            "an encoding failure preserves destination and later count conversions");
+        Require(std::fgetc(pipe.GetHandle()) == 'X', "the first byte outside an invalid UTF-8 prefix remains unread");
+        Require(fscanf_nid_postfix(&pipe, "%d", &values[0]) == 1 && values[0] == 7,
+            "narrow scanning continues after an encoding failure");
+        pipe.Close();
+    }
+    {
+        FileStream pipe(OpenPipe("\xe2\x82"));
+        bool rejected = false;
+        try { ScanStream(&pipe, "%lc", pair); } catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected && std::feof(pipe.GetHandle()) && (pipe.GuestState().flags & 0x20) != 0,
+            "truncated UTF-8 synchronizes guest EOF on the exception path");
+        Require(std::fgetc(pipe.GetHandle()) == EOF, "truncated input has no discarded lookahead");
+        pipe.Close();
+    }
+    {
+        FileStream pipe(OpenPipe("\xf0\x9f\x98\x80Z"));
+        bool rejected = false;
+        try { ScanStream(&pipe, "%lc", pair); } catch (const std::runtime_error&) { rejected = true; }
+        char unread[4]{};
+        Require(rejected && std::fread(unread, 1, 4, pipe.GetHandle()) == 4 &&
+            std::memcmp(unread, "\xf0\x9f\x98\x80", 4) == 0 && std::fgetc(pipe.GetHandle()) == 'Z',
+            "an unsupported four-byte lead is rejected before consuming its sequence");
+        pipe.Close();
     }
 
     struct FailureCase { const char* input; int result; int first; int second; std::int64_t count; };

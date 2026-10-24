@@ -143,8 +143,6 @@ public:
 
     void Next() { ++cursor; }
 
-    void Back(int) { --cursor; }
-
     std::ptrdiff_t Offset() const { return cursor - start; }
 
     int Scan(const std::string& directive, void* target) {
@@ -164,21 +162,18 @@ private:
 #ifndef _WIN32
 class StreamInput {
 public:
-    explicit StreamInput(std::FILE* source) : stream(source) {}
+    explicit StreamInput(FileStream* source) : stream(source->GetHandle()), owner(source) {}
+
+    ~StreamInput() { owner->SyncStatus(); }
 
     int Peek() {
         const int character = std::getc(stream);
-        if (character != EOF) std::ungetc(character, stream);
+        if (character != EOF && std::ungetc(character, stream) == EOF) throw std::runtime_error("Cannot restore scanf lookahead");
         return character;
     }
 
     void Next() {
         if (std::getc(stream) != EOF) ++offset;
-    }
-
-    void Back(int character) {
-        if (std::ungetc(character, stream) == EOF) throw std::runtime_error("Cannot restore scanf input");
-        --offset;
     }
 
     std::ptrdiff_t Offset() const { return offset; }
@@ -194,23 +189,35 @@ public:
 
 private:
     std::FILE* stream;
+    FileStream* owner;
     std::ptrdiff_t offset = 0;
 };
 #endif
 
 #ifndef _WIN32
+bool AcceptsWideScan(const std::string& specifier, bool set, bool single, int character) {
+    if (character == EOF) return false;
+    if (set) return LibcDetail::InWideScanset(specifier, character < 0x80 ? character : 0x80);
+    return single || character >= 0x80 || !std::isspace(character);
+}
+
 template <typename TInput>
-std::size_t PeekWideScan(TInput& input, char32_t* point) {
-    char text[5]{};
+std::size_t ReadWideScan(TInput& input, char32_t* point) {
+    char text[4]{};
     const int first = input.Peek();
     if (first == EOF) return 0;
-    const std::size_t wanted = (first & 0xE0) == 0xC0 ? 2 : (first & 0xF0) == 0xE0 ? 3 : (first & 0xF8) == 0xF0 ? 4 : 1;
-    std::size_t size = 0;
-    while (size < wanted && input.Peek() != EOF) {
-        text[size++] = static_cast<char>(input.Peek());
+    text[0] = static_cast<char>(first);
+    if (first >= 0x80 && (first < 0xc2 || first >= 0xf0))
+        return LibcDetail::ReadWideScanCharacter(text, point);
+    const std::size_t wanted = first < 0x80 ? 1 : first < 0xe0 ? 2 : 3;
+    input.Next();
+    for (std::size_t index = 1; index < wanted; ++index) {
+        const int next = input.Peek();
+        if (next == EOF) break;
+        text[index] = static_cast<char>(next);
+        if ((next & 0xc0) != 0x80) break;
         input.Next();
     }
-    for (std::size_t index = size; index != 0; --index) input.Back(static_cast<unsigned char>(text[index - 1]));
     return LibcDetail::ReadWideScanCharacter(text, point);
 }
 #endif
@@ -307,11 +314,9 @@ int ScanGuest(TInput& input, const char* format, bool secure, NextPointer nextPo
             std::u16string text;
             while (text.size() < maximum) {
                 char32_t character = 0;
-                const std::size_t bytes = PeekWideScan(input, &character);
-                if (bytes == 0 || (set ? !LibcDetail::InWideScanset(specifier, character) :
-                    (!single && character < 0x80 && std::isspace(static_cast<int>(character))))) break;
+                if (!AcceptsWideScan(specifier, set, single, input.Peek())) break;
+                if (ReadWideScan(input, &character) == 0) break;
                 text.push_back(static_cast<char16_t>(character));
-                for (std::size_t index = 0; index < bytes; ++index) input.Next();
             }
             if (text.empty()) return failure();
             if (!suppress) {
@@ -343,12 +348,7 @@ int ScanGuest(TInput& input, const char* format, bool secure, NextPointer nextPo
             const int next = input.Peek();
             bool continues = next != EOF && (set ? InScanSet(specifier, next) : !std::isspace(next));
 #ifndef _WIN32
-            if (wide && next != EOF) {
-                char32_t character = 0;
-                PeekWideScan(input, &character);
-                continues = set ? LibcDetail::InWideScanset(specifier, character) :
-                    character >= 0x80 || !std::isspace(static_cast<int>(character));
-            }
+            if (wide) continues = AcceptsWideScan(specifier, set, false, next);
 #endif
             if (continues) {
                 ClearFirst(target, wide);
@@ -461,7 +461,7 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #else
     std::va_list args;
     va_start(args, format);
-    StreamInput input(native);
+    StreamInput input(stream);
     const int result = HasGuestWideScan(format)
         ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
         : HostVfscanf(native, format, args);
@@ -742,7 +742,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
 #else
     if (HasGuestWideScan(format)) {
         LibcDetail::FormatArguments arguments(args);
-        StreamInput input(native);
+        StreamInput input(stream);
         const int result = ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
         stream->SyncStatus();
         return result;
