@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 
 struct PoolStats {
     std::size_t pool_size;
@@ -63,7 +64,12 @@ int main() {
 
     const int http2 = sceHttp2Init(1, ssl, 0x40000, 1);
     Require(http2 > 0);
-    Require(sceHttp2GetMemoryPoolStats(http2, &stats) == 0 && stats.pool_size == 0x40000);
+    bool http2StatsThrow = false;
+    const PoolStats previous = stats;
+    try { sceHttp2GetMemoryPoolStats(http2, &stats); }
+    catch (const std::exception&) { http2StatsThrow = true; }
+    Require(http2StatsThrow && stats.pool_size == previous.pool_size && stats.max_inuse_size == previous.max_inuse_size &&
+        stats.current_inuse_size == previous.current_inuse_size && stats.reserved == previous.reserved);
     Require(sceHttp2GetMemoryPoolStats(http2, nullptr) == http2NullPointer);
     Require(sceHttp2GetMemoryPoolStats(12345, nullptr) == http2NullPointer);
     CheckRejected(sceHttp2GetMemoryPoolStats, 12345, http2InvalidId);
