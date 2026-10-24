@@ -2165,30 +2165,30 @@ static void CheckRemappedDirectMemoryIsChargedOnce() {
 #ifdef _WIN32
     constexpr std::size_t bytes = 0x10000000;
     const auto committed = [] {
-        PERFORMANCE_INFORMATION info{};
-        info.cb = sizeof(info);
-        Require(K32GetPerformanceInfo(&info, sizeof(info)) != 0);
-        return static_cast<std::int64_t>(info.CommitTotal) * static_cast<std::int64_t>(info.PageSize);
+        struct {
+            PROCESS_MEMORY_COUNTERS_EX counters;
+            SIZE_T privateWorkingSetSize;
+            ULONG64 sharedCommitUsage;
+        } info{};
+        info.counters.cb = sizeof(info);
+        Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&info), sizeof(info)) != 0);
+        return static_cast<std::int64_t>(info.counters.PrivateUsage) + static_cast<std::int64_t>(info.sharedCommitUsage);
     };
-    bool once = false;
-    for (int attempt = 0; attempt < 3 && !once; ++attempt) {
-        const auto before = committed();
-        std::int64_t phys = 0;
-        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &phys) == 0);
-        void* mapped = nullptr;
-        Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, phys, 0) == 0);
-        RequireResidentMapping(mapped);
-        std::memset(mapped, 0xa5, bytes);
-        Require(sceKernelMunmap(mapped, bytes) == 0);
-        void* again = nullptr;
-        Require(sceKernelMapDirectMemory(&again, bytes, 3, 0, phys, 0) == 0);
-        const auto* data = static_cast<const unsigned char*>(again);
-        Require(data[0] == 0xa5 && data[bytes / 2] == 0xa5 && data[bytes - 1] == 0xa5);
-        once = committed() - before < static_cast<std::int64_t>(bytes + bytes / 2);
-        Require(sceKernelMunmap(again, bytes) == 0);
-        Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
-    }
-    Require(once);
+    const auto before = committed();
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, phys, 0) == 0);
+    RequireResidentMapping(mapped);
+    std::memset(mapped, 0xa5, bytes);
+    Require(sceKernelMunmap(mapped, bytes) == 0);
+    void* again = nullptr;
+    Require(sceKernelMapDirectMemory(&again, bytes, 3, 0, phys, 0) == 0);
+    const auto* data = static_cast<const unsigned char*>(again);
+    Require(data[0] == 0xa5 && data[bytes / 2] == 0xa5 && data[bytes - 1] == 0xa5);
+    Require(committed() - before < static_cast<std::int64_t>(bytes + bytes / 2));
+    Require(sceKernelMunmap(again, bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
 #endif
 }
 
