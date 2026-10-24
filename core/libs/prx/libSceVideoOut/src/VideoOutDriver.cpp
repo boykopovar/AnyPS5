@@ -11,6 +11,7 @@
 
 #include "SDL.h"
 #include "SDL_vulkan.h"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
@@ -284,7 +285,7 @@ VideoOutDriver::VideoOutDriver() {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) {
+        presentThread = Libc::StartHostJThread([this, &started](std::stop_token token) {
             try {
                 AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
             } catch (...) {
@@ -294,7 +295,7 @@ VideoOutDriver::VideoOutDriver() {
             presentLoop(token, started);
         });
         attached.get();
-        vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
+        vblankThread = Libc::StartHostJThread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
     } catch (...) {
         if (vblankThread.joinable()) {

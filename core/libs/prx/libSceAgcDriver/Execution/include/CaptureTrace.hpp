@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libc/include/HostThread.hpp"
 
 #include <array>
 #include <chrono>
@@ -39,7 +40,7 @@ private:
     CaptureTrace() {
         output.exceptions(std::ios::badbit | std::ios::failbit);
         output.open("capture-trace.log", std::ios::binary);
-        worker = std::thread([this] { run(); });
+        worker = Libc::StartHostThread([this] { run(); });
     }
 
     ~CaptureTrace() {

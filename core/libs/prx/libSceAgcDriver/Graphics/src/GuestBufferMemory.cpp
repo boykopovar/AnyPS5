@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -2329,10 +2330,10 @@ private:
         const auto requested = text != nullptr ? std::atoi(text) : 3;
         const auto wanted = disabled ? 0u : static_cast<unsigned>(std::clamp(requested, 0, 16));
         for (unsigned i = 0; i < wanted; ++i) {
-            threads.emplace_back([this](std::stop_token token) {
+            threads.push_back(Libc::StartHostJThread([this](std::stop_token token) {
                 CpuTopology::PinHelperThread("mirror refresh");
                 helper(token);
-            });
+            }));
             ++helpers;
         }
     }

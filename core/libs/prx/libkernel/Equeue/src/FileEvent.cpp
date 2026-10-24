@@ -1,4 +1,5 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -745,7 +746,7 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    Libc::StartHostThread(RunHostWatch, watch, std::move(host)).detach();
     return 0;
 }
 

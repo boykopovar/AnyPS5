@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstring>
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
@@ -70,7 +71,7 @@ Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount, bool ps5
     if (init.default_language) {
         for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index) language[index] = init.default_language[index];
     }
-    controller = std::thread([this, closed = controllerClosed] { controllerLoop(*closed); });
+    controller = Libc::StartHostThread([this, closed = controllerClosed] { controllerLoop(*closed); });
 }
 
 Player::~Player() {
