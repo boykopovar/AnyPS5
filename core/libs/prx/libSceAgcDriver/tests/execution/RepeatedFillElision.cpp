@@ -23,6 +23,15 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -84,7 +93,7 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-enum class Outcome : std::uint8_t { NotWatched, NoDevice, NoImport, Passed };
+enum class Outcome : std::uint8_t { NoImport, Passed };
 enum class Store : std::uint8_t { Recorded, Elided };
 
 Store Fill(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes, const std::array<std::uint32_t, 4>& pattern, const std::string& what) {
@@ -99,6 +108,10 @@ Store Fill(AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t b
     return store;
 }
 
+std::string Unexpected(Store expected) {
+    return expected == Store::Elided ? " was recorded although the write watch proves the range unchanged" : " was elided although nothing proves the range unchanged";
+}
+
 void RequireFilled(const WatchedBlock& guest, std::size_t offset, std::size_t bytes, const std::array<std::uint32_t, 4>& pattern, const std::string& what) {
     for (std::size_t at = 0; at < bytes; at += sizeof(std::uint32_t)) {
         std::uint32_t word = 0;
@@ -107,55 +120,58 @@ void RequireFilled(const WatchedBlock& guest, std::size_t offset, std::size_t by
     }
 }
 
-Outcome RepeatsAreElidedUntilTheRangeChanges() {
-    if (!GuestMemory::WriteWatched()) return Outcome::NotWatched;
+Outcome RepeatsAreElidedUntilTheRangeChanges(AgcDriver::VulkanDevice& device, const char* mode) {
     WatchedBlock guest;
-    auto device = OpenVulkanTestDevice();
-    if (!device) return Outcome::NoDevice;
     const auto address = guest.Address() + FillOffset;
+    std::uint64_t filled = 0;
     {
         std::lock_guard lock(GuestMemory::GpuMutex());
-        if (!device->FillBuffer(address, FillBytes, Pattern)) return Outcome::NoImport;
-        device->WaitIdle();
+        if (!device.FillBuffer(address, FillBytes, Pattern)) return Outcome::NoImport;
+        filled = GuestMemory::TrackerGeneration();
+        device.WaitIdle();
     }
     RequireFilled(guest, FillOffset, FillBytes, Pattern, "the first fill");
     Require(guest.Data()[FillOffset - 1] == 0x37 && guest.Data()[FillOffset + FillBytes] == 0x37, "repeated fill elision: the first fill stored outside its range");
+    GuestMemory::CollectWritesUncached(address, FillBytes);
+    const bool proven = GuestMemory::Watched(address, FillBytes) && GuestMemory::UnchangedSince(address, FillBytes, filled);
+    const auto repeat = proven ? Store::Elided : Store::Recorded;
+    std::printf("repeated fill elision, %s: %s\n", mode, proven ? "the write watch proves the range unchanged, so repeats are elided" : "nothing proves the range unchanged, so every fill is recorded");
 
-    Require(Fill(*device, address, FillBytes, Pattern, "a repeat over unchanged bytes") == Store::Elided, "repeated fill elision: a repeat over unchanged bytes was recorded");
-    Require(Fill(*device, address, FillBytes, Pattern, "a second repeat") == Store::Elided, "repeated fill elision: the repeat after an elided one was recorded");
-    RequireFilled(guest, FillOffset, FillBytes, Pattern, "the elided repeats");
+    Require(Fill(device, address, FillBytes, Pattern, "a repeat over unchanged bytes") == repeat, std::string("repeated fill elision: a repeat over unchanged bytes") + Unexpected(repeat));
+    Require(Fill(device, address, FillBytes, Pattern, "a second repeat") == repeat, std::string("repeated fill elision: a second repeat") + Unexpected(repeat));
+    RequireFilled(guest, FillOffset, FillBytes, Pattern, "the repeats");
 
     guest.Data()[FillOffset + 4096] = 0x5a;
-    Require(Fill(*device, address, FillBytes, Pattern, "the fill after a CPU write") == Store::Recorded, "repeated fill elision: the fill after a CPU write was elided");
+    Require(Fill(device, address, FillBytes, Pattern, "the fill after a CPU write") == Store::Recorded, "repeated fill elision: the fill after a CPU write was elided");
     RequireFilled(guest, FillOffset, FillBytes, Pattern, "the fill after a CPU write");
 
-    Require(Fill(*device, address, FillBytes, Zero, "a fill with another pattern") == Store::Recorded, "repeated fill elision: a fill with another pattern was elided");
+    Require(Fill(device, address, FillBytes, Zero, "a fill with another pattern") == Store::Recorded, "repeated fill elision: a fill with another pattern was elided");
     RequireFilled(guest, FillOffset, FillBytes, Zero, "the fill with another pattern");
-    Require(Fill(*device, address, FillBytes, Zero, "a repeat of the other pattern") == Store::Elided, "repeated fill elision: a repeat of the other pattern was recorded");
+    Require(Fill(device, address, FillBytes, Zero, "a repeat of the other pattern") == repeat, std::string("repeated fill elision: a repeat of the other pattern") + Unexpected(repeat));
 
-    Require(Fill(*device, address + 4096, 4096, Pattern, "a GPU store inside the range") == Store::Recorded, "repeated fill elision: a fill of another range was elided");
-    Require(Fill(*device, address, FillBytes, Zero, "the fill after a GPU store") == Store::Recorded, "repeated fill elision: the fill after a GPU store was elided");
+    Require(Fill(device, address + 4096, 4096, Pattern, "a GPU store inside the range") == Store::Recorded, "repeated fill elision: a fill of another range was elided");
+    Require(Fill(device, address, FillBytes, Zero, "the fill after a GPU store") == Store::Recorded, "repeated fill elision: the fill after a GPU store was elided");
     RequireFilled(guest, FillOffset, FillBytes, Zero, "the fill after a GPU store");
 
     {
         std::lock_guard lock(GuestMemory::GpuMutex());
         GuestMemory::MarkWritten(address + FillBytes / 2, 16);
     }
-    Require(Fill(*device, address, FillBytes, Zero, "the fill after a driver stamp") == Store::Recorded, "repeated fill elision: the fill after a write-back's stamp was elided");
+    Require(Fill(device, address, FillBytes, Zero, "the fill after a driver stamp") == Store::Recorded, "repeated fill elision: the fill after a write-back's stamp was elided");
 
-    Require(Fill(*device, address, FillBytes / 2, Zero, "a shorter fill at the same address") == Store::Recorded, "repeated fill elision: a shorter fill at the same address was elided");
-    Require(Fill(*device, address, FillBytes, Zero, "the fill after a shorter one") == Store::Recorded, "repeated fill elision: the fill after a shorter one was elided");
+    Require(Fill(device, address, FillBytes / 2, Zero, "a shorter fill at the same address") == Store::Recorded, "repeated fill elision: a shorter fill at the same address was elided");
+    Require(Fill(device, address, FillBytes, Zero, "the fill after a shorter one") == Store::Recorded, "repeated fill elision: the fill after a shorter one was elided");
 
     {
         std::lock_guard lock(GuestMemory::GpuMutex());
-        Graphics::ClearHostImports(device->Device());
+        Graphics::ClearHostImports(device.Device());
     }
-    Require(Fill(*device, address, FillBytes, Zero, "the fill after its import was dropped") == Store::Recorded, "repeated fill elision: the fill through a new import was elided");
+    Require(Fill(device, address, FillBytes, Zero, "the fill after its import was dropped") == Store::Recorded, "repeated fill elision: the fill through a new import was elided");
     RequireFilled(guest, FillOffset, FillBytes, Zero, "the fill through a new import");
     Require(guest.Data()[FillOffset - 1] == 0x37 && guest.Data()[FillOffset + FillBytes] == 0x37, "repeated fill elision: a fill stored outside its range");
     {
         std::lock_guard lock(GuestMemory::GpuMutex());
-        Graphics::ClearHostImports(device->Device());
+        Graphics::ClearHostImports(device.Device());
     }
     return Outcome::Passed;
 }
@@ -164,16 +180,35 @@ Outcome RepeatsAreElidedUntilTheRangeChanges() {
 
 int main() {
     try {
-        const auto outcome = RepeatsAreElidedUntilTheRangeChanges();
-        if (outcome == Outcome::NoDevice) return VulkanTestSkipped;
-        if (outcome == Outcome::NotWatched) {
+        if (!GuestMemory::WriteWatched()) {
             std::printf("skipped, guest memory is not write watched\n");
             return VulkanTestSkipped;
         }
-        if (outcome == Outcome::NoImport) {
+        auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+#ifndef _WIN32
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        const auto decided = Graphics::PrepareImportWatch(context);
+        struct Restore {
+            const Graphics::Context& context;
+            Graphics::ImportWatch decided;
+            ~Restore() { Graphics::SetImportWatch(context, decided); }
+        } restore{context, decided};
+        std::vector<Graphics::ImportWatch> modes{decided};
+        if (decided != Graphics::ImportWatch::Unwatch) modes.push_back(Graphics::ImportWatch::Unwatch);
+        for (const auto mode : modes) {
+            Graphics::SetImportWatch(context, mode);
+            if (RepeatsAreElidedUntilTheRangeChanges(*device, mode == Graphics::ImportWatch::Watch ? "imports under the write watch" : "imports left unwatched") == Outcome::NoImport) {
+                std::printf("skipped, the device does not import guest memory\n");
+                return VulkanTestSkipped;
+            }
+        }
+#else
+        if (RepeatsAreElidedUntilTheRangeChanges(*device, "imports as decided") == Outcome::NoImport) {
             std::printf("skipped, the device does not import guest memory\n");
             return VulkanTestSkipped;
         }
+#endif
         std::puts("repeated fill elision tests passed");
         return 0;
     } catch (const std::exception& error) {
