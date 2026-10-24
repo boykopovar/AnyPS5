@@ -1,7 +1,6 @@
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
@@ -26,8 +25,7 @@ static void Require(bool value) { if (!value) std::abort(); }
 static std::FILE* shared = nullptr;
 static std::atomic<int> deliveries{0};
 static std::atomic<int> released{0};
-static std::atomic<bool> stop{false};
-static std::atomic<int> blocks{0};
+static std::atomic<int> writing{0};
 
 static void APS5_VABI Handler(int, void*) {
     const auto delivery = deliveries.fetch_add(1) + 1;
@@ -35,12 +33,12 @@ static void APS5_VABI Handler(int, void*) {
 }
 
 static void* APS5_VABI Writer(void*) {
-    const std::string block(16u * PipeBytes, 'x');
-    while (!stop.load()) {
+    const std::string block(2u * PipeBytes, 'x');
+    for (int raise = 1; raise <= Raises; ++raise) {
+        writing.store(raise);
         Require(std::fwrite(block.data(), 1, block.size(), shared) == block.size());
-        blocks.fetch_add(1);
-        volatile std::uint64_t spin = 0;
-        for (std::uint64_t i = 0; i < 200000; ++i) spin = spin + i;
+        while (deliveries.load() < raise) {
+        }
     }
     return nullptr;
 }
@@ -48,7 +46,8 @@ static void* APS5_VABI Writer(void*) {
 int main() {
     std::atomic<bool> done{false};
     std::thread watchdog([&done] {
-        for (int i = 0; i < 25000 && !done.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if (!done.load()) std::abort();
     });
     HANDLE read = nullptr;
@@ -61,20 +60,19 @@ int main() {
         char chunk[PipeBytes];
         DWORD got = 0;
         while (ReadFile(read, chunk, sizeof(chunk), &got, nullptr) != 0 && got != 0) {
-            if (draining.load()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (draining.load()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     });
     Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Handler)) == 0);
     Pthread writer = nullptr;
     Require(scePthreadCreate(&writer, nullptr, Writer, nullptr, "pipe writer") == 0);
-    while (blocks.load() == 0) std::this_thread::yield();
     for (int raise = 1; raise <= Raises; ++raise) {
+        while (writing.load() < raise) std::this_thread::yield();
         Require(sceKernelRaiseException(writer, SigUsr1) == 0);
         while (deliveries.load() < raise) std::this_thread::yield();
         Require(std::fputc('y', shared) == 'y');
         released.store(raise);
     }
-    stop.store(true);
     draining.store(false);
     Require(scePthreadJoin(writer, nullptr) == 0);
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
