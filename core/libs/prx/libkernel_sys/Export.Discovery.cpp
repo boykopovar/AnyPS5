@@ -311,11 +311,6 @@ int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_barrier_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_cond_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -356,11 +351,6 @@ int APS5_VABI pthread_mutex_init_for_mono_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_mutex_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -387,11 +377,6 @@ int APS5_VABI pthread_resume_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlock_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

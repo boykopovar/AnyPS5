@@ -14,6 +14,7 @@ struct PthreadBarrierPrivate {
     unsigned arrived = 0;
     unsigned active = 0;
     std::uint64_t generation = 0;
+    std::string name;
 };
 
 namespace {
@@ -100,6 +101,14 @@ int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrie
     }
     delete value;
     *barrier = nullptr;
+    return 0;
+}
+
+int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** barrier, const char* name) {
+    if (!barrier || !*barrier) return 22;
+    auto& value = **barrier;
+    std::lock_guard lock(value.mutex);
+    if (name) value.name = name;
     return 0;
 }
 

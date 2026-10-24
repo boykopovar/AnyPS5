@@ -272,4 +272,16 @@ int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
     return 0;
 }
 
+int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
+    if (!mutex)
+        throw std::invalid_argument("pthread_mutex_setname_np: null mutex");
+    std::lock_guard lock(InitializationMutex());
+    const auto current = std::atomic_ref<PthreadMutex>(*mutex).load(std::memory_order_acquire);
+    if (!isInitializedMutex(current))
+        throw std::invalid_argument("pthread_mutex_setname_np: mutex is statically initialized or destroyed");
+    if (name)
+        current->_name = name;
+    return 0;
+}
+
 }

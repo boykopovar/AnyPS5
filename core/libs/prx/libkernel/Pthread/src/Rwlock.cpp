@@ -14,6 +14,7 @@ static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
+static constexpr int POSIX_EINVAL = 22;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -176,6 +177,17 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
     if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrSettype: null attr");
     (*attr)->type = type;
+    return SCE_OK;
+}
+
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+    if (!name) return POSIX_EINVAL;
+    if (!rwlock) throw std::runtime_error("pthread_rwlock_setname_np: null rwlock");
+    PthreadRwlock current = std::atomic_ref<PthreadRwlock>(*rwlock).load(std::memory_order_acquire);
+    if (current == nullptr) return SCE_OK;
+    if (current == DestroyedRwlock) throw std::runtime_error("pthread_rwlock_setname_np: destroyed rwlock");
+    std::lock_guard state(current->_state);
+    current->_name = name;
     return SCE_OK;
 }
 
