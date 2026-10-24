@@ -365,6 +365,24 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     char narrow[8] = {};
     Require(sscanf_nid_postfix("ab%", "%7[^%ls]", narrow) == 1 && std::strcmp(narrow, "ab") == 0);
 #endif
+#ifdef _WIN32
+    char freebsd[64];
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%qd|%qu|%qx|%qo") == 15 &&
+        std::strcmp(freebsd, "%qd|%qu|%qx|%qo") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%qd|%d", 7) == 5 && std::strcmp(freebsd, "%qd|7") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%D|%hD|%O|%U|%jD") == 14 &&
+        std::strcmp(freebsd, "%D|%D|%O|%U|%D") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "[%5%][%-5%][%y][%5y][%-3y][%hhz]") == 34 &&
+        std::strcmp(freebsd, "[    %][%    ][%y][   %y][%y ][%z]") == 0);
+    for (const char* unsupported : {"%+y", "%#y", "%05y", "%.2y"}) {
+        bool threw = false;
+        try { snprintf_nid_postfix(freebsd, sizeof(freebsd), unsupported, 1); } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw);
+    }
+    bool incomplete = false;
+    try { snprintf_nid_postfix(freebsd, sizeof(freebsd), "100%"); } catch (const std::invalid_argument&) { incomplete = true; }
+    Require(incomplete);
+#endif
     long long count = -1;
     int smallCount = -1;
     Require(snprintf_nid_postfix(buffer, 3, "abcd%lnEF%n", &count, &smallCount) == 6);
