@@ -854,6 +854,19 @@ int main() {
     std::filesystem::create_directory(root / "nonempty");
     { std::ofstream out(root / "nonempty" / "f.bin"); out << 'x'; }
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == -1 && Error() == 66);
+#ifdef _WIN32
+    const auto fullJunctionTarget = root / "junction-full-target";
+    Require(std::filesystem::create_directory(fullJunctionTarget));
+    { std::ofstream out(fullJunctionTarget / "inside.txt"); out << 'x'; }
+    const auto fullJunctionCommand = L"cmd /c mklink /J \"" + (root / "junction-full").wstring() + L"\" \"" + std::filesystem::absolute(fullJunctionTarget).wstring() + L"\"";
+    Require(_wsystem(fullJunctionCommand.c_str()) == 0);
+    Require(unlinkat_nid_postfix(base, "junction-full", 0x800) == -1 && Error() == 20);
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(unlinkat_nid_postfix(base, "junction-full", 0) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "junction-full")));
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullJunctionTarget / "inside.txt") && std::filesystem::remove(fullJunctionTarget));
+#endif
     Require(unlinkat_nid_postfix(base, "nonempty/f.bin", 0) == 0 && !std::filesystem::exists(root / "nonempty" / "f.bin"));
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == 0 && !std::filesystem::exists(root / "nonempty"));
     { std::ofstream out(root / "to_unlink.bin"); out << 'x'; }
