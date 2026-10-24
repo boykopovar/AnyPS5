@@ -13,6 +13,7 @@
 extern "C" {
 std::int64_t APS5_VABI random_nid_postfix();
 void APS5_VABI srandom_nid_postfix(std::uint64_t);
+void APS5_VABI srandomdev_nid_postfix();
 char* APS5_VABI initstate_nid_postfix(std::uint64_t, char*, std::int64_t);
 char* APS5_VABI setstate_nid_postfix(char*);
 int* APS5_VABI __error_nid_postfix();
@@ -231,6 +232,26 @@ int main() {
     std::sort(serial.begin(), serial.end());
     std::sort(concurrent.begin(), concurrent.end());
     Require(serial == concurrent, "concurrent calls must draw the serial sequence");
+
+    for (const std::int64_t size : {8, 32, 64, 128, 256}) {
+        std::array<char, 256> entropyState{};
+        char* previous = initstate_nid_postfix(42, entropyState.data(), size);
+        srandomdev_nid_postfix();
+        const std::size_t separation = size == 32 || size == 128 ? 3 : 1;
+        std::int64_t expected;
+        if (size == 8) {
+            std::int64_t x = static_cast<std::int32_t>(Word(entropyState.data(), 1));
+            if (x == 0) x = 123459876;
+            x = 16807 * (x % 127773) - 2836 * (x / 127773);
+            if (x < 0) x += 0x7fffffff;
+            expected = x;
+        } else {
+            const std::uint32_t sum = Word(entropyState.data(), 1) + Word(entropyState.data(), 1 + separation);
+            expected = sum >> 1;
+        }
+        Require(random_nid_postfix() == expected, "srandomdev seeds the shared library's active state from host entropy");
+        setstate_nid_postfix(previous);
+    }
 
     return failures == 0 ? 0 : 1;
 }
