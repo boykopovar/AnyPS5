@@ -45,9 +45,6 @@ struct SlabSlot {
 // builds no longer sweeps the large ones out. Free slots are kept per size, usage and memory
 // properties, so a lookup does not scan the other slots. Reuse is safe because a Buffer is only released once
 // the GPU work using it completed (kept until the batch fence, or after a CommandBatch wait).
-// APS5_NO_BUFFER_CLASSES=1 matches exact sizes only, as before; APS5_BUFFER_POOL_SLOTS=<n> sets the
-// slot count (the bound applies to each tier below, and is held to a sixth of the device's
-// maxMemoryAllocationCount so the three tiers keep half of it free).
 //
 // The size classes and the exact-size allocations are retained in two tiers with a budget each:
 // the multi-MiB texture scratch buffers that come back from a batch (GPU-direct uploads and
@@ -125,8 +122,6 @@ private:
         std::uint64_t misses = 0;
         std::uint64_t evictions = 0;
     };
-    // The tier a buffer of `capacity` and `properties` is retained in (the large one for everything
-    // when shared; the device tier for device-local memory while it has a budget).
     Tier& tierFor(std::size_t capacity, VkMemoryPropertyFlags properties);
     static bool DeviceTierEnabled();
     static VkDeviceSize deviceBudget(const Context& context);
@@ -159,6 +154,7 @@ private:
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
+    Tier smallDeviceTier;
     std::chrono::steady_clock::time_point heapRead{};
     bool heapOver = false;
     VkDeviceSize imageBudget = 0;

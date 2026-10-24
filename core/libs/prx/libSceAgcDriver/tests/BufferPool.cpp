@@ -325,6 +325,26 @@ void SmallDeviceRetention() {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "device pool tier retention leaked Vulkan objects");
 }
 
+void SmallDeviceOwnTier() {
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkDeviceMemory small = VK_NULL_HANDLE;
+        {
+            DeviceBuffer buffer(context, 256 * 1024, usage);
+            small = MemoryOf(buffer.Handle());
+        }
+        std::vector<std::unique_ptr<Buffer>> host;
+        for (int i = 0; i < 160; ++i) host.push_back(std::make_unique<Buffer>(context, 512 * 1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible));
+        host.clear();
+        const auto made = mock.allocations;
+        DeviceBuffer again(context, 256 * 1024, usage);
+        Expect(MemoryOf(again.Handle()) == small && mock.allocations == made, "small host buffer churn evicted a retained small device buffer");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "the small device tier leaked Vulkan objects");
+}
+
 void LargerClass() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -1170,6 +1190,7 @@ int main(int argc, char** argv) {
         LargerClass();
         KeptUntilFence();
         SmallDeviceRetention();
+        SmallDeviceOwnTier();
         Budget();
         AddressAndHostUnchanged();
         SmallDeviceClasses();
