@@ -43,6 +43,7 @@ inline constexpr std::uint8_t OneByteArpl = 0x62;
 inline constexpr std::uint8_t OneByteMovsxd = 0x63;
 inline constexpr std::uint8_t OneByteModRmRangeIMin = 0x84;
 inline constexpr std::uint8_t OneByteModRmRangeIMax = 0x8F;
+inline constexpr std::uint8_t OneByteLea = 0x8D;
 inline constexpr std::uint8_t OneByteGrp2Rm8Imm8 = 0xC0;
 inline constexpr std::uint8_t OneByteGrp2RmImm8 = 0xC1;
 inline constexpr std::uint8_t OneByteVex3 = 0xC4;

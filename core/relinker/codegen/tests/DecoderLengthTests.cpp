@@ -120,6 +120,8 @@ int main() {
         for (const auto& testCase : std::vector<std::pair<const char*, bool>>{
             {"6590", false},
             {"654889c8", false},
+            {"658d0511111111", false},
+            {"650f1f0511111111", false},
             {"65488b0c2578030000", true},
             {"65a4", true},
             {"650fa2", false},
