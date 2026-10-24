@@ -14,6 +14,7 @@ using namespace FreeType;
 
 extern "C" {
 std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t, std::int64_t);
+std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector*);
 }
 
 static void Check(bool value, int line) {
@@ -30,6 +31,18 @@ static void TestAtan2() {
     }
 }
 
+static void TestLength() {
+    for (const std::int64_t x : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
+        for (const std::int64_t y : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
+            const GuestVector guest{x, y};
+            FT_Vector native{static_cast<FT_Pos>(x), static_cast<FT_Pos>(y)};
+            Require(FT_Vector_Length_nid_postfix(&guest) == FT_Vector_Length(&native));
+        }
+    }
+    Require(FT_Vector_Length_nid_postfix(nullptr) == FT_Vector_Length(nullptr));
+}
+
 int main() {
     TestAtan2();
+    TestLength();
 }
