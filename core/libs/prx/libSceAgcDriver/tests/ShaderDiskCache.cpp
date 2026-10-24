@@ -62,11 +62,19 @@ void setEnvironment(const char* name, const std::string& value) {
 #endif
 }
 
+void setPathEnvironment(const char* name, const std::filesystem::path& value) {
+#ifdef _WIN32
+    _wputenv_s(std::filesystem::path(name).wstring().c_str(), value.wstring().c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
 #ifdef _WIN32
 void verifyHostStandardError() {
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-host-stderr-" + std::to_string(std::random_device{}()));
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
     int capture[2], guest[2];
     require(::_pipe(capture, 65536, _O_BINARY) == 0, "cannot create host capture");
     require(::_pipe(guest, 65536, _O_BINARY) == 0, "cannot create guest capture");
@@ -1074,7 +1082,7 @@ void verifyLongHostPaths() {
     const auto extended = [](const auto& path) { return std::filesystem::path(L"\\\\?\\" + path.native()); };
     std::filesystem::create_directories(extended(directory));
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
     std::vector<std::filesystem::path> files;
     std::filesystem::path entries;
     struct Cleanup {
@@ -2530,7 +2538,7 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-        setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+        setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
         verifyEntryRoundTrip();
