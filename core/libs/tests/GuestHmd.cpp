@@ -50,7 +50,9 @@ void CheckDisconnected() {
 
 void CheckBufferQueries() {
     Require(sceHmdDistortionGetWorkMemoryAlign() == 0x400, "distortion work memory alignment");
+    Require(sceHmdGetDistortionWorkMemoryAlign() == 0x400, "distortion work memory alignment query");
     Require(sceHmdDistortionGetWorkMemorySize() == 0x20000, "distortion work memory size");
+    Require(sceHmdGetDistortionWorkMemorySize() == 0x20000, "distortion work memory size query");
     Require(sceHmdReprojectionQueryGarlicBuffAlign() == 0x100, "reprojection garlic buffer alignment");
     Require(sceHmdReprojectionQueryGarlicBuffSize() == 0x100000, "reprojection garlic buffer size");
     Require(sceHmdReprojectionQueryOnionBuffAlign() == 0x100, "reprojection onion buffer alignment");
