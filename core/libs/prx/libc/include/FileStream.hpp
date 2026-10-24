@@ -69,8 +69,13 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    static constexpr std::size_t WideConversionOffset = 0x60 - sizeof(GuestFilePrefix);
+    static constexpr std::size_t WideConversionSize = 16;
 
 public:
+    static_assert(sizeof(GuestFilePrefix) <= 0x60);
+    static_assert(0x60 + WideConversionSize <= 256);
+
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
         _guest.flags = handle == stdin ? 4 : handle == stdout || handle == stderr ? 8 : 0x10;
@@ -99,6 +104,10 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
+    void* WideConversionState() { return _reserved + WideConversionOffset; }
+    void ResetWideConversionState() {
+        for (std::size_t index = 0; index < WideConversionSize; ++index) _reserved[WideConversionOffset + index] = std::byte{};
+    }
     bool IsHostStandard() const {
         return _handle == stdin || _handle == stdout || _handle == stderr;
     }
@@ -147,6 +156,7 @@ public:
         _guest = {};
         guestError = false;
         randomDevice = false;
+        ResetWideConversionState();
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));

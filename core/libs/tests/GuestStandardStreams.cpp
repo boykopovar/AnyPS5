@@ -53,6 +53,7 @@ int APS5_VABI fputwc_nid_postfix(char16_t, FileStream*);
 int APS5_VABI fputws_nid_postfix(const char16_t*, FileStream*);
 std::int32_t APS5_VABI getwc_nid_postfix(FileStream*);
 std::int32_t APS5_VABI getwchar_nid_postfix();
+std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream*);
 int APS5_VABI putwc_nid_postfix(char16_t, FileStream*);
 int APS5_VABI putwchar_nid_postfix(char16_t);
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t*, int, FileStream*);
@@ -775,6 +776,39 @@ int main(int argc, char** argv) {
     Require(fgetws_nid_postfix(utfBuf, 16, &roundTrip) == utfBuf);
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
+
+    FileStream wideIncomplete(std::tmpfile());
+    Require(std::fwrite("\xE2\x82", 1, 2, wideIncomplete.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideIncomplete, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideIncomplete) == -1);
+    Require(*__error_nid_postfix() == 86 && feof_nid_postfix(&wideIncomplete) != 0 && ferror_nid_postfix(&wideIncomplete) != 0);
+    wideIncomplete.Close();
+
+    FileStream wideInvalid(std::tmpfile());
+    Require(std::fwrite("\xE2" "A", 1, 2, wideInvalid.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideInvalid, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideInvalid) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideInvalid) != 0);
+    clearerr_nid_postfix(&wideInvalid);
+    Require(fseeko_nid_postfix(&wideInvalid, 1, SEEK_SET) == 0);
+    Require(fgetwc_nid_postfix(&wideInvalid) == 'A' && ferror_nid_postfix(&wideInvalid) == 0);
+    wideInvalid.Close();
+
+    FileStream wideFourByte(std::tmpfile());
+    Require(std::fwrite("\xF0\x9F\x98\x80", 1, 4, wideFourByte.GetHandle()) == 4);
+    Require(fseeko_nid_postfix(&wideFourByte, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideFourByte) != 0);
+    wideFourByte.Close();
+
+    FileStream wideRandom(std::tmpfile());
+    wideRandom.MarkRandomDevice();
+    *__error_nid_postfix() = 0;
+    const std::int32_t randomCharacter = fgetwc_nid_postfix(&wideRandom);
+    Require(randomCharacter == -1 ? *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideRandom) != 0
+                                  : randomCharacter >= 0 && randomCharacter <= 0xffff);
+    wideRandom.Close();
 
     FileStream midErr(std::tmpfile());
     Require(fputc_nid_postfix('A', &midErr) == 'A');

@@ -35,6 +35,9 @@ FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
 int __isthreaded_nid_postfix = 1;
+std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+int APS5_VABI mbsinit_nid_postfix(const void* state);
+void HostEntropy_nid_no_patch(void* buffer, std::size_t size);
 
 int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
@@ -46,31 +49,63 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     return result;
 }
 std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
-    if (stream == nullptr) {
-        errno = 22;
-        return -1;
-    }
-    const int first = fgetc_nid_postfix(stream);
-    if (first == -1) return -1;
-    const unsigned char lead = static_cast<unsigned char>(first);
-    if (lead < 0x80) return lead;
-    const std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
-    if (extra == 0) {
-        errno = 86;
-        stream->SetError();
-        return -1;
-    }
-    std::uint32_t code = extra == 3 ? (lead & 0x07) : extra == 2 ? (lead & 0x0f) : (lead & 0x1f);
-    for (std::size_t index = 0; index < extra; ++index) {
-        const int next = fgetc_nid_postfix(stream);
-        if (next == -1 || (static_cast<unsigned char>(next) & 0xc0) != 0x80) {
-            errno = 86;
+    if (stream == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    auto* native = stream->GetHandle();
+    struct HostStreamLock {
+        std::FILE* stream;
+        explicit HostStreamLock(std::FILE* value) : stream(value) {
+#ifdef _WIN32
+            ::_lock_file(stream);
+#else
+            ::flockfile(stream);
+#endif
+        }
+        ~HostStreamLock() {
+#ifdef _WIN32
+            ::_unlock_file(stream);
+#else
+            ::funlockfile(stream);
+#endif
+        }
+    } lock(native);
+    if (!stream->SwitchToReadingUnlocked()) return -1;
+    std::uint16_t character = 0;
+    auto* const state = stream->WideConversionState();
+    for (;;) {
+        int next;
+        if (stream->IsRandomDevice()) {
+            unsigned char value = 0;
+            HostEntropy_nid_no_patch(&value, sizeof(value));
+            next = value;
+        } else {
+#ifdef _WIN32
+            next = ::_fgetc_nolock(native);
+#else
+            next = ::getc_unlocked(native);
+#endif
+        }
+        if (next == EOF) {
+            stream->SyncUnlockedStatus();
+            stream->KeepDirectoryReadError(true);
+            if (mbsinit_nid_postfix(state) == 0) {
+                errno = 86;
+                stream->SetError();
+                stream->KeepDirectoryReadError(true);
+            }
+            return -1;
+        }
+        const char byte = static_cast<char>(static_cast<unsigned char>(next));
+        const std::size_t converted = mbrtowc_nid_postfix(&character, &byte, 1, state);
+        if (converted == static_cast<std::size_t>(-1)) {
+            stream->SyncUnlockedStatus();
             stream->SetError();
             return -1;
         }
-        code = (code << 6) | (static_cast<unsigned char>(next) & 0x3f);
+        if (converted == static_cast<std::size_t>(-2)) continue;
+        stream->SyncUnlockedStatus();
+        return character;
     }
-    return static_cast<std::int32_t>(code);
 }
 
 
