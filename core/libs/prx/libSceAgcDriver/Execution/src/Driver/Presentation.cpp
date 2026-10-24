@@ -111,6 +111,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             if (buffer != nullptr) require(buffer->width == window.width && buffer->height == window.height, "display buffer extent differs from output");
         }
 
+        if (presentable && buffer != nullptr) presenting->PrepareDisplayRead(*buffer);
         if (presentable && !syncFlip) {
             if (inFlight != 0) {
 

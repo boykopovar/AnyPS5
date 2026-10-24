@@ -252,6 +252,7 @@ public:
     // reads them, i.e. wait for every slot: the presenter then retires them before taking the
     // mutex (the same wait under it is only the fallback when the answer changes in between).
     bool PresentWaitsForSlots(const DisplayBuffer* buffer) const;
+    void PrepareDisplayRead(const DisplayBuffer& buffer) const;
     bool AcquireImage();
     bool PresentClear(std::uint32_t width, std::uint32_t height, bool opaque);
     void PresentPixels(std::uint32_t width, std::uint32_t height, std::span<const std::byte> pixels);
