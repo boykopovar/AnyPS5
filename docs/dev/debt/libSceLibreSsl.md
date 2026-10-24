@@ -1,5 +1,6 @@
 # libSceLibreSsl technical debt
 
+- [EVP_PKEY_free](../../../core/libs/prx/libSceLibreSsl/src/PkeyLifecycle.cpp) - PS5 behavior has not been independently measured. A key that holds algorithm data, an engine or attributes throws and keeps its last reference, since no export can attach them yet. Reference counting and release follow LibreSSL 2.5.4 [p_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/p_lib.c).
 - [EVP_PKEY_new](../../../core/libs/prx/libSceLibreSsl/src/PkeyLifecycle.cpp) - PS5 behavior has not been independently measured. The 56-byte LP64 layout and initial values follow LibreSSL 2.5.4 [evp.h](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) and [p_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/p_lib.c).
 ### Functional
 
