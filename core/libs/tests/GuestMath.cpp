@@ -83,6 +83,7 @@ float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
 double APS5_VABI asin_nid_postfix(double);
 float APS5_VABI atan2f_nid_postfix(float, float);
+float APS5_VABI atanf_nid_postfix(float);
 float APS5_VABI hypotf_nid_postfix(float, float);
 double APS5_VABI hypot_nid_postfix(double, double);
 double APS5_VABI fdim_nid_postfix(double, double);
@@ -437,8 +438,9 @@ static void CheckNanConversions() {
             std::fprintf(stderr, "atof(\"%s\")\n", test.text);
             correct = false;
         }
+        const std::uint32_t expectedSingle = (test.bits >> 63 != 0 ? 0x80000000u : 0) | 0x7fc00000u;
         const auto single = std::bit_cast<std::uint32_t>(strtof_nid_postfix(test.text, &end));
-        if (single != 0x7fc00000u || end != test.text + test.sequenceUsed) {
+        if (single != expectedSingle || end != test.text + test.sequenceUsed) {
             std::fprintf(stderr, "strtof(\"%s\") = 0x%08x\n", test.text, static_cast<unsigned>(single));
             correct = false;
         }
@@ -461,7 +463,7 @@ static void CheckNanConversions() {
         }
         if (test.wideOtherMeasured) {
             const auto wideSingle = std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wide, &wideEnd));
-            const bool singleOk = wideSingle == 0x7fc00000u && wideEnd == wide + test.sequenceUsed;
+            const bool singleOk = wideSingle == expectedSingle && wideEnd == wide + test.sequenceUsed;
             const long double wideExtended = wcstold_nid_postfix(wide, &wideEnd);
             if (!singleOk || !ExtendedBits(wideExtended, 0xc000000000000000ull, 0x7fff) || wideEnd != wide + test.sequenceUsed) {
                 std::fprintf(stderr, "wcstof/wcstold(\"%s\")\n", test.text);
@@ -487,7 +489,6 @@ static void CheckFloatUnderflowErrno() {
     errno = 7;
     Require(strtod_nid_postfix("1e-310", &end) == 1e-310 && errno == 7);
     Require(strtod_nid_postfix("-4.9406564584124654e-324", &end) == -0x1p-1074 && errno == 7);
-    Require(strtof_nid_postfix("1e-40", &end) == 1e-40f && errno == 7);
     Require(strtold_nid_postfix("1e-4940", &end) == 1e-4940L && errno == 7);
     Require(strtod_nid_postfix("1e-330", &end) == 0.0 && errno == ERANGE);
     errno = 0;
@@ -496,6 +497,49 @@ static void CheckFloatUnderflowErrno() {
     Require(strtod_nid_postfix("1e400", &end) == HUGE_VAL && errno == ERANGE);
     errno = 0;
     Require(strtod_nid_postfix("2.2250738585072014e-308", &end) == 0x1p-1022 && errno == 0);
+    Require(strtod_nid_postfix("0x1.8p-1075", &end) == 0x1p-1074 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("-0x1.000001p-1075", &end) == -0x1p-1074 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("0x1p-1074", &end) == 0x1p-1074 && strtod_nid_postfix("0x1.8p-1074", &end) == 0x1p-1073 && errno == 0);
+    Require(strtod_nid_postfix("0x1p-1076", &end) == 0.0 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("0x1p+1100", &end) == HUGE_VAL && errno == ERANGE);
+    errno = 7;
+    Require(strtold_nid_postfix("0x1p-16446", &end) == 0.0L && strtold_nid_postfix("0x1p+20000", &end) == HUGE_VALL && errno == 7);
+    Require(strtof_nid_postfix("0x1p-149", &end) == 0x1p-149f && strtof_nid_postfix("0x1.8p-149", &end) == 0x1p-148f && strtof_nid_postfix("0x1.000001p-149", &end) == 0x1p-149f && errno == 7);
+    Require(strtof_nid_postfix("1.40129846432481707092372958328991613128026194187651577175706828388979108268586060148663818836212158203125e-45", &end) == 0x1p-149f && strtof_nid_postfix("1.17549435e-38", &end) == 0x1p-126f && errno == 7);
+    Require(strtof_nid_postfix("0x1p-150", &end) == 0.0f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1.8p-150", &end) == 0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("-0x0.0000018p-126", &end) == -0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1.4p-149", &end) == 0x1p-149f && strtof_nid_postfix("0x1.cp-149", &end) == 0x1p-148f && errno == 7);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1p+200", &end) == HUGE_VALF && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("1e-40", &end) == 1e-40f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("-1e-45", &end) == -0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("3e-45", &end) == 0x1p-148f && errno == ERANGE);
+    Require(strtof_nid_postfix("1e39", &end) == HUGE_VALF && errno == ERANGE);
+    errno = 0;
+}
+
+static void CheckAtanfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3e80000bu, 0x3e7adbc5u}, {0x3e0007c9u, 0x3dfebd2au}, {0xbdccce4cu, 0xbdcc2090u},
+        {0x3ef00334u, 0x3ee07046u}, {0x3f40077eu, 0x3f24c148u}, {0x3fa009a5u, 0x3f656b6au},
+        {0x4080055cu, 0x3fa9b5a8u}, {0xbf12345eu, 0xbf04d718u}, {0x3f800000u, 0x3f490fdbu},
+        {0x4c800000u, 0x3fc90fdbu}, {0xcc800000u, 0xbfc90fdbu}, {0x7f800000u, 0x3fc90fdbu},
+        {0xff800000u, 0xbfc90fdbu}, {0x7fc00001u, 0x7fc00001u}, {0x80000000u, 0x80000000u},
+        {0x00000001u, 0x00000001u}, {0x39000000u, 0x39000000u},
+    };
+    for (const auto& [input, expected] : cases) {
+        Require(std::bit_cast<std::uint32_t>(atanf_nid_postfix(std::bit_cast<float>(input))) == expected);
+    }
 }
 
 static void CheckHypotSpecialValue() {
@@ -916,6 +960,37 @@ static void CheckHyperbolic() {
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
 }
 
+static void CheckCoshfMsunBoundaries() {
+    static constexpr struct {
+        std::uint32_t input;
+        std::uint32_t output;
+    } cases[] = {
+        {0x00000000u, 0x3f800000u},
+        {0x80000000u, 0x3f800000u},
+        {0x00000001u, 0x3f800000u},
+        {0x397fffffu, 0x3f800000u},
+        {0x39800000u, 0x3f800000u},
+        {0x3eb17217u, 0x3f87c3b6u},
+        {0x3eb17218u, 0x3f87c3b6u},
+        {0x3f800000u, 0x3fc583aau},
+        {0xbf800000u, 0x3fc583aau},
+        {0x410fffffu, 0x457d389cu},
+        {0x41100000u, 0x457d38acu},
+        {0x42b17216u, 0x7effff04u},
+        {0x42b17217u, 0x7effff84u},
+        {0x42b17218u, 0x7f000002u},
+        {0x42b2d4fbu, 0x7f7fff6cu},
+        {0x42b2d4fcu, 0x7f7fffecu},
+        {0xc2b2d4fcu, 0x7f7fffecu},
+    };
+    for (const auto& test : cases)
+        Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(test.input))) == test.output);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x42b2d4fdu))) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(-INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
+}
+
 static void CheckScaledHyperbolic() {
     const int rounding = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -1284,17 +1359,31 @@ static void CheckLongDoubleRounding(long double value, std::int64_t expected, bo
     }
 }
 
-static void CheckNoConversionIsPositiveZero() {
-    for (const char* text : {"", " ", "-", "+", "-.", "+.", "-x", "-.e1", "-e5", "- 1", "  -."}) {
+static void CheckNoConversionZero() {
+    for (const char* text : {"", " ", "-", " -", "+", "-.", "+.", "-x", "-.e1", "-e5", "- 1", "  -."}) {
         char* end = nullptr;
         const double parsed = strtod_nid_postfix(text, &end);
         Require(parsed == 0. && !std::signbit(parsed) && end == text);
+        const bool negative = std::strchr(text, '-') != nullptr;
+        const bool loneSign = negative && text[std::strlen(text) - 1] == '-';
         const float parsedFloat = strtof_nid_postfix(text, &end);
-        Require(parsedFloat == 0.f && !std::signbit(parsedFloat) && end == text);
+        Require(parsedFloat == 0.f && std::signbit(parsedFloat) == (negative && !loneSign) && end == text);
         const long double parsedLong = strtold_nid_postfix(text, &end);
-        Require(parsedLong == 0.L && !std::signbit(parsedLong) && end == text);
+        Require(parsedLong == 0.L && std::signbit(parsedLong) == negative && end == text);
         Require(!std::signbit(atof_nid_postfix(text)));
     }
+    for (const char* text : {"-i", "-in", "-N", "-nax"}) {
+        char* end = nullptr;
+        const float parsedFloat = strtof_nid_postfix(text, &end);
+        Require(parsedFloat == 0.f && std::signbit(parsedFloat) && end == text);
+        Require(!std::signbit(strtold_nid_postfix(text, nullptr)));
+    }
+    for (const char* text : {"-nan", "-NAN", " -nan(5)"}) {
+        char* end = nullptr;
+        const float parsedFloat = strtof_nid_postfix(text, &end);
+        Require(std::bit_cast<std::uint32_t>(parsedFloat) == 0xffc00000u && end == text + std::strlen(text));
+    }
+    Require(std::bit_cast<std::uint32_t>(strtof_nid_postfix("nan", nullptr)) == 0x7fc00000u);
     char* end = nullptr;
     const char negativeZero[] = "-0.0x";
     const double parsed = strtod_nid_postfix(negativeZero, &end);
@@ -1319,9 +1408,9 @@ static void CheckNoConversionIsPositiveZero() {
     const double parsedWide = wcstod_nid_postfix(wide, &wideEnd);
     Require(parsedWide == 0. && !std::signbit(parsedWide) && wideEnd == wide);
     const float parsedWideFloat = wcstof_nid_postfix(wide, &wideEnd);
-    Require(parsedWideFloat == 0.f && !std::signbit(parsedWideFloat) && wideEnd == wide);
+    Require(parsedWideFloat == 0.f && std::signbit(parsedWideFloat) && wideEnd == wide);
     const long double parsedWideLong = wcstold_nid_postfix(wide, &wideEnd);
-    Require(parsedWideLong == 0.L && !std::signbit(parsedWideLong) && wideEnd == wide);
+    Require(parsedWideLong == 0.L && std::signbit(parsedWideLong) && wideEnd == wide);
 }
 
 template<typename TValue, std::size_t TBytes>
@@ -1353,7 +1442,7 @@ static void CheckDinkumwareFloatCharacteristics() {
 int main() {
     CheckFloatClassification();
     CheckDinkumwareConstants();
-    CheckNoConversionIsPositiveZero();
+    CheckNoConversionZero();
     CheckMissingClassificationExports();
     CheckFloatMathExports();
     CheckIntegerConversions();
@@ -1634,10 +1723,12 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();
     CheckHypotSpecialValue();
+    CheckAtanfConsoleBits();
     CheckFloatUnderflowErrno();
     CheckFmodErrno();
     CheckFmodfErrno();

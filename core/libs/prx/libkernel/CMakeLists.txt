@@ -46,6 +46,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Spinlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
@@ -1620,6 +1621,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_memory guest_mmap_fixed_anonymous PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+        add_test_executable(guest_low_address_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestLowAddressMemory.cpp)
+        target_include_directories(guest_low_address_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_low_address_memory_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_low_address_memory_tests)
+        add_test(NAME guest_low_address_memory COMMAND guest_low_address_memory_tests)
+        set_tests_properties(guest_low_address_memory PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_low_address_memory PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_mprotect_unmapped_tests ${LIBS_INCLUDE_DIR}/tests/GuestMprotectUnmapped.cpp)
     target_include_directories(guest_mprotect_unmapped_tests PRIVATE ${LIBS_INCLUDE_DIR})

@@ -17,6 +17,9 @@ double APS5_VABI jn_nid_postfix(int, double);
 double APS5_VABI y0_nid_postfix(double);
 double APS5_VABI y1_nid_postfix(double);
 double APS5_VABI yn_nid_postfix(int, double);
+float APS5_VABI y0f_nid_postfix(float);
+float APS5_VABI y1f_nid_postfix(float);
+float APS5_VABI ynf_nid_postfix(int, float);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -100,6 +103,30 @@ static void CheckSecondKind() {
     }
 }
 
+static void CheckFloatSecondKindZero() {
+    const char* names[] = {"y0f", "y1f", "ynf"};
+    for (int function = 0; function < 3; ++function) {
+        for (const int order : {INT_MIN, -3, -2, -1, 0, 1, 2, 3, INT_MAX}) {
+            for (const float input : {0.0f, -0.0f}) {
+                for (const int flags : {0, FE_INEXACT, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    std::feraiseexcept(flags);
+                    const int expectedFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    *__error_nid_postfix() = 12345;
+                    const float result = function == 0 ? y0f_nid_postfix(input) : function == 1 ? y1f_nid_postfix(input) : ynf_nid_postfix(order, input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    if (std::bit_cast<std::uint32_t>(result) != 0xff800000u || actualFlags != expectedFlags || *__error_nid_postfix() != 12345) {
+                        std::fprintf(stderr, "Guest %s(%d, %08x): result %08x, flags %x, expected %x, errno %d\n", names[function], order,
+                                     std::bit_cast<std::uint32_t>(input), std::bit_cast<std::uint32_t>(result), actualFlags, expectedFlags, *__error_nid_postfix());
+                        std::abort();
+                    }
+                }
+            }
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckIntegerOrders() {
     const OrderCase first[] = {
         {2, 0x3ddb7cdfd9d7bdbbull, 0x3b979ca10c924224ull}, {5, 0xbddb7cdfd9d7bdbbull, 0xb4cfed4f3ec0c466ull}, {33, 0x3e00000000000000ull, 0x0000000000000000ull},
@@ -181,6 +208,7 @@ static void CheckValues() {
 int main() {
     CheckFirstKind();
     CheckSecondKind();
+    CheckFloatSecondKindZero();
     CheckIntegerOrders();
     CheckValues();
     return 0;

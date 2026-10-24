@@ -30,6 +30,8 @@ static bool q = _wgetenv(L"APS5_WIDE_PRESENT") != nullptr;
 static int r = _wtoi(_wgetenv(L"APS5_WIDE_INT"));
 static const wchar_t* s = _wgetenv(L"ANYPS5_WIDE_CONFIG");
 static const char* t = std::getenv("NOT_AN_ENV");
+static std::uint64_t u = std::min<std::uint64_t>(EnvironmentNumber("APS5_CRASH_STACK_BYTES"), std::uint64_t{1} << 20);
+static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 """
 
 
@@ -52,7 +54,8 @@ class EnvReferenceTests(unittest.TestCase):
              "APS5_CRASH_INDIRECT_MEMORY", "APS5_PIPELINE_JOURNAL_MAX_MIB",
              "APS5_PIPELINE_STORE_ENTRIES", "APS5_PIPELINE_JOURNAL_THREADS", "APS5_PM4_RING",
              "ANYPS5_LOADEXEC_ARGV_SKIP", "ANYPS5_LOADEXEC_PARENT",
-             "ANYPS5_WIDE_CONFIG", "APS5_WIDE_PRESENT", "APS5_WIDE_INT"})
+             "ANYPS5_WIDE_CONFIG", "APS5_WIDE_PRESENT", "APS5_WIDE_INT",
+             "APS5_CRASH_STACK_BYTES"})
         self.assertEqual(found["APS5_PROFILE_DRAW"][0][1], 1)
         self.assertEqual(found["APS5_THREAD_NICE"][0][2:], ("integer", "-10"))
         self.assertEqual(found["APS5_HOST_IMPORT_MIB"][0][2:], ("integer", "6144"))
@@ -65,6 +68,7 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["ANYPS5_WIDE_CONFIG"][0][2:], ("string", ""))
         self.assertEqual(found["APS5_WIDE_PRESENT"][0][2:], ("presence", ""))
         self.assertEqual(found["APS5_WIDE_INT"][0][2:], ("integer", ""))
+        self.assertEqual(found["APS5_CRASH_STACK_BYTES"][0][2:], ("integer", ""))
 
     def test_reads_environmental_variable_with_multiline_getenv(self):
         root = self.fixture()
@@ -77,6 +81,51 @@ class EnvReferenceTests(unittest.TestCase):
 
         found = env_reference.reads([root / "core"])
         self.assertIn("APS5_MULTILINE", found)
+
+    def test_whitespace_before_parentheses_preserves_names_kinds_and_defaults(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        expected = env_reference.reads([root / "core"])
+        for separator in (" ", "\t", " \t "):
+            with self.subTest(separator=separator):
+                source.write_text(CODE.replace("(", separator + "("), encoding="utf-8")
+                self.assertEqual(env_reference.reads([root / "core"]), expected)
+
+    def test_reader_and_parenthesis_on_separate_lines_keep_line_numbers_and_kinds(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = !std::getenv\n    ("APS5_PRESENT");\n'
+                          'auto b = _wtoi(_wgetenv\n    (L"ANYPS5_INTEGER"));\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(set(found), {"APS5_PRESENT", "ANYPS5_INTEGER"})
+        self.assertEqual(found["APS5_PRESENT"], [(source.as_posix(), 1, "presence", "")])
+        self.assertEqual(found["ANYPS5_INTEGER"], [(source.as_posix(), 3, "integer", "")])
+
+    def test_main_check_rejects_an_undocumented_spaced_read(self):
+        root = self.fixture()
+        (root / "core" / "Sample.cpp").write_text('auto value = !std::getenv \t("APS5_UNDOCUMENTED");\n', encoding="utf-8")
+        doc = root / "ENVIRONMENT.md"
+        doc.write_text("", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = env_reference.main(["--check", "--root", str(root / "core"), "--doc", str(doc)])
+        self.assertEqual(code, 1)
+        self.assertIn("APS5_UNDOCUMENTED is read", out.getvalue())
+        self.assertNotIn("all documented", out.getvalue())
+
+    def test_negated_spaced_getenv_is_a_presence_read(self):
+        root = self.fixture()
+        (root / "core" / "Sample.cpp").write_text('auto a = !std::getenv ("APS5_PRESENT");\n'
+                                                  'auto b = !_wgetenv\t(L"ANYPS5_PRESENT");\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(set(found), {"APS5_PRESENT", "ANYPS5_PRESENT"})
+        self.assertEqual([sites[0][2] for sites in found.values()], ["presence", "presence"])
+
+    def test_spacing_does_not_change_literal_parentheses_in_a_custom_prefix(self):
+        for separator in ("", " ", "\t"):
+            with self.subTest(separator=separator):
+                source = f'getenv{separator}("CUSTOM(NAME"); getenv{separator}("CUSTOM (WRONG");'
+                found = env_reference.line_reads(source, ("CUSTOM(",))
+                self.assertEqual([match.group("name") for _, match in found], ["CUSTOM(NAME"])
 
     def test_multiline_reads_keep_line_numbers_and_do_not_duplicate(self):
         root = self.fixture()

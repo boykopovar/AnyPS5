@@ -47,7 +47,7 @@ def skips(path):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test is skipped that the job's device is not expected to skip")
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")

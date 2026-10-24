@@ -1251,7 +1251,7 @@ public:
     static constexpr std::size_t Window = std::size_t{8} << 20u;
 
     explicit PieceWindow(const Context& context, bool views = false) : importing(context) {
-#ifndef _WIN32
+#ifdef __linux__
         if (views) {
             reserved = mmap(nullptr, 2 * Window, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             Require(reserved != MAP_FAILED, "cannot reserve the block of 16 KiB views");
@@ -3679,7 +3679,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importRequesterTests(context, access);
     hostImportReportTests();
     importBlockMapTests(context, false);
-#ifndef _WIN32
+#ifdef __linux__
     importBlockMapTests(context, true);
 #endif
     importBlockBuildTests(context);

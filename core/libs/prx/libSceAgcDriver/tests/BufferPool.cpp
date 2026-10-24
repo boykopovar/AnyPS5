@@ -844,6 +844,103 @@ void AllocationFailureReportsHeapBudgets() {
     Expect(diagnosticBudgetQueries == 0, "missing-extension fallback attempted a memory budget query");
 }
 
+Context reclaimContext() {
+    auto context = mockContext();
+    context.memory.memoryHeapCount = 2;
+    context.memory.memoryHeaps[0] = {4096 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    context.memory.memoryHeaps[1] = {8192 * MiB, 0};
+    context.memory.memoryTypes[1].heapIndex = 1;
+    return context;
+}
+
+void IdleDeviceReclaim() {
+    mock = MockDevice{};
+    {
+        auto context = reclaimContext();
+        VkBuffer cold;
+        VkBuffer nextCold;
+        VkBuffer hot;
+        VkBuffer host;
+        VkBuffer small;
+        { DeviceBuffer buffer(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); cold = buffer.Handle(); }
+        { DeviceBuffer buffer(context, 3 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); nextCold = buffer.Handle(); }
+        { DeviceBuffer buffer(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); hot = buffer.Handle(); }
+        { Buffer buffer(context, 8 * MiB, VK_BUFFER_USAGE_TRANSFER_SRC_BIT); host = buffer.Handle(); }
+        { Buffer buffer(context, 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT); small = buffer.Handle(); }
+        DeviceBuffer active(context, 16 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        auto& pool = *context.bufferPool;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        Expect(pool.ReclaimIdleDevice(MiB, start) == 0, "the first pressure observation reclaimed a buffer without an idle interval");
+        Expect(pool.ReclaimIdleDevice(MiB, start + std::chrono::milliseconds(999)) == 0, "a partial idle interval reclaimed a buffer");
+        {
+            DeviceBuffer reused(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            Expect(reused.Handle() == hot, "the warm device buffer was not reused");
+        }
+        const auto next = start + std::chrono::seconds(1);
+        SetAllocationFailureCountdown(0);
+        bool threw = false;
+        try {
+            pool.ReclaimIdleDevice(MiB, next);
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        SetAllocationFailureCountdown(-1);
+        Expect(threw && mock.liveBuffers.contains(cold) && mock.liveBuffers.contains(nextCold), "a failed reclaim collection lost ownership of an allocation");
+        Expect(pool.ReclaimIdleDevice(MiB, next) == 2 * MiB, "reclaim did not release exactly the oldest complete idle allocation");
+        Expect(!mock.liveBuffers.contains(cold) && mock.liveBuffers.contains(nextCold), "bounded reclaim released the wrong allocation or exceeded its request");
+        Expect(pool.ReclaimIdleDevice(0, next) == 0, "zero pressure released a buffer");
+        Expect(pool.ReclaimIdleDevice(32 * MiB, next) == 3 * MiB, "reclaim counted a hot, live, host or slab allocation as idle device memory");
+        for (const auto buffer : {hot, host, small, active.Handle()}) Expect(mock.liveBuffers.contains(buffer), "reclaim destroyed a protected buffer");
+        SetAllocationFailureCountdown(0);
+        const auto empty = pool.ReclaimIdleDevice(32 * MiB, next);
+        SetAllocationFailureCountdown(-1);
+        Expect(empty == 0, "an unchanged empty eligible set did not stay empty");
+        Expect(pool.ReclaimIdleDevice(32 * MiB, start) == 0, "a backwards time observation reclaimed a buffer");
+        Expect(pool.ReclaimIdleDevice(32 * MiB, next + std::chrono::seconds(1)) == 4 * MiB, "a device buffer did not become reclaimable after a complete idle interval");
+        Expect(mock.liveBuffers.contains(active.Handle()), "reclaim touched an allocation still in use");
+        Expect(pool.ReclaimIdleDevice(32 * MiB, next + std::chrono::seconds(2)) == 0, "an empty device tier reported reclaimed memory");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "idle device reclaim leaked an allocation");
+}
+
+void IdleReclaimPreservesWorkingSet() {
+    mock = MockDevice{};
+    {
+        auto context = reclaimContext();
+        const auto useWorkingSet = [&] {
+            std::vector<std::unique_ptr<DeviceBuffer>> buffers;
+            for (unsigned i = 0; i < 4; ++i) buffers.push_back(std::make_unique<DeviceBuffer>(context, 96 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+        };
+        useWorkingSet();
+        const auto allocations = mock.allocations;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        auto& pool = *context.bufferPool;
+        Expect(pool.ReclaimIdleDevice(1024 * MiB, start) == 0, "initial pressure discarded the working set");
+        for (unsigned second = 1; second <= 4; ++second) {
+            useWorkingSet();
+            Expect(pool.ReclaimIdleDevice(1024 * MiB, start + std::chrono::seconds(second)) == 0, "pressure discarded buffers reused during the observation interval");
+            Expect(mock.allocations == allocations && mock.liveBytes == 384 * MiB, "a reusable working set larger than 128 MiB was recreated or shrunk");
+        }
+        Expect(pool.ReclaimIdleDevice(1024 * MiB, start + std::chrono::seconds(5)) == 384 * MiB, "the former working set remained retained after becoming idle");
+        Expect(mock.liveBytes == 0, "reclaim did not return the idle working set to the device");
+    }
+    Expect(mock.liveBuffers.empty(), "working-set reclaim leaked a buffer");
+    for (const auto heaps : {0u, 2u}) {
+        mock = MockDevice{};
+        {
+            auto context = reclaimContext();
+            context.memory.memoryHeapCount = heaps;
+            context.memory.memoryHeaps[1].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+            { DeviceBuffer buffer(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
+            auto& pool = *context.bufferPool;
+            const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+            Expect(pool.ReclaimIdleDevice(4 * MiB, start) == 0 && pool.ReclaimIdleDevice(4 * MiB, start + std::chrono::seconds(1)) == 0, "reclaim assumed a device heap without unambiguous ownership");
+            Expect(mock.liveBytes == 2 * MiB, "reclaim released memory from an unknown or different local heap");
+        }
+        Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "unsupported-heap reclaim leaked an allocation");
+    }
+}
+
 void SuccessfulAllocationKeepsPool() {
     mock = MockDevice{};
     {
@@ -1013,10 +1110,50 @@ void ImageMemoryReuse() {
     Expect(mock.frees == 35 && context.bufferPool->RetainedImages() == 1, "the pool retains image memory again after a trim");
 }
 
+void IdleReclaimPreservesImages() {
+    mock = MockDevice{};
+    {
+        auto context = reclaimContext();
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = 4 * MiB;
+        allocation.memoryTypeIndex = 0;
+        std::uint32_t type = 99;
+        const auto image = AllocateImageMemory(context, allocation, 1u, "test idle image", &type);
+        ReleaseImageMemory(context, image, 4 * MiB, type);
+        VkBuffer buffer;
+        { DeviceBuffer idle(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); buffer = idle.Handle(); }
+        auto& pool = *context.bufferPool;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        Expect(pool.RetainedImages() == 1 && mock.liveBytes == 6 * MiB, "the mixed pool fixture was not retained");
+        Expect(pool.ReclaimIdleDevice(MiB, start) == 0, "initial pressure reclaimed mixed pool memory");
+        const auto next = start + std::chrono::seconds(1);
+        const auto released = pool.ReclaimIdleDevice(MiB, next);
+        Expect(released == 2 * MiB, "idle buffer reclaim selected image memory instead of the oldest buffer");
+        if (released != 2 * MiB) return;
+        Expect(!mock.liveBuffers.contains(buffer) && mock.liveBytes == 4 * MiB && pool.RetainedImages() == 1, "buffer reclaim changed image ownership or accounting");
+        Expect(pool.ReclaimIdleDevice(32 * MiB, next) == 0, "an image-only pool was reclaimed as idle buffers");
+        SetAllocationFailureCountdown(0);
+        const auto empty = pool.ReclaimIdleDevice(32 * MiB, next);
+        SetAllocationFailureCountdown(-1);
+        Expect(empty == 0, "a repeated image-only scan allocated or reclaimed memory");
+        const auto allocations = mock.allocations;
+        const auto reused = AllocateImageMemory(context, allocation, 1u, "test idle image", &type);
+        Expect(reused == image && mock.allocations == allocations && pool.RetainedImages() == 0, "the retained image was not reusable after buffer reclaim");
+        ReleaseImageMemory(context, reused, 4 * MiB, type);
+        Expect(pool.RetainedImages() == 1 && mock.liveBytes == 4 * MiB, "the reused image was not retained exactly once");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty() && mock.frees == 2, "mixed pool cleanup leaked or freed an allocation twice");
+}
+
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
             SmallDeviceRetention();
+            if (std::getenv("APS5_STAGING_POOL_MIB") == nullptr) {
+                IdleDeviceReclaim();
+                IdleReclaimPreservesWorkingSet();
+            }
             return failures == 0 ? 0 : 1;
         }
         if (argc == 2) {
@@ -1052,6 +1189,9 @@ int main(int argc, char** argv) {
         AllocationFailure(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_DEVICE_LOST, true);
         AllocationFailureReportsHeapBudgets();
         SuccessfulAllocationKeepsPool();
+        IdleDeviceReclaim();
+        IdleReclaimPreservesWorkingSet();
+        IdleReclaimPreservesImages();
         PartialSlabDoesNotRetry();
         CacheReclaimRecovery();
         ImageCacheReclaim();

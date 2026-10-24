@@ -40,6 +40,8 @@ int APS5_VABI socket_nid_postfix(int, int, int);
 std::int64_t APS5_VABI readlink_nid_postfix(const char*, char*, std::size_t);
 int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
 std::int64_t APS5_VABI pathconf_nid_postfix(const char*, int);
+std::int64_t APS5_VABI fpathconf_nid_postfix(int, int);
+std::int64_t APS5_VABI _fpathconf_nid_postfix(int, int);
 int APS5_VABI fchdir_nid_postfix(int);
 int APS5_VABI chdir_nid_postfix(const char*);
 int APS5_VABI chroot_nid_postfix(const char*);
@@ -67,6 +69,10 @@ int APS5_VABI renameat_nid_postfix(int, const char*, int, const char*);
 int APS5_VABI fchmodat_nid_postfix(int, const char*, int, int);
 int APS5_VABI lchmod_nid_postfix(const char*, std::uint16_t);
 int APS5_VABI fchown_nid_postfix(int, std::uint32_t, std::uint32_t);
+int APS5_VABI chown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
+int APS5_VABI lchown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
+int APS5_VABI fchownat_nid_postfix(int, const char*, std::uint32_t, std::uint32_t, int);
+int APS5_VABI linkat_nid_postfix(int, const char*, int, const char*, int);
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
@@ -104,6 +110,82 @@ bool ChrootThrows(const std::string& path) {
         return std::strstr(error.what(), path.c_str()) != nullptr;
     }
     return false;
+}
+
+template <typename Call>
+bool ThrowsNaming(Call call, const char* text) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::strstr(error.what(), text) != nullptr;
+    }
+    return false;
+}
+
+void OwnershipAndLinkTests(const std::filesystem::path& root) {
+    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
+    const auto file = (root / "owned.txt").string();
+    std::ofstream(file).put('x');
+    const auto missing = (root / "missing.txt").string();
+    const auto throughFile = file + "/inner";
+    const auto linked = (root / "linked.txt").string();
+    const auto other = (root / "other.txt").string();
+    Require(chown_nid_postfix(file.c_str(), 0, 0) == 0);
+    Require(chown_nid_postfix(file.c_str(), Unchanged, Unchanged) == 0);
+    Require(lchown_nid_postfix(file.c_str(), 0, Unchanged) == 0);
+    Require(fchownat_nid_postfix(-100, file.c_str(), Unchanged, 0, 0) == 0);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 0, 0, 0x200) == 0);
+    for (const auto call : {chown_nid_postfix, lchown_nid_postfix}) {
+        Require(call(missing.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(call(throughFile.c_str(), 0, 0) == -1 && Error() == 20);
+        Require(call("", 0, 0) == -1 && Error() == 2);
+        Require(call(nullptr, 0, 0) == -1 && Error() == 14);
+    }
+    Require(fchownat_nid_postfix(-100, missing.c_str(), 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 0, 0, 0x400) == -1 && Error() == 22);
+    Require(chown_nid_postfix(missing.c_str(), 1000, 0) == -1 && Error() == 2);
+    Require(chown_nid_postfix(nullptr, 1000, 0) == -1 && Error() == 14);
+    Require(lchown_nid_postfix(throughFile.c_str(), 0, 1000) == -1 && Error() == 20);
+    Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
+    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
+    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
+    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
+    Require(std::filesystem::hard_link_count(file) == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
+    Require(linkat_nid_postfix(-100, missing.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, other.c_str(), 0x200) == -1 && Error() == 22);
+    Require(linkat_nid_postfix(-100, nullptr, -100, other.c_str(), 0) == -1 && Error() == 14);
+    Require(linkat_nid_postfix(-100, "", -100, other.c_str(), 0) == -1 && Error() == 2);
+    Require(ThrowsNaming([&] { linkat_nid_postfix(directory, "owned.txt", -100, other.c_str(), 0); }, "linkat: a relative path"));
+    Require(ThrowsNaming([&] { linkat_nid_postfix(-100, file.c_str(), directory, "other.txt", 0); }, "linkat: a relative path"));
+    const auto symbolic = (root / "owned.link").string();
+    const auto dangling = (root / "dangling.link").string();
+    if (symlink_nid_postfix("owned.txt", symbolic.c_str()) == 0) {
+        Require(symlink_nid_postfix("missing.txt", dangling.c_str()) == 0);
+        Require(chown_nid_postfix(symbolic.c_str(), 0, 0) == 0 && lchown_nid_postfix(symbolic.c_str(), 0, 0) == 0);
+        Require(chown_nid_postfix(dangling.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(lchown_nid_postfix(dangling.c_str(), 0, 0) == 0);
+        Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0) == -1 && Error() == 2);
+        Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0x200) == 0);
+        Require(ThrowsNaming([&] { linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0); }, "symbolic link itself"));
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0x400) == 0);
+#ifdef _WIN32
+        Require((GetFileAttributesW(std::filesystem::path(other).c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
+#else
+        Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
+#endif
+        Require(std::filesystem::hard_link_count(file) == 3);
+        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+    }
+    Require(sceKernelClose(directory) == 0);
+    Require(std::filesystem::remove(linked) && std::filesystem::remove(file));
 }
 
 bool SymlinkTargetThrows(const char* target, const std::string& created) {
@@ -312,6 +394,52 @@ static void CheckProcessQueries() {
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
 }
 
+template <typename F>
+bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
+    try {
+        fn(descriptor, name);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename F>
+void CheckDescriptorPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 1) == 32767);
+    Require(fn(descriptor, 4) == 255);
+    Require(fn(descriptor, 5) == 1024);
+    Require(fn(descriptor, 6) == 512);
+    Require(fn(descriptor, 7) == 1);
+    Require(fn(descriptor, 8) == 1);
+    Require(fn(descriptor, 12) == 64);
+    *__error_nid_postfix() = 0;
+    Require(fn(descriptor, 15) == -1 && Error() == 0);
+    Require(fn(descriptor, 18) == 1024);
+    Require(fn(descriptor, 54) == 0);
+    Require(fn(descriptor, 55) == 0);
+    for (const int name : {0, 11, 61, 62, 65, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 22);
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
+        Require(DescriptorPathconfThrows(fn, descriptor, name));
+    Require(fn(-1, 4) == -1 && Error() == 9);
+    Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
+}
+
+template <typename F>
+void CheckPipePathconf(F fn) {
+    int ends[2]{-1, -1};
+    Require(pipe_nid_postfix(ends) == 0);
+    for (const int end : ends) {
+        Require(fn(end, 6) == 512);
+        Require(fn(end, 53) == 200112);
+        for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
+            Require(fn(end, name) == -1 && Error() == 22);
+    }
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -328,6 +456,7 @@ int main() {
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     DirectoryRenameTests(root);
+    OwnershipAndLinkTests(root);
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);
@@ -344,10 +473,21 @@ int main() {
     Require(fstat_nid_postfix(descriptor, &viaFstat) == 0 && _fstat_nid_postfix(descriptor, &viaUnderscore) == 0);
     Require(std::memcmp(&viaFstat, &viaUnderscore, sizeof(FileStat)) == 0 && viaFstat.st_size == 1);
     Require(fstat_nid_postfix(descriptor, nullptr) == -1 && Error() == 14);
+    CheckDescriptorPathconf(fpathconf_nid_postfix, descriptor);
+    CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
+    CheckPipePathconf(fpathconf_nid_postfix);
+    CheckPipePathconf(_fpathconf_nid_postfix);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, viaPublic) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
     Require(fstat_nid_postfix(-1, &viaFstat) == -1 && Error() == 9);
+    Require(fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    Require(_fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    const int dirDescriptor = open_nid_postfix(root.generic_string().c_str(), 0, 0);
+    Require(dirDescriptor >= 0);
+    CheckDescriptorPathconf(fpathconf_nid_postfix, dirDescriptor);
+    CheckDescriptorPathconf(_fpathconf_nid_postfix, dirDescriptor);
+    Require(close_nid_postfix(dirDescriptor) == 0);
     char buffer[64];
     for (const auto& component : {std::string("missing"), std::string("file.txt")}) {
         const auto prefix = root.generic_string() + "/" + component + "/../";

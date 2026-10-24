@@ -134,7 +134,7 @@ def elf_program_dynamic_symbols(path, data):
     if symbol_count is None:
         raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
     symbol_offset = file_offset(symbol_address, symbol_count * symbol_size, "dynamic symbol table")
-    imports = set()
+    imports = {}
     exports = set()
     for index in range(symbol_count):
         name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * symbol_size, path, "dynamic symbol")
@@ -142,7 +142,7 @@ def elf_program_dynamic_symbols(path, data):
             continue
         symbol = cstring(data, string_offset + name, string_offset + string_size, path, "dynamic symbol name").split(MODULE_SUFFIX, 1)[0]
         if section_index == 0:
-            imports.add(symbol)
+            imports[symbol] = imports.get(symbol, True) and info >> 4 == 2
         elif info >> 4 in (1, 2, 10) and other & 3 in (0, 3):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
@@ -190,7 +190,7 @@ def elf_imports(path, data):
         imports, _, needed = elf_program_dynamic_symbols(path, data)
         return imports, needed
     sections = elf_sections(path, data)
-    symbols = set()
+    symbols = {}
     needed = set()
     for section in sections:
         kind, offset, size, link, entry = section[1], section[4], section[5], section[6], section[9]
@@ -200,10 +200,11 @@ def elf_imports(path, data):
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
-                name, _, _, index, _, _ = unpack("<IBBHQQ", data, offset + position, path, "dynamic symbol")
+                name, info, _, index, _, _ = unpack("<IBBHQQ", data, offset + position, path, "dynamic symbol")
                 if name and index == 0:
                     symbol = cstring(data, strings_offset + name, strings_offset + strings_size, path, "import name")
-                    symbols.add(symbol.split(MODULE_SUFFIX, 1)[0])
+                    symbol = symbol.split(MODULE_SUFFIX, 1)[0]
+                    symbols[symbol] = symbols.get(symbol, True) and info >> 4 == 2
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
@@ -449,7 +450,7 @@ def read_modules(directories):
                 names = pe_exports(file, data)
             else:
                 symbols, needed = elf_imports(file, data)
-                imports[file.name] = (sorted(symbols), sorted(needed))
+                imports[file.name] = (sorted(symbols.items()), sorted(needed))
                 names = elf_exports(file, data)
             for name in names:
                 exports[name.split(MODULE_SUFFIX, 1)[0]].add(file.name)
@@ -538,11 +539,13 @@ MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
 
 
 def module_stem(name, fold):
+    if fold:
+        name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
             name = name[:-len(suffix)]
             break
-    return name.lower() if fold else name
+    return name
 
 
 class ModuleNames(set):
@@ -594,9 +597,10 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         record["references"] += 1
         record["weak"] = record["weak"] and weak
     for module, (symbols, needed) in (module_imports or {}).items():
-        for nid in symbols:
-            record = records.setdefault((nid, None, module), {"nid": nid, "library": None, "module": module, "references": 0, "weak": False})
+        for nid, weak in symbols:
+            record = records.setdefault((nid, None, module), {"nid": nid, "library": None, "module": module, "references": 0, "weak": weak})
             record["references"] += 1
+            record["weak"] = record["weak"] and weak
     for record in records.values():
         nid, library = record["nid"], record["library"]
         providers = exports.get(nid, [])
@@ -705,6 +709,8 @@ def label(record):
     else:
         mark = "" if record.get("name_verified", True) else " (name does not hash to this NID)"
         text = f"{record['nid']}  {record['name']}{mark}"
+    if record["weak"]:
+        text += "  (weak import)"
     return f"{text}  (imported by {record['module']})" if record.get("module") else text
 
 
@@ -730,7 +736,7 @@ def render(summary, records, missing, stops, missing_hosts=(), located=None):
     lines = [f"{summary['references']} references, {summary['unique_imports']} unique imports"]
     for kind in CLASSES:
         lines.append(f"  {kind:<12}{summary['unique_by_class'][kind]:>6} imports  {summary['references_by_class'][kind]:>6} references")
-    for title, kind in (("Absent: no built library exports these, so the loader fails", "absent"), ("Stub: exported but throws when called", "stub")):
+    for title, kind in (("Absent: no built library exports these", "absent"), ("Stub: exported but throws when called", "stub")):
         selected = [record for record in records if record["class"] == kind]
         if selected:
             lines.append("")

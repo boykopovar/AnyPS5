@@ -558,10 +558,46 @@ void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAcce
     }
 }
 
+std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t texel) {
+    const auto resource = access.mem.resource;
+    const auto u32 = TypeU32(state);
+    const auto format = state.registrationModules
+        ? Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u), ConstantU32(state, 20u)), ConstantU32(state, 0x1ffu))
+        : state.module.SpecializationConstant(u32, PipelineSpecialization::FmaskFormatBase + resource, 0u);
+    auto layout = ConstantU32(state, 0u);
+    for (auto value = static_cast<std::uint32_t>(IrBufferFormat::Fmask8_S2_F1); value <= static_cast<std::uint32_t>(IrBufferFormat::Fmask64_S16_F8); ++value) {
+        const auto fmask = FmaskLayoutOf(static_cast<IrBufferFormat>(value));
+        if (!fmask.has_value()) continue;
+        layout = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), format, ConstantU32(state, value)), ConstantU32(state, fmask->sampleBits | (fmask->samples << 8u) | (fmask->fragments << 16u)), layout);
+    }
+    const auto sampleBits = Binary(state, spv::OpBitwiseAnd, u32, layout, ConstantU32(state, 0xffu));
+    const auto samples = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
+    const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
+    const auto packed = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, packed, texel, 0u);
+    auto expanded = ConstantU32(state, 0u);
+    for (std::uint32_t sample = 0; sample < 8u; ++sample) {
+        const auto field = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldUExtract, u32, field, packed, Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample)), sampleBits);
+        const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), ConstantU32(state, 8u), field);
+        const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
+        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, nibble, ConstantU32(state, sample * 4u)));
+    }
+    const std::array<std::uint32_t, 4> components{expanded, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u)};
+    std::uint32_t selected[4] = {};
+    for (std::uint32_t component = 0; component < 4u; component++) selected[component] = RuntimeSwizzledComponent(state, RuntimeImageSwizzle(state, resource, component), components);
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, selected[0], selected[1], selected[2], selected[3]);
+    return result;
+}
+
 std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     if (access.image.srgbDecode) {
         return DecodeSrgbTexel(state, texel);
+    }
+    if (access.image.conversionFormat == FmaskExpansion) {
+        return ExpandFmaskTexel(state, access, texel);
     }
     const auto info = ImageConversionFormat(access.image);
     if (info.format == IrBufferFormat::Invalid) {
@@ -2005,7 +2041,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     state.tableAccess = {};
     if (tables) {
         EmitLabel(state, invalid);
-        if (returnsValue) incoming.insert(incoming.end(), {ConstantU32CompositeZero(state, 4u), invalid});
+        if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
         state.module.AddFunction(spv::OpBranch, merge);
     } else if (exits) {
         EmitLabel(state, invalid);
@@ -2022,7 +2058,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, guardSkip);
         state.module.AddFunction(spv::OpBranch, guardMerge);
         EmitLabel(state, guardMerge);
-        if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ConstantU32CompositeZero(state, 4u), guardSkip);
+        if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ZeroResult(ctx, inst), guardSkip);
     }
     if (returnsValue) ctx.definitions.emplace(&inst, guardedId);
 }

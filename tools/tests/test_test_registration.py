@@ -394,6 +394,33 @@ class CheckRegistrationCliTests(unittest.TestCase):
                 code = check_test_registration.main(["--scripts"])
             self.assertEqual(code, 0)
 
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(check_test_registration.sys, "stdout", out), patch.object(check_test_registration.sys, "stderr", err):
+            try:
+                check_test_registration.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
 
 if __name__ == "__main__":
     unittest.main()

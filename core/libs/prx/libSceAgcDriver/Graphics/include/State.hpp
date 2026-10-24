@@ -70,6 +70,7 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
+    std::uint16_t partialWriteMask = 0;
 };
 
 struct DepthTarget {
@@ -162,6 +163,7 @@ struct State {
     float pointSizeMax = 0.0f;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool pixelEarlyZ = false;
+    bool pixelKill = false;
 };
 
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
@@ -186,6 +188,11 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
+std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+bool DepthStencilWrites(const State& state);
+bool DepthStencilTests(const State& state);
+ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);

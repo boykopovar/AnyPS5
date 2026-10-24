@@ -249,6 +249,29 @@ static void CheckUnansweredSysctl() {
         Require(size == 4 && untouched[0] == 0x5a5a5a5a && untouched[1] == 0x5a5a5a5a && untouched[2] == 0x5a5a5a5a);
     }
 }
+static void CheckUnknownSysctlName() {
+    static constexpr const char* name = "kern.anyps5_no_such_name";
+    unsigned char buffer[16];
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    std::size_t length = sizeof(buffer);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(name, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(length == sizeof(buffer) && Untouched(buffer, sizeof(buffer)));
+
+    length = 77;
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(name, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2 && length == 77);
+
+    int mib[4] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t mibLength = 4;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix(name, mib, &mibLength) == -1 && *__error_nid_postfix() == 2);
+    Require(mibLength == 4 && mib[0] == 0x5a5a5a5a && mib[1] == 0x5a5a5a5a && mib[2] == 0x5a5a5a5a && mib[3] == 0x5a5a5a5a);
+
+    mibLength = 0;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix(name, nullptr, &mibLength) == -1 && *__error_nid_postfix() == 2 && mibLength == 0);
+}
 static void CheckPathnameSysctl() {
     *__error_nid_postfix() = 13;
     char buffer[32] = {};
@@ -770,16 +793,15 @@ static void CheckNameToMib() {
     char tooLong[1025];
     std::memset(tooLong, 'a', sizeof(tooLong) - 1);
     tooLong[sizeof(tooLong) - 1] = 0;
-    Require(sysctlnametomib_nid_postfix(tooLong, mib, &size) == -1 && *__error_nid_postfix() == 63);
+    int tooLongMib[4] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t tooLongMibSize = 4;
+    Require(sysctlnametomib_nid_postfix(tooLong, tooLongMib, &tooLongMibSize) == -1 && *__error_nid_postfix() == 63);
+    Require(tooLongMibSize == 4 && tooLongMib[0] == 0x5a5a5a5a && tooLongMib[1] == 0x5a5a5a5a && tooLongMib[2] == 0x5a5a5a5a && tooLongMib[3] == 0x5a5a5a5a);
     tooLong[1023] = 0;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix(tooLong, tooLongMib, &tooLongMibSize) == -1 && *__error_nid_postfix() == 2 && tooLongMibSize == 4);
+    Require(tooLongMib[0] == 0x5a5a5a5a && tooLongMib[1] == 0x5a5a5a5a && tooLongMib[2] == 0x5a5a5a5a && tooLongMib[3] == 0x5a5a5a5a);
     bool threw = false;
-    try {
-        sysctlnametomib_nid_postfix(tooLong, mib, &size);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-    threw = false;
     try {
         sysctlnametomib_nid_postfix(nullptr, mib, &size);
     } catch (const std::invalid_argument&) {
@@ -793,13 +815,8 @@ static void CheckNameToMib() {
         threw = true;
     }
     Require(threw);
-    threw = false;
-    try {
-        sysctlnametomib_nid_postfix("kern.cp_times", mib, &size);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.anyps5_no_such_name", mib, &size) == -1 && *__error_nid_postfix() == 2);
 }
 int main() {
     CheckProcessorCountSysctl();
@@ -811,6 +828,7 @@ int main() {
 #endif
     CheckTscFrequencySysctl();
     CheckUnansweredSysctl();
+    CheckUnknownSysctlName();
     CheckPathnameSysctl();
     CheckSystemStringSysctl();
     CheckSystemStringNames();
