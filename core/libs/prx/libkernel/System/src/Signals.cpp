@@ -478,6 +478,45 @@ namespace {
 constexpr int SsDisable = 4;
 constexpr std::size_t MinSignalStackSize = 2048;
 thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
+
+int ChangeSignalMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool* caught) {
+    if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
+    {
+        std::lock_guard lock(registration);
+        if (previousSet != nullptr) {
+            previousSet->bits[0] = blockedMask.load();
+            for (int word = 1; word < 4; ++word) previousSet->bits[word] = blockedMaskExtra[word - 1].load();
+        }
+        if (set != nullptr) {
+            switch (how) {
+                case 1:
+                    blockedMask.fetch_or(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_or(set->bits[word]);
+                    break;
+                case 2:
+                    blockedMask.fetch_and(~set->bits[0]);
+                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~set->bits[word]);
+                    break;
+                case 3:
+                    blockedMask.store(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].store(set->bits[word]);
+                    break;
+            }
+        }
+    }
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    for (int guest = 1; guest <= MaxSignal; ++guest) {
+        if (SignalBlocked(guest) || !Deliverable(guest) || !TakePending(guest)) continue;
+        if (DeliverPendingSignal(guest) && caught != nullptr) *caught = true;
+    }
+    return 0;
+}
+}
+
+extern "C" int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet) {
+    bool caught = false;
+    ChangeSignalMask(GuestSigsetmask, set, previousSet, &caught);
+    return caught ? 1 : 0;
 }
 
 extern "C" {
@@ -560,36 +599,7 @@ int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previ
     return 0;
 }
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
-    {
-        std::lock_guard lock(registration);
-        if (previousSet != nullptr) {
-            previousSet->bits[0] = blockedMask.load();
-            for (int word = 1; word < 4; ++word) previousSet->bits[word] = blockedMaskExtra[word - 1].load();
-        }
-        if (set != nullptr) {
-            switch (how) {
-                case 1:
-                    blockedMask.fetch_or(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_or(set->bits[word]);
-                    break;
-                case 2:
-                    blockedMask.fetch_and(~set->bits[0]);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~set->bits[word]);
-                    break;
-                case 3:
-                    blockedMask.store(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].store(set->bits[word]);
-                    break;
-            }
-        }
-    }
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-    for (int guest = 1; guest <= MaxSignal; ++guest) {
-        if (SignalBlocked(guest) || !Deliverable(guest) || !TakePending(guest)) continue;
-        DeliverPendingSignal(guest);
-    }
-    return 0;
+    return ChangeSignalMask(how, set, previousSet, nullptr);
 }
 
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet) {
