@@ -2590,11 +2590,23 @@ bool LoopGuardEnabled() {
 
 }
 
+std::optional<BorderColor> ShaderResources::readBorderColor(std::span<const std::uint32_t> words) {
+    const auto index = BorderColorTableIndex(words);
+    if (!index.has_value()) return std::nullopt;
+    Require(context.borderColorTable.has_value(), "a sampler reads border color table entry " + std::to_string(*index) + ", but the table base register was never written");
+    BorderColor color{};
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Capture);
+    GuestMemory::Read(BorderColorTableEntry(*context.borderColorTable, *index), std::as_writable_bytes(std::span(color)), 4);
+    readsBorderColorTable = true;
+    return color;
+}
+
 void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
     directRegions.clear();
+    if (readsBorderColorTable) return;
     if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
@@ -4637,14 +4649,16 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
             const bool compareEnable = binding.samplerDepthCompare.at(element);
             const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
             const bool integerBorder = element < binding.samplerIntegerBorder.size() && binding.samplerIntegerBorder[element];
+            const auto tableColor = readBorderColor(words);
+            const auto* color = tableColor.has_value() ? &*tableColor : nullptr;
             if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
-                samplers.push_back(context.samplerCache->Get(context, words, compareEnable, unnormalized, true, integerBorder));
+                samplers.push_back(context.samplerCache->Get(context, words, compareEnable, unnormalized, true, integerBorder, color));
             } else {
-                auto resource = DecodeSamplerResource(words, unnormalized, true, integerBorder);
+                auto resource = DecodeSamplerResource(words, unnormalized, true, integerBorder, color);
                 resource.compareEnable = compareEnable;
                 samplers.push_back(std::make_shared<Sampler>(context, resource));
             }
-            samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized, integerBorder});
+            samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized, integerBorder, false, false, tableColor});
             item.imageAllocations.push_back(samplers.size() - 1);
         }
         Require(samplers.size() <= context.limits.maxDescriptorSetSamplers, "pipeline sampler descriptors exceed device limits");
@@ -4804,10 +4818,11 @@ void ShaderResources::applyAnisoOverride() {
         const auto variant = SingleLevelSamplerWords(source.words, source.singleLevelImage, source.mipmappedImage);
         if (!variant.has_value()) continue;
         const auto& words = *variant;
+        const auto* color = source.tableColor.has_value() ? &*source.tableColor : nullptr;
         if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
-            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder);
+            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder, color);
         } else {
-            auto resource = DecodeSamplerResource(words, source.unnormalized, true, source.integerBorder);
+            auto resource = DecodeSamplerResource(words, source.unnormalized, true, source.integerBorder, color);
             resource.compareEnable = source.compareEnable;
             samplers[index] = std::make_shared<Sampler>(context, resource);
         }
@@ -5121,7 +5136,7 @@ void ShaderResources::resolveImageTables() {
                 for (std::uint32_t sampler = 0; sampler < stageSamplers.size() && sampler < 32u; ++sampler) {
                     if (((binding.imageSamplers.at(element) >> sampler) & 1u) == 0) continue;
                     const auto& source = samplerSources.at(table.firstSampler + sampler);
-                    const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder);
+                    const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder, source.tableColor.has_value() ? &*source.tableColor : nullptr);
                     const bool border = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
                     Require(!border || source.integerBorder == integerImage, "an image table entry's sampler border color numeric class disagrees with its sampled image class, which needs dynamic pairing and is not implemented");
                     Require(!SingleLevelSamplerWords(source.words, true, false).has_value(), "an image table entry paired with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");

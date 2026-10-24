@@ -31,9 +31,14 @@ struct GuestSamplerResource {
     VkCompareOp compareOp = VK_COMPARE_OP_NEVER;
     bool unnormalizedCoordinates = false;
     bool nonSeamlessCube = false;
+    std::array<std::uint32_t, 4> customBorderColor{};
 };
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false);
+using BorderColor = std::array<std::uint32_t, 4>;
+
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false, const BorderColor* tableColor = nullptr);
+std::optional<std::uint32_t> BorderColorTableIndex(std::span<const std::uint32_t> words);
+std::uint64_t BorderColorTableEntry(std::uint64_t base, std::uint32_t index);
 std::optional<std::array<std::uint32_t, 4>> SingleLevelSamplerWords(std::span<const std::uint32_t, 4> words, bool singleLevelImage, bool mipmappedImage);
 
 }

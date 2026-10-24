@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -216,6 +217,10 @@ struct Context {
     bool samplerFilterMinmax = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
+    bool customBorderColor = false;
+    std::uint32_t maxCustomBorderColorSamplers = 0;
+    std::atomic<std::uint32_t>* customBorderColorSamplers = nullptr;
+    std::optional<std::uint64_t> borderColorTable;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
@@ -361,6 +366,12 @@ struct Context {
         return HostMemoryType(mask);
     }
 };
+
+inline Context WithBorderColorTable(const Context& context, std::optional<std::uint64_t> base) {
+    auto result = context;
+    result.borderColorTable = base;
+    return result;
+}
 
 inline VkShaderModule CreateShaderModule(const Context& context, const std::uint32_t* code, std::size_t bytes, const char* operation) {
     return CreateShaderModule(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule"), context.device, context.graphicsPipelineLibrary, code, bytes, operation);

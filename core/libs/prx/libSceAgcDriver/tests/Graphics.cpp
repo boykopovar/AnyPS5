@@ -700,6 +700,23 @@ void srgb8TargetTests() {
     setProxyVariable("");
 }
 
+void BorderColorTableBaseTests() {
+    auto queue = makeState();
+    const auto graphicsBase = [&] { return AgcDriver::Graphics::BorderColorTableBase(queue.context, AgcDriver::Graphics::GraphicsBorderColorBase); };
+    Require(!graphicsBase().has_value(), "a draw with no TA_BC_BASE_ADDR has a border colour table");
+    queue.context[AgcDriver::Graphics::GraphicsBorderColorBase] = 0x05059a06u;
+    Require(graphicsBase() == 0x5059a0600ull, "TA_BC_BASE_ADDR is the table address shifted right by 8");
+    queue.context[AgcDriver::Graphics::GraphicsBorderColorBase + 1u] = 0xffffff12u;
+    Require(graphicsBase() == (0x12ull << 40u | 0x5059a0600ull), "TA_BC_BASE_ADDR_HI holds address bits 40 to 47");
+    queue.ClearContext();
+    Require(!graphicsBase().has_value(), "a context clear must drop the border colour table");
+    AgcDriver::QueueState compute;
+    Require(!AgcDriver::Graphics::BorderColorTableBase(compute.userConfig, AgcDriver::Graphics::ComputeBorderColorBase).has_value(), "a dispatch with no TA_CS_BC_BASE_ADDR has a border colour table");
+    compute.userConfig[AgcDriver::Graphics::ComputeBorderColorBase] = 0x05059a04u;
+    Require(AgcDriver::Graphics::BorderColorTableBase(compute.userConfig, AgcDriver::Graphics::ComputeBorderColorBase) == 0x5059a0400ull, "TA_CS_BC_BASE_ADDR decoded incorrectly");
+    Require(!AgcDriver::Graphics::BorderColorTableBase(compute.context, AgcDriver::Graphics::GraphicsBorderColorBase).has_value(), "a dispatch must not take the graphics border colour table");
+}
+
 void hardwareScreenOffsetTests() {
     auto queue = makeState();
     queue.context[0x90] = 0x80010003;
@@ -11966,6 +11983,7 @@ int main(int argc, char** argv) {
         framebufferOwnerTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
+        BorderColorTableBaseTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();

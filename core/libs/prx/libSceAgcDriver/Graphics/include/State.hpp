@@ -175,6 +175,9 @@ void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo&
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
+inline constexpr std::uint32_t GraphicsBorderColorBase = 0x20;
+inline constexpr std::uint32_t ComputeBorderColorBase = 0x380;
+std::optional<std::uint64_t> BorderColorTableBase(const Registers& registers, std::uint32_t low);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 VkExtent2D SampleLocationGrid(const State& state);

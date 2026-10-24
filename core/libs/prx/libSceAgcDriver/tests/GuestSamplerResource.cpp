@@ -539,14 +539,33 @@ void RunGuestSamplerResourceTests() {
         unreadMode.clampX = mode;
         DecodeSamplerResource(pack(unreadMode));
     }
+    Require(!BorderColorTableIndex(pack(unusedTable)).has_value(), "a table border colour that no axis reads must not name a table entry");
+    const BorderColor tableColor{0x3e19999au, 0x3f000000u, 0x3d4ccccdu, 0u};
     for (std::uint32_t mode : {4u, 5u, 6u, 7u}) {
         for (int axis = 0; axis < 3; ++axis) {
             Fields readTable = base;
             readTable.borderColorType = 3;
             (axis == 0 ? readTable.clampX : axis == 1 ? readTable.clampY : readTable.clampZ) = mode;
-            rejectFields(readTable, "border color table");
+            auto words = pack(readTable);
+            words[3] |= 0x5a3u;
+            Require(BorderColorTableIndex(words) == 0x5a3u, "a sampler that reads the border colour table must name BORDER_COLOR_PTR");
+            reject([&] { DecodeSamplerResource(words); }, "border color table entry 1443");
+            const auto decoded = DecodeSamplerResource(words, false, false, false, &tableColor);
+            Require(decoded.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT && decoded.customBorderColor == tableColor, "a table border colour must decode to the entry as a custom float colour");
+            reject([&] { DecodeSamplerResource(words, false, false, true, &tableColor); }, "integer border color from the border color table");
         }
     }
+    for (std::uint32_t type = 0; type < 3u; ++type) {
+        Fields fixed = base;
+        fixed.clampX = 6;
+        fixed.borderColorType = type;
+        auto words = pack(fixed);
+        words[3] |= 0x5a3u;
+        Require(!BorderColorTableIndex(words).has_value(), "a fixed border colour must not name a table entry");
+        Require(DecodeSamplerResource(words, false, false, false, &tableColor).borderColor != VK_BORDER_COLOR_FLOAT_CUSTOM_EXT, "a fixed border colour must ignore a table colour");
+    }
+    Require(BorderColorTableEntry(0x5059a0600ull, 0) == 0x5059a0600ull && BorderColorTableEntry(0x5059a0600ull, 0xfffu) == 0x5059a0600ull + 0xfffull * 16u, "border colour table entries are 16 bytes apart");
+    reject([] { BorderColorTableEntry(0x5059a0600ull, 0x1000u); }, "BORDER_COLOR_PTR");
     const std::array<std::uint32_t, 4> capturedTable{0x00007092u, 0x00fff000u, 0x05000000u, 0xc0000000u};
     const auto capturedUnread = DecodeSamplerResource(capturedTable);
     Require(capturedUnread.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && capturedUnread.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured table-border sampler decoded incorrectly");
