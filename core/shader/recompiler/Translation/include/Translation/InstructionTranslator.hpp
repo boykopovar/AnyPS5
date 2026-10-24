@@ -40,6 +40,7 @@ struct TranslateOptions {
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
+    std::int32_t instanceInputSgpr = -1;
 };
 
 class InstructionTranslator {

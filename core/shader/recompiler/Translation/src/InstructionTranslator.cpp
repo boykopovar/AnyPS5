@@ -42,6 +42,16 @@ void validateTranslateOptions(const TranslateOptions& options) {
     if (options.userDataBaseRegister >= NumScalarRegs || options.userDataCount > NumScalarRegs - options.userDataBaseRegister) {
         throw std::runtime_error("shader user data exceeds the scalar register bank");
     }
+    if (options.instanceInputSgpr != -1) {
+        if (options.stage != ShaderStageKind::Vertex || options.gcnLegacyVertexInputs || options.instanceInputSgpr < 0 ||
+            static_cast<std::uint32_t>(options.instanceInputSgpr) < options.userDataBaseRegister ||
+            static_cast<std::uint32_t>(options.instanceInputSgpr) - options.userDataBaseRegister >= options.userDataCount) {
+            throw std::runtime_error("dynamic instance input requires a vertex user SGPR");
+        }
+        if (options.embeddedFetch != nullptr && options.embeddedFetch->instanceOffsetSgpr >= 0) {
+            throw std::runtime_error("dynamic instance input cannot also fold an instance fetch offset");
+        }
+    }
     if (options.waveSize != 32u && options.waveSize != 64u) {
         throw std::runtime_error("shader translation requires wave32 or wave64, got " + std::to_string(options.waveSize));
     }
@@ -183,6 +193,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         const auto* fetch = options.embeddedFetch;
         const std::int32_t folded = fetch == nullptr ? -1 : kind == StageInputKind::VertexIndex ? fetch->vertexOffsetSgpr : fetch->instanceOffsetSgpr;
         IrValue& index = builtin(kind);
+        if (kind == StageInputKind::InstanceIndex && options.instanceInputSgpr >= 0) return entryIr.ISub(index, builtin(StageInputKind::BaseInstance));
         return folded < 0 ? index : entryIr.ISub(index, entryIr.GetUserData(static_cast<ScalarReg>(folded)));
     };
     const auto tessellationBase = [&entryIr](TessellationBaseKind kind) -> IrValue& {
@@ -195,7 +206,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
 
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
-        IrValue& value = entryIr.GetUserData(reg);
+        IrValue& value = static_cast<std::int32_t>(RegIndex(reg)) == options.instanceInputSgpr ? builtin(StageInputKind::BaseInstance) : entryIr.GetUserData(reg);
         entryIr.SetScalarReg(reg, value);
         entryIr.SetScalarMaskTag(reg, entryIr.ConstantBool(false));
     }

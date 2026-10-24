@@ -243,6 +243,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
+    translateOptions.instanceInputSgpr = request.graphics ? request.graphics->instanceInputSgpr : -1;
+    if (translateOptions.instanceInputSgpr != -1 && (request.shader.stage != ShaderStage::Vertex || request.graphics->mesh || request.graphics->tessellation || !supports(spv::CapabilityDrawParameters))) {
+        throw std::runtime_error("dynamic instance input requires a vertex draw with shader draw parameters");
+    }
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.inputInfo = inputInfo;

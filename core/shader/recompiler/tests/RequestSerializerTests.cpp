@@ -588,6 +588,32 @@ int main() {
         }
     }
 
+    {
+        ShaderRecompiler::RecompileRequest dynamic{};
+        dynamic.shader.stage = ShaderRecompiler::ShaderStage::Vertex;
+        dynamic.graphics = ShaderRecompiler::GraphicsCompileContext{};
+        const auto ordinary = serializer.Serialize(dynamic);
+        Require(DecodeBase64(ordinary)[4] == 46u);
+        Require(serializer.Deserialize(ordinary).request.graphics->instanceInputSgpr == -1);
+        for (const auto sgpr : {8, 10, 11, 39}) {
+            dynamic.graphics->instanceInputSgpr = sgpr;
+            const auto encoded = serializer.Serialize(dynamic);
+            auto bytes = DecodeBase64(encoded);
+            Require(bytes[4] == 47u && serializer.Deserialize(encoded).request.graphics->instanceInputSgpr == sgpr);
+            Require(serializer.Serialize(serializer.Deserialize(encoded).request) == encoded);
+            bytes.pop_back();
+            bool rejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+            }
+            Require(rejected);
+        }
+        dynamic.graphics->instanceInputSgpr = -1;
+        Require(serializer.Serialize(dynamic) == ordinary);
+    }
+
     ShaderRecompiler::RecompileRequest request{};
     for (const bool preserve : {false, true}) {
         request.target.float16DenormPreserve = preserve;
@@ -609,7 +635,7 @@ int main() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 47u;
+        future[4] = 48u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
