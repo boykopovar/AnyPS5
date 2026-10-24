@@ -15,4 +15,13 @@ int APS5_VABI FT_Library_SetLcdFilter_nid_postfix(GuestLibrary* library, std::in
     return FT_Library_SetLcdFilter(library ? library->host : nullptr, static_cast<FT_LcdFilter>(filter));
 }
 
+int APS5_VABI FT_Library_SetLcdFilterWeights_nid_postfix(GuestLibrary* library, unsigned char* weights) {
+    FT_Library host = library ? library->host : nullptr;
+    if (!weights) return FT_Library_SetLcdFilterWeights(host, nullptr);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(weights, FT_LCD_FILTER_FIVE_TAPS);
+    std::array<unsigned char, FT_LCD_FILTER_FIVE_TAPS> copy;
+    std::memcpy(copy.data(), weights, copy.size());
+    return FT_Library_SetLcdFilterWeights(host, copy.data());
+}
+
 }
