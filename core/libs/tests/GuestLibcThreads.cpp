@@ -29,6 +29,7 @@ void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread);
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attr, void** thread);
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
 int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
 void RegisterPthreadCreate_nid_no_patch(int (APS5_VABI* fn)(void**, const void*, void* (APS5_VABI*)(void*), void*));
@@ -254,7 +255,10 @@ struct HostPadThread {
     void* result = nullptr;
 };
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* arg) {
+static const void* lastCreateAttr = nullptr;
+
+static int APS5_VABI HostPthreadCreate(void** thread, const void* attr, void* (APS5_VABI* entry)(void*), void* arg) {
+    lastCreateAttr = attr;
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, arg] { handle->result = entry(arg); });
     *thread = handle;
@@ -309,10 +313,37 @@ static void PadLaunchAndJoin() {
     void* thread = nullptr;
     _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &thread);
     Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(lastCreateAttr == nullptr);
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
     int code = 0;
     Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
     Require(_Thrd_join_nid_postfix(nullptr, &code) == 4);
+
+    RegisterPthreadCreate_nid_no_patch(nullptr);
+    RegisterPthreadJoin_nid_no_patch(nullptr);
+}
+
+static void PadLaunchWithAttributes() {
+    unsigned (APS5_VABI* vtable[1])(GuestPad*) = {TestPadGo};
+    RegisterPthreadCreate_nid_no_patch(HostPthreadCreate);
+    RegisterPthreadJoin_nid_no_patch(HostPthreadJoin);
+
+    TestPad pad{};
+    pad.vtable = vtable;
+    _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
+    int attribute = 0;
+    void* attr = &attribute;
+    void* thread = nullptr;
+    lastCreateAttr = nullptr;
+    _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &attr, &thread);
+    Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(attr == &attribute);
+    Require(lastCreateAttr == &attr);
+
+    _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+    int code = 0;
+    Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
 
     RegisterPthreadCreate_nid_no_patch(nullptr);
     RegisterPthreadJoin_nid_no_patch(nullptr);
@@ -484,6 +515,7 @@ int main() {
     ConditionBroadcast();
     ConditionSignal();
     PadLaunchAndJoin();
+    PadLaunchWithAttributes();
     PadDetach();
     ThreadHelpers();
 }
