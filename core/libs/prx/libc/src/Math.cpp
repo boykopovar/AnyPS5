@@ -833,7 +833,29 @@ float APS5_VABI cbrtf_nid_postfix(float x) {
     T = T * (static_cast<double>(x) + x + r) / (x + r + r);
     return static_cast<float>(T);
 }
-float APS5_VABI remainderf_nid_postfix(float x, float y) { return std::remainder(x, y); }
+static long double PartialRemainder(long double x, long double y, std::uint16_t* status) {
+    long double remainder;
+    asm("1:\n\tfprem1\n\tfnstsw %%ax\n\ttestw $0x400, %%ax\n\tjnz 1b" : "=t"(remainder), "=a"(*status) : "0"(x), "u"(y));
+    return remainder;
+}
+
+static void SetRemainderDomainError(long double x, long double y) {
+    if (!std::isnan(x) && !std::isnan(y) && (y == 0 || std::isinf(x))) {
+        errno = EDOM;
+    }
+}
+
+static int RemquoQuotient(std::uint16_t status, bool negative) {
+    const int quotient = ((status >> 8) & 1) << 2 | ((status >> 14) & 1) << 1 | ((status >> 9) & 1);
+    return negative ? -quotient : quotient;
+}
+
+float APS5_VABI remainderf_nid_postfix(float x, float y) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    SetRemainderDomainError(x, y);
+    return static_cast<float>(remainder);
+}
 float APS5_VABI nextafterf_nid_postfix(float x, float y) { return std::nextafter(x, y); }
 double APS5_VABI nextafter_nid_postfix(double x, double y) { return std::nextafter(x, y); }
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
@@ -880,9 +902,26 @@ int APS5_VABI ilogb_nid_postfix(double x) {
     return std::ilogb(x);
 }
 int APS5_VABI ilogbf_nid_postfix(float x) { return ilogb_nid_postfix(static_cast<double>(x)); }
-double APS5_VABI remainder_nid_postfix(double x, double y) { return std::remainder(x, y); }
-double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) { return std::remquo(x, y, quo); }
-float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) { return std::remquo(x, y, quo); }
+double APS5_VABI remainder_nid_postfix(double x, double y) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    SetRemainderDomainError(x, y);
+    return static_cast<double>(remainder);
+}
+double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    SetRemainderDomainError(x, y);
+    return static_cast<double>(remainder);
+}
+float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    SetRemainderDomainError(x, y);
+    return static_cast<float>(remainder);
+}
 float APS5_VABI _FSinh_nid_postfix(float x, float y) { return ScaledHyperbolic(x, y, true); }
 float APS5_VABI _FCosh_nid_postfix(float x, float y) { return ScaledHyperbolic(x, y, false); }
 
