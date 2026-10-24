@@ -1,0 +1,15 @@
+add_library(libSceSystemLogger SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSystemLogger PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSystemLogger)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_systemlogger_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemLogger.cpp)
+    target_include_directories(guest_systemlogger_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_systemlogger_tests PRIVATE libSceSystemLogger libc)
+    configure_windows_unwind(guest_systemlogger_tests)
+    add_test(NAME guest_systemlogger_lifecycle COMMAND guest_systemlogger_tests lifecycle)
+    if(WIN32)
+        set_tests_properties(guest_systemlogger_lifecycle PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger>")
+    endif()
+endif()
