@@ -2,7 +2,6 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -29,6 +28,7 @@ static bool OnlySlots(const TestCallbacks& callbacks, int first, void* firstValu
 
 extern "C" {
 void APS5_VABI SSL_CTX_set_info_callback_nid_postfix(TestCtx*, void*);
+void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(TestCtx*, void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -54,7 +54,20 @@ static void TestInfoCallback() {
     Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
 }
 
+static void TestNewSessionCallback() {
+    TestCallbacks callbacks {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_sess_set_new_cb_nid_postfix(nullptr, &Marker[0]); });
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(&ctx, &Marker[0]); });
+    ctx.internal = &callbacks;
+    SSL_CTX_sess_set_new_cb_nid_postfix(&ctx, &Marker[0]);
+    Require(OnlySlots(callbacks, 3, &Marker[0], -1, nullptr));
+    SSL_CTX_sess_set_new_cb_nid_postfix(&ctx, nullptr);
+    Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
+}
+
 int main() {
     TestInfoCallback();
+    TestNewSessionCallback();
     return 0;
 }
