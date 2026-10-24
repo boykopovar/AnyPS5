@@ -2394,6 +2394,10 @@ struct TargetBinding {
     std::shared_ptr<StorageTexture> resident;
     bool proxied = false;
     std::unique_ptr<Buffer> transfer;
+    bool banded = false;
+    VkRect2D band{};
+    std::size_t bandOffset = 0;
+    std::uint32_t bandPitch = 0;
     std::unique_ptr<Buffer> tiled;
     std::unique_ptr<DeviceBuffer> tiledDevice;
     std::unique_ptr<DeviceBuffer> linearDevice;
@@ -2571,8 +2575,24 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
             std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
         } else {
-            binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
-            ReadColorTarget(color, binding.transfer->Bytes());
+            const auto x0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.x, 0));
+            const auto y0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.y, 0));
+            const auto x1 = std::min<std::uint32_t>(x0 + state.scissor.extent.width, color.extent.width);
+            const auto y1 = std::min<std::uint32_t>(y0 + state.scissor.extent.height, color.extent.height);
+            binding.banded = color.tileMode == ColorTileMode::Linear && color.dccAddress == 0 && x0 < x1 && y0 < y1 && (x1 - x0 < color.extent.width || y1 - y0 < color.extent.height);
+            if (binding.banded) {
+                binding.band = {{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)}, {x1 - x0, y1 - y0}};
+                binding.bandOffset = colorLayout.Offset(x0, y0);
+                binding.bandPitch = static_cast<std::uint32_t>(colorLayout.Bytes() / (std::size_t{color.extent.height} * color.elementBytes));
+                const auto bandBytes = colorLayout.Offset(x1 - 1, y1 - 1) + color.elementBytes - binding.bandOffset;
+                binding.transfer = std::make_unique<Buffer>(context, bandBytes, copies);
+                binding.original.resize(bandBytes);
+                GuestMemory::Read(color.address + binding.bandOffset, binding.original, color.elementBytes);
+                std::memcpy(binding.transfer->Bytes().data(), binding.original.data(), bandBytes);
+            } else {
+                binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
+                ReadColorTarget(color, binding.transfer->Bytes());
+            }
         }
         // A fast-cleared DCC target holds its clear value wherever the draw does not write.
         if (color.dccAddress != 0) {
@@ -2995,6 +3015,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         VkBufferImageCopy copy{};
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.imageExtent = {binding.color.extent.width, binding.color.extent.height, 1};
+        if (binding.banded) {
+            copy.bufferRowLength = binding.bandPitch;
+            copy.imageOffset = {binding.band.offset.x, binding.band.offset.y, 0};
+            copy.imageExtent = {binding.band.extent.width, binding.band.extent.height, 1};
+        }
         const VkBuffer linear = binding.gpuTiling ? binding.linearDevice->Handle() : binding.transfer->Handle();
         countBarrier(binding.gpuTiling ? 4 : 2);
         if (binding.gpuTiling) {
@@ -3060,6 +3085,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         VkBufferImageCopy copy{};
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.imageExtent = {binding.color.extent.width, binding.color.extent.height, 1};
+        if (binding.banded) {
+            copy.bufferRowLength = binding.bandPitch;
+            copy.imageOffset = {binding.band.offset.x, binding.band.offset.y, 0};
+            copy.imageExtent = {binding.band.extent.width, binding.band.extent.height, 1};
+        }
         countBarrier(binding.gpuTiling ? 4 : 2);
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         const VkBuffer linear = binding.gpuTiling ? binding.linearDevice->Handle() : binding.transfer->Handle();
@@ -3146,6 +3176,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             continue;
         }
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
+        else if (binding.banded) GuestMemory::WriteChanged(binding.color.address + binding.bandOffset, binding.transfer->Bytes(), binding.original);
         else WriteColorTarget(binding.color, binding.transfer->Bytes());
         // The stored texels are the whole target now, so later reads must see them rather than a fast clear.
         const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
