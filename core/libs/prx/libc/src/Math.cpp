@@ -82,6 +82,14 @@ float SinhfExp(float x) {
     return y * std::bit_cast<float>(static_cast<std::uint32_t>(0x7f + k) << 23);
 }
 
+float GuestTgammaf(float x) {
+    const float result = static_cast<float>(std::tgamma(static_cast<double>(x)));
+    if (result != 0.0f || !std::isfinite(x) || x >= 0.0f || std::trunc(x) == x) return result;
+    const double interval = std::floor(-static_cast<double>(x));
+    const bool negative = std::fmod(interval, 2.0) == 0.0;
+    return std::copysign(0.0f, negative ? -1.0f : 1.0f);
+}
+
 float AtanhfLog1p(float x) {
     constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f;
     constexpr float Lp1 = 6.6666668653e-01f, Lp2 = 4.0000000596e-01f, Lp3 = 2.8571429849e-01f, Lp4 = 2.2222198546e-01f;
@@ -406,7 +414,7 @@ long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); 
 long double APS5_VABI log2l_nid_postfix(long double x) { return std::log2(x); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
-float APS5_VABI tgammaf_nid_postfix(float x) { return static_cast<float>(std::tgamma(static_cast<double>(x))); }
+float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
     return std::hypot(x, y);
