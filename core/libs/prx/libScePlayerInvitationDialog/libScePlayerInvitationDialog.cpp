@@ -8,7 +8,9 @@ namespace {
 
 constexpr std::int32_t COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr auto COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x80B80003u);
+constexpr auto COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x80B80004u);
 constexpr auto COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<std::int32_t>(0x80B80005u);
+constexpr auto COMMON_DIALOG_ERROR_BUSY = static_cast<std::int32_t>(0x80B80007u);
 constexpr auto COMMON_DIALOG_ERROR_ARG_NULL = static_cast<std::int32_t>(0x80B8000Du);
 
 std::mutex g_dialog_mutex;
@@ -25,19 +27,18 @@ extern "C" {
 std::int32_t APS5_VABI scePlayerInvitationDialogInitialize(void) {
     std::lock_guard lock(g_dialog_mutex);
     APS5_LOG_OUT("status=%d", status());
-    if (g_dialog_status == PlayerInvitationDialogStatus::None) {
-        g_dialog_status = PlayerInvitationDialogStatus::Initialized;
-    }
+    if (g_dialog_status != PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    g_dialog_status = PlayerInvitationDialogStatus::Initialized;
     return 0;
 }
 
 std::int32_t APS5_VABI scePlayerInvitationDialogOpen(const ScePlayerInvitationDialogParam* param) {
     std::lock_guard lock(g_dialog_mutex);
     APS5_LOG_OUT("param=%p status=%d", static_cast<const void*>(param), status());
-    if (g_dialog_status == PlayerInvitationDialogStatus::None) {
-        g_dialog_status = PlayerInvitationDialogStatus::Initialized;
-    }
-    g_dialog_status = PlayerInvitationDialogStatus::Running;
+    if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (g_dialog_status == PlayerInvitationDialogStatus::Running) return COMMON_DIALOG_ERROR_BUSY;
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    g_dialog_status = PlayerInvitationDialogStatus::Finished;
     return 0;
 }
 
@@ -68,6 +69,7 @@ std::int32_t APS5_VABI scePlayerInvitationDialogClose(void) {
 std::int32_t APS5_VABI scePlayerInvitationDialogTerminate(void) {
     std::lock_guard lock(g_dialog_mutex);
     APS5_LOG_OUT("status=%d", status());
+    if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     g_dialog_status = PlayerInvitationDialogStatus::None;
     return 0;
 }
