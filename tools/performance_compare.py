@@ -73,7 +73,7 @@ def load_summary(path, trace=None):
                 record = json.loads(line)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
-            except ValueError as error:
+            except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
             if trace is None or record.get("trace") == trace:
                 records.append((line_number, record))
@@ -182,7 +182,7 @@ def main(argv=None):
         if args.require_matching_context and report["configuration_differences"]:
             raise ValueError("recorded configuration differs: " + ", ".join(report["configuration_differences"]))
         output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n" if args.json else markdown(report)
-    except (OSError, ValueError, OverflowError) as error:
+    except (OSError, ValueError, OverflowError, RecursionError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
     sys.stdout.write(output)
 
