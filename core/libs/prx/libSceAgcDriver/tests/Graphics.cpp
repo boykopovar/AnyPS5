@@ -1328,7 +1328,10 @@ void ShaderStageTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported vertex");
     }
     queue.context[0x2d5] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "without PRIMGEN_EN");
+    {
+        const auto legacy = AgcDriver::Graphics::DecodeState(queue).stages;
+        Require(legacy.path == AgcDriver::Graphics::ShaderPath::Vertex && legacy.registerValue == 0, "legacy vertex routing did not decode as vertex");
+    }
     queue.context.erase(0x2d5);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.context[0x2d5] = 0x2000;
