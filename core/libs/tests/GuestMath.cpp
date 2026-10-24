@@ -552,9 +552,29 @@ static void CheckHypotSpecialValue() {
 }
 
 static void CheckAsinfErrno() {
-    errno = 0;
-    (void)asinf_nid_postfix(2.0f);
-    Require(errno == 0);
+    for (const float input : {2.0f, -2.0f, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        errno = 0;
+        (void)asinf_nid_postfix(input);
+        Require(errno == EDOM);
+    }
+    for (const float input : {1.0f, -1.0f, 0.5f, 0.0f}) {
+        errno = 1234;
+        (void)asinf_nid_postfix(input);
+        Require(errno == 1234);
+    }
+}
+
+static void CheckAsinfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3f000000u, 0x3f060a92u}, {0x3f800000u, 0x3fc90fdbu}, {0xbf800000u, 0xbfc90fdbu},
+        {0x3b3a82dau, 0x3b3a82eau}, {0xbb753808u, 0xbb75382du}, {0x3f0008fbu, 0x3f0614f1u},
+        {0xbf001216u, 0xbf061f75u}, {0x3f7fffffu, 0x3fc9048au}, {0x39000000u, 0x39000000u},
+        {0x80000000u, 0x80000000u}, {0x00000001u, 0x00000001u}, {0x40000000u, 0xffc00000u},
+        {0x7fc00001u, 0x7fc00001u},
+    };
+    for (const auto& [input, expected] : cases) {
+        Require(std::bit_cast<std::uint32_t>(asinf_nid_postfix(std::bit_cast<float>(input))) == expected);
+    }
 }
 
 static void CheckExp2Errno() {
@@ -1746,6 +1766,7 @@ int main() {
     CheckAsin();
     const auto quotient = div_nid_postfix(7, 2);
     CheckAsinfErrno();
+    CheckAsinfConsoleBits();
     Require(quotient.quot == 3 && quotient.rem == 1);
     const auto negativeNumerator = div_nid_postfix(-7, 2);
     Require(negativeNumerator.quot == -3 && negativeNumerator.rem == -1);

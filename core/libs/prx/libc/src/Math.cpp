@@ -295,11 +295,33 @@ float APS5_VABI fmodf_nid_postfix(float x, float y) {
     errno = saved_errno;
     return result;
 }
+static float AsinfRational(float t) {
+    const float p = t * (1.6666586697e-01f + t * (-4.2743422091e-02f + t * -8.6563630030e-03f));
+    const float q = 1.0f + t * -7.0662963390e-01f;
+    return p / q;
+}
+
 float APS5_VABI asinf_nid_postfix(float x) {
-    const int saved_errno = errno;
-    const float result = std::asin(x);
-    errno = saved_errno;
-    return result;
+    const double pio2 = 1.570796326794896558e+00;
+    const std::int32_t hx = std::bit_cast<std::int32_t>(x);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x3f800000) {
+        if (ix == 0x3f800000) {
+            return static_cast<float>(x * pio2);
+        }
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (ix < 0x3f000000) {
+        if (ix < 0x39800000) {
+            return x;
+        }
+        return x + x * AsinfRational(x * x);
+    }
+    const float t = (1.0f - std::fabs(x)) * 0.5f;
+    const double s = std::sqrt(static_cast<double>(t));
+    const float result = static_cast<float>(pio2 - 2.0 * (s + s * AsinfRational(t)));
+    return hx > 0 ? result : -result;
 }
 float APS5_VABI acosf_nid_postfix(float x) {
     if (std::isnan(x)) {
