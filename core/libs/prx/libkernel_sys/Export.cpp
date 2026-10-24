@@ -318,6 +318,14 @@ int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
+int APS5_VABI is_in_sandbox_nid_postfix(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsInSandbox(void) {
+    return is_in_sandbox_nid_postfix();
+}
+
 int APS5_VABI fork_nid_postfix(void) {
     NotImplemented_nid_no_patch("fork: child processes");
     return -1;
