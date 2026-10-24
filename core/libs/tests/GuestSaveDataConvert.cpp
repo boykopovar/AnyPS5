@@ -59,6 +59,9 @@ int main() {
 
     float progress = 0.0f;
     Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query before initialize fails with not initialized");
+    Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    SaveDataConvert nullDir{};
+    Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name is rejected");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
