@@ -29,6 +29,7 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet*);
 int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t);
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet*);
+int APS5_VABI siginterrupt_nid_postfix(int, int);
 }
 struct GuestSigaction {
     std::uintptr_t handler;
@@ -419,4 +420,24 @@ int main() {
     Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
     Require(signal_nid_postfix(30, nullptr) == Callback && signal_nid_postfix(31, nullptr) == Callback &&
         signal_nid_postfix(128, nullptr) == Callback);
+    Require(signal_nid_postfix(30, Callback) == nullptr);
+    Require(siginterrupt_nid_postfix(30, 1) == 0 && _sigintr_nid_postfix.bits[0] == (1u << 29));
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 &&
+        interruptible.handler == reinterpret_cast<std::uintptr_t>(Callback) && interruptible.flags == 0);
+    Require(signal_nid_postfix(30, Callback) == Callback);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0);
+    Require(siginterrupt_nid_postfix(30, 0) == 0 && _sigintr_nid_postfix.bits[0] == 0);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 &&
+        interruptible.handler == reinterpret_cast<std::uintptr_t>(Callback) && interruptible.flags == 0x2);
+    Require(siginterrupt_nid_postfix(128, 1) == 0 && _sigintr_nid_postfix.bits[3] == (1u << 31));
+    Require(sigaction_nid_postfix(128, nullptr, &interruptible) == 0 && interruptible.handler == 0 && interruptible.flags == 0);
+    Require(siginterrupt_nid_postfix(128, 0) == 0 && _sigintr_nid_postfix.bits[3] == 0);
+    Require(sigaction_nid_postfix(128, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    for (const int badSignal : {0, -1, 129}) {
+        *__error_nid_postfix() = 0;
+        Require(siginterrupt_nid_postfix(badSignal, 1) == -1 && *__error_nid_postfix() == 22);
+    }
+    Require(_sigintr_nid_postfix.bits[0] == 0 && _sigintr_nid_postfix.bits[3] == 0);
+    Require(signal_nid_postfix(30, nullptr) == Callback);
+    Require(sigaction_nid_postfix(128, &restored, nullptr) == 0);
 }
