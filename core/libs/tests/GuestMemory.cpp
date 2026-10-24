@@ -2691,6 +2691,59 @@ static void CheckDirectMemoryBackingNeedsNoFilesystem() {
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
 }
 
+static void CheckDirectMemorySharedBackingRuns() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t first = 0;
+    std::int64_t second = 0;
+    std::int64_t third = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &first) == 0);
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &second) == 0);
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &third) == 0);
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 4, 0, 0) == 0 && reserved != nullptr);
+    auto* bytes = static_cast<unsigned char*>(reserved);
+    constexpr int fixed = 0x10;
+    void* piece = bytes;
+    Require(sceKernelMapDirectMemory(&piece, page * 2, 3, fixed, first, 0) == 0 && piece == bytes);
+    piece = bytes + page * 2;
+    Require(sceKernelMapDirectMemory(&piece, page, 3, fixed, second, 0) == 0 && piece == bytes + page * 2);
+    piece = bytes + page * 3;
+    Require(sceKernelMapDirectMemory(&piece, page, 3, fixed, third, 0) == 0 && piece == bytes + page * 3);
+    bytes[page * 2 + 7] = 0x6b;
+    const auto address = reinterpret_cast<std::uintptr_t>(reserved);
+    int file = -1;
+    GuestArena::SharedBackingRun runs[4]{};
+    std::size_t count = 0;
+    Require(GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 4, &file, runs, 4, &count));
+    const bool adjacent = static_cast<std::uint64_t>(second) == static_cast<std::uint64_t>(first) + page * 2;
+    Require(count == (adjacent ? 2u : 3u) || (adjacent && static_cast<std::uint64_t>(third) == static_cast<std::uint64_t>(second) + page && count == 1));
+    std::uint64_t total = 0;
+    for (std::size_t index = 0; index < count; ++index) total += runs[index].bytes;
+    Require(total == page * 4 && runs[0].offset == static_cast<std::uint64_t>(first));
+    unsigned char byte = 0;
+    std::uint64_t secondOffset = 0;
+    std::uint64_t covered = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (covered <= page * 2 && page * 2 < covered + runs[index].bytes) secondOffset = runs[index].offset + (page * 2 - covered);
+        covered += runs[index].bytes;
+    }
+    Require(secondOffset == static_cast<std::uint64_t>(second));
+    Require(pread(file, &byte, 1, static_cast<off_t>(secondOffset + 7)) == 1 && byte == 0x6b);
+    close(file);
+    Require(GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address + page, page * 3, &file, runs, 4, &count) && runs[0].offset == static_cast<std::uint64_t>(first) + page);
+    close(file);
+    const bool oneRun = GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 4, &file, runs, 1, &count);
+    if (oneRun) close(file);
+    Require(!oneRun || count == 1);
+    Require(!GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 5, &file, runs, 4, &count));
+    Require(!GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, 0, &file, runs, 4, &count));
+    Require(sceKernelMunmap(reserved, page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(first, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(second, page) == 0);
+    Require(sceKernelReleaseDirectMemory(third, page) == 0);
+}
+
+
 static void CheckDirectMemorySharedBacking() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -3402,6 +3455,7 @@ int main(int argc, char** argv) {
     CheckDirectMemoryWriteWatchFollowsRemovedMappings();
     CheckMappingCostFollowsTheMappingCount();
     CheckDirectMemoryBackingNeedsNoFilesystem();
+        CheckDirectMemorySharedBackingRuns();
     CheckDirectMemorySharedBacking();
     CheckVirtualQueryFindsNeighbours();
     CheckReleaseFindsEveryDirectMapping();

@@ -626,6 +626,7 @@ namespace {
 
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
+std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
 
 }
 
@@ -645,6 +646,15 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+
+void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolver) {
+    sharedBackingRunsResolver.store(resolver, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
+    const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
+    return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
 }
 #endif
 

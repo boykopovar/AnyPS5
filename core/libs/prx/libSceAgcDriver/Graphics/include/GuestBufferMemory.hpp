@@ -67,6 +67,7 @@ struct ImportProbe {
     std::uint32_t writtenAfterSettle = 0;
     std::uint32_t writtenByCpu = 0;
     std::uint32_t writtenAfterFill = 0;
+    std::uint32_t staleAfterFill = 0;
 };
 
 ImportProbe ProbeImportWriteProtection(const Context& context);

@@ -647,6 +647,39 @@ bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::ui
     return true;
 }
 
+bool SharedBackingRuns(std::uintptr_t address, std::size_t bytes, int* file, GuestArena::SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
+    std::lock_guard lock(g_directLock);
+    *count = 0;
+    const auto next = g_directMappings.upper_bound(address);
+    if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address || next == g_directMappings.begin()) return false;
+    auto it = std::prev(next);
+    if (address >= it->second.end) return false;
+    const int backingFile = it->second.backing->File();
+    const auto end = address + bytes;
+    std::size_t filled = 0;
+    for (auto cursor = address; cursor < end;) {
+        if (it == g_directMappings.end() || it->first > cursor || it->second.backing->File() != backingFile) return false;
+        const auto phys = it->second.phys + (cursor - it->first);
+        const auto page = g_physPages.find(phys - phys % PS5_PAGE_SIZE);
+        if (page == g_physPages.end() || page->second.backing != it->second.backing) return false;
+        const auto stop = std::min(end, static_cast<std::uintptr_t>(it->second.end));
+        const auto offset = it->second.backing->FileOffset() + page->second.offset + phys % PS5_PAGE_SIZE;
+        if (filled != 0 && runs[filled - 1].offset + runs[filled - 1].bytes == offset) {
+            runs[filled - 1].bytes += stop - cursor;
+        } else {
+            if (filled == capacity) return false;
+            runs[filled++] = GuestArena::SharedBackingRun{offset, static_cast<std::size_t>(stop - cursor)};
+        }
+        cursor = stop;
+        ++it;
+    }
+    const int duplicate = fcntl(backingFile, F_DUPFD_CLOEXEC, 0);
+    if (duplicate < 0) throw std::system_error(errno, std::generic_category(), "duplicate direct memory backing");
+    *file = duplicate;
+    *count = filled;
+    return true;
+}
+
 bool WriteSharedBacking(std::uintptr_t address, const void* source, std::size_t bytes) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
     std::lock_guard lock(g_directLock);
@@ -1458,6 +1491,7 @@ void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType) {
     static std::once_flag registered;
     std::call_once(registered, [] {
         GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking);
+        GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(&SharedBackingRuns);
         GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(&WriteSharedBacking);
     });
 #endif
