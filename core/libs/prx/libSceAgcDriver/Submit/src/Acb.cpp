@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -10,7 +11,7 @@
 extern "C" {
 
 int APS5_VABI sceAgcDriverSubmitAcb(uint32_t queue, const Packet* packet) {
-    if (queue < 0x20 || queue >= 0x58) {
+    if (queue < 0x20 || queue >= AgcDriver::DriverDetail::SubmissionQueueEnd) {
         throw std::runtime_error(std::string(__func__) + ": unsupported compute queue");
     }
     AgcDriver::Submit(packet, queue);
