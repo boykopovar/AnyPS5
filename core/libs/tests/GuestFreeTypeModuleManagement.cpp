@@ -15,6 +15,7 @@ extern "C" {
 void* APS5_VABI FT_Get_Module_nid_postfix(GuestLibrary*, const char*);
 void* APS5_VABI FT_Get_Renderer_nid_postfix(GuestLibrary*, std::uint32_t);
 int APS5_VABI FT_Remove_Module_nid_postfix(GuestLibrary*, void*);
+void APS5_VABI FT_Add_Default_Modules_nid_postfix(GuestLibrary*);
 }
 
 static void Check(bool value, int line) {
@@ -77,8 +78,26 @@ static void TestRemoveModule() {
     Require(FT_Remove_Module_nid_postfix(nullptr, foreign) == FT_Remove_Module(nullptr, nativeForeign));
 }
 
+static void TestAddDefaultModules() {
+    Libraries libraries;
+    for (const char* name : {"truetype", "cff", "smooth"}) {
+        FT_Remove_Module(libraries.guest.host, FT_Get_Module(libraries.guest.host, name));
+        FT_Remove_Module(libraries.native, FT_Get_Module(libraries.native, name));
+    }
+    Require(FT_Get_Module(libraries.guest.host, "truetype") == nullptr);
+    FT_Add_Default_Modules_nid_postfix(&libraries.guest);
+    FT_Add_Default_Modules(libraries.native);
+    for (const char* name : {"truetype", "cff", "type1", "bdf", "smooth", "raster1", "missing"}) {
+        Require((FT_Get_Module(libraries.guest.host, name) != nullptr) == (FT_Get_Module(libraries.native, name) != nullptr));
+    }
+    Require(FT_Get_Module(libraries.guest.host, "truetype") != nullptr);
+    FT_Add_Default_Modules_nid_postfix(&libraries.guest);
+    FT_Add_Default_Modules_nid_postfix(nullptr);
+}
+
 int main() {
     TestGetModule();
     TestGetRenderer();
     TestRemoveModule();
+    TestAddDefaultModules();
 }
