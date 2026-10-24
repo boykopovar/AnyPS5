@@ -22,24 +22,13 @@ extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer,
 
 using SonyConstraintHandler = void (APS5_VABI *)(const char* message, void* pointer, int error);
 
-inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
-    (void)message;
-    (void)pointer;
-    (void)error;
-    std::abort();
-}
-
-inline std::mutex& SonyConstraintMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
-inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
-    static SonyConstraintHandler handler = SonyDefaultConstraintHandler;
-    return handler;
-}
-
-namespace {
+std::mutex& SonyConstraintMutex();
+SonyConstraintHandler& SonyConstraintHandlerSlot();
+void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error);
+extern "C" void SonyInvokeConstraintHandler_nid_no_patch(const char* message, void* pointer, int error);
+extern "C" void SonyIgnoreHandlerS_nid_no_patch(const char* message, void* pointer, int error);
+extern "C" void* SonySetConstraintHandlerS_nid_no_patch(void* handler);
+extern "C" SonyLconv* SonyLocaleconv_nid_no_patch(void);
 
 template<typename TInteger>
 inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
@@ -56,12 +45,7 @@ inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*
 }
 
 inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int error) {
-    SonyConstraintHandler handler = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(SonyConstraintMutex());
-        handler = SonyConstraintHandlerSlot();
-    }
-    if (handler) handler(message, pointer, error);
+    SonyInvokeConstraintHandler_nid_no_patch(message, pointer, error);
 }
 
 inline char* SonyStrtokS(char* str, const char* delim, char** context) {
@@ -124,19 +108,6 @@ inline int SonyAsctimeS(char* buffer, std::size_t size, const GuestTm* time) {
     return SonyFormatAsctime(buffer, size, *time);
 }
 
-inline void SonyIgnoreHandlerS(const char* message, void* pointer, int error) {
-    (void)message;
-    (void)pointer;
-    (void)error;
-}
-
-inline void* SonySetConstraintHandlerS(void* handler) {
-    std::lock_guard<std::mutex> lock(SonyConstraintMutex());
-    void* previous = reinterpret_cast<void*>(SonyConstraintHandlerSlot());
-    SonyConstraintHandlerSlot() = handler ? reinterpret_cast<SonyConstraintHandler>(handler) : SonyDefaultConstraintHandler;
-    return previous;
-}
-
 inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
@@ -184,29 +155,6 @@ inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_
         ++converted;
     }
     return converted;
-}
-
-inline SonyLconv* SonyLocaleconv(void) {
-    static char empty[] = "";
-    static char point[] = ".";
-    static char falseText[] = "false";
-    static char trueText[] = "true";
-    static SonyLconv value = [] {
-        SonyLconv init{};
-        for (auto& pointer : init.monetary) pointer = empty;
-        for (auto& byte : init.chars) byte = CHAR_MAX;
-        init.decimal_point = point;
-        init.grouping = empty;
-        init.thousands_sep = empty;
-        init.frac_grouping = empty;
-        init.frac_sep = empty;
-        init.false_text = falseText;
-        init.true_text = trueText;
-        init.no_text = empty;
-        init.yes_text = empty;
-        return init;
-    }();
-    return &value;
 }
 
 inline int SonyFpclassifyd(double value) {
@@ -288,8 +236,6 @@ inline __int128 SonyModti3(__int128 dividend, __int128 divisor) {
     unsigned __int128 remainder = 0;
     SonyUdivmod128(magnitudeDividend, magnitudeDivisor, &remainder);
     return (__int128)(negative ? (unsigned __int128)0 - remainder : remainder);
-}
-
 }
 
 #endif

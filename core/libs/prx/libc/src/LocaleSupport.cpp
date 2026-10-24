@@ -641,7 +641,7 @@ void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
 }
 
 SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 }
