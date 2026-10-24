@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -17,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -209,10 +211,64 @@ private:
     std::shared_ptr<std::vector<std::uint32_t>> words;
 };
 
-struct RegisteredShaderState {
+class RegisterList {
+public:
+    using Entry = std::pair<std::uint32_t, std::uint32_t>;
+    using const_iterator = std::vector<Entry>::const_iterator;
+
+    RegisterList() = default;
+    explicit RegisterList(const Registers& registers) {
+        entries.reserve(registers.size());
+        registers.ForEach([&](std::uint32_t offset, std::uint32_t value) { entries.emplace_back(offset, value); });
+    }
+
+    [[nodiscard]] Registers Expand() const {
+        Registers registers;
+        if (!entries.empty()) registers.emplace(entries.back().first, entries.back().second);
+        for (const auto& [offset, value] : entries) registers.emplace(offset, value);
+        return registers;
+    }
+    [[nodiscard]] const_iterator begin() const { return entries.begin(); }
+    [[nodiscard]] const_iterator end() const { return entries.end(); }
+    [[nodiscard]] const_iterator find(std::uint32_t offset) const {
+        const auto found = std::lower_bound(entries.begin(), entries.end(), offset, [](const Entry& entry, std::uint32_t wanted) { return entry.first < wanted; });
+        return found != entries.end() && found->first == offset ? found : entries.end();
+    }
+    [[nodiscard]] std::uint32_t at(std::uint32_t offset) const {
+        const auto found = find(offset);
+        if (found == end()) throw std::out_of_range("register is not set");
+        return found->second;
+    }
+    [[nodiscard]] std::size_t size() const { return entries.size(); }
+    [[nodiscard]] bool empty() const { return entries.empty(); }
+    template<class TVisit>
+    void ForEach(TVisit&& visit) const {
+        for (const auto& [offset, value] : entries) visit(offset, value);
+    }
+    void emplace(std::uint32_t offset, std::uint32_t value) {
+        const auto found = std::lower_bound(entries.begin(), entries.end(), offset, [](const Entry& entry, std::uint32_t wanted) { return entry.first < wanted; });
+        if (found == entries.end() || found->first != offset) entries.insert(found, {offset, value});
+    }
+
+    bool operator==(const RegisterList&) const = default;
+
+private:
+    std::vector<Entry> entries;
+};
+
+struct DecodedShaderState {
     Registers shader;
     Registers context;
     Registers userConfig;
+};
+
+struct RegisteredShaderState {
+    RegisteredShaderState() = default;
+    RegisteredShaderState(const DecodedShaderState& decoded) : shader(decoded.shader), context(decoded.context), userConfig(decoded.userConfig) {}
+
+    RegisterList shader;
+    RegisterList context;
+    RegisterList userConfig;
 
     bool operator==(const RegisteredShaderState&) const = default;
 };
