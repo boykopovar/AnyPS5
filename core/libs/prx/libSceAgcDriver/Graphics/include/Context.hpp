@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -150,6 +151,19 @@ inline std::uint64_t& DeviceProcLookups() {
 }
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
+
+inline constexpr VkMemoryPropertyFlags HostBufferProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+inline constexpr VkMemoryPropertyFlags MappedDeviceProperties = HostBufferProperties | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+inline VkMemoryPropertyFlags SnapshotMemoryProperties(const VkPhysicalDeviceMemoryProperties& memory, bool disabled) {
+    constexpr VkDeviceSize ResizableBarBytes = VkDeviceSize{4} << 30u;
+    if (disabled) return HostBufferProperties;
+    for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
+        const auto& type = memory.memoryTypes[i];
+        if ((type.propertyFlags & MappedDeviceProperties) == MappedDeviceProperties && type.heapIndex < memory.memoryHeapCount && memory.memoryHeaps[type.heapIndex].size >= ResizableBarBytes) return MappedDeviceProperties;
+    }
+    return HostBufferProperties;
+}
 
 struct Context {
     VkDevice device;
@@ -295,10 +309,20 @@ struct Context {
         return Function<TFunction>(name);
     }
 
-    std::uint32_t MemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags) const {
+    VkMemoryPropertyFlags SnapshotProperties() const {
+        static const bool disabled = std::getenv("APS5_NO_BAR_SNAPSHOTS") != nullptr;
+        return SnapshotMemoryProperties(memory, disabled);
+    }
+
+    std::optional<std::uint32_t> MatchingMemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags) const {
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
             if ((mask & (1u << i)) != 0 && (memory.memoryTypes[i].propertyFlags & flags) == flags) return i;
         }
+        return std::nullopt;
+    }
+
+    std::uint32_t MemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags) const {
+        if (const auto type = MatchingMemoryType(mask, flags)) return *type;
         throw std::runtime_error("AGC graphics: required Vulkan memory type is unavailable");
     }
 
@@ -359,6 +383,43 @@ struct Context {
     std::optional<std::uint32_t> RefusedDeviceMemoryFallback(std::uint32_t mask, std::uint32_t refused) const {
         if (refused >= memory.memoryTypeCount || (memory.memoryHeaps[memory.memoryTypes[refused].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return std::nullopt;
         return HostMemoryType(mask);
+    }
+
+    VkMemoryPropertyFlags MappedBufferProperties(std::uint32_t mask, VkMemoryPropertyFlags flags, VkDeviceSize bytes) const {
+        if ((flags & MappedDeviceProperties) != MappedDeviceProperties) return flags;
+        const auto mapped = MatchingMemoryType(mask, flags);
+        if (!mapped) {
+            static std::atomic<std::uint64_t> placements{0};
+            const auto count = placements.fetch_add(1) + 1;
+            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] mapped buffer: none of the buffer's memory types (mask 0x%x) is mapped device-local, placed in host memory; %llu such allocations\n", mask, static_cast<unsigned long long>(count));
+            return HostBufferProperties;
+        }
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return flags;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        memoryProperties2(physical, &properties);
+        const auto heap = memory.memoryTypes[*mapped].heapIndex;
+        const auto budget = reported.heapBudget[heap];
+        const auto usage = reported.heapUsage[heap];
+        if (budget == 0 || (usage < budget && bytes <= budget - usage)) return flags;
+        static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
+        const auto count = placements.fetch_add(1) + 1;
+        const auto total = placedBytes.fetch_add(bytes) + bytes;
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] mapped buffer: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory; %llu such allocations, %llu MiB\n", heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        return HostBufferProperties;
+    }
+
+    std::optional<std::uint32_t> RefusedMappedMemoryFallback(std::uint32_t mask, VkMemoryPropertyFlags flags, std::uint32_t refused) const {
+        if ((flags & MappedDeviceProperties) != MappedDeviceProperties || refused >= memory.memoryTypeCount || (memory.memoryHeaps[memory.memoryTypes[refused].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return std::nullopt;
+        std::optional<std::uint32_t> host;
+        for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
+            const auto& type = memory.memoryTypes[i];
+            if ((mask & (1u << i)) == 0 || (type.propertyFlags & HostBufferProperties) != HostBufferProperties || (memory.memoryHeaps[type.heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) continue;
+            if ((type.propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) return i;
+            if (!host) host = i;
+        }
+        return host;
     }
 };
 

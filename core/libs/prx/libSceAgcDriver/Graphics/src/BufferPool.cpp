@@ -237,7 +237,7 @@ std::uint64_t BufferPool::SlabKey(std::uint32_t memoryType, std::size_t capacity
     return (static_cast<std::uint64_t>(memoryType) << 40u) | (static_cast<std::uint64_t>(addressable ? 1u : 0u) << 39u) | static_cast<std::uint64_t>(capacity);
 }
 
-SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable) {
+SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable, std::optional<std::uint32_t> hostType) {
     const auto key = SlabKey(memoryType, capacity, addressable);
     const auto takeFrom = [&](SlabBlock& block, Slab& slab) {
         const auto index = block.free.back();
@@ -245,7 +245,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
         if (block.used++ == 0) --slab.emptyBlocks;
         if (block.free.empty()) slab.available.erase(std::find(slab.available.begin(), slab.available.end(), &block));
         const auto offset = static_cast<VkDeviceSize>(index) * block.slotBytes;
-        return SlabSlot{block.memory, offset, block.mapping != nullptr ? block.mapping + offset : nullptr};
+        return SlabSlot{block.memory, offset, block.mapping != nullptr ? block.mapping + offset : nullptr, block.memoryType};
     };
     {
         std::lock_guard lock(slabMutex);
@@ -265,8 +265,8 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
     if (addressable) allocation.pNext = &flags;
     allocation.allocationSize = blockBytes;
     allocation.memoryTypeIndex = memoryType;
-    block->memory = AllocateMemory(allocation, "vkAllocateMemory buffer slab");
-    if ((context.memory.memoryTypes[memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+    block->memory = AllocateMemory(allocation, "vkAllocateMemory buffer slab", hostType, &block->memoryType);
+    if ((context.memory.memoryTypes[block->memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
         void* mapping = nullptr;
         const auto mapped = mapMemory(device, block->memory, 0, VK_WHOLE_SIZE, 0, &mapping);
         Check(mapped, "vkMapMemory buffer slab");

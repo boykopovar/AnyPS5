@@ -82,9 +82,13 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         // The CPU reads most of these buffers back (write-back, diffs), which is very slow from
         // write-combined memory, so the default host properties prefer cached host memory.
         const bool useSlab = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 && BufferPool::SlabEligible(capacity, requirements.alignment, requirements.size, context.limits.nonCoherentAtomSize);
-        allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, properties, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize);
+        const auto placedBytes = useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize;
+        this->properties = context.MappedBufferProperties(requirements.memoryTypeBits, properties, placedBytes);
+        allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, this->properties, placedBytes);
+        const auto refused = context.RefusedMappedMemoryFallback(requirements.memoryTypeBits, this->properties, allocation.memoryTypeIndex);
         if (useSlab) {
-            const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable);
+            const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable, refused);
+            if (slot.memoryType != allocation.memoryTypeIndex) this->properties = HostBufferProperties;
             memory = slot.memory;
             offset = slot.offset;
             slab = true;
@@ -95,7 +99,9 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             ready = true;
             return;
         }
-        memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer");
+        std::uint32_t allocatedType = allocation.memoryTypeIndex;
+        memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer", refused, &allocatedType);
+        if (allocatedType != allocation.memoryTypeIndex) this->properties = HostBufferProperties;
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         initializeAddress(usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
