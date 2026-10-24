@@ -356,7 +356,42 @@ float APS5_VABI nearbyintf_nid_postfix(float x) { return std::nearbyintf(x); }
 long double APS5_VABI nearbyintl_nid_postfix(long double x) { return std::nearbyint(x); }
 double APS5_VABI nearbyint_nid_postfix(double x) { return std::nearbyint(x); }
 
-double APS5_VABI cbrt_nid_postfix(double x) { return std::cbrt(x); }
+double APS5_VABI cbrt_nid_postfix(double x) {
+    const std::uint32_t B1 = 715094163;
+    const std::uint32_t B2 = 696219795;
+    const double P0 = 1.87595182427177009643;
+    const double P1 = -1.88497979543377169875;
+    const double P2 = 1.621429720105354466140;
+    const double P3 = -0.758397934778766047437;
+    const double P4 = 0.145996192886612446982;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::uint32_t hx = static_cast<std::uint32_t>(bits >> 32);
+    const std::uint32_t low = static_cast<std::uint32_t>(bits);
+    const std::uint32_t sign = hx & 0x80000000u;
+    hx ^= sign;
+    if (hx >= 0x7ff00000) {
+        return x + x;
+    }
+    double t;
+    if (hx < 0x00100000) {
+        if ((hx | low) == 0) {
+            return x;
+        }
+        t = std::bit_cast<double>(std::uint64_t{0x4350000000000000}) * x;
+        const std::uint32_t high = static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(t) >> 32);
+        t = std::bit_cast<double>(static_cast<std::uint64_t>(sign | ((high & 0x7fffffff) / 3 + B2)) << 32);
+    } else {
+        t = std::bit_cast<double>(static_cast<std::uint64_t>(sign | (hx / 3 + B1)) << 32);
+    }
+    double r = (t * t) * (t / x);
+    t = t * ((P0 + r * (P1 + r * P2)) + ((r * r) * r) * (P3 + r * P4));
+    t = std::bit_cast<double>((std::bit_cast<std::uint64_t>(t) + 0x80000000u) & 0xffffffffc0000000ull);
+    const double s = t * t;
+    r = x / s;
+    const double w = t + t;
+    r = (r - t) / (w + r);
+    return t + t * r;
+}
 double APS5_VABI asin_nid_postfix(double x) {
     if (std::isgreater(x, 1.0) || std::isless(x, -1.0)) {
         std::feraiseexcept(FE_INVALID);
