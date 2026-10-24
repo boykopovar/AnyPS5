@@ -651,6 +651,15 @@ int main() {
     {
         const auto listed = root / "listed.txt";
         std::ofstream(listed, std::ios::binary) << "listed";
+        Require(fopen_nid_postfix(listed.string().c_str(), "wx") == nullptr && *__error_nid_postfix() == 17);
+        for (const char* invalidMode : {"z", "", "q"}) {
+            *__error_nid_postfix() = 0;
+            Require(fopen_nid_postfix(listed.string().c_str(), invalidMode) == nullptr && *__error_nid_postfix() == 22);
+        }
+        auto* readWrite = fopen_nid_postfix(listed.string().c_str(), "rw");
+        char word[8] = {};
+        Require(readWrite != nullptr && fread_nid_postfix(word, 1, 6, readWrite) == 6 && std::string(word) == "listed");
+        Require(fclose_nid_postfix(readWrite) == 0);
         for (const char* openMode : {"r", "rb", "re"}) {
             auto* directoryStream = fopen_nid_postfix(root.string().c_str(), openMode);
             Require(directoryStream != nullptr);
