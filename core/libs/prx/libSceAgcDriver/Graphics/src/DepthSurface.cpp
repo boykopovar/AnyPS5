@@ -2470,6 +2470,17 @@ std::optional<float> DepthFillValue(std::uint32_t pattern, bool d16) {
     return value;
 }
 
+namespace {
+
+std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    if (target.samples != 1u || HtileFillCovers(target.htileAddress, target.extent, address, bytes)) return std::nullopt;
+    const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+    if (!PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes)) return std::nullopt;
+    return DepthFillValue(pattern, d16);
+}
+
+}
+
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
@@ -2484,10 +2495,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             continue;
         }
         if (target.samples != 1) continue;
-        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-        if (PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes)) {
-            if (const auto depth = DepthFillValue(pattern, d16)) surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
-        }
+        if (const auto depth = planeFillDepth(target, address, bytes, pattern)) surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
         if (PlaneFillCovers(target.stencilAddress, DepthSliceBytes(target.extent, 1u), address, bytes)) {
             if (const auto stencil = StencilFillValue(pattern)) surface->NotePlaneFill(VK_IMAGE_ASPECT_STENCIL_BIT, 0.0f, *stencil);
         }
@@ -2495,7 +2503,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
 }
 
 std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
-    if (!DepthPlanesStale()) return 0;
+    if (bytes == 0 || !overlapsStalePlane(address, address + bytes)) return 0;
     std::lock_guard lock(surfacesMutex());
     std::size_t discarded = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
@@ -2503,10 +2511,10 @@ std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, s
         if (!surface->AnyStale()) continue;
         const auto& target = surface->target;
         const auto plane = stalePlaneRange(*surface);
-        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-        const bool cleared = target.samples == 1u && surface->active->load(std::memory_order_acquire) && PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes) && DepthFillValue(pattern, d16).has_value();
-        if (!surface->syncing && cleared && PlaneFillCovers(plane.first, plane.second - plane.first, address, bytes)) {
+        const auto depth = surface->active->load(std::memory_order_acquire) ? planeFillDepth(target, address, bytes, pattern) : std::nullopt;
+        if (!surface->syncing && depth.has_value() && PlaneFillCovers(plane.first, plane.second - plane.first, address, bytes)) {
             surface->ClearStale();
+            surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
             ++discarded;
         }
         if (surface->AnyStale()) remaining.push_back(plane);

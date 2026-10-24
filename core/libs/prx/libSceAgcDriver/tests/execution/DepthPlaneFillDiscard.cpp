@@ -134,8 +134,7 @@ int main() {
         Require(Since(before).stores == 0, "a read of a discarded plane counted a store");
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "the discarded plane before the fill lands");
 
-        AgcDriver::Graphics::NoteDepthMetadataFill(base - Block, PlaneBytes + Block, One);
-        Require(draw(depth, {}) == PlaneTexels, "a draw at depth 0.5 failed LESS against the 1.0 the fill cleared the plane to");
+        Require(draw(depth, {}) == PlaneTexels, "a draw at depth 0.5 failed LESS against the 1.0 the discarding fill cleared the plane to");
         static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes));
         device->WaitIdle();
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "the plane after the fill and a draw that wrote no depth");
@@ -143,8 +142,11 @@ int main() {
         Require(draw(depth, writeHalf) == PlaneTexels, "the second draw writing depth 0.5 did not cover the plane");
         Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(base, PlaneBytes, One) == 1, "a fill of exactly the stale plane did not discard it");
         Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(base, PlaneBytes, One) == 0, "a second fill discarded a plane that was no longer stale");
-        AgcDriver::Graphics::NoteDepthMetadataFill(base, PlaneBytes, One);
         Require(draw(depth, {}) == PlaneTexels, "a draw after the second fill failed LESS against 1.0");
+
+        Require(draw(depth, writeHalf) == PlaneTexels, "the third draw writing depth 0.5 did not cover the plane");
+        Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(base, PlaneBytes, 0u) == 1, "a fill of 0.0 over the stale plane did not discard it");
+        Require(draw(depth, {}) == 0u, "a draw at depth 0.5 passed LESS against the 0.0 the discarding fill cleared the plane to");
         std::puts("depth plane fill discard tests passed");
         return 0;
     } catch (const std::exception& error) {
