@@ -68,6 +68,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SoftwareVersion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Error.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/ThermalSensors.cpp
