@@ -48,4 +48,16 @@ void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector* vector, std::int64_t an
     *vector = {native.x, native.y};
 }
 
+void APS5_VABI FT_Vector_Polarize_nid_postfix(const GuestVector* vector, std::int64_t* length, std::int64_t* angle) {
+    if (!vector || !length || !angle || (vector->x == 0 && vector->y == 0)) return;
+    FT_Vector native = HostVector(*vector, __func__);
+    FT_Fixed nativeLength = 0;
+    FT_Angle nativeAngle = 0;
+    FT_Vector_Polarize(&native, &nativeLength, &nativeAngle);
+    GuestArena::HostWrite lengthWrite(length, sizeof(*length));
+    GuestArena::HostWrite angleWrite(angle, sizeof(*angle));
+    *length = nativeLength;
+    *angle = nativeAngle;
+}
+
 }
