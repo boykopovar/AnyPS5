@@ -13,6 +13,7 @@ using namespace FreeType;
 
 extern "C" {
 int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary**);
+int APS5_VABI FT_Reference_Library_nid_postfix(GuestLibrary*);
 int APS5_VABI FT_Done_Library_nid_postfix(GuestLibrary*);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec*);
@@ -49,6 +50,23 @@ static void TestDone() {
     Require(FT_Done_Library_nid_postfix(nullptr) == FT_Done_Library(nullptr));
 }
 
+static void TestReference() {
+    const std::vector<unsigned char> font = FontFixture::BuildFont(3, {});
+    GuestLibrary* guest = nullptr;
+    FT_Library native = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&guest) == 0 && FT_Init_FreeType(&native) == 0);
+    for (int extra = 1; extra <= 3; ++extra) {
+        Require(FT_Reference_Library_nid_postfix(guest) == FT_Reference_Library(native));
+    }
+    for (int round = 0; round < 3; ++round) {
+        Require(FT_Done_Library_nid_postfix(guest) == FT_Done_Library(native));
+        OpenFace(guest, native, font);
+    }
+    Require(FT_Done_Library_nid_postfix(guest) == FT_Done_Library(native));
+    Require(FT_Reference_Library_nid_postfix(nullptr) == FT_Reference_Library(nullptr));
+}
+
 int main() {
     TestDone();
+    TestReference();
 }
