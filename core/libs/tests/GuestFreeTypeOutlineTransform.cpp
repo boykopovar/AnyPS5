@@ -13,6 +13,7 @@ using namespace FreeType;
 
 extern "C" {
 int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline*, std::int64_t);
+int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline*, std::int64_t, std::int64_t);
 }
 
 static void Check(bool value, int line) {
@@ -82,6 +83,22 @@ static void TestEmbolden() {
     Require(FT_Outline_Embolden_nid_postfix(&empty, 64) == FT_Outline_Embolden(&nativeEmpty, 64));
 }
 
+static void TestEmboldenXY() {
+    for (const auto& make : {+[] { return Square(false); }, +[] { return Frame(); }, +[] { return Curved(); }}) {
+        for (const std::int64_t x : {0, 32, 64, -32}) {
+            for (const std::int64_t y : {0, 64, 128, -64}) {
+                Pair pair(make());
+                const int guestError = FT_Outline_EmboldenXY_nid_postfix(&pair.guest, x, y);
+                const int nativeError = FT_Outline_EmboldenXY(&pair.native, static_cast<FT_Pos>(x), static_cast<FT_Pos>(y));
+                Require(guestError == nativeError);
+                pair.Matches();
+            }
+        }
+    }
+    Require(FT_Outline_EmboldenXY_nid_postfix(nullptr, 64, 32) == FT_Outline_EmboldenXY(nullptr, 64, 32));
+}
+
 int main() {
     TestEmbolden();
+    TestEmboldenXY();
 }
