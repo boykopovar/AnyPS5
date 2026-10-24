@@ -115,6 +115,7 @@ std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWrit
 // (Refresh).
 std::atomic<std::uint64_t> pretestSkipped{0}, unregisteredDropped{0}, keyFlipKept{0};
 std::atomic<std::uint64_t> queuedReadHeld{0};
+std::atomic<std::uint64_t> drawnStores{0}, drawnStoreRegions{0};
 // Images stored by a FlushPending after a hook skip of theirs (AccessKeptByCpu), of which by the
 // hook for the read site of the last skip; images evictStale dropped (the [hooksync] and [storage] lines).
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
@@ -4182,14 +4183,20 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
         return (row - area.top) * rowBytes + offset - row * mip.pitchBytes - area.left * elementBytes;
     };
     const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto append = [](std::vector<VkBufferCopy>& copies, const VkBufferCopy& copy) {
+        if (!copies.empty() && copies.back().srcOffset + copies.back().size == copy.srcOffset && copies.back().dstOffset + copies.back().size == copy.dstOffset) copies.back().size += copy.size;
+        else copies.push_back(copy);
+    };
+    std::uint64_t regions = 0;
     for (const auto& segment : segments) {
         std::vector<VkBufferCopy> copies;
         for (const auto& [from, to] : stores) {
             const auto begin = std::max(from, segment.begin);
             const auto end = std::min(to, segment.end);
-            if (begin < end) copies.push_back({scratchOffset(begin), HostImportOffset(*segment.import, begin), end - begin});
+            if (begin < end) append(copies, {scratchOffset(begin), HostImportOffset(*segment.import, begin), end - begin});
         }
         if (!copies.empty()) copyBuffer(commands, scratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+        regions += copies.size();
     }
     if (!saveUnits.empty()) {
         const auto saved = savedBytes->Bytes();
@@ -4198,9 +4205,12 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
             std::memcpy(saved.data() + offset, original.data() + offset, static_cast<std::size_t>(layerBytes(unit)));
         }
         std::vector<VkBufferCopy> saves;
-        for (const auto& [from, to] : stores) saves.push_back({scratchOffset(from), from - descriptor.baseAddress, to - from});
+        for (const auto& [from, to] : stores) append(saves, {scratchOffset(from), from - descriptor.baseAddress, to - from});
         copyBuffer(commands, scratch->Handle(), savedBytes->Handle(), static_cast<std::uint32_t>(saves.size()), saves.data());
+        regions += saves.size();
     }
+    drawnStores.fetch_add(1, std::memory_order_relaxed);
+    drawnStoreRegions.fetch_add(regions, std::memory_order_relaxed);
     VkImageMemoryBarrier backToGeneral = toSource;
     backToGeneral.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     backToGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -5132,6 +5142,10 @@ bool StorageTexture::skippedResultsInside(std::uint64_t address, std::size_t byt
 
 StorageTexture::HookSkipCounts StorageTexture::TakeHookSkipCounts() {
     return {flushedAfterSkip.exchange(0, std::memory_order_relaxed), flushedAfterSkipSameSite.exchange(0, std::memory_order_relaxed)};
+}
+
+StorageTexture::DrawnStoreCounts StorageTexture::TakeDrawnStoreCounts() {
+    return {drawnStores.exchange(0, std::memory_order_relaxed), drawnStoreRegions.exchange(0, std::memory_order_relaxed)};
 }
 
 void StorageTexture::BumpPendingSerial() {
