@@ -42,6 +42,10 @@ alignas(256) constexpr std::array<std::uint32_t, 33> Code{
     0xdc708000, 0x00000403, 0xdc708004, 0x00000503, 0xdc708008, 0x00000603, 0xdc70800c, 0x00000703,
     0xdc708010, 0x00000803, 0xdc708014, 0x00000903, 0xbf810000};
 
+alignas(256) constexpr std::array<std::uint32_t, 15> MisalignedBaseCode{
+    0x34060085, 0x4a0606ff, OutputBase, 0xf4000101, 0x0c000000, 0xf4000141, 0x0e000000, 0xbf8cc07f,
+    0x7e100204, 0x7e120205, 0xdc708010, 0x00000803, 0xdc708014, 0x00000903, 0xbf810000};
+
 class GuestBlock {
 public:
     GuestBlock() {
@@ -93,23 +97,24 @@ std::uint32_t Bytes(const std::vector<std::uint32_t>& memory, std::uint32_t addr
     return value;
 }
 
-std::vector<std::uint32_t> Expected() {
+std::vector<std::uint32_t> Expected(bool scalarOnly) {
     const auto initial = Initial();
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         auto* out = &memory[OutputBase / 4u + tid * OutputDwords];
-        out[0] = Bytes(initial, tid * 4u + 0x10u);
-        out[1] = Bytes(initial, tid * 4u + 0x14u);
-        out[2] = Bytes(initial, tid * 4u + 0x18u);
-        out[3] = Bytes(initial, tid * 4u + 0x403u);
+        if (!scalarOnly) {
+            out[0] = Bytes(initial, tid * 4u + 0x10u);
+            out[1] = Bytes(initial, tid * 4u + 0x14u);
+            out[2] = Bytes(initial, tid * 4u + 0x18u);
+            out[3] = Bytes(initial, tid * 4u + 0x403u);
+        }
         out[4] = Bytes(initial, 0x200u);
         out[5] = Bytes(initial, 0x2f4u);
     }
     return memory;
 }
 
-ShaderRecompiler::RecompileResult Recompile(std::uint32_t waveSize, std::span<const std::uint32_t> userData, std::span<const std::byte> guest, const ShaderRecompiler::SpirvTarget& target) {
-    const std::span<const std::uint32_t> code(Code);
+ShaderRecompiler::RecompileResult Recompile(std::span<const std::uint32_t> code, std::uint32_t waveSize, std::span<const std::uint32_t> userData, std::span<const std::byte> guest, const ShaderRecompiler::SpirvTarget& target) {
     const std::array<ShaderRecompiler::MemoryRegion, 2> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(guest.data()), guest}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -127,17 +132,20 @@ bool SearchesAnchor(const ShaderRecompiler::SharedSpirv& spirv) {
     return text.find("bda_anchor_range") != std::string_view::npos;
 }
 
-void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
+void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name, std::uint32_t scalarBaseLow = 0u) {
     auto memory = Initial();
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
-    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
-    const auto result = Recompile(waveSize, userData, std::span<const std::byte>(reinterpret_cast<const std::byte*>(guest.Data()), InputDwords * sizeof(std::uint32_t)), target);
+    const bool scalarOnly = scalarBaseLow != 0u;
+    const std::span<const std::uint32_t> code = scalarOnly ? std::span<const std::uint32_t>(MisalignedBaseCode) : std::span<const std::uint32_t>(Code);
+    std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    if (scalarOnly) userData.insert(userData.end(), {static_cast<std::uint32_t>(address) + scalarBaseLow, static_cast<std::uint32_t>(address >> 32u), 0u, 0u, 0x200u, 0x2f4u});
+    const auto result = Recompile(code, waveSize, userData, std::span<const std::byte>(reinterpret_cast<const std::byte*>(guest.Data()), InputDwords * sizeof(std::uint32_t)), target);
     Require(SearchesAnchor(result.spirv), "BDA anchor reads: " + name + " reads of one user-data base do not share an anchor");
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::memcpy(memory.data(), guest.Data(), BlockBytes);
-    const auto expected = Expected();
+    const auto expected = Expected(scalarOnly);
     for (std::size_t dword = 0; dword < memory.size(); ++dword) {
         Require(memory[dword] == expected[dword], "BDA anchor reads: " + name + " byte " + std::to_string(dword * 4u) + " is " + Hex(memory[dword]) + ", expected " + Hex(expected[dword]));
     }
@@ -155,6 +163,7 @@ int main() {
         Run(*device, guest, 32, native, "wave32");
         Run(*device, guest, 64, native, "wave64");
         if (split.subgroupSize != native.subgroupSize) Run(*device, guest, 64, split, "wave64 split");
+        for (const std::uint32_t low : {1u, 2u, 3u}) Run(*device, guest, 64, native, "scalar loads from a base with low bits " + std::to_string(low), low);
         std::puts("BDA anchor read tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -479,10 +479,16 @@ std::uint32_t EmitElectedBdaRange(SpirvEmitterState& state, std::uint32_t type, 
     return result;
 }
 
-std::uint32_t BdaAnchorHolds(SpirvEmitterState& state, const SpirvEmitterState::BdaAnchor& anchor, std::uint32_t low, std::int32_t immediate, std::uint32_t bytes, std::uint32_t& translated) {
+bool ScalarAddressRead(const SpirvEmitterState& state, const IrValue& inst) {
+    const auto index = inst.Flags<MemoryFlags>().index;
+    const auto& memory = state.program.Resources().memoryInfo;
+    return index < memory.size() && memory[index].kind == ResourceKind::ScalarAddress;
+}
+
+std::uint32_t BdaAnchorHolds(SpirvEmitterState& state, const SpirvEmitterState::BdaAnchor& anchor, std::uint32_t anchorOffset, std::uint32_t low, std::int32_t immediate, std::uint32_t bytes, std::uint32_t& translated) {
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
-    auto offset = Binary(state, spv::OpIAdd, u64, anchor.offset, Unary(state, spv::OpUConvert, u64, low));
+    auto offset = Binary(state, spv::OpIAdd, u64, anchorOffset, Unary(state, spv::OpUConvert, u64, low));
     if (immediate != 0) offset = Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate))));
     const auto width = BdaConstant(state, bytes);
     const auto fits = Binary(state, spv::OpUGreaterThanEqual, boolean, anchor.size, width);
@@ -532,6 +538,7 @@ void EmitBdaAnchorRange(SpirvEmitterState& state, SpirvEmitterState::BdaAnchor& 
     const auto end = extract(1u);
     anchor.device = extract(2u);
     anchor.offset = Binary(state, spv::OpISub, u64, base, begin);
+    anchor.dwordOffset = Binary(state, spv::OpISub, u64, Binary(state, spv::OpBitwiseAnd, u64, base, BdaConstant(state, ~std::uint64_t{3})), begin);
     const auto span = Binary(state, spv::OpISub, u64, end, begin);
     const auto deviceEnd = Binary(state, spv::OpIAdd, u64, anchor.device, span);
     auto usable = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpINotEqual, boolean, anchor.device, BdaConstant(state, 0u)), Binary(state, spv::OpUGreaterThan, boolean, deviceEnd, anchor.device));
@@ -578,7 +585,8 @@ std::array<std::uint32_t, 4> EmitAnchoredBdaRead(SpirvEmitterState& state, const
         bytes = (last - first + 1u) * 4u;
     }
     std::uint32_t translated = 0;
-    auto direct = BdaAnchorHolds(state, anchor, low, static_cast<std::int32_t>(static_cast<std::uint32_t>(immediate) + first * 4u), bytes, translated);
+    const auto anchorOffset = ScalarAddressRead(state, inst) ? anchor.dwordOffset : anchor.offset;
+    auto direct = BdaAnchorHolds(state, anchor, anchorOffset, low, static_cast<std::int32_t>(static_cast<std::uint32_t>(immediate) + first * 4u), bytes, translated);
     if (bits == 32u) direct = Binary(state, spv::OpLogicalAnd, boolean, direct, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, translated)));
     const auto directLabel = state.module.AllocateId();
     const auto lookupLabel = state.module.AllocateId();
