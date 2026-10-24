@@ -132,6 +132,59 @@ private:
         if (value && !value->HasImmediate()) restricted.insert(value);
     }
 
+    void restrictSource(const IrValue* value, unsigned depth) {
+        value = value->Resolve();
+        if (depth > 64u || value->HasImmediate()) return;
+        restrict(value);
+        for (const auto* argument : value->Arguments()) restrictSource(argument, depth + 1u);
+    }
+
+    bool execEquivalent(const IrValue* left, const IrValue* right) const {
+        const IrBlock* block = left->Parent();
+        if (block == nullptr || block != right->Parent()) return false;
+        bool between = false;
+        for (const IrValue* instruction : block->Instructions()) {
+            if (instruction == left || instruction == right) {
+                if (between) return true;
+                between = true;
+                continue;
+            }
+            if (!between) continue;
+            switch (instruction->Opcode()) {
+                case IrOpcode::SetExec:
+                case IrOpcode::SetExecLo:
+                case IrOpcode::SetExecHi:
+                case IrOpcode::Discard:
+                case IrOpcode::Sendmsg:
+                case IrOpcode::SetThreadBitScalarRegister:
+                case IrOpcode::SetScalarMaskTag:
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return false;
+    }
+
+    bool equivalentSource(const IrValue* left, const IrValue* right, unsigned depth) {
+        if (depth > 64u) return false;
+        left = left->Resolve();
+        right = right->Resolve();
+        if (left == right || sameValue(left, right)) return true;
+        if (left->Opcode() != right->Opcode() || left->ArgumentCount() != right->ArgumentCount()) return false;
+        if (left->Opcode() == IrOpcode::Ballot && !execEquivalent(left, right)) return false;
+        for (std::size_t index = 0; index < left->ArgumentCount(); ++index) if (!equivalentSource(left->Argument(index), right->Argument(index), depth + 1u)) return false;
+        return true;
+    }
+
+    bool equivalentWqm(const IrValue* left, const IrValue* right, unsigned depth) {
+        left = left->Resolve();
+        right = right->Resolve();
+        if (left == right) return true;
+        if (left->Opcode() != IrOpcode::WqmU64 || right->Opcode() != IrOpcode::WqmU64 || left->ArgumentCount() != 1u || right->ArgumentCount() != 1u) return false;
+        return equivalentSource(left->Argument(0), right->Argument(0), depth + 1u);
+    }
+
     std::optional<ReplayMask> own(const IrValue* value) {
         value = value->Resolve();
         if (value->Opcode() != IrOpcode::INotEqual32) return std::nullopt;
@@ -189,7 +242,8 @@ private:
             valid = (maskStable(pair(0u, 0u), depth + 1u) && maskStable(pair(1u, 1u), depth + 1u)) || (waveSize != 32u && maskStable(pair(0u, 1u), depth + 1u) && maskStable(pair(1u, 0u), depth + 1u));
         } else if (mask.low->Opcode() == IrOpcode::CompositeExtractU64 && mask.low->ArgumentCount() == 2u && Immediate(mask.low->Argument(1), 0u)) {
             const IrValue* wqm = mask.low->Argument(0)->Resolve();
-            const bool paired = waveSize == 32u || (mask.high->Opcode() == IrOpcode::CompositeExtractU64 && mask.high->ArgumentCount() == 2u && mask.high->Argument(0)->Resolve() == wqm && Immediate(mask.high->Argument(1), 1u));
+            const IrValue* highWqm = mask.high->Opcode() == IrOpcode::CompositeExtractU64 && mask.high->ArgumentCount() == 2u ? mask.high->Argument(0)->Resolve() : nullptr;
+            const bool paired = waveSize == 32u || (highWqm != nullptr && Immediate(mask.high->Argument(1), 1u) && equivalentWqm(wqm, highWqm, depth));
             if (paired && wqm->Opcode() == IrOpcode::WqmU64 && wqm->ArgumentCount() == 1u) {
                 const IrValue* source = wqm->Argument(0)->Resolve();
                 valid = source->Opcode() == IrOpcode::CompositeConstructU64 && source->ArgumentCount() == 2u && maskStable(ReplayMask{source->Argument(0)->Resolve(), source->Argument(1)->Resolve()}, depth + 1u);
@@ -197,7 +251,11 @@ private:
                     const auto provenance = helpers(ReplayMask{source->Argument(0)->Resolve(), source->Argument(1)->Resolve()}, depth + 1u);
                     valid = provenance == HelperMask::RealOnly || provenance == HelperMask::QuadStable;
                 }
-                if (valid) { restrict(wqm); restrict(source); }
+                if (valid) {
+                    restrict(wqm);
+                    restrict(source);
+                    if (highWqm != wqm) restrictSource(highWqm, 0u);
+                }
             }
         } else if (mask.low->IsPhi() && mask.low->ArgumentCount() != 0u && mask.low->ArgumentCount() == mask.low->PhiBlockCount() && (waveSize == 32u || (mask.high->IsPhi() && mask.high->Parent() == mask.low->Parent() && mask.high->ArgumentCount() == mask.high->PhiBlockCount()))) {
             valid = true;
@@ -288,7 +346,8 @@ private:
                 }
             } else if (mask.low->Opcode() == IrOpcode::CompositeExtractU64 && mask.low->ArgumentCount() == 2u && Immediate(mask.low->Argument(1), 0u)) {
                 const IrValue* wqm = mask.low->Argument(0)->Resolve();
-                const bool paired = waveSize == 32u || (mask.high->Opcode() == IrOpcode::CompositeExtractU64 && mask.high->ArgumentCount() == 2u && mask.high->Argument(0)->Resolve() == wqm && Immediate(mask.high->Argument(1), 1u));
+                const IrValue* highWqm = mask.high->Opcode() == IrOpcode::CompositeExtractU64 && mask.high->ArgumentCount() == 2u ? mask.high->Argument(0)->Resolve() : nullptr;
+                const bool paired = waveSize == 32u || (highWqm != nullptr && Immediate(mask.high->Argument(1), 1u) && equivalentWqm(wqm, highWqm, depth));
                 if (paired && wqm->Opcode() == IrOpcode::WqmU64 && wqm->ArgumentCount() == 1u) {
                     const IrValue* source = wqm->Argument(0)->Resolve();
                     if (source->Opcode() == IrOpcode::CompositeConstructU64 && source->ArgumentCount() == 2u) {

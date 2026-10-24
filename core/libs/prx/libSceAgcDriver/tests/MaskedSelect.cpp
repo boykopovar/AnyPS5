@@ -1071,6 +1071,37 @@ int main() {
         b.program.Info().usesDma = true;
         if (!StencilReplaySafe(b.program)) return false;
         b.program.Info().bdaWrites = true;
+    const auto wholeQuadEval = [](Builder& b, IrValue& live) -> IrValue& {
+        auto& ballot = b.emit(IrOpcode::Ballot, IrType::U32x4, {&live});
+        auto& allLow = b.emit(IrOpcode::Ballot, IrType::U32x4, {&b.truth()});
+        auto& allHigh = b.emit(IrOpcode::Ballot, IrType::U32x4, {&b.truth()});
+        auto& low = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &b.constant(0u)}), &b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&allLow, &b.constant(0u)})});
+        auto& high = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &b.constant(1u)}), &b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&allHigh, &b.constant(1u)})});
+        return b.emit(IrOpcode::WqmU64, IrType::U64, {&b.emit(IrOpcode::CompositeConstructU64, IrType::U64, {&low, &high})});
+    };
+
+    const auto splitQuads = [&](Builder& b, IrValue& live) -> IrValue& {
+        auto& wqmLow = wholeQuadEval(b, live);
+        auto& wqmHigh = wholeQuadEval(b, live);
+        return b.threadBit(b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmLow, &b.constant(0u)}), b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmHigh, &b.constant(1u)}));
+    };
+
+    passed &= run("stencil replay pairs structurally equivalent whole-quad evaluations for split low and high words", [&] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        exportUnder(b, splitQuads(b, b.logicalAnd(pixelPredicate(b), helperPredicate(b, false))), true, true);
+        return StencilReplaySafe(b.program);
+    });
+
+    passed &= run("stencil replay refuses to pair whole-quad evaluations separated by an execution-mask change", [&] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& live = b.logicalAnd(pixelPredicate(b), helperPredicate(b, false));
+        auto& wqmLow = wholeQuadEval(b, live);
+        b.emit(IrOpcode::SetExecLo, IrType::Void, {&b.constant(0xffffffffu)});
+        auto& wqmHigh = wholeQuadEval(b, live);
+        auto& guard = b.threadBit(b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmLow, &b.constant(0u)}), b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmHigh, &b.constant(1u)}));
+        exportUnder(b, guard, true, true);
         return !StencilReplaySafe(b.program);
     });
 
