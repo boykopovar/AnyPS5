@@ -91,16 +91,7 @@ static int NativeMkdir(const std::filesystem::path& path, std::uint16_t mode) {
     (void)mode;
     return ::_wmkdir(path.wstring().c_str());
 }
-static int NativeChmod(const std::filesystem::path& path, int mode) {
-    RecordWrittenPath_nid_no_patch(path);
-    return ::_wchmod(path.wstring().c_str(), mode);
-}
-std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
-    if (handle == INVALID_HANDLE_VALUE) {
-        errno = EBADF;
-        return std::nullopt;
-    }
+static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     std::wstring path(MAX_PATH, L'\0');
     auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
     if (length >= path.size()) {
@@ -119,6 +110,32 @@ std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(in
     if (path.starts_with(LR"(\\?\UNC\)")) path.replace(0, 8, LR"(\\)");
     else if (path.starts_with(LR"(\\?\)") && path.size() > 6 && path[5] == L':' && path[6] == L'\\') path.erase(0, 4);
     return path;
+}
+std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return std::nullopt;
+    }
+    return HandlePath(handle);
+}
+static int NativeChmod(const std::filesystem::path& path, int mode) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+        RecordWrittenPath_nid_no_patch(path);
+        return ::_wchmod(path.wstring().c_str(), mode);
+    }
+    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = WindowsOpenError_nid_no_patch(GetLastError());
+        return -1;
+    }
+    const auto target = HandlePath(handle);
+    CloseHandle(handle);
+    if (!target) return -1;
+    RecordWrittenPath_nid_no_patch(*target);
+    return ::_wchmod(target->wstring().c_str(), mode);
 }
 static int NativeFchmod(int descriptor, int mode) {
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);

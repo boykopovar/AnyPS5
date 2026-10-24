@@ -919,6 +919,37 @@ int main() {
     };
     Require(sceKernelFchmod(descriptor, 0400) == 0 && !ownerWrite());
     Require(fchmod_nid_postfix(descriptor, 0600) == 0 && ownerWrite());
+    const auto sizedLink = sized.parent_path() / "sized.link";
+    const auto missingLink = sized.parent_path() / "missing.link";
+    const auto loopLink = sized.parent_path() / "loop.link";
+#ifdef _WIN32
+    const DWORD linkFlags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    const bool chmodLinked = CreateSymbolicLinkW(sizedLink.wstring().c_str(), sized.filename().wstring().c_str(), linkFlags) &&
+        CreateSymbolicLinkW(missingLink.wstring().c_str(), L"missing.bin", linkFlags) &&
+        CreateSymbolicLinkW(loopLink.wstring().c_str(), L"loop.link", linkFlags);
+#else
+    std::error_code chmodLinkError;
+    std::filesystem::create_symlink(sized.filename(), sizedLink, chmodLinkError);
+    if (!chmodLinkError) std::filesystem::create_symlink("missing.bin", missingLink, chmodLinkError);
+    if (!chmodLinkError) std::filesystem::create_symlink("loop.link", loopLink, chmodLinkError);
+    const bool chmodLinked = !chmodLinkError;
+#endif
+    if (chmodLinked) {
+        Require(chmod_nid_postfix(sizedLink.string().c_str(), 0400) == 0 && !ownerWrite());
+#ifdef _WIN32
+        Require((GetFileAttributesW(sizedLink.wstring().c_str()) & FILE_ATTRIBUTE_READONLY) == 0);
+#endif
+        Require(chmod_nid_postfix(sizedLink.string().c_str(), 0600) == 0 && ownerWrite());
+        Require(chmod_nid_postfix(missingLink.string().c_str(), 0600) == -1 && *__error_nid_postfix() == 2);
+#ifdef _WIN32
+        Require(chmod_nid_postfix(loopLink.string().c_str(), 0600) == -1 && *__error_nid_postfix() == 62);
+#endif
+    } else {
+        std::fprintf(stderr, "symbolic links unavailable: the chmod link cases not tested\n");
+    }
+    unlink_nid_postfix(sizedLink.string().c_str());
+    unlink_nid_postfix(missingLink.string().c_str());
+    unlink_nid_postfix(loopLink.string().c_str());
     Require(sceKernelFtruncate(descriptor, 3) == 0);
     FileStat times{};
     const KernelTimeval past[2]{{1000000000, 0}, {1000000000, 500000}};
