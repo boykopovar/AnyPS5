@@ -5,14 +5,23 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <initializer_list>
 
 struct Value { void* node; };
 struct String { void* text; };
 struct Array { void* items; };
 struct Object { void* items; };
+struct Iterator { void* state; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 
 extern "C" {
+Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
+Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
+void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
+void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(Iterator*, const Iterator*);
+void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(Iterator*);
+void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value*, const String*);
@@ -24,6 +33,8 @@ void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
 int APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
 int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value*, const Object*);
+int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
+std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
@@ -92,7 +103,7 @@ static void CheckValue(const Value& value, const char* expected) {
 enum class Operation {
     ValueCopy, ArrayCopy, ObjectCopy, ValueAssign, ObjectAssign, ArrayAppend,
     ValueArray, ValueObject, ValueString, ValueText, ValueTypeString, ValueTypeArray,
-    ValueTypeObject, SetArray, SetObject, PairCopy
+    ValueTypeObject, SetArray, SetObject, SetTypeArray, SetTypeObject, SetTypeString, PairCopy
 };
 
 static bool Run(Operation operation, const Value& source, const char* expected, const Array& array, const Object& object, const String& text) {
@@ -101,7 +112,8 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
     Object objectResult{};
     Pair pair{};
     bool valueReady = false, arrayReady = false, objectReady = false, pairReady = false;
-    if (operation == Operation::ValueAssign || operation == Operation::SetArray || operation == Operation::SetObject) {
+    const bool typeSetter = operation == Operation::SetTypeArray || operation == Operation::SetTypeObject || operation == Operation::SetTypeString;
+    if (operation == Operation::ValueAssign || operation == Operation::SetArray || operation == Operation::SetObject || typeSetter) {
         _ZN3sce4Json5ValueC1EPKc(&result, "previous");
         valueReady = true;
     }
@@ -126,6 +138,9 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
             case Operation::ValueTypeObject: _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&result, 7); valueReady = true; break;
             case Operation::SetArray: _ZN3sce4Json5Value3setERKNS0_5ArrayE(&result, &array); break;
             case Operation::SetObject: _ZN3sce4Json5Value3setERKNS0_6ObjectE(&result, &object); break;
+            case Operation::SetTypeArray: _ZN3sce4Json5Value3setENS0_9ValueTypeE(&result, 6); break;
+            case Operation::SetTypeObject: _ZN3sce4Json5Value3setENS0_9ValueTypeE(&result, 7); break;
+            case Operation::SetTypeString: _ZN3sce4Json5Value3setENS0_9ValueTypeE(&result, 5); break;
             case Operation::PairCopy: _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &text, &source); pairReady = true; break;
         }
         succeeded = true;
@@ -134,7 +149,10 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
     allocationBudget = -1;
     if (valueReady) {
         if (succeeded) CheckValue(result, expected);
-        else CheckValue(result, "\"previous\"");
+        else {
+            Require(_ZNK3sce4Json5Value7getTypeEv(&result) == 5, "failed setter changed the destination type");
+            CheckValue(result, "\"previous\"");
+        }
         _ZN3sce4Json5ValueD1Ev(&result);
     }
     if (arrayReady) {
@@ -183,6 +201,9 @@ int main() {
         {"empty object value", Operation::ValueTypeObject, &objectValue, "{}"},
         {"set array", Operation::SetArray, &arrayValue, arrayJson},
         {"set object", Operation::SetObject, &objectValue, objectJson},
+        {"set empty array", Operation::SetTypeArray, &objectValue, "[]"},
+        {"set empty object", Operation::SetTypeObject, &objectValue, "{}"},
+        {"set empty string", Operation::SetTypeString, &objectValue, "\"\""},
         {"pair copy", Operation::PairCopy, &objectValue, objectJson},
     };
     unsigned failures = 0;
@@ -200,9 +221,62 @@ int main() {
         }
         Require(succeeded, "copy never succeeded");
     }
+    for (bool objectIterator : {false, true}) {
+        activeCase = objectIterator ? "object iterator copy" : "array iterator copy";
+        const auto before = liveAllocations;
+        Iterator source{};
+        if (objectIterator) _ZNK3sce4Json6Object5beginEv(&source, object);
+        else _ZNK3sce4Json5Array5beginEv(&source, array);
+        for (activeBudget = 0; activeBudget <= 1; ++activeBudget) {
+            Iterator copy{};
+            bool succeeded = false;
+            allocationBudget = activeBudget;
+            try {
+                if (objectIterator) _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &source);
+                else _ZN3sce4Json5Array8iteratorC1ERKS2_(&copy, &source);
+                succeeded = true;
+            } catch (const std::bad_alloc&) {
+                ++failures;
+            }
+            allocationBudget = -1;
+            Require(succeeded == (activeBudget == 1), "iterator allocation failure ignored");
+            if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
+            if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
+            else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
+        }
+        if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&source);
+        else _ZN3sce4Json5Array8iteratorD1Ev(&source);
+        Require(liveAllocations == before, "iterator copy leaked allocations");
+    }
+    activeCase = "value swap";
+    bool swapSucceeded = false;
+    for (activeBudget = 0; activeBudget < 256 && !swapSucceeded; ++activeBudget) {
+        const auto before = liveAllocations;
+        Value first{}, second{};
+        _ZN3sce4Json5ValueC1ERKS1_(&first, &objectValue);
+        _ZN3sce4Json5ValueC1ERKS1_(&second, &arrayValue);
+        allocationBudget = activeBudget;
+        try {
+            _ZN3sce4Json5Value4swapERS1_(&first, &second);
+            swapSucceeded = true;
+        } catch (const std::bad_alloc&) {
+            ++failures;
+        }
+        allocationBudget = -1;
+        if (swapSucceeded) {
+            CheckValue(first, arrayJson);
+            CheckValue(second, objectJson);
+        }
+        _ZN3sce4Json5ValueD1Ev(&first);
+        _ZN3sce4Json5ValueD1Ev(&second);
+        Require(liveAllocations == before, "swap leaked allocations");
+        CheckValue(objectValue, objectJson);
+        CheckValue(arrayValue, arrayJson);
+    }
+    Require(swapSucceeded, "swap never succeeded");
     _ZN3sce4Json6StringD1Ev(&text);
     _ZN3sce4Json5ValueD1Ev(&arrayValue);
     _ZN3sce4Json5ValueD1Ev(&objectValue);
     Require(liveAllocations == initial, "source cleanup leaked allocations");
-    std::printf("JSON copy cleanup: %zu operations, %u allocation failures, no leaks\n", sizeof(cases) / sizeof(cases[0]), failures);
+    std::printf("JSON copy cleanup: %zu operations, %u allocation failures, no leaks\n", sizeof(cases) / sizeof(cases[0]) + 3, failures);
 }

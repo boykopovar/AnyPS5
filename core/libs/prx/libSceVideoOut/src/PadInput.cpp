@@ -12,6 +12,7 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -59,6 +60,8 @@ void PadInput::openController(int deviceIndex) {
         SDL_GameControllerGetNumTouchpads(controller), SDL_GameControllerHasLED(controller) == SDL_TRUE, SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE);
     enableSensors();
     outputPending = true;
+    lightBar.Reset();
+    triggerEffect.Reset();
 }
 
 void PadInput::enableSensors() {
@@ -86,10 +89,16 @@ void PadInput::applyOutput() {
     if (controller == nullptr) return;
     const auto now = std::chrono::steady_clock::now();
     const bool isPs5 = SDL_GameControllerGetType(controller) == SDL_CONTROLLER_TYPE_PS5;
-    const auto large = isPs5 ? outputState.vibrationLarge : std::max(outputState.vibrationLarge, outputState.audioVibrationLarge);
-    const auto small = isPs5 ? outputState.vibrationSmall : std::max(outputState.vibrationSmall, outputState.audioVibrationSmall);
+    const auto large = std::max(outputState.vibrationLarge, outputState.audioVibrationLarge);
+    const auto small = std::max(outputState.vibrationSmall, outputState.audioVibrationSmall);
     const bool rumbling = large != 0 || small != 0;
     const bool triggerRumble = outputState.trigger[0].fallback != 0 || outputState.trigger[1].fallback != 0;
+    if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
+        const LightBarPacer::Color color = outputState.lightBarValid
+            ? LightBarPacer::Color{outputState.lightBar[0], outputState.lightBar[1], outputState.lightBar[2]}
+            : LightBarPacer::Color{0, 64, 255};
+        if (lightBar.Due(color, now)) lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
+    }
     if (!outputPending) {
         if ((rumbling || (triggerRumble && !isPs5)) && now >= nextRumbleRefresh) outputPending = true;
         else return;
@@ -98,17 +107,15 @@ void PadInput::applyOutput() {
     nextRumbleRefresh = now + std::chrono::milliseconds(700);
     constexpr Uint32 rumbleMs = 2000;
     SDL_GameControllerRumble(controller, static_cast<Uint16>(large * 257), static_cast<Uint16>(small * 257), rumbling ? rumbleMs : 0);
-    if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
-        if (outputState.lightBarValid) SDL_GameControllerSetLED(controller, outputState.lightBar[0], outputState.lightBar[1], outputState.lightBar[2]);
-        else SDL_GameControllerSetLED(controller, 0, 64, 255);
-    }
     if (outputState.triggerTouched) {
         if (isPs5) {
-            Uint8 effect[47] = {};
+            TriggerEffectCache::Effect effect{};
             effect[0] = 0x04 | 0x08;
-            std::memcpy(effect + 10, outputState.trigger[1].effect, 11);
-            std::memcpy(effect + 21, outputState.trigger[0].effect, 11);
-            SDL_GameControllerSendEffect(controller, effect, sizeof(effect));
+            std::memcpy(effect.data() + 10, outputState.trigger[1].effect, 11);
+            std::memcpy(effect.data() + 21, outputState.trigger[0].effect, 11);
+            if (triggerEffect.NeedsSend(effect)) {
+                triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
+            }
         } else if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
             SDL_GameControllerRumbleTriggers(controller, static_cast<Uint16>(outputState.trigger[0].fallback * 257), static_cast<Uint16>(outputState.trigger[1].fallback * 257), triggerRumble ? rumbleMs : 0);
         }
@@ -185,12 +192,12 @@ PadInputState PadInput::sampleController() const {
             float pressure = 0.0f;
             if (SDL_GameControllerGetTouchpadFinger(controller, 0, finger, &down, &x, &y, &pressure) != 0 || down == 0) continue;
             result.touch[finger].active = true;
-            result.touch[finger].x = static_cast<std::uint16_t>(std::clamp(x, 0.0f, 1.0f) * 1919.0f);
-            result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * 942.0f);
+            result.touch[finger].x = static_cast<std::uint16_t>(std::clamp(x, 0.0f, 1.0f) * (kTouchPadWidth - 1));
+            result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * (kTouchPadHeight - 1));
         }
     }
     if (viewPressed && !result.touch[0].active && !result.touch[1].active) {
-        result.touch[0] = {true, 960, 471, 0};
+        result.touch[0] = {true, kTouchPadWidth / 2, kTouchPadHeight / 2, 0};
     }
     return result;
 }
@@ -205,18 +212,18 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         if (instanceId == event.cdevice.which) {
             closeController();
             openFirstAvailableController();
-            publish();
+            publish(window.FrameNumber());
         }
         return;
     }
     if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP ||
         event.type == SDL_CONTROLLERAXISMOTION || event.type == SDL_CONTROLLERDEVICEREMAPPED) {
-        publish();
+        publish(window.FrameNumber());
         return;
     }
     if (event.type == SDL_WINDOWEVENT) {
         if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) setMouseMode(false);
-        publish();
+        publish(window.FrameNumber());
         return;
     }
     // APS5_NO_PAD_INPUT=1 keeps a measurement run from reacting to keys or mouse buttons that reach
@@ -230,24 +237,27 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
     if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
+    if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
-    if (event.type != SDL_MOUSEMOTION) publish();
+    if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber());
 }
 
-void PadInput::Update() {
+void PadInput::Update(const DisplayWindow& window) {
     if (controller != nullptr) SDL_GameControllerUpdate();
     applyOutput();
     if (controller != nullptr) controllerState = sampleController();
     if (keyboardMouse.MouseMode() && SDL_GetKeyboardFocus() == nullptr) {
         keyboardMouse.Release();
         setMouseMode(false);
-        publish();
+        publish(window.FrameNumber());
         return;
     }
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
-    if (controller != nullptr || keyboardMouse.MouseMode() || changed) publish();
+    if (controller != nullptr || keyboardMouse.MouseMode() || changed) publish(window.FrameNumber());
 }
 
-void PadInput::publish() {
-    PadPublishInput_nid_postfix(keyboardMouse.Compose(controllerState));
+void PadInput::publish(std::uint64_t frame) {
+    const auto state = keyboardMouse.Compose(controllerState);
+    PadPublishInput_nid_postfix(state);
+    if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr) VideoOutTelemetry::EmitPadIfChanged(*telemetry, telemetryFilter, frame, state);
 }

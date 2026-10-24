@@ -20,6 +20,8 @@ static constexpr int UMTX_OP_MUTEX_LOCK = 5;
 static constexpr int UMTX_OP_WAIT_UINT = 11;
 static constexpr int UMTX_OP_WAIT_UINT_PRIVATE = 15;
 static constexpr int UMTX_OP_WAKE_PRIVATE = 16;
+static constexpr int UMTX_OP_SEM_WAIT = 19;
+static constexpr int UMTX_OP_SEM_WAKE = 20;
 static constexpr int UMTX_OP_NWAKE_PRIVATE = 21;
 static constexpr int UMTX_OP_SEM2_WAIT = 23;
 static constexpr int UMTX_OP_MAX = 27;
@@ -270,6 +272,61 @@ static void NwakeReadsOnlyTheCountedEntries() {
     Require(Umtx(addresses, UMTX_OP_NWAKE_PRIVATE, 1) == 0);
 }
 
+struct GuestSemaphore {
+    std::uint32_t hasWaiters;
+    std::uint32_t count;
+    std::uint32_t flags;
+};
+
+static void SemWaitReturnsAtOnceWhileTheCountIsNonzero() {
+    GuestSemaphore sem{0, 2, 0};
+    KernelTimespec none{0, 0};
+    Require(Umtx(&sem, UMTX_OP_SEM_WAIT, 0, SizeOf(sizeof(none)), &none) == 0);
+    Require(sem.hasWaiters == 1);
+    Require(sem.count == 2);
+}
+
+static void SemWaitTimesOutWhileTheCountIsZero() {
+    GuestSemaphore sem{0, 0, 0};
+    KernelTimespec relative{0, 20000000};
+    auto start = std::chrono::steady_clock::now();
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM_WAIT, 0, SizeOf(sizeof(relative)), &relative), GUEST_ETIMEDOUT));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+    Require(sem.hasWaiters == 1);
+}
+
+static void SemWakeReleasesTheWaiterAndClearsTheFlag() {
+    GuestSemaphore sem{0, 0, 0};
+    std::atomic<int> finished{0};
+    int result = -2;
+    std::thread waiter([&] {
+        KernelTimespec failsafe = FailsafeTimeout();
+        result = Umtx(&sem, UMTX_OP_SEM_WAIT, 0, SizeOf(sizeof(failsafe)), &failsafe);
+        ++finished;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::atomic_ref<std::uint32_t>(sem.hasWaiters).load() == 0) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    std::this_thread::sleep_for(SETTLE);
+    Require(finished.load() == 0);
+
+    std::atomic_ref<std::uint32_t>(sem.count).store(1);
+    Require(Umtx(&sem, UMTX_OP_SEM_WAKE, 0) == 0);
+    waiter.join();
+    Require(result == 0);
+    Require(sem.hasWaiters == 0);
+}
+
+static void SemWakeWithoutWaitersSucceeds() {
+    GuestSemaphore sem{0, 0, 0};
+    Require(Umtx(&sem, UMTX_OP_SEM_WAKE, 0) == 0);
+    Require(sem.hasWaiters == 0);
+    Require(FailsWith(Umtx(nullptr, UMTX_OP_SEM_WAKE, 0), GUEST_EFAULT));
+    Require(FailsWith(Umtx(nullptr, UMTX_OP_SEM_WAIT, 0), GUEST_EFAULT));
+}
+
 static void RejectsBadObjectsAndOperations() {
     Require(FailsWith(Umtx(nullptr, UMTX_OP_WAIT, 0), GUEST_EFAULT));
     Require(FailsWith(Umtx(nullptr, UMTX_OP_WAIT_UINT, 0), GUEST_EFAULT));
@@ -281,11 +338,14 @@ static void RejectsBadObjectsAndOperations() {
     Require(FailsWith(Umtx(&value, UMTX_OP_MAX, 0), GUEST_EINVAL));
     Require(FailsWith(Umtx(&value, -1, 0), GUEST_EINVAL));
 
+    for (const std::uint64_t owner : {std::uint64_t{0}, std::uint64_t{123456}, (std::uint64_t{1} << 63) | 123456}) {
+        std::uint64_t word = owner;
+        Require(FailsWith(Umtx(&word, 1, 123456), GUEST_EOPNOTSUPP));
+        Require(FailsWith(Umtx(&word, 0, 123456), GUEST_EOPNOTSUPP));
+        Require(word == owner);
+    }
+
     bool threw = false;
-    try { Umtx(&value, 1, 0); }
-    catch (const std::runtime_error&) { threw = true; }
-    Require(threw);
-    threw = false;
     try { Umtx(&value, UMTX_OP_MUTEX_LOCK, 0); }
     catch (const std::runtime_error&) { threw = true; }
     Require(threw);
@@ -305,5 +365,9 @@ int main() {
     WakeWithoutWaitersSucceeds();
     NwakeWakesEveryWaiterOnEachListedAddress();
     NwakeReadsOnlyTheCountedEntries();
+    SemWaitReturnsAtOnceWhileTheCountIsNonzero();
+    SemWaitTimesOutWhileTheCountIsZero();
+    SemWakeReleasesTheWaiterAndClearsTheFlag();
+    SemWakeWithoutWaitersSucceeds();
     RejectsBadObjectsAndOperations();
 }

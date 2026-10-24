@@ -81,10 +81,11 @@ int CachedColumnOffset(FontHandle handle, FontHandleNative* font, float& offset)
     return rc;
 }
 
-void LoadKerning(FT_Face face, float scaleW, float scaleH, std::uint32_t preCode, std::uint32_t code, FontKerning* kerning) {
-    const FT_UInt previousGlyph = face ? FT_Get_Char_Index(face, preCode) : 0;
-    const FT_UInt glyph = face ? FT_Get_Char_Index(face, code) : 0;
-    if (!face || previousGlyph == 0 || glyph == 0) return;
+void LoadKerning(const FontState& state, float scaleW, float scaleH, std::uint32_t preCode, std::uint32_t code, FontKerning* kerning) {
+    FT_UInt previousGlyph = 0;
+    FT_UInt glyph = 0;
+    const FT_Face face = FaceForCode(state, preCode, &previousGlyph);
+    if (!face || FaceForCode(state, code, &glyph) != face) return;
     const auto charW = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleW * 64.0f));
     const auto charH = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleH * 64.0f));
     FT_Set_Char_Size(face, charW, charH, 72, 72);
@@ -187,7 +188,12 @@ int APS5_VABI sceFontGetKerning(FontHandle fontHandle, std::uint32_t preCode, st
     if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     *kerning = {};
     const FontState* state = TryGetState(fontHandle);
-    if (state) LoadKerning(state->face, state->scaleW, state->scaleH, preCode, code, kerning);
+    if (state) {
+        float scaleW = 0.0f;
+        float scaleH = 0.0f;
+        StyleStateGetScalePixel(&font->style, &scaleW, &scaleH);
+        LoadKerning(*state, scaleW, scaleH, preCode, code, kerning);
+    }
     ReleaseFontLock(font, fontLock);
     return SCE_FONT_OK;
 }
@@ -209,7 +215,7 @@ int APS5_VABI sceFontGetRenderScaledKerning(FontHandle fontHandle, std::uint32_t
         float scaleH = 0.0f;
         rc = StyleStateGetScalePixel(&font->cached_style.state, &scaleW, &scaleH);
         const FontState* state = TryGetState(fontHandle);
-        if (rc == SCE_FONT_OK && state) LoadKerning(state->face, scaleW, scaleH, preCode, code, kerning);
+        if (rc == SCE_FONT_OK && state) LoadKerning(*state, scaleW, scaleH, preCode, code, kerning);
     }
     ReleaseCachedStyleLock(font, cachedLock);
     ReleaseFontLock(font, fontLock);
@@ -372,8 +378,7 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     *pGlyph = nullptr;
     if (!fontHandle) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     if (code == 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
-    const FontState* state = TryGetState(fontHandle);
-    if (!state) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    if (!TryGetState(fontHandle)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     const std::uint8_t glyphForm = detail ? detail->glyph_form : 0;
     const std::uint8_t metricsForm = detail ? detail->metrics_form : 0;
     const std::uint16_t formOptions = detail ? detail->form_options : 0;
@@ -384,7 +389,9 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     if ((glyphForm != 0 && metricsForm == 0) || glyphForm > 1 || metricsForm > 4) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (glyphMemory && glyphMemory->mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontGlyphMetrics metrics{};
-    const int rc = GetCharGlyphMetrics(fontHandle, code, &metrics, false);
+    float scaleW = 0.0f;
+    float scaleH = 0.0f;
+    const int rc = GetCharGlyphMetrics(fontHandle, code, &metrics, false, &scaleW, &scaleH);
     if (rc != SCE_FONT_OK) return rc;
     auto* generated = new (std::nothrow) GeneratedGlyph();
     if (!generated) return SCE_FONT_ERROR_ALLOCATION_FAILED;
@@ -394,13 +401,13 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     generated->glyph.flags = formOptions;
     generated->glyph.glyph_form = glyphForm;
     generated->glyph.metrics_form = metricsForm;
-    generated->glyph.em_size = ClampToU16(state->scaleH);
+    generated->glyph.em_size = ClampToU16(scaleH);
     generated->glyph.baseline = ClampToU16(metrics.Horizontal.bearingY);
     generated->glyph.height_px = ClampToU16(metrics.height);
     generated->glyph.origin_x = 0;
     generated->glyph.origin_y = generated->glyph.baseline;
-    generated->glyph.scale_x = state->scaleW;
-    generated->glyph.base_scale = state->scaleH;
+    generated->glyph.scale_x = scaleW;
+    generated->glyph.base_scale = scaleH;
     generated->glyph.memory = glyphMemory;
     generated->owner = fontHandle;
     generated->outline.outline_flags = generated->glyph.flags;
@@ -419,10 +426,27 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph glyph, std::uint32_t attribute, std::uint64_t value) {
+int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph glyph, std::int32_t attribute, std::int32_t* previousAttribute) {
+    if (!glyph || glyph->magic != GLYPH_MAGIC) {
+        if (previousAttribute) *previousAttribute = 0;
+        return SCE_FONT_ERROR_INVALID_GLYPH;
+    }
+    if (attribute != 0x10 && attribute != 0x11) {
+        if (previousAttribute) *previousAttribute = 0;
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    const std::int32_t previous = (glyph->flags & 2) ? 0x11 : 0x10;
+    glyph->flags = static_cast<std::uint16_t>((glyph->flags & ~2u) | ((attribute - 0x10) << 1));
+    if (previousAttribute) *previousAttribute = previous;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontGlyphGetAttribute(FontGlyph glyph, int attribute, int* nowAttribute) {
     (void)attribute;
-    (void)value;
-    if (!glyph || glyph->magic != GLYPH_MAGIC) return SCE_FONT_ERROR_INVALID_GLYPH;
+    if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* generated = TryGetGeneratedGlyph(glyph);
+    if (!generated) return SCE_FONT_ERROR_INVALID_GLYPH;
+    *nowAttribute = (glyph->flags & 2) ? 0x11 : 0x10;
     return SCE_FONT_OK;
 }
 

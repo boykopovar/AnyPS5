@@ -126,7 +126,7 @@ std::int64_t APS5_VABI nrand48_nid_postfix(std::uint16_t* seed) {
 }
 
 std::int64_t APS5_VABI jrand48_nid_postfix(std::uint16_t* seed) {
-    return static_cast<std::int32_t>(static_cast<std::uint32_t>(NextRand48(seed, __func__) >> 16));
+    return static_cast<std::int64_t>(NextRand48(seed, __func__) >> 16);
 }
 
 double APS5_VABI drand48_nid_postfix() {
@@ -141,7 +141,7 @@ std::int64_t APS5_VABI lrand48_nid_postfix() {
 
 std::int64_t APS5_VABI mrand48_nid_postfix() {
     std::lock_guard lock(g_randomLock);
-    return static_cast<std::int32_t>(static_cast<std::uint32_t>(NextRand48(g_rand48Seed, __func__) >> 16));
+    return static_cast<std::int64_t>(NextRand48(g_rand48Seed, __func__) >> 16);
 }
 
 void APS5_VABI srand48_nid_postfix(std::int64_t seedval) {

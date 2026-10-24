@@ -1,0 +1,16 @@
+add_library(libSceNpWebApi SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpWebApi PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpWebApi)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_web_api_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpWebApi.cpp)
+    target_include_directories(guest_np_web_api_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_web_api_tests PRIVATE libSceNpWebApi)
+    configure_windows_unwind(guest_np_web_api_tests)
+    add_test(NAME guest_np_web_api COMMAND guest_np_web_api_tests)
+    set_tests_properties(guest_np_web_api PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_web_api PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpWebApi>")
+    endif()
+endif()

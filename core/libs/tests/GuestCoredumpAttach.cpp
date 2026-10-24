@@ -1,3 +1,4 @@
+#include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -10,8 +11,8 @@
 extern "C" {
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stackSize, uint64_t context);
 int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void);
-int APS5_VABI sceCoredumpAttachMemoryRegion(uint32_t userValue, const void* mem, size_t size);
-int APS5_VABI sceCoredumpAttachUserMemoryFile(uint32_t userValue, const void* mem, size_t size);
+int APS5_VABI sceCoredumpAttachMemoryRegion(uint32_t userValue, const void* mem, std::int32_t size);
+int APS5_VABI sceCoredumpAttachUserMemoryFile(uint32_t userValue, const void* mem, std::int32_t size);
 int APS5_VABI sceCoredumpGetStopInfoCpu(void* info, size_t size);
 int APS5_VABI sceCoredumpGetThreadContextInfo(void* threadContextInfo, size_t threadContextInfoSize);
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size);
@@ -20,6 +21,7 @@ int APS5_VABI sceCoredumpConfigDumpMode(int mode);
 }
 
 namespace {
+alignas(16) std::array<std::byte, 0x40> process{};
 constexpr int InvalidArgument = static_cast<int>(0x81180000u);
 constexpr int NotInCoredumpHandler = static_cast<int>(0x81180003u);
 constexpr uint32_t UserFileTruncateIfExceedLimit = 0x80000000u;
@@ -42,6 +44,13 @@ bool Throws(TAttach attach, const char* function) {
 }
 
 int main() {
+    const std::uint64_t processSize = process.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    const std::uint32_t sdkVersion = 0x06500000;
+    std::memcpy(process.data(), &processSize, sizeof(processSize));
+    std::memcpy(process.data() + 8, &processMagic, sizeof(processMagic));
+    std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
+    Require(ProcessParametersFixture::Install(process.data(), process.size()));
     alignas(uint64_t) std::array<unsigned char, 64> region{};
     for (size_t index = 0; index < region.size(); ++index) region[index] = static_cast<unsigned char>(index * 7 + 3);
     const auto original = region;
@@ -52,6 +61,7 @@ int main() {
     Require(sceCoredumpAttachMemoryRegion(1, region.data(), region.size()) == NotInCoredumpHandler);
     Require(sceCoredumpAttachUserMemoryFile(UserFileTruncateIfExceedLimit | 2, region.data(), region.size()) == NotInCoredumpHandler);
     Require(sceCoredumpGetStopInfoCpu(region.data() + 16, 16) == NotInCoredumpHandler);
+    Require(sceCoredumpGetStopInfoCpu(region.data() + 16, 8) == NotInCoredumpHandler);
     Require(sceCoredumpGetThreadContextInfo(context.data() + 8, 144) == NotInCoredumpHandler);
     Require(region == original && context == originalContext);
 
@@ -70,23 +80,30 @@ int main() {
     Require(region == original && context == originalContext);
     Require(!handlerRan);
 
-    Require(Throws([&] { sceCoredumpAttachMemoryRegion(1, nullptr, region.size()); }, "sceCoredumpAttachMemoryRegion"));
-    Require(Throws([&] { sceCoredumpAttachMemoryRegion(1, region.data(), 0); }, "sceCoredumpAttachMemoryRegion"));
-    Require(Throws([&] { sceCoredumpAttachMemoryRegion(1, region.data(), SIZE_MAX); }, "sceCoredumpAttachMemoryRegion"));
-    Require(Throws([&] { sceCoredumpAttachUserMemoryFile(1, nullptr, region.size()); }, "sceCoredumpAttachUserMemoryFile"));
-    Require(Throws([&] { sceCoredumpAttachUserMemoryFile(1, region.data(), 0); }, "sceCoredumpAttachUserMemoryFile"));
-    Require(Throws([&] { sceCoredumpAttachUserMemoryFile(1, region.data(), SIZE_MAX); }, "sceCoredumpAttachUserMemoryFile"));
-    Require(Throws([&] { sceCoredumpGetStopInfoCpu(nullptr, 16); }, "sceCoredumpGetStopInfoCpu"));
-    Require(Throws([&] { sceCoredumpGetStopInfoCpu(region.data() + 1, 16); }, "sceCoredumpGetStopInfoCpu"));
-    Require(Throws([&] { sceCoredumpGetStopInfoCpu(reinterpret_cast<void*>(UINTPTR_MAX - 7u), 16); }, "sceCoredumpGetStopInfoCpu"));
+    Require(sceCoredumpAttachMemoryRegion(1, nullptr, region.size()) == NotInCoredumpHandler);
+    Require(sceCoredumpAttachMemoryRegion(1, region.data(), 0) == NotInCoredumpHandler);
+    Require(sceCoredumpAttachMemoryRegion(1, region.data(), -1) == 0);
+    Require(sceCoredumpAttachUserMemoryFile(1, nullptr, region.size()) == NotInCoredumpHandler);
+    Require(sceCoredumpAttachUserMemoryFile(1, region.data(), 0) == NotInCoredumpHandler);
+    Require(sceCoredumpAttachUserMemoryFile(1, region.data(), -1) == 0);
+    Require(sceCoredumpGetStopInfoCpu(nullptr, 16) == InvalidArgument);
+    Require(sceCoredumpGetStopInfoCpu(region.data() + 1, 16) == NotInCoredumpHandler);
+    Require(sceCoredumpGetStopInfoCpu(reinterpret_cast<void*>(UINTPTR_MAX - 7u), 16) == NotInCoredumpHandler);
     for (const size_t size : {size_t{0}, size_t{1}, size_t{15}, size_t{17}, SIZE_MAX})
-        Require(Throws([&] { sceCoredumpGetStopInfoCpu(region.data() + 16, size); }, "sceCoredumpGetStopInfoCpu"));
-    Require(Throws([&] { sceCoredumpGetThreadContextInfo(nullptr, 144); }, "sceCoredumpGetThreadContextInfo"));
-    Require(Throws([&] { sceCoredumpGetThreadContextInfo(context.data() + 1, 144); }, "sceCoredumpGetThreadContextInfo"));
-    Require(Throws([&] { sceCoredumpGetThreadContextInfo(reinterpret_cast<void*>(UINTPTR_MAX - 7u), 144); }, "sceCoredumpGetThreadContextInfo"));
+        Require(sceCoredumpGetStopInfoCpu(region.data() + 16, size) == InvalidArgument);
+    Require(sceCoredumpGetThreadContextInfo(nullptr, 144) == InvalidArgument);
+    Require(sceCoredumpGetThreadContextInfo(context.data() + 1, 144) == NotInCoredumpHandler);
+    Require(sceCoredumpGetThreadContextInfo(reinterpret_cast<void*>(UINTPTR_MAX - 7u), 144) == NotInCoredumpHandler);
     for (const size_t size : {size_t{0}, size_t{1}, size_t{143}, size_t{145}, SIZE_MAX})
-        Require(Throws([&] { sceCoredumpGetThreadContextInfo(context.data(), size); }, "sceCoredumpGetThreadContextInfo"));
+        Require(sceCoredumpGetThreadContextInfo(context.data(), size) == InvalidArgument);
 
+    for (const auto length : {INT32_MIN, -1, 0, 1, INT32_MAX}) {
+        const int expected = length < 0 ? 0 : NotInCoredumpHandler;
+        Require(sceCoredumpAttachMemoryRegion(0, nullptr, length) == expected);
+        Require(sceCoredumpAttachUserMemoryFile(0, nullptr, length) == expected);
+        Require(sceCoredumpAttachMemoryRegion(0xffffffffu, region.data(), length) == expected);
+        Require(sceCoredumpAttachUserMemoryFile(0xffffffffu, region.data(), length) == expected);
+    }
     Require(sceCoredumpUnregisterCoredumpHandler() == 0);
     Require(sceCoredumpAttachMemoryRegion(1, region.data(), region.size()) == NotInCoredumpHandler);
     Require(sceCoredumpAttachUserMemoryFile(1, region.data(), region.size()) == NotInCoredumpHandler);

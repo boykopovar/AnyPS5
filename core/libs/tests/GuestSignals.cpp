@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <atomic>
 #include <chrono>
 #include <thread>
 using Handler = void (APS5_VABI *)(int);
@@ -14,6 +15,8 @@ struct GuestSignalSet {
 extern "C" {
 Handler APS5_VABI signal_nid_postfix(int, Handler);
 int APS5_VABI raise_nid_postfix(int);
+int APS5_VABI kill_nid_postfix(int, int);
+int APS5_VABI getpid_nid_postfix();
 int APS5_VABI pthread_kill_nid_postfix(void*, int);
 void* APS5_VABI scePthreadSelf();
 int APS5_VABI scePthreadCreate(void** thread, const void* attr, void* (APS5_VABI *entry)(void*), void* arg, const char* name);
@@ -33,6 +36,7 @@ struct GuestSigaction {
     GuestSignalSet mask;
 };
 static_assert(sizeof(GuestSigaction) == 32);
+extern GuestSignalSet _sigintr_nid_postfix;
 static bool Same(const GuestSigaction& left, const GuestSigaction& right) {
     return left.handler == right.handler && left.flags == right.flags && std::memcmp(&left.mask, &right.mask, sizeof(left.mask)) == 0;
 }
@@ -54,6 +58,14 @@ struct SuspendSender {
     void* target = nullptr;
     int result = -1;
 };
+struct EndingThread {
+    std::atomic<bool> release{false};
+};
+void* APS5_VABI EndingEntry(void* arg) {
+    auto& state = *static_cast<EndingThread*>(arg);
+    while (!state.release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return nullptr;
+}
 void* APS5_VABI SuspendSend(void* arg) {
     auto& sender = *static_cast<SuspendSender*>(arg);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -63,6 +75,11 @@ void* APS5_VABI SuspendSend(void* arg) {
 void APS5_VABI Callback(int value) {
     received = value;
     handlerReturn = reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+}
+GuestSignalSet maskInHandler{};
+void APS5_VABI MaskCallback(int value) {
+    received = value;
+    sigprocmask_nid_postfix(1, nullptr, &maskInHandler);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
@@ -87,12 +104,32 @@ int main() {
     Require(pthread_kill_nid_postfix(nullptr, 128) == 3);
     Require(pthread_kill_nid_postfix(nullptr, 129) == 22);
     Require(pthread_kill_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{0x10}), 15) == 3);
+    Require(pthread_kill_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{0x10}), 0) == 3);
+    {
+        EndingThread ending;
+        void* thread = nullptr;
+        Require(scePthreadCreate(&thread, nullptr, EndingEntry, &ending, nullptr) == 0);
+        Require(pthread_kill_nid_postfix(thread, 0) == 0);
+        ending.release.store(true);
+        int answer = 0;
+        for (int attempt = 0; attempt < 2000 && (answer = pthread_kill_nid_postfix(thread, 0)) != 3; ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(answer == 3);
+        Require(pthread_kill_nid_postfix(thread, 15) == 3);
+        Require(scePthreadJoin(thread, nullptr) == 0);
+        Require(pthread_kill_nid_postfix(thread, 0) == 3);
+    }
     Require(received == 0);
     Require(signal_nid_postfix(15, ignore) != invalid);
     received = 0;
     Require(raise_nid_postfix(15) == 0 && received == 0);
     Require(signal_nid_postfix(15, nullptr) == ignore);
     Require(raise_nid_postfix(100) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    received = 0;
+    Require(raise_nid_postfix(0) == 0 && received == 0 && *__error_nid_postfix() == 0);
+    Require(raise_nid_postfix(129) == -1 && *__error_nid_postfix() == 22);
+    Require(raise_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
     GuestSignalSet blocked{{0x20, 0, 0, 0}};
     GuestSignalSet previous{{}};
     Require(sigprocmask_nid_postfix(3, &blocked, &previous) == 0);
@@ -112,6 +149,17 @@ int main() {
     Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
     Require(pthread_sigmask_nid_postfix(2, &blocked, &previous) == 0 && previous.bits[0] == 0x20);
     Require(pthread_sigmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0);
+    const GuestSignalSet withKillAndStop{{(1u << 8) | (1u << 16) | 0x20, 0, 0, 0}};
+    const GuestSignalSet noSignals{{0, 0, 0, 0}};
+    Require(sigprocmask_nid_postfix(1, &withKillAndStop, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
+    Require(sigprocmask_nid_postfix(3, &noSignals, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(3, &withKillAndStop, nullptr) == 0);
+    Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
+    Require(sigprocmask_nid_postfix(3, &noSignals, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(1, &withKillAndStop, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
+    Require(pthread_sigmask_nid_postfix(3, &noSignals, nullptr) == 0);
 
     const auto callback = reinterpret_cast<std::uintptr_t>(Callback);
     const auto infoCallback = reinterpret_cast<std::uintptr_t>(InfoCallback);
@@ -130,6 +178,15 @@ int main() {
     Require(signal_nid_postfix(15, Callback) == nullptr);
     Require(sigaction_nid_postfix(15, nullptr, &current) == 0 && current.handler == callback && current.flags == 0x2);
     Require(signal_nid_postfix(15, nullptr) == Callback);
+    for (const int flags : {0x80, 0x100, 0x8000, 0x40 | 0x80}) {
+        const GuestSigaction undefinedFlags{callback, flags, {}};
+        *__error_nid_postfix() = 0;
+        Require(sigaction_nid_postfix(15, &undefinedFlags, nullptr) == -1 && *__error_nid_postfix() == 22);
+        Require(sigaction_nid_postfix(15, nullptr, &current) == 0 && current.handler == 0 && current.flags == 0x2);
+    }
+    const GuestSigaction ignoredWithFlags{1, 0x8000, {}};
+    Require(sigaction_nid_postfix(15, &ignoredWithFlags, nullptr) == 0);
+    Require(sigaction_nid_postfix(15, &defaults, nullptr) == 0);
 
     const GuestSigaction crash{infoCallback, 0x40 | 0x10, {}};
     for (int recorded : {10, 1, 64, 128}) {
@@ -184,6 +241,14 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(sigsuspend_nid_postfix(&empty) == -1 && *__error_nid_postfix() == 4 && received == 30);
     Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == user.bits[0]);
+    Require(signal_nid_postfix(30, MaskCallback) != invalid);
+    const GuestSignalSet suspendWithKillAndStop{{(1u << 8) | (1u << 16) | (1u << 28), 0, 0, 0}};
+    received = 0;
+    Require(raise_nid_postfix(30) == 0 && received == 0);
+    Require(sigsuspend_nid_postfix(&suspendWithKillAndStop) == -1 && received == 30);
+    Require(maskInHandler.bits[0] == (1u << 28));
+    Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == user.bits[0]);
+    Require(signal_nid_postfix(30, Callback) != invalid);
     received = 0;
     SuspendWait wait{&empty, 0, 0};
     void* suspender = nullptr;
@@ -310,4 +375,48 @@ int main() {
         pendingSignals.bits[0] == 0 && pendingSignals.bits[1] == 0 &&
         pendingSignals.bits[2] == 0 && pendingSignals.bits[3] == 0);
     for (int guest : {40, 73, 128}) Require(signal_nid_postfix(guest, nullptr) == Callback);
+    for (const int ignoredByDefault : {16, 19, 20, 23, 28, 29}) {
+        *__error_nid_postfix() = 0;
+        received = 0;
+        Require(raise_nid_postfix(ignoredByDefault) == 0 && received == 0 && *__error_nid_postfix() == 0);
+        Require(kill_nid_postfix(getpid_nid_postfix(), ignoredByDefault) == 0 && *__error_nid_postfix() == 0);
+    }
+    const GuestSignalSet ignoredByDefaultSet{{(1u << 15) | (1u << 19) | (1u << 22) | (1u << 27) | (1u << 28), 0, 0, 0}};
+    GuestSignalSet pendingIgnored{};
+    Require(sigprocmask_nid_postfix(3, &ignoredByDefaultSet, nullptr) == 0);
+    for (const int ignoredByDefault : {16, 20, 23, 28, 29}) Require(raise_nid_postfix(ignoredByDefault) == 0);
+    Require(sigpending_nid_postfix(&pendingIgnored) == 0 && pendingIgnored.bits[0] == 0);
+    const GuestSignalSet noneBlocked{{0, 0, 0, 0}};
+    Require(sigprocmask_nid_postfix(3, &noneBlocked, nullptr) == 0);
+    const GuestSigaction ignored{1, 0, {}};
+    const GuestSigaction restored{0, 0, {}};
+    const GuestSignalSet userSignal{{1u << 29, 0, 0, 0}};
+    Require(sigaction_nid_postfix(30, &ignored, nullptr) == 0);
+    *__error_nid_postfix() = 0;
+    Require(raise_nid_postfix(30) == 0 && kill_nid_postfix(getpid_nid_postfix(), 30) == 0 && *__error_nid_postfix() == 0);
+    Require(sigprocmask_nid_postfix(3, &userSignal, nullptr) == 0);
+    Require(raise_nid_postfix(30) == 0);
+    Require(sigpending_nid_postfix(&pendingIgnored) == 0 && pendingIgnored.bits[0] == 0);
+    Require(sigprocmask_nid_postfix(3, &noneBlocked, nullptr) == 0);
+    Require(sigaction_nid_postfix(30, &restored, nullptr) == 0);
+    Require(_sigintr_nid_postfix.bits[0] == 0 && _sigintr_nid_postfix.bits[1] == 0 && _sigintr_nid_postfix.bits[2] == 0 &&
+        _sigintr_nid_postfix.bits[3] == 0);
+    GuestSigaction interruptible{};
+    Require(signal_nid_postfix(30, Callback) == nullptr);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    _sigintr_nid_postfix.bits[0] = 1u << 29;
+    Require(signal_nid_postfix(30, Callback) == Callback);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 &&
+        interruptible.handler == reinterpret_cast<std::uintptr_t>(Callback) && interruptible.flags == 0);
+    signal_nid_postfix(31, Callback);
+    Require(sigaction_nid_postfix(31, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    _sigintr_nid_postfix.bits[3] = 1u << 31;
+    Require(signal_nid_postfix(128, Callback) == nullptr);
+    Require(sigaction_nid_postfix(128, nullptr, &interruptible) == 0 && interruptible.flags == 0);
+    _sigintr_nid_postfix.bits[0] = 0;
+    _sigintr_nid_postfix.bits[3] = 0;
+    Require(signal_nid_postfix(30, Callback) == Callback);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    Require(signal_nid_postfix(30, nullptr) == Callback && signal_nid_postfix(31, nullptr) == Callback &&
+        signal_nid_postfix(128, nullptr) == Callback);
 }

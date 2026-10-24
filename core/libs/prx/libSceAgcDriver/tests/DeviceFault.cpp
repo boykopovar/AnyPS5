@@ -97,6 +97,35 @@ void Nothing() {
     Require(faultCalls == 0, "the fault info was queried without the extension");
 }
 
+void BufferMarkers() {
+    AgcDriver::BufferMarkerLog log;
+    Require(log.Report(0, 0) == std::vector<std::string>{"[device-fault] no buffer marker reached"}, "an untouched marker buffer was not reported");
+    Require(log.Next(0x10000) == 1 && log.Next(0x10100) == 2 && log.Next(0x10200) == 3, "markers are not numbered from 1");
+    const auto lines = log.Report(3, 1);
+    Require(lines.size() == 4, "a hang two markers past the last finished one does not get four lines");
+    Require(lines[0] == "[device-fault] last dispatch reached: marker 3, program 0x10200", "the reached line changed");
+    Require(lines[1] == "[device-fault] last dispatch finished: marker 1, program 0x10000", "the finished line changed");
+    Require(lines[2] == "[device-fault] unfinished dispatch: marker 2, program 0x10100", "the first unfinished line changed");
+    Require(lines[3] == "[device-fault] unfinished dispatch: marker 3, program 0x10200", "the second unfinished line changed");
+    Require(log.Report(3, 3).size() == 2, "a finished queue listed unfinished dispatches");
+    const auto first = log.Report(1, 0);
+    Require(first.size() == 3 && first[1] == "[device-fault] no dispatch finished" && first[2] == "[device-fault] unfinished dispatch: marker 1, program 0x10000", "a hang in the first dispatch was not reported as nothing finished");
+    Require(log.Report(2, 3).size() == 2, "markers finished past the reached one listed unfinished dispatches");
+}
+
+void BufferMarkersWrap() {
+    AgcDriver::BufferMarkerLog log;
+    for (std::uint32_t i = 0; i <= AgcDriver::BufferMarkerLog::Capacity; ++i) static_cast<void>(log.Next(0x20000 + i));
+    const auto lines = log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, 1);
+    Require(lines[0] == "[device-fault] last dispatch reached: marker 4097, program 0x21000", "the newest marker was not kept");
+    Require(lines[1] == "[device-fault] last dispatch finished: marker 1, program not in the log", "an overwritten marker kept a program");
+    Require(lines.size() == 2 + AgcDriver::BufferMarkerLog::Listed + 1 && lines.back() == "[device-fault] 4088 more unfinished dispatches", "a full log of unfinished markers was not listed and counted");
+    Require(log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, 0).size() == 2, "more unfinished markers than the log holds were listed");
+    const auto pending = log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, AgcDriver::BufferMarkerLog::Capacity - 19);
+    Require(pending.size() == 2 + AgcDriver::BufferMarkerLog::Listed + 1, "a long unfinished run was not cut to the listed count");
+    Require(pending.back() == "[device-fault] 12 more unfinished dispatches", "the count of unlisted unfinished dispatches changed");
+}
+
 void AddressKinds() {
     Require(std::strcmp(AgcDriver::DeviceFaultAddressKind(VK_DEVICE_FAULT_ADDRESS_TYPE_NONE_EXT), "none") == 0, "none");
     Require(std::strcmp(AgcDriver::DeviceFaultAddressKind(VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT), "write invalid") == 0, "write invalid");
@@ -115,6 +144,8 @@ int main() {
         Checkpoints();
         Nothing();
         AddressKinds();
+        BufferMarkers();
+        BufferMarkersWrap();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "agc_device_fault: %s\n", error.what());
         return 1;

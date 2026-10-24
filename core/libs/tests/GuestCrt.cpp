@@ -189,10 +189,20 @@ int main() {
     Require(asctime_s_nid_postfix(text, sizeof(text), &known) == 0);
     Require(std::strcmp(text, "Thu Jan  1 00:00:00 1970\n") == 0);
     known.tm_wday = 7;
-    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
     known.tm_wday = 4;
+    known.tm_year = 9000;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    known.tm_year = 70;
+    known.tm_mday = 32;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    known.tm_mday = 1;
     Require(sceAmprAsctimeS(nullptr, sizeof(text), &known) == EINVAL);
-    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
     Require(sceAmprAsctimeS(text, 25, &known) == EINVAL);
     const std::int64_t epoch = 0;
     Require(sceAmprCtimeS(text, sizeof(text), &epoch) == 0);
@@ -201,7 +211,8 @@ int main() {
     Require(ctime_s_nid_postfix(libcText, sizeof(libcText), &epoch) == 0);
     Require(std::strcmp(libcText, text) == 0);
     Require(sceAmprCtimeS(text, 25, &epoch) == EINVAL);
-    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
 
     char line[] = "a,b,,c";
     char* context = nullptr;

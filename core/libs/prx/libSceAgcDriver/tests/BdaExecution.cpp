@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -14,6 +15,12 @@
 #include <vector>
 
 namespace {
+
+std::string Hex(std::uint64_t value) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
+    return text;
+}
 
 using namespace AgcDriver::Graphics;
 
@@ -293,7 +300,7 @@ static void RunBdaAnchorTests(const Context& context) {
                     const auto expected = run(programs.plain, index, anchor, batch);
                     const auto actual = run(programs.anchored, index, anchor, batch);
                     const bool faultsMatch = programs.reads.lanes == 1u ? std::memcmp(&expected.fault, &actual.fault, sizeof(expected.fault)) == 0 : expected.fault.state == actual.fault.state;
-                    Require(faultsMatch && expected.values == actual.values, "an anchored BDA read differs from the same read through the lookups at anchor 0x" + std::to_string(anchor) + " + " + std::to_string(batch[0]) + " + (" + std::to_string(read.immediate) + "), " + std::to_string(read.bits) + " bits, " + std::to_string(read.dwords) + " dwords");
+                    Require(faultsMatch && expected.values == actual.values, "an anchored BDA read differs from the same read through the lookups at anchor " + Hex(anchor) + " + " + std::to_string(batch[0]) + " + (" + std::to_string(read.immediate) + "), " + std::to_string(read.bits) + " bits, " + std::to_string(read.dwords) + " dwords");
                 }
             }
         }
@@ -307,6 +314,9 @@ static void RunBdaAnchorTests(const Context& context) {
     for (std::uint32_t lane = 0; lane < 32u; ++lane) lows.push_back(lane * 0x24u);
     std::vector<std::uint32_t> strided;
     for (std::uint32_t lane = 0; lane < lanes; ++lane) strided.push_back(lane * 16u);
+    auto halfword = build({{{-1, 16, 1, 1}}, false, false, false, lanes});
+    compare(*halfword, {guest + 0x100}, {1u});
+    compare(*halfword, {guest + 0x100}, {0u, 1u});
     auto continuing = build({reads, false, false, false, lanes});
     compare(*continuing, anchors, lows);
     compare(*continuing, {guest + 0x400}, strided);
@@ -326,11 +336,11 @@ static void RunBdaAnchorTests(const Context& context) {
     };
     const auto loads = [&](std::uint32_t read, std::uint64_t anchor, std::uint32_t low, std::initializer_list<std::uint32_t> values) {
         const auto outcome = run(*direct, read, anchor, {low});
-        Require(outcome.fault.state == Abi::FaultState::Empty && std::equal(values.begin(), values.end(), outcome.values.begin()), "a read the anchor holds did not load directly at anchor 0x" + std::to_string(anchor) + " + " + std::to_string(low) + ", read " + std::to_string(read));
+        Require(outcome.fault.state == Abi::FaultState::Empty && std::equal(values.begin(), values.end(), outcome.values.begin()), "a read the anchor holds did not load directly at anchor " + Hex(anchor) + " + " + std::to_string(low) + ", read " + std::to_string(read));
     };
     const auto misses = [&](std::uint32_t read, std::uint64_t anchor, std::uint32_t low) {
         const auto outcome = run(*direct, read, anchor, {low});
-        Require(outcome.fault.state == Abi::FaultState::Empty && outcome.values[0] == BdaAnchoredReadSentinel, "a read the anchor does not hold did not take the lookup path at anchor 0x" + std::to_string(anchor) + " + " + std::to_string(low) + ", read " + std::to_string(read));
+        Require(outcome.fault.state == Abi::FaultState::Empty && outcome.values[0] == BdaAnchoredReadSentinel, "a read the anchor does not hold did not take the lookup path at anchor " + Hex(anchor) + " + " + std::to_string(low) + ", read " + std::to_string(read));
     };
     loads(2, guest + 0x100, 0, {dword(words, 0)});
     loads(2, guest + 0x100, 0xc, {dword(words, 0xc)});
@@ -511,6 +521,20 @@ void RunBdaExecutionTests(const Context& context) {
     }
     ranges[0].permissions = 0;
     run(guest, 8, 0, Abi::FaultReason::Permission);
+    const auto sequence = [&](std::initializer_list<Abi::FaultReason> reasons, Abi::FaultReason recorded, std::uint32_t otherFaults) {
+        const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
+        std::memcpy(table.Bytes().data(), &header, sizeof(header));
+        std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        Pipeline pipeline(context, MakeBdaFaultSequenceTestShader(reasons), {&table, &fault, &output});
+        pipeline.Run(1);
+        Abi::Fault report{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        Require(report.state == Abi::FaultState::Ready && report.reason == recorded && report.otherFaults == otherFaults, "BDA faults of one dispatch were not recorded with the first reason and the sticky other-fault flag");
+    };
+    sequence({Abi::FaultReason::Unaligned, Abi::FaultReason::Unaligned}, Abi::FaultReason::Unaligned, 0);
+    sequence({Abi::FaultReason::Unaligned, Abi::FaultReason::Unmapped}, Abi::FaultReason::Unaligned, 1);
+    sequence({Abi::FaultReason::Unmapped, Abi::FaultReason::Unaligned}, Abi::FaultReason::Unmapped, 1);
     RunBdaDwordWriteTests(context);
     RunBdaAnchorTests(context);
 }
@@ -544,9 +568,9 @@ void RunBdaStoreExecutionTests(const Context& context) {
         Abi::Fault report{};
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
         if (reason == Abi::FaultReason{}) {
-            Require(report.state == Abi::FaultState::Empty && report.reason == Abi::FaultReason{} && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, label + "mapped store published a fault");
+            Require(report.state == Abi::FaultState::Empty && report.reason == Abi::FaultReason{} && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, label + "mapped store published a fault");
         } else {
-            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && report.reserved == 0, label + "incorrect first fault metadata");
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && report.otherFaults == 1, label + "incorrect first fault metadata");
         }
         std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
         std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));

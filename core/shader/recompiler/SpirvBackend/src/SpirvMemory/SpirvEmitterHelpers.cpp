@@ -218,7 +218,19 @@ void DefineInputs(SpirvEmitterState& state) {
         const auto reads = [&](StageInputKind kind) {
             return std::any_of(state.inputs.begin(), state.inputs.end(), [&](const SpirvInputBinding& input) { return input.kind == kind; });
         };
-        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)});
+        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective), state.program.Info().smoothOffsetBarycentrics}, state.meshBarycentricPixel);
+        if (state.meshBarycentricPixel && emulation.positionsLocation != BarycentricEmulationLayout::NoLocation) {
+            state.pixelFlatPositions = DefineInterfaceVariable(state, state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u)), spv::StorageClassInput, "meshBarycentricPositions");
+            state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationLocation, emulation.positionsLocation);
+            state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationPerPrimitiveEXT);
+            state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
+            state.module.EmitExtension("SPV_EXT_mesh_shader");
+        }
+        if (emulation.reciprocalWLocation != BarycentricEmulationLayout::NoLocation) {
+            state.barycentricReciprocalWVariable = DefineInterfaceVariable(state, TypeF32Vector(state, 3u), spv::StorageClassInput, "gl_BarycentricReciprocalW");
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationNoPerspective);
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationLocation, emulation.reciprocalWLocation);
+        }
     }
     for (auto& input : state.inputs) {
         if (pixelStage && input.kind == StageInputKind::Parameter) {
@@ -294,7 +306,7 @@ void DefineInputs(SpirvEmitterState& state) {
                     throw std::runtime_error("SPIR-V module emission failed: per-vertex parameter " + std::to_string(location) + " has no emulated location");
                 }
                 location = relocated->second;
-                state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationFlat);
+                state.module.AddAnnotation(spv::OpDecorate, input.variableId, state.meshBarycentricPixel ? spv::DecorationPerPrimitiveEXT : spv::DecorationFlat);
             } else if (input.perVertex) {
                 state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationPerVertexKHR);
             } else if (flat) {
@@ -412,7 +424,7 @@ void DefineOutputs(SpirvEmitterState& state) {
         case StageOutputKind::StencilRef:
             if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
                 const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
-                if (values.empty()) throw std::runtime_error("stencil reference export emulation requires a proven set of at most 16 values");
+                if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
                 if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
                 state.stencilReplay = true;
@@ -472,7 +484,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::Buffers:
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
             if (state.requirements.coherentBufferAlias) state.storageBufferCoherentVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers_coherent");
-            if (state.requirements.bufferInt64Atomics) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
+            if (state.requirements.bufferU64View) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
             if (state.storageBufferU64Variable != 0u || state.storageBufferCoherentVariable != 0u) {
                 for (const auto variable : {state.storageBufferVariable, state.storageBufferCoherentVariable, state.storageBufferU64Variable}) {
                     if (variable != 0u) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
@@ -540,6 +552,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
             const auto& image = *selected;
             const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
             state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
+            if (std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
                 state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
             }
@@ -561,6 +574,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
             state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferU64Variable, spv::DecorationCoherent);
             for (const auto variable : {state.ldsBufferVariable, state.ldsBufferU64Variable}) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
         }
+    }
+    if (state.pixelFunctionLdsBuffer) {
+        state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+        state.module.AddName(state.ldsBufferVariable, "pixel_function_lds");
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, PixelFunctionLdsDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
+        if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.ldsBufferVariable);
     }
 }
 

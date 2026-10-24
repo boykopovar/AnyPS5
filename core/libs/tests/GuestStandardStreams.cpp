@@ -17,6 +17,7 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <fcntl.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -64,6 +65,8 @@ int APS5_VABI ungetc_nid_postfix(int, FileStream*);
 char* APS5_VABI fgets_nid_postfix(char*, int, FileStream*);
 int APS5_VABI feof_nid_postfix(FileStream*);
 int APS5_VABI ferror_nid_postfix(FileStream*);
+int APS5_VABI feof_unlocked_nid_postfix(FileStream*);
+int APS5_VABI ferror_unlocked_nid_postfix(FileStream*);
 int APS5_VABI fileno_nid_postfix(FileStream*);
 void APS5_VABI clearerr_nid_postfix(FileStream*);
 void APS5_VABI rewind_nid_postfix(FileStream*);
@@ -167,6 +170,9 @@ static void CheckUnlockedStreams() {
     { std::ofstream seed(filename, std::ios::binary); seed.put('A'); Require(seed.good()); }
     FileStream readOnly(std::fopen(filename.c_str(), "rb"));
     Require(putc_unlocked_nid_postfix('X', &readOnly) == EOF && (readOnly.GuestState().flags & 0x40));
+    Require(ferror_unlocked_nid_postfix(&readOnly) == 1 && feof_unlocked_nid_postfix(&readOnly) == 0);
+    clearerr_unlocked_nid_postfix(&readOnly);
+    Require(ferror_unlocked_nid_postfix(&readOnly) == 0);
     readOnly.Close();
     Require(CheckFileBytes(filename, "A", "rb", false));
     Require(std::filesystem::remove(filename));
@@ -174,6 +180,17 @@ static void CheckUnlockedStreams() {
 
 static void CheckUnlockedQueries() {
     FileStream stream(std::tmpfile());
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == EOF);
+    Require(feof_unlocked_nid_postfix(&stream) == 1 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require((stream.GuestState().flags & 0x60) == 0x20);
+    stream.SetError();
+    Require(feof_unlocked_nid_postfix(&stream) == 1 && ferror_unlocked_nid_postfix(&stream) == 1);
+    clearerr_unlocked_nid_postfix(&stream);
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == EOF && std::ungetc('Q', stream.GetHandle()) == 'Q');
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == 'Q');
     Require(fputc_nid_postfix(0x7f, &stream) == 0x7f);
     std::rewind(stream.GetHandle());
     Require(fgetc_nid_postfix(&stream) == 0x7f && feof_nid_postfix(&stream) == 0);
@@ -239,7 +256,7 @@ static void CheckTryLock() {
     Require(threw);
 }
 
-static void CheckUnlockedStreamLock(bool write) {
+static void CheckUnlockedStreamLock(bool write, int (APS5_VABI *query)(FileStream*) = nullptr) {
     FileStream stream(std::tmpfile());
     Require(std::fputc('A', stream.GetHandle()) == 'A');
     std::rewind(stream.GetHandle());
@@ -260,7 +277,7 @@ static void CheckUnlockedStreamLock(bool write) {
     }
     std::thread caller([&] {
         entered = true;
-        result = write ? putc_unlocked_nid_postfix('B', &stream) : getc_unlocked_nid_postfix(&stream);
+        result = query ? query(&stream) : write ? putc_unlocked_nid_postfix('B', &stream) : getc_unlocked_nid_postfix(&stream);
         done = true;
     });
     const auto enteredDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -277,7 +294,7 @@ static void CheckUnlockedStreamLock(bool write) {
     release = true;
     owner.join();
     caller.join();
-    Require(completedWhileHeld && result == (write ? 'B' : 'A'));
+    Require(completedWhileHeld && result == (query ? 0 : write ? 'B' : 'A'));
     stream.Close();
 }
 
@@ -582,12 +599,32 @@ static int CheckExclusiveStandardOutput() {
     return 0;
 }
 
+#ifdef _WIN32
+static void CheckStandardStreamDeleteSharing() {
+    int index = 0;
+    for (auto* stream : {__stdinp_nid_postfix, __stderrp_nid_postfix}) {
+        const std::string filename = "anyps5-standard-delete-" + std::to_string(index++) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        auto* const native = stream->GetHandle();
+        const int descriptor = ::_fileno(native);
+        Require(freopen_nid_postfix(filename.c_str(), "w+b", stream) == stream);
+        Require(stream->GetHandle() == native && ::_fileno(stream->GetHandle()) == descriptor);
+        Require(fputc_nid_postfix('A', stream) == 'A' && fflush_nid_postfix(stream) == 0);
+        const std::string renamed = filename + "-moved";
+        std::filesystem::rename(filename, renamed);
+        Require(fputc_nid_postfix('B', stream) == 'B' && fflush_nid_postfix(stream) == 0);
+        Require(std::filesystem::remove(renamed));
+        Require(fseeko_nid_postfix(stream, 0, SEEK_SET) == 0);
+        Require(fgetc_nid_postfix(stream) == 'A' && fgetc_nid_postfix(stream) == 'B');
+    }
+}
+#endif
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
     CheckClosedStreamWrites();
     CheckDescriptorAccessModes();
-    Require(_Getmbcurmax_nid_postfix() == 1 && _Getmbcurmax_nid_postfix() == ___mb_cur_max_nid_postfix());
+    Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();
     Require(fdopen_nid_postfix(-1, "rb") == nullptr && *__error_nid_postfix() == 9);
     Require(fdopen_nid_postfix(0, nullptr) == nullptr && *__error_nid_postfix() == 22);
@@ -708,9 +745,11 @@ int main(int argc, char** argv) {
     Require(wideBuf[0] == u'E' && wideBuf[1] == u'n' && wideBuf[2] == u'd' && wideBuf[3] == 0);
     Require(fgetws_nid_postfix(wideBuf, 16, &wideIo) == nullptr);
     Require(feof_nid_postfix(&wideIo));
-    Require(fgetws_nid_postfix(wideBuf, 0, &wideIo) == nullptr && *__error_nid_postfix() == 22);
-    Require(ferror_nid_postfix(&wideIo));
     clearerr_nid_postfix(&wideIo);
+    *__error_nid_postfix() = 0;
+    Require(fgetws_nid_postfix(wideBuf, 0, &wideIo) == nullptr && *__error_nid_postfix() == 0);
+    Require(fgetws_nid_postfix(wideBuf, -1, &wideIo) == nullptr && *__error_nid_postfix() == 0);
+    Require(!ferror_nid_postfix(&wideIo));
     Require(fgetws_nid_postfix(nullptr, 16, &wideIo) == nullptr && *__error_nid_postfix() == 22);
     Require(ferror_nid_postfix(&wideIo));
     clearerr_nid_postfix(&wideIo);
@@ -718,7 +757,7 @@ int main(int argc, char** argv) {
     wideBuf[0] = u'X';
     wideBuf[1] = u'Y';
     std::rewind(wideIo.GetHandle());
-    Require(fgetws_nid_postfix(wideBuf, 1, &wideIo) == wideBuf && wideBuf[0] == 0 && wideBuf[1] == u'Y');
+    Require(fgetws_nid_postfix(wideBuf, 1, &wideIo) == nullptr && wideBuf[0] == u'X' && wideBuf[1] == u'Y');
     Require(fgetc_nid_postfix(&wideIo) == 'H');
     wideIo.Close();
 
@@ -742,7 +781,7 @@ int main(int argc, char** argv) {
     Require(fputc_nid_postfix(0xff, &midErr) == 0xff);
     std::rewind(midErr.GetHandle());
     char16_t midBuf[16]{};
-    Require(fgetws_nid_postfix(midBuf, 16, &midErr) == nullptr);
+    Require(fgetws_nid_postfix(midBuf, 16, &midErr) == midBuf && midBuf[0] == u'A' && midBuf[1] == 0);
     Require(ferror_nid_postfix(&midErr));
     midErr.Close();
 
@@ -875,7 +914,42 @@ int main(int argc, char** argv) {
     CheckUnlockedStreams();
     CheckUnlockedStreamLock(false);
     CheckUnlockedStreamLock(true);
+    CheckUnlockedStreamLock(false, feof_unlocked_nid_postfix);
+    CheckUnlockedStreamLock(false, ferror_unlocked_nid_postfix);
     CheckTryLock();
     CheckUnlockedQueries();
-    return CheckBinaryModes() ? 0 : 1;
+    if (!CheckBinaryModes()) return 1;
+#ifdef _WIN32
+    CheckStandardStreamDeleteSharing();
+    const std::string standardFilename = "anyps5-standard-reopen-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(freopen_nid_postfix(standardFilename.c_str(), "w", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
+    const HANDLE hostOutput = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    Require(hostOutput != nullptr && hostOutput != INVALID_HANDLE_VALUE);
+    Require(hostOutput != reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(stdout))));
+    DWORD handleFlags = 0;
+    Require(::GetHandleInformation(hostOutput, &handleFlags) != 0);
+    constexpr char hostMessage[] = "host stdout preserved\n";
+    DWORD hostWritten = 0;
+    Require(::WriteFile(hostOutput, hostMessage, sizeof(hostMessage) - 1, &hostWritten, nullptr) != 0 && hostWritten == sizeof(hostMessage) - 1);
+    Require(printf_nid_postfix("standard output") == 15 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    { std::ifstream input(standardFilename, std::ios::binary); std::string contents; std::getline(input, contents);
+      Require(contents == "standard output"); }
+    const std::string movedFilename = standardFilename + "-moved";
+    std::error_code renameError;
+    std::filesystem::rename(standardFilename, movedFilename, renameError);
+    Require(!renameError && !std::filesystem::exists(standardFilename) && std::filesystem::exists(movedFilename));
+    Require(printf_nid_postfix(" continued") == 10 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    { std::ifstream input(movedFilename, std::ios::binary); std::string contents; std::getline(input, contents);
+      Require(contents == "standard output continued"); }
+    Require(std::filesystem::remove(movedFilename));
+    Require(!std::filesystem::exists(movedFilename));
+    Require(printf_nid_postfix(" after delete") == 13 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    const std::string exclusiveFilename = "anyps5-standard-exclusive-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    { std::ofstream out(exclusiveFilename, std::ios::binary); out << "existing"; }
+    Require(freopen_nid_postfix(exclusiveFilename.c_str(), "wx", __stdoutp_nid_postfix) == nullptr && *__error_nid_postfix() == 17);
+    Require(std::filesystem::remove(exclusiveFilename));
+    Require(printf_nid_postfix("closed") == -1 && *__error_nid_postfix() == 9);
+    Require(std::fputs("host stdout intact\n", stdout) >= 0 && std::fflush(stdout) == 0);
+#endif
+    return 0;
 }

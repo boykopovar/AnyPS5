@@ -43,6 +43,10 @@ def compute_nid(symbol):
     return "".join(out)
 
 
+def strip_nid_postfix(name):
+    return re.sub(r"_nid_disambig[0-9]+$", "", name.removesuffix(NID_POSTFIX))
+
+
 def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,12 +130,10 @@ def collect_real_names():
         for match in source_definitions(text):
             name = match.group(1)
             names.add(name)
-            if name.endswith(NID_POSTFIX):
-                names.add(name[:-len(NID_POSTFIX)])
+            names.add(strip_nid_postfix(name))
         for name in source_assembly_definitions(text):
             names.add(name)
-            if name.endswith(NID_POSTFIX):
-                names.add(name[:-len(NID_POSTFIX)])
+            names.add(strip_nid_postfix(name))
     return names
 
 
@@ -170,15 +172,25 @@ def nid_arguments(arguments, options):
     return normalized
 
 
+def symbol_file(path):
+    if path == "-":
+        text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
+    else:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r"))]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Suggest real names for Unknown NID stubs")
     parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"),
-                        help="NID database CSV (downloaded to a cache dir by default)")
+                        help="NID database CSV; defaults to $ANYPS5_NID_DB, then to a copy downloaded to a cache dir")
     parser.add_argument("--nid", action="append", default=None,
                         help="resolve only these NIDs instead of scanning the tree")
     parser.add_argument("--name", "--symbol", dest="name", action="append", default=None,
                         help="compute NIDs for these symbol names")
+    parser.add_argument("--from-file", action="append", default=[], metavar="PATH",
+                        help="append symbol names from a UTF-8 file, one nonempty line per name; repeat or use - for stdin")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
     options = [option for action in parser._actions for option in action.option_strings]
@@ -188,8 +200,14 @@ def main(argv=None):
     requested_nids = "--nid" in requested_options
     if requested_nids and requested_options & {"--name", "--symbol"}:
         parser.error("--name/--symbol cannot be combined with --nid")
-    if requested_options & {"--name", "--symbol"}:
-        rows = [{"name": name, "nid": compute_nid(name)} for name in (args.name or [])]
+    if requested_nids and "--from-file" in requested_options:
+        parser.error("--from-file cannot be combined with --nid")
+    if requested_options & {"--name", "--symbol", "--from-file"}:
+        try:
+            names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]
+        except (OSError, UnicodeError) as error:
+            parser.error(str(error))
+        rows = [{"name": name, "nid": compute_nid(name)} for name in names]
         if args.json:
             print(json.dumps({"symbols": rows}, indent=1))
         else:

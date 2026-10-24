@@ -73,8 +73,13 @@ static void CheckOverrides(const std::string& directory, const std::string& path
 int main() {
 #ifndef _WIN32
     const auto bundle = std::filesystem::absolute("host_bundle.pem");
-    const std::string expected = "-----BEGIN CERTIFICATE-----\nMIIBAA==\n-----END CERTIFICATE-----\n";
-    { std::ofstream file(bundle, std::ios::binary | std::ios::trunc); file << expected; }
+    const std::string expected = "-----BEGIN CERTIFICATE-----\nMIIBAA==\n-----END CERTIFICATE-----\n"
+                                 "-----BEGIN CERTIFICATE-----\r\nMIIBAg==\r\n-----END CERTIFICATE-----\r\n";
+    const std::string input = "Bag Attributes\r\n    friendlyName: should-not-be-copied\r\n"
+                              "-----BEGIN PRIVATE KEY-----\r\nprivate-key-material\r\n-----END PRIVATE KEY-----\r\n" +
+                              expected + "subject=should-not-be-copied\r\n"
+                              "-----BEGIN RSA PRIVATE KEY-----\r\nmore-private-key-material\r\n-----END RSA PRIVATE KEY-----\r\n";
+    { std::ofstream file(bundle, std::ios::binary | std::ios::trunc); file << input; }
     Require(setenv("SSL_CERT_FILE", bundle.c_str(), 1) == 0);
 #endif
     const std::string directory = std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/cert";

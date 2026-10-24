@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include <source_location>
 #include <string>
 #include <vector>
 extern "C" {
@@ -21,7 +23,12 @@ int APS5_VABI sceKernelGetModuleInfo2(KernelModule, ModuleInfo*);
 std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void**, std::size_t*);
 std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo*);
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const std::source_location& location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "module info check failed at line %u\n", location.line());
+        std::abort();
+    }
+}
 template<typename TFunction>
 static bool ThrowsInvalidArgument(TFunction function) {
     try {
@@ -55,7 +62,11 @@ int main(int argc, char** argv) {
             executable = (segment.prot & 5) == 5;
     }
     Require(executable);
+#if defined(_WIN32) && defined(__SEH__)
+    Require(info.eh_frame_addr == 0 && info.eh_frame_size == 0);
+#else
     Require(info.eh_frame_addr != 0 && info.eh_frame_size != 0);
+#endif
 #ifndef _WIN32
     Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0);
 #endif
@@ -172,6 +183,8 @@ int main(int argc, char** argv) {
     Require(reloadedAdd != nullptr);
     const auto fresh = Query(reloadedAdd, 0);
     Require(fresh.eh_frame_size == info.eh_frame_size && fresh.eh_frame_hdr_size == info.eh_frame_hdr_size);
-    Require(fresh.eh_frame_addr - fresh.segments[0].address == info.eh_frame_addr - info.segments[0].address);
+    if (info.eh_frame_addr)
+        Require(fresh.eh_frame_addr - fresh.segments[0].address == info.eh_frame_addr - info.segments[0].address);
+    else Require(fresh.eh_frame_addr == 0);
     Require(dlclose_nid_postfix(reloaded) == 0);
 }

@@ -6,6 +6,9 @@
 #include <exception>
 #include "SceTypes.hpp"
 
+constexpr std::uint16_t kTouchPadWidth = 1920;
+constexpr std::uint16_t kTouchPadHeight = 1080;
+
 struct PadTouchPoint {
     bool active = false;
     std::uint16_t x = 0;

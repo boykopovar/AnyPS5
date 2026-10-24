@@ -26,6 +26,8 @@ std::int64_t APS5_VABI mktime_nid_postfix(GuestTm*);
 std::size_t APS5_VABI strftime_nid_postfix(char*, std::size_t, const char*, const GuestTm*);
 void APS5_VABI tzset_nid_postfix(void);
 extern char* tzname_nid_postfix[2];
+extern std::int64_t timezone_nid_postfix;
+extern int daylight_nid_postfix;
 char* APS5_VABI ctime_nid_postfix(const std::int64_t*);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
@@ -343,16 +345,22 @@ static void CheckGuestZone() {
     tzset_nid_postfix();
     Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 21 && result.tm_mday == 2 && result.tm_gmtoff == -10800,
         "tzset ignored the guest TZ");
+    Require(timezone_nid_postfix == 10800 && daylight_nid_postfix == 1, "tzset did not set timezone and daylight for UTC+3");
     Require(setenv_nid_postfix("TZ", "", 1) == 0, "Could not empty the guest time zone");
     tzset_nid_postfix();
     Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 0 && result.tm_mday == 3 && result.tm_gmtoff == 0,
         "An empty guest TZ was not treated as UTC");
+    Require(timezone_nid_postfix == 0 && daylight_nid_postfix == 1, "tzset did not set timezone and daylight for UTC");
+    Require(setenv_nid_postfix("TZ", "EST5EDT", 1) == 0, "Could not set a daylight saving guest time zone");
+    tzset_nid_postfix();
+    Require(timezone_nid_postfix == 18000 && daylight_nid_postfix == 1, "timezone is not the standard offset of a daylight saving zone");
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
     tzset_nid_postfix();
     Require(setenv_nid_postfix("TZ", "EST5", 1) == 0, "Could not set the guest time zone without tzset");
     Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 19 && result.tm_gmtoff == -18000,
         "localtime ignored a guest TZ change made without tzset");
-    Require(std::strcmp(tzname_nid_postfix[0], "EST") == 0, "Implicit guest TZ update did not refresh tzname");
+    Require(std::strcmp(tzname_nid_postfix[0], "EST") == 0 && std::strcmp(tzname_nid_postfix[1], "   ") == 0,
+        "Implicit guest TZ update did not refresh tzname");
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
     tzset_nid_postfix();
 }
@@ -372,7 +380,10 @@ static void CheckZoneRace() {
     std::atomic<bool> stop{false};
     std::atomic<int> torn{0};
     std::thread flipper([&] {
-        for (bool west = false; !stop.load(); west = !west) setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
+        for (bool west = false; !stop.load(); west = !west) {
+            setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
+            std::this_thread::yield();
+        }
     });
     std::array<std::thread, 6> readers;
     for (auto& reader : readers) {
@@ -520,8 +531,9 @@ int main() {
     GuestTm shifted{};
     Require(localtime_s_nid_postfix(&epoch, &shifted) == &shifted && shifted.tm_hour == 5 && shifted.tm_gmtoff == 18000,
         "tzset did not pick up the new TZ");
-    Require(tzname_nid_postfix[0] != nullptr && std::strcmp(tzname_nid_postfix[0], "UTC") == 0 && tzname_nid_postfix[1] != nullptr,
-        "tzname does not name the zone tzset set");
+    Require(tzname_nid_postfix[0] != nullptr && std::strcmp(tzname_nid_postfix[0], "UTC") == 0 && tzname_nid_postfix[1] != nullptr &&
+            std::strcmp(tzname_nid_postfix[1], "   ") == 0,
+        "tzname does not name the zone tzset set and leave the daylight name blank");
     Require(setenv_nid_postfix("TZ", "EST5EDT", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
     Require(std::strcmp(tzname_nid_postfix[0], "EST") == 0 && std::strcmp(tzname_nid_postfix[1], "EDT") == 0,

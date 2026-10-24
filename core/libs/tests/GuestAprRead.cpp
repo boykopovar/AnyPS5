@@ -228,13 +228,39 @@ private:
     void* pointer = nullptr;
     void* handler = nullptr;
 };
+
+struct SmallStackRead {
+    const Fixture* fixture = nullptr;
+    std::vector<std::uint8_t>* storage = nullptr;
+    std::string error;
+};
+
+DWORD WINAPI ReadOnSmallStack(void* parameter) {
+    auto& read = *static_cast<SmallStackRead*>(parameter);
+    try {
+        CheckRead(*read.fixture, read.storage->data() + 17, 65537, 0);
+    } catch (const std::exception& failure) {
+        read.error = failure.what();
+    }
+    return 0;
+}
+
+void TestSmallStack(const Fixture& fixture) {
+    std::vector<std::uint8_t> storage(131200, 0xCC);
+    SmallStackRead read{&fixture, &storage, {}};
+    const HANDLE thread = CreateThread(nullptr, 64u * 1024u, ReadOnSmallStack, &read, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    Require(thread != nullptr, "cannot start the small-stack APR reader");
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+    Require(read.error.empty(), read.error.c_str());
+}
 #endif
 
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected host, direct, eof, errors or fault");
+        Require(argc == 2, "expected host, direct, eof, errors, streams, fault or stack");
         const Fixture fixture;
         const std::string mode = argv[1];
         if (mode == "host") {
@@ -254,6 +280,8 @@ int main(int argc, char** argv) {
             const FaultBuffer storage;
             TestRead(fixture, storage.Data());
             Require(committedPages > 2, "APR did not exercise demand-committed destination pages");
+        } else if (mode == "stack") {
+            TestSmallStack(fixture);
 #endif
         } else {
             throw std::runtime_error("unknown APR read case");

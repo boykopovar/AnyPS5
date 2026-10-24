@@ -6,16 +6,31 @@ import shlex
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP")
-DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MJ")
+DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 
 
-def capture(command, cwd=None):
-    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+def capture(command, cwd=None, encoding="utf-8"):
+    return subprocess.run(command, capture_output=True, text=True, encoding=encoding,
                           errors="replace", cwd=cwd)
+
+
+def ninja_encoding(ninja):
+    if sys.platform != "win32":
+        return "utf-8"
+    result = capture([ninja, "-t", "wincodepage"])
+    if result.returncode != 0:
+        raise ValueError(f"ninja -t wincodepage: {result.stderr.strip() or result.stdout.strip()}")
+    declared = result.stdout.strip()
+    encodings = {"Build file encoding: UTF-8": "utf-8", "Build file encoding: ANSI": "mbcs"}
+    if declared not in encodings:
+        raise ValueError(f"unsupported Ninja build-file encoding: {declared!r}")
+    return encodings[declared]
 
 
 def repository():
@@ -25,19 +40,53 @@ def repository():
     return Path(result.stdout.strip())
 
 
+def validate_arguments(arguments):
+    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
+        raise ValueError("arguments must be a nonempty list of strings with an executable")
+
+
+def compilation_database(text, source, skip_empty_commands=False):
+    database = json.loads(text)
+    if not isinstance(database, list):
+        raise ValueError(f"{source}: expected an array of command objects")
+    commands = []
+    for index, entry in enumerate(database):
+        context = f"{source}: entry {index}"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{context}: expected a command object")
+        for field in ("directory", "file"):
+            if field not in entry:
+                raise ValueError(f"{context}: missing {field}")
+            if not isinstance(entry[field], str) or not entry[field]:
+                raise ValueError(f"{context}: {field} must be a nonempty string")
+        if skip_empty_commands and "arguments" not in entry and entry.get("command") == "":
+            continue
+        if "arguments" in entry:
+            try:
+                validate_arguments(entry["arguments"])
+            except ValueError as error:
+                raise ValueError(f"{context}: {error}") from error
+        elif "command" not in entry:
+            raise ValueError(f"{context}: expected arguments or command")
+        elif not isinstance(entry["command"], str) or not entry["command"].strip():
+            raise ValueError(f"{context}: command must be a nonempty string")
+        commands.append(entry)
+    return commands
+
+
 def entries(build):
     if not build.is_dir():
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
-        return json.loads(manifest.read_text(encoding="utf-8"))
+        return compilation_database(manifest.read_text(encoding="utf-8-sig"), manifest)
     ninja = shutil.which("ninja")
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
-    result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"])
+    result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
     if result.returncode != 0:
         raise ValueError(f"ninja -t compdb: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
 def entry_key(entry, root):
@@ -101,8 +150,10 @@ def syntax_only(entry, source):
 
 
 def syntax_arguments(arguments, directory, source):
-    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
-        raise ValueError("arguments must be a nonempty list of strings with an executable")
+    validate_arguments(arguments)
+    for argument in arguments[1:]:
+        if argument.startswith("@"):
+            raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")
     wanted = source.resolve()
     trimmed = []
     index = 0
@@ -111,7 +162,7 @@ def syntax_arguments(arguments, directory, source):
         if argument in DROP_WITH_VALUE:
             index += 2
             continue
-        if argument in DROP or argument.startswith("-MJ"):
+        if argument in DROP or argument.startswith(("-MT", "-MF", "-MQ", "-MJ")):
             index += 1
             continue
         if not argument.startswith("-"):
@@ -127,31 +178,50 @@ def syntax_arguments(arguments, directory, source):
     return trimmed
 
 
-def check(root, build, files):
+def check_source(task):
+    source, name, build, configurations = task
+    if configurations is None:
+        return 0, 0, f"{name}: no compile command in {build}\n"
+    failed = False
+    diagnostics = []
+    for entry in configurations:
+        command = (syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
+                   if "arguments" in entry else syntax_only(entry, source))
+        result = subprocess.run(command, cwd=entry["directory"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode == 0:
+            continue
+        failed = True
+        output = (result.stdout or "") + (result.stderr or "")
+        diagnostics.append(output if output.endswith("\n") else output + "\n")
+    return 1, int(failed), "".join(diagnostics)
+
+
+def check(root, build, files, jobs=1):
     commands = index(build, root)
-    checked = 0
-    failed = 0
+    tasks = []
     for file in files:
         source = file.resolve()
-        name = os.path.relpath(source, root).replace(os.sep, "/")
-        configurations = commands.get(name)
-        if configurations is None:
-            print(f"{name}: no compile command in {build}", file=sys.stderr)
-            continue
-        checked += 1
-        source_failed = False
-        for entry in configurations:
-            command = (syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
-                       if "arguments" in entry else syntax_only(entry, source))
-            result = subprocess.run(command, cwd=entry["directory"],
-                                    capture_output=True, text=True, encoding="utf-8", errors="replace")
-            if result.returncode == 0:
-                continue
-            source_failed = True
-            output = (result.stdout or "") + (result.stderr or "")
-            sys.stderr.write(output if output.endswith("\n") else output + "\n")
-        failed += int(source_failed)
+        try:
+            name = source.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            name = source.as_posix()
+        tasks.append((source, name, build, commands.get(name)))
+    checked = failed = 0
+    with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
+        results = executor.map(check_source, tasks) if executor is not None else map(check_source, tasks)
+        for count, failures, diagnostics in results:
+            checked += count
+            failed += failures
+            sys.stderr.write(diagnostics)
     return checked, failed
+
+
+def positive_integer(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 def main(argv=None):
@@ -162,6 +232,8 @@ def main(argv=None):
         description="compile the changed translation units only, to check a change builds without a full build")
     parser.add_argument("--build", type=Path, default=Path("build"),
                         help="a configured Ninja build directory of this checkout (default: build)")
+    parser.add_argument("--jobs", type=positive_integer, default=1, metavar="N",
+                        help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
     parser.add_argument("--base", default="origin/main",
                         help="branch the change is against (default: origin/main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
@@ -172,7 +244,7 @@ def main(argv=None):
         if not files:
             print(f"no changed translation unit against {args.base}")
             return 0
-        checked, failed = check(root, args.build, files)
+        checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))
     if failed:

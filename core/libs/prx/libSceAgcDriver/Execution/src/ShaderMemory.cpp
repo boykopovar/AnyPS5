@@ -18,6 +18,8 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+#include <mutex>
+#include <unordered_map>
 
 namespace AgcDriver {
 namespace {
@@ -130,6 +132,23 @@ std::vector<std::unique_ptr<TPage>>& pagePool() {
 
 constexpr std::size_t PagePoolLimit = 64;
 
+bool sharedPagePools() {
+    static const bool enabled = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    return enabled;
+}
+
+template<typename TPage>
+struct SharedPagePool {
+    std::mutex mutex;
+    std::vector<std::unique_ptr<TPage>> pages;
+};
+
+template<typename TPage>
+SharedPagePool<TPage>& sharedPagePool() {
+    static auto* pool = new SharedPagePool<TPage>();
+    return *pool;
+}
+
 }
 
 void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
@@ -144,6 +163,15 @@ ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regio
 }
 
 ShaderMemory::~ShaderMemory() {
+    if (sharedPagePools() && !pages.empty()) {
+        auto& shared = sharedPagePool<Page>();
+        std::lock_guard lock(shared.mutex);
+        for (const auto& [base, page] : pages) {
+            if (shared.pages.size() < 1024) shared.pages.emplace_back(page);
+            else delete page;
+        }
+        return;
+    }
     auto& pool = pagePool<Page>();
     for (const auto& [base, page] : pages) {
         if (pool.size() < PagePoolLimit) pool.emplace_back(page);
@@ -191,6 +219,14 @@ std::size_t ShaderMemory::pageAtOrAfter(std::uint64_t base) const {
 
 ShaderMemory::Page& ShaderMemory::addPage(std::size_t position, std::uint64_t base) {
     auto& pool = pagePool<Page>();
+    if (pool.empty() && sharedPagePools()) {
+        auto& shared = sharedPagePool<Page>();
+        std::lock_guard lock(shared.mutex);
+        for (std::size_t i = 0; i < 32 && !shared.pages.empty(); ++i) {
+            pool.push_back(std::move(shared.pages.back()));
+            shared.pages.pop_back();
+        }
+    }
     std::unique_ptr<Page> owned;
     if (pool.empty()) {
         owned = std::make_unique<Page>();

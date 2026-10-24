@@ -11,7 +11,7 @@
 #include <new>
 #include <stdexcept>
 #include <system_error>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -53,11 +53,12 @@ constexpr int GuestAdviceCore = 9;
 constexpr int GuestAdviceProtect = 10;
 constexpr int GuestLockCurrent = 0x1;
 constexpr int GuestLockFuture = 0x2;
+constexpr int GuestDefinedProtection = 0x3F7;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 class ScopedDescriptor {
 public:
     explicit ScopedDescriptor(int value) noexcept : descriptor(fcntl(value, F_DUPFD_CLOEXEC, 0)), error(descriptor < 0 ? errno : 0) {}
@@ -155,7 +156,9 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!RoundLength(length, rounded) || (protection & ~7) != 0)
         return failed(GuestInvalid);
     if ((flags & (GuestMapExclusive | GuestMapFixed)) == GuestMapExclusive) return failed(GuestInvalid);
-    const int mappingFlags = flags & ~GuestAlignedSuper;
+    if ((flags & (GuestShared | GuestPrivate)) == (GuestShared | GuestPrivate)) return failed(GuestInvalid);
+    int mappingFlags = flags & ~GuestAlignedSuper;
+    if ((mappingFlags & (GuestShared | GuestPrivate | GuestAnonymous)) == GuestAnonymous) mappingFlags |= GuestPrivate;
     const bool fixedAnonymous = (mappingFlags & ~(GuestMapFixed | GuestMapExclusive)) == (GuestPrivate | GuestAnonymous)
                                 && (mappingFlags & GuestMapFixed) != 0;
     if (mappingFlags == (GuestPrivate | GuestAnonymous) || fixedAnonymous) {
@@ -168,7 +171,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #endif
         const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
         const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
-        void* mapped = fixedAnonymous ? address : nullptr;
+        void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
@@ -195,7 +198,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
         static_cast<std::uint64_t>(offset) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - rounded)
         return failed(GuestInvalid);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const ScopedDescriptor pinnedDescriptor(descriptor);
     if (pinnedDescriptor.Get() < 0) return failed(pinnedDescriptor.Error());
     const int mappingDescriptor = pinnedDescriptor.Get();
@@ -279,7 +282,7 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
-        if (DoMprotect(address, length, protection) != 0) return failed(GuestInvalid);
+        if (DoMprotect(address, length, protection & GuestDefinedProtection) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);

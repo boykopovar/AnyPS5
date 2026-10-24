@@ -165,7 +165,7 @@ def scan_library(path):
     for source in path.rglob("*.cpp"):
         if "tests" in source.relative_to(path).parts:
             continue
-        text = code(source.read_text(errors="ignore"))
+        text = code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
         for match in DEFINITION.finditer(text):
@@ -186,7 +186,7 @@ def scan_library(path):
     if not (done or todo):
         cmake = path / "CMakeLists.txt"
         texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
-        texts += [(SOURCE_SHARED, source.read_text(errors="ignore")) for source in sorted(path.glob("*.cpp"))]
+        texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
         owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
         owners = [o for o in owners if o != path.name and (path.parent / o).is_dir()]
         if owners:
@@ -456,6 +456,31 @@ def write_site(output, libraries, shaders):
     (output / "progress.html").write_text(summary(libraries, shaders), encoding="utf-8")
 
 
+def validate_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        raise ValueError("snapshot must be an object")
+    for section in ("libraries", "shaders"):
+        data = snapshot.get(section)
+        if not isinstance(data, dict):
+            raise ValueError(f"{section} must be an object")
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            raise ValueError(f"{section}.groups must be a list")
+        percent = data.get("percent")
+        if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
+            raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        for index, group in enumerate(groups):
+            location = f"{section}.groups[{index}]"
+            if not isinstance(group, dict) or not isinstance(group.get("name"), str):
+                raise ValueError(f"{location} must be an object with a string name")
+            if "shared_sources" in group and not isinstance(group["shared_sources"], str):
+                raise ValueError(f"{location}.shared_sources must be a string")
+            for field in ("done_names", "todo_names", "inert_names"):
+                values = group.get(field, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError(f"{location}.{field} must be a list of strings")
+
+
 def main(argv=None):
     global PRX, OPCODES
     previous = PRX, OPCODES
@@ -473,7 +498,18 @@ def main(argv=None):
         if args.compare:
             if args.module or args.json:
                 parser.error("--compare does not combine with --module or --json")
-            base, head = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
+            snapshots = []
+            for path in args.compare:
+                try:
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, ValueError) as error:
+                    parser.error(f"{path}: {error}")
+            for path, snapshot in zip(args.compare, snapshots):
+                try:
+                    validate_snapshot(snapshot)
+                except ValueError as error:
+                    parser.error(f"{path}: {error}")
+            base, head = snapshots
             print(report(base, head), end="")
             return 0
         if not args.output and not (args.module or args.json):
@@ -481,13 +517,19 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
-        libraries, shaders = collect_libraries(), collect_shaders()
+        try:
+            libraries, shaders = collect_libraries(), collect_shaders()
+        except FileNotFoundError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
         try:
             libraries = select_libraries(libraries, args.module or [])
         except ValueError as error:
             parser.error(str(error))
         if args.output:
-            write_site(args.output, libraries, shaders)
+            try:
+                write_site(args.output, libraries, shaders)
+            except OSError as error:
+                parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:

@@ -16,6 +16,8 @@ std::uint64_t DeadlineNanos(std::uint64_t microseconds);
 std::uint64_t RemainingMicros(std::uint64_t deadlineNanos);
 void SleepNanos(std::uint64_t nanos);
 void SleepUntil(std::uint64_t deadlineNanos);
+bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_t>& counter, std::uint64_t observed);
+void WakeChangeSleepers();
 
 struct Waiter;
 

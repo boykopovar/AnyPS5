@@ -34,8 +34,12 @@ static void RequireRunning() {
 }
 
 int main() {
+    SaveDataDialogParam param{};
+    param.size = sizeof(param);
+
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "initial status");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate before init");
+    Require(sceSaveDataDialogOpen(&param) == SAVE_DATA_DIALOG_ERROR_INVALID_STATE, "open before init");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close before init");
     SaveDataDialogResult uninitResult{};
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before init");
@@ -44,6 +48,7 @@ int main() {
 
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
+    Require(sceSaveDataDialogOpen(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with null param");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close while initialized not running");
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before open");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc while initialized not running");
@@ -54,7 +59,7 @@ int main() {
     items.dir_names = names;
     items.dir_names_num = 2;
     int context = 42;
-    SaveDataDialogParam param{};
+    param = {};
     param.size = sizeof(param);
     param.mode = SAVE_DATA_DIALOG_MODE_PROGRESS_BAR;
     param.items = &items;
@@ -80,6 +85,8 @@ int main() {
         SaveDataDialogResult result{};
         result.dir_name = &selected;
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
+        Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with null result pointer");
         Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
                 result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
                 "save result must preserve its mode, directory and caller context");
@@ -99,6 +106,38 @@ int main() {
     Require(sceSaveDataDialogTerminate() == 0, "terminate");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate when already terminated");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
+
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for empty selection");
+    SaveDataDialogParam emptySelectionParam{};
+    emptySelectionParam.size = sizeof(emptySelectionParam);
+    emptySelectionParam.mode = 1;
+    Require(sceSaveDataDialogOpen(&emptySelectionParam) == 0, "open selection dialog without items");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED, "selection finishes immediately");
+    SaveDataDirName emptySelectionDir{};
+    std::memset(emptySelectionDir.data, 'X', sizeof(emptySelectionDir.data));
+    SaveDataDialogResult emptySelectionResult{};
+    emptySelectionResult.dir_name = &emptySelectionDir;
+    Require(sceSaveDataDialogGetResult(&emptySelectionResult) == 0, "read empty selection result");
+    Require(emptySelectionDir.data[0] == '\0', "empty selection directory name must be null-terminated");
+    Require(emptySelectionResult.mode == emptySelectionParam.mode &&
+            emptySelectionResult.result == SAVE_DATA_DIALOG_RESULT_OK, "selection result status");
+    Require(sceSaveDataDialogTerminate() == 0, "terminate selection");
+
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for empty result");
+    param = {};
+    param.size = sizeof(param);
+    param.mode = SAVE_DATA_DIALOG_MODE_PROGRESS_BAR;
+    Require(sceSaveDataDialogOpen(&param) == 0, "open progress without items");
+    Require(sceSaveDataDialogClose(nullptr) == 0, "close empty progress");
+    Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED, "finish empty progress");
+    SaveDataDirName emptySelected{};
+    std::memset(emptySelected.data, 'X', sizeof(emptySelected.data));
+    SaveDataDialogResult emptyResult{};
+    emptyResult.dir_name = &emptySelected;
+    Require(sceSaveDataDialogGetResult(&emptyResult) == 0, "read empty result");
+    Require(emptySelected.data[0] == '\0', "empty directory name must be null-terminated");
+    Require(sceSaveDataDialogTerminate() == 0, "terminate empty progress");
+
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc after terminate");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value after terminate");
 }

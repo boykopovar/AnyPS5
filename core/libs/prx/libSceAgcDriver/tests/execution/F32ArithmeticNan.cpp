@@ -23,6 +23,7 @@ constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+bool FusedExactArithmetic = false;
 
 alignas(256) constexpr std::array<std::uint32_t, 57> Code{
     0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
@@ -172,7 +173,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("f32 arithmetic nan: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Require(actual == expected, std::string("f32 arithmetic nan: ") + (FusedExactArithmetic ? "fused " : "") + "lane " + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 bool IsNan32(std::uint32_t value) {
@@ -202,6 +203,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     };
     request.useCache = false;
     request.context.floatMode = floatMode;
+    request.target.fusedExactArithmetic = FusedExactArithmetic;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -223,12 +225,16 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check(ExpectedNoIeee, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check(ExpectedNoIeee, "IEEE=0");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
-        Check(ExpectedIeee, "IEEE=1");
+        for (const bool fused : {false, true}) {
+            if (!fused && device->Target().fusedExactArithmetic) continue;
+            FusedExactArithmetic = fused;
+            Run(*device, std::nullopt);
+            Check(ExpectedNoIeee, "no float mode");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+            Check(ExpectedNoIeee, "IEEE=0");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+            Check(ExpectedIeee, "IEEE=1");
+        }
         std::puts("f32 arithmetic nan tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -341,7 +341,7 @@ void TestMultisampleDepthOwnership(Context context) {
     ClearDepthSurfaces(context.device);
     context.imageFormatProperties = sampledDepthProperties;
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a supported sampled MSAA format must retain attachment rendering without import eligibility");
-    Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0, "a supported MSAA depth image must allow sampled views");
+    Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0, "a native MSAA depth attachment must keep sampled usage off when the shadow path is available");
     ClearDepthSurfaces(context.device);
     const auto destroyed = imagesDestroyed;
     auto owner = std::make_shared<OwnedImage>(context, newHandle<VkImage>(), newHandle<VkDeviceMemory>());

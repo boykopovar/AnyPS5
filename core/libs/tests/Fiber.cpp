@@ -270,6 +270,7 @@ int main() {
     Require(sceFiberStartContextSizeCheck(1) == FiberErrorInvalid, "start with flags");
     Require(_sceFiberInitializeImpl_nid_postfix(checked, "unchecked", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0) == 0, "initialize unchecked");
     Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == ~0ull, "no margin without size check");
+    Require(info.entry == CheckedEntry, "info preserves the guest entry callback type");
     Require(sceFiberFinalize(checked) == 0, "finalize unchecked");
     Require(sceFiberStartContextSizeCheck(0) == 0, "start size check");
     Require(sceFiberStartContextSizeCheck(0) == FiberErrorState, "start twice");

@@ -2,14 +2,16 @@
 #define ELFPATCHER_GUESTMODULEWRITER_HPP
 
 #include <relinker/guest/GuestImage.hpp>
+#include <functional>
+#include <string_view>
 
 namespace Elfpatcher {
 
 class GuestModuleWriter {
 public:
     std::vector<std::uint8_t> WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath) const;
-    std::vector<std::uint8_t> WriteWindows(const Relinker::GuestImage& image, Domain::GuestRuntime& runtime) const;
-    std::vector<std::uint8_t> WriteMacOs(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath) const;
+    std::vector<std::uint8_t> WriteWindows(const Relinker::GuestImage& image, Domain::GuestRuntime& runtime, const std::function<void(std::string_view)>& message = {}) const;
+    std::vector<std::uint8_t> WriteMacOs(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath, const std::function<void(std::string_view)>& message = {}) const;
 };
 
 }

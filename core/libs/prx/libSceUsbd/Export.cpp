@@ -534,4 +534,105 @@ void APS5_VABI sceUsbdUnrefDevice(void* device) {
     libusb_unref_device(host);
 }
 
+std::int32_t APS5_VABI sceUsbdClearHalt(void* deviceHandle, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdDetachKernelDriver(void* deviceHandle, int interfaceNumber) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdEventHandlerActive() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void* APS5_VABI sceUsbdGetDevice(void* deviceHandle) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUsbdGetDeviceSpeed(void* device) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetMaxIsoPacketSize(void* device, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetMaxPacketSize(void* device, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdHandleEvents() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdHandleEventsLocked(UsbdTimeval* timeout) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI sceUsbdLockEventWaiters() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI sceUsbdLockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void* APS5_VABI sceUsbdOpenDeviceWithVidPid(std::uint16_t vendorId, std::uint16_t productId) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdSetInterfaceAltSetting(void* deviceHandle, int interfaceNumber, int alternateSetting) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdTryLockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI sceUsbdUnlockEventWaiters() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI sceUsbdUnlockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+std::int32_t APS5_VABI sceUsbdWaitForEvent(UsbdTimeval* timeout) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

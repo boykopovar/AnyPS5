@@ -20,13 +20,47 @@ static int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t val
  return USER_SERVICE_OK;
 }
 
+
+extern "C" int APS5_VABI sceSystemServiceParamGetInt(int param_id, int* value);
+
+// Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
+// the keyboard type of the configured system language and 0 for the input variants (see
+// docs/dev/debt/libSceUserService.md).
+static int32_t KeyboardTypeForSystemLanguage() {
+ constexpr int param_id_lang = 1;
+ constexpr int32_t fallback = 20;
+ constexpr int32_t keyboard_types[] = {37, 20, 26, 21, 17, 28, 29, 33, 34, 38, 39, 40, 23, 35, 16,
+                                       30, 31, 32, 19, 36, 22, 41, 25, 44, 48, 43, 47, 42, 46, 45};
+ int language = -1;
+ if (sceSystemServiceParamGetInt(param_id_lang, &language) != 0 || language < 0 ||
+     language >= static_cast<int>(sizeof(keyboard_types) / sizeof(keyboard_types[0]))) {
+  return fallback;
+ }
+ return keyboard_types[language];
+}
+
+static int32_t NoInputVariant() {
+ return 0;
+}
+
+static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)()) {
+ if (type == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (user_id != USER_SERVICE_INITIAL_USER_ID) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
+ }
+ *type = value();
+ return USER_SERVICE_OK;
+}
+
 extern "C" {
 
 int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32_t* chat_transcription) {
  return ReportAccessibilitySetting(user_id, chat_transcription, 0);
 }
 
-int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable() {
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -43,7 +77,7 @@ int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibr
  return ReportAccessibilitySetting(user_id, vibration, 1);
 }
 
-int APS5_VABI sceUserServiceGetAccessibilityZoom() {
+int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -148,8 +182,11 @@ int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
  return USER_SERVICE_OK;
 }
 
-int APS5_VABI sceUserServiceInitialize(const void* params) {
- (void)params;
+static bool ValidThreadPriority(int priority) {
+ return priority >= USER_SERVICE_THREAD_PRIORITY_MIN && priority <= USER_SERVICE_THREAD_PRIORITY_MAX;
+}
+
+static int MarkInitialized() {
  if (initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
@@ -157,11 +194,20 @@ int APS5_VABI sceUserServiceInitialize(const void* params) {
  return USER_SERVICE_OK;
 }
 
-int APS5_VABI sceUserServiceInitialize2(void) {
- if (!initialized.exchange(true)) {
-  loginReported.store(false);
+int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
+ if (params != nullptr) {
+  if (!ValidThreadPriority(params->priority)) {
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
  }
- return USER_SERVICE_OK;
+ return MarkInitialized();
+}
+
+int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask) {
+ if (!ValidThreadPriority(priority)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ return MarkInitialized();
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
@@ -204,6 +250,18 @@ int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
  }
  *color = 0;
  return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetKeyboardType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, KeyboardTypeForSystemLanguage);
+}
+
+int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, NoInputVariant);
+}
+
+int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, NoInputVariant);
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {

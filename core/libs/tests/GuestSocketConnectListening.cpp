@@ -20,6 +20,7 @@ namespace {
 constexpr int Inet = 2;
 constexpr int Stream = 1;
 constexpr int ErrorNotSupported = 45;
+constexpr int ErrorInvalid = 22;
 
 void Require(bool condition, const char* what) {
     if (condition) return;
@@ -57,6 +58,12 @@ int main() {
     Require(connect_nid_postfix(listener, address.data(), 1) == -1 && *__error_nid_postfix() == shortError,
         "connect on a listening socket with a 1-byte address must fail as on any socket, not with EOPNOTSUPP");
     Require(nullError != ErrorNotSupported && shortError != ErrorNotSupported, "address errors must not be EOPNOTSUPP");
+    const int connected = socket_nid_postfix(Inet, Stream, 0);
+    Require(connected >= 0 && connect_nid_postfix(connected, address.data(), address.size()) == 0, "connect to the listener failed");
+    *__error_nid_postfix() = 0;
+    Require(listen_nid_postfix(connected, 1) == -1 && *__error_nid_postfix() == ErrorInvalid,
+        "listen on a connected socket must fail with EINVAL (22)");
+    Require(close_nid_postfix(connected) == 0, "close failed");
     Require(close_nid_postfix(plain) == 0, "close failed");
     std::array<std::uint8_t, 28> wrongFamily{28, 28};
     *__error_nid_postfix() = 0;

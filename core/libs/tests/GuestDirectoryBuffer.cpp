@@ -102,7 +102,7 @@ static void CheckReadOnlyDestination() {
         ("anyps5-directory-readonly-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     { std::ofstream file(root / "entry.bin"); Require(static_cast<bool>(file)); }
-    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     std::int64_t physical = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &physical) == 0);
@@ -110,6 +110,9 @@ static void CheckReadOnlyDestination() {
     Require(sceKernelMapDirectMemory(&mapping, page, 3, 0, physical, 0) == 0 && mapping != nullptr);
     std::int64_t base = -1;
     Require(sceKernelGetdirentries(directory, static_cast<char*>(mapping), 4096, &base) > 0);
+    Require(sceKernelClose(directory) == 0);
+    directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
     Require(sceKernelMprotect(mapping, page, 1) == 0);
     Require(sceKernelGetdirentries(directory, static_cast<char*>(mapping), 4096, &base) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelGetdirentries(12345, static_cast<char*>(mapping), 4096, &base) == SCE_KERNEL_ERROR_EBADF);
@@ -117,6 +120,7 @@ static void CheckReadOnlyDestination() {
     Require(sceKernelGetdirentries(directory, buffer.data(), static_cast<int>(buffer.size()),
         static_cast<std::int64_t*>(mapping)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelMprotect(mapping, page, 3) == 0);
+    Require(sceKernelGetdirentries(directory, buffer.data(), static_cast<int>(buffer.size()), &base) > 0);
     Require(sceKernelMunmap(mapping, page) == 0);
     Require(sceKernelReleaseDirectMemory(physical, page) == 0);
     Require(sceKernelClose(directory) == 0);

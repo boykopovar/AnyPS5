@@ -169,7 +169,7 @@ int main() {
     Require(sceKernelMkdir(nullptr, 0777) == static_cast<std::int32_t>(0x8002000eu));
     Require(sceKernelRmdir(nullptr) == static_cast<std::int32_t>(0x8002000eu));
     Require(sceKernelRename(nullptr, "dest") == static_cast<std::int32_t>(0x8002000eu));
-    Require(sceKernelRename("src", nullptr) == static_cast<std::int32_t>(0x8002000eu));
+    Require(sceKernelRename("src", nullptr) == static_cast<std::int32_t>(0x80020002u));
     Require(sceKernelRename(nullptr, nullptr) == static_cast<std::int32_t>(0x8002000eu));
     Require(close_nid_postfix(descriptor) == 0);
     const int readOnly = open_nid_postfix(fileName.c_str(), SCE_KERNEL_O_RDONLY, 0);

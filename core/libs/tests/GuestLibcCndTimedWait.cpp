@@ -1,10 +1,18 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 struct Xtime {
     std::int64_t sec;
@@ -18,11 +26,29 @@ int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
 int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
 int APS5_VABI _Cnd_init_nid_postfix(void** handle);
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle);
+int APS5_VABI _Cnd_wait_nid_postfix(void** condition, void** mutex);
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** condition, void** mutex, const Xtime* target);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+#ifdef _WIN32
+struct TimerResolution {
+    using SetTimerResolution = LONG(WINAPI*)(ULONG, BOOLEAN, PULONG);
+    SetTimerResolution set = nullptr;
+    ULONG current = 0;
+
+    TimerResolution() {
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        if (ntdll)
+            set = reinterpret_cast<SetTimerResolution>(GetProcAddress(ntdll, "NtSetTimerResolution"));
+        Require(set != nullptr && set(5000, TRUE, &current) >= 0);
+    }
+
+    ~TimerResolution() { set(5000, FALSE, &current); }
+};
+#endif
 
 template<typename TException, typename TCall>
 static void RequireThrows(TCall call) {
@@ -72,6 +98,22 @@ int main() {
         Require(result == success);
     }
 
+#ifdef _WIN32
+    TimerResolution timerResolution;
+    std::vector<std::chrono::steady_clock::duration> shortWaits;
+    for (int i = 0; i < 31; ++i) {
+        const auto start = std::chrono::steady_clock::now();
+        const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(1);
+        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(deadline.time_since_epoch()).count();
+        const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline.time_since_epoch()).count() % 1000000000;
+        const Xtime shortTimeout{seconds, nanoseconds};
+        Require(_Cnd_timedwait_nid_postfix(&condition, &mutex, &shortTimeout) == timedout);
+        shortWaits.push_back(std::chrono::steady_clock::now() - start);
+    }
+    std::sort(shortWaits.begin(), shortWaits.end());
+    Require(shortWaits[shortWaits.size() / 2] < std::chrono::milliseconds(12));
+#endif
+
     const auto unnormalizedDeadline = std::chrono::system_clock::now() + std::chrono::milliseconds(20);
     const auto unnormalizedSec = std::chrono::duration_cast<std::chrono::seconds>(unnormalizedDeadline.time_since_epoch()).count();
     const auto unnormalizedNsec = std::chrono::duration_cast<std::chrono::nanoseconds>(unnormalizedDeadline.time_since_epoch()).count() % 1000000000;
@@ -98,6 +140,18 @@ int main() {
         Require(_Cnd_timedwait_nid_postfix(&condition, &mutex, &futureTime) == success);
     }
     signaler.join();
+
+    ready = false;
+    std::thread untimedSignaler([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(_Mtx_lock_nid_postfix(&mutex) == success);
+        ready = true;
+        Require(_Cnd_broadcast_nid_postfix(&condition) == success);
+        Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    });
+    Require(_Cnd_wait_nid_postfix(&condition, &mutex) == success);
+    Require(ready);
+    untimedSignaler.join();
 
     constexpr std::int64_t farSeconds = 10000000000;
     const Xtime farTime{farSeconds, 999999999};

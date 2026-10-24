@@ -78,7 +78,10 @@ bool Ngs2FinishBlock(Ngs2Voice& voice) {
         voice.blocks.pop_front();
     }
     const auto revision = voice.waveformRevision;
-    if (voice.callback != nullptr && (voice.callbackFlags & info.flag) != 0) voice.callback(&info);
+    if (voice.callback != nullptr && (voice.callbackFlags & info.flag) != 0) {
+        const Ngs2Unlocked unlocked;
+        voice.callback(&info);
+    }
     return voice.waveformRevision == revision && voice.state == Ngs2PlayState::Playing;
 }
 

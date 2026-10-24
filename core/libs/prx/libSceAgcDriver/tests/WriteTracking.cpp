@@ -7,9 +7,13 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+#ifdef __GLIBC__
+#include <malloc.h>
 #endif
 #include <array>
 #include <cstdint>
@@ -19,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -29,11 +34,78 @@ using namespace AgcDriver::GuestMemory;
 constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
+constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
 #endif
 
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+#ifdef _WIN32
+bool CheckMetadataCommit() {
+    std::uintptr_t arena = 0;
+    std::size_t bytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &bytes);
+    if (bytes == 0 || !GuestArena::GuestArenaWriteWatched_nid_postfix()) return false;
+    PROCESS_MEMORY_COUNTERS_EX before{};
+    PROCESS_MEMORY_COUNTERS_EX after{};
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&before), sizeof(before)), "cannot measure private commit before tracking");
+    Require(WriteWatched(), "the arena is not write watched");
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&after), sizeof(after)), "cannot measure private commit after tracking");
+    const auto committed = after.PrivateUsage > before.PrivateUsage ? after.PrivateUsage - before.PrivateUsage : 0;
+    std::cout << "write-tracker initialization: " << committed / 1024 << " KiB private commit for " << (bytes >> 30u) << " GiB guest arena\n";
+    Require(committed < (64u << 20u), "write tracking committed dense generation tables for untouched guest ranges");
+    const auto generation = TrackerGeneration();
+    for (std::uint64_t offset = 0; offset + Block <= bytes; offset += std::uint64_t{1} << 32u) {
+        Require(NewestStamp(arena + offset, Block) == 0 && UnchangedSince(arena + offset, Block, generation), "an untouched leaf has a write stamp");
+    }
+    PROCESS_MEMORY_COUNTERS_EX queried{};
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&queried), sizeof(queried)), "cannot measure private commit after empty-range queries");
+    Require(queried.PrivateUsage < after.PrivateUsage + (4u << 20u), "queries allocated untouched tracking leaves");
+    return true;
+}
+
+void CheckSparseLeafBoundaries() {
+    constexpr std::uintptr_t LeafBytes = std::uintptr_t{1} << 32;
+    std::uintptr_t arena = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaBytes);
+    const auto boundary = arena + (arenaBytes / (2 * LeafBytes)) * LeafBytes;
+    constexpr std::size_t bytes = 4 * Block;
+    void* memory = GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(boundary - Block, bytes, Block);
+    struct Release {
+        void* memory;
+        ~Release() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+        }
+    } release{memory};
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(base == boundary - Block, "the sparse tracking fixture did not straddle its 4 GiB leaf boundary");
+    GuestArena::GuestArenaCommit_nid_postfix(memory, bytes, PAGE_READWRITE, bytes);
+    std::memset(memory, 0x11, bytes);
+    BumpCollectEpoch();
+    const auto collected = CollectWrites(base, bytes);
+    Require(collected != 0, "the cross-leaf range was not collected");
+    MarkWritten(boundary, 4);
+    Require(UnchangedSince(base, Block, collected) && !UnchangedSince(base, bytes, collected), "a driver store across a leaf boundary did not stamp exactly its block");
+    Require(UnchangedSinceCollected(boundary, Block, collected), "the cross-leaf driver store became a CPU store");
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x22;
+    CollectWritesUncached(base, bytes);
+    Require(!UnchangedSinceCollected(base, Block, collected), "a CPU store before the leaf boundary was missed");
+    Require(UnchangedSinceCollected(boundary, 3 * Block, collected), "the CPU store stamped the other leaf");
+    Unwatch(base, bytes);
+    const auto hint = UntrackedHint(base, bytes);
+    Require(hint != 0, "the cross-leaf untracked range has no hint");
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x33;
+    static_cast<volatile std::uint8_t*>(memory)[3 * Block] = 0x44;
+    BumpCollectEpoch();
+    const auto changed = UntrackedHint(base, bytes);
+    Require(changed > hint, "cross-leaf CPU stores did not change their untracked hint");
+    Require(UntrackedHint(base, Block) == changed && UntrackedHint(base + 3 * Block, Block) == changed, "a cross-leaf hint store was missed");
+    Require(UntrackedHint(boundary, 2 * Block) == hint, "hint stores changed untouched blocks in the other leaf");
+}
+#endif
 
 void* AllocateWatched(std::size_t bytes, bool crossLeaf = false) {
 #ifdef _WIN32
@@ -102,6 +174,21 @@ void CheckSharedBlock() {
     if (!Watched(outside, unwatched.size())) Require(StoredOver(outside, unwatched.size(), TrackerGeneration()), "an unwatched range reads as not stored over");
 }
 
+void CheckStoredOverUsesPageEvidence() {
+    constexpr std::size_t Page = 4096;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(2 * Block));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto before = CollectWritesUncached(base, 2 * Block);
+    Require(before != 0, "the stored-over page fixture was not collected");
+
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x22;
+    const auto after = CollectWritesUncached(base, Block);
+    Require(after > before, "the page-local CPU write was not collected");
+    Require(StoredOver(base, Page, before), "a collected CPU write on a page was not reported as stored over");
+    Require(!StoredOver(base + Page, Page, before), "a page-local CPU write made an untouched page in the same block count as stored over");
+}
+
 void CheckStoredAllSince() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes));
@@ -144,6 +231,39 @@ void CheckStoredAllSince() {
     Require(!StoredAllSince_nid_no_patch(base + 16, dword.size(), dwordStored), "a dword store at the baseline is taken as newer");
     MarkWritten(base, 64);
     Require(StoredAllSince_nid_no_patch(base, 64, before), "a complete non-block-aligned range store is absent");
+
+    before = TrackerGeneration();
+    MarkPossiblyWritten(base + 2048, 16);
+    Require(StoredOver(base + 2048, 16, before), "a possible driver write did not invalidate its exact range");
+    Require(!StoredOver(base + 2064, 16, before), "a possible driver write invalidated an adjacent range");
+    Require(!UnchangedSince(base + 2048, 16, before), "a possible driver write left its exact range unchanged");
+    Require(UnchangedSince(base + 2064, 16, before), "a possible driver write changed an adjacent range");
+    Require(!StoredAllSince_nid_no_patch(base + 2048, 16, before), "a possible driver write proved complete byte coverage");
+    for (unsigned repeat = 0; repeat < 6; ++repeat) MarkPossiblyWritten(base + 2048, 16);
+    Require(StoredOver(base + 2048, 16, before), "repeated possible writes lost their overlap evidence");
+    Require(!StoredOver(base + 2064, 16, before), "repeated possible writes invalidated an adjacent range");
+    Require(!StoredAllSince_nid_no_patch(base + 2048, 16, before), "repeated possible writes proved complete byte coverage");
+
+    before = TrackerGeneration();
+    constexpr unsigned PossibleIntervals = 8;
+    auto beforeNewest = before;
+    for (unsigned interval = 0; interval < PossibleIntervals; ++interval) {
+        beforeNewest = TrackerGeneration();
+        MarkPossiblyWritten(base + 4096 + static_cast<std::uint64_t>(interval) * 32, 16);
+    }
+    Require(StoredOver(base + 4096, 16, before), "an evicted possible-write interval was forgotten instead of marking its block");
+    Require(StoredOver(base + 4096 + 16, 16, before), "an evicted possible write did not mark the rest of its block");
+    Require(StoredOver(base + 4096 + (PossibleIntervals - 1) * 32, 16, beforeNewest), "the newest possible-write interval was evicted");
+    const auto beforeRecord = TrackerGeneration();
+    MarkPossiblyWritten(base + 4096, 16);
+    Require(StoredOver(base + 4096, 16, beforeRecord), "a possible-write interval was not retained after being re-recorded");
+    Require(!StoredAllSince_nid_no_patch(base + 4096, 16, before), "possible-write eviction or re-recording proved complete byte coverage");
+
+    before = TrackerGeneration();
+    MarkWritten(base + 2560, 16);
+    MarkPossiblyWritten(base, Block);
+    Require(StoredAllSince_nid_no_patch(base + 2560, 16, before), "a possible whole-block range erased an exact partial-store proof");
+    Require(!StoredAllSince_nid_no_patch(base, Block, before), "a possible whole-block range proved complete block coverage");
 
     before = TrackerGeneration();
     MarkWritten(base + 512, 16);
@@ -274,6 +394,42 @@ void CheckSharedBlockProofs() {
     Write(base + Block + 14 * page + 0x100, label);
     Require(!StoredOver(base + Block + 14 * page + 0x800, 16, beforeNeighbour), "a neighbour in the page of an own store reads as stored over");
     Require(!UnchangedSince(base + Block + 14 * page + 0x800, 16, beforeNeighbour), "a range in the page an own store dirtied reads as unchanged");
+}
+
+void CheckRepeatedPossibleStores() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block - 0x9000;
+    std::memset(memory, 0x11, 3 * Block);
+
+    const auto synced = CollectWrites(base, 3 * Block);
+    Require(synced != 0, "the test block is not collected");
+
+    const auto exact = TrackerGeneration();
+    MarkWritten(base + Block, 0x100);
+    for (std::uint64_t store = 0; store < 5; ++store) MarkPossiblyWritten(boundary + store * 0x1000, 0x100);
+    Require(StoredAllSince_nid_no_patch(base + Block, 0x100, exact), "possible writes beyond the ring forgot an exact store's coverage");
+
+    void* fresh = AllocateWatched(2 * Block);
+    const auto freshBase = reinterpret_cast<std::uint64_t>(fresh);
+    std::memset(fresh, 0x11, 2 * Block);
+    const auto freshSynced = CollectWrites(freshBase, 2 * Block);
+    const auto neighbour = freshBase + Block - 0x9000;
+    MarkPossiblyWritten(neighbour, 0x100);
+    const auto secondStored = MarkPossiblyWritten(neighbour + 0x1000, 0x100);
+    const auto thirdStored = MarkPossiblyWritten(neighbour + 0x2000, 0x100);
+    MarkPossiblyWritten(neighbour + 0x3000, 0x100);
+    const auto settled = TrackerGeneration();
+    MarkPossiblyWritten(neighbour, 0x100);
+    MarkPossiblyWritten(neighbour, 0x100);
+    MarkPossiblyWritten(neighbour + 0x5000, 0x100);
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), secondStored), "a full possible ring evicted a newer piece instead of its oldest");
+    Require(StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), freshSynced), "an evicted possible write is not taken as a store over the rest of the block");
+
+    const auto partial = TrackerGeneration();
+    MarkPossiblyWritten(neighbour + 0x5080, 0x100);
+    Require(StoredOver(neighbour + 0x5000, 0x10, settled) && StoredOver(neighbour + 0x5100, 0x10, partial), "a possible write that overlaps an earlier piece without containing it replaced it");
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), thirdStored), "a possible write that overlaps without containing evicted a newer piece instead of the oldest");
 }
 
 void CheckOwnStore() {
@@ -580,6 +736,82 @@ void CheckRewatch() {
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
 }
 
+void CheckResidentDirectMappingReuse() {
+    constexpr std::size_t bytes = 5 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
+    Require(memory != nullptr, "cannot reserve the resident remap fixture");
+    struct Cleanup {
+        std::uint8_t* memory;
+        std::array<HANDLE, 3> sections{};
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+            for (const auto section : sections) {
+                if (section == nullptr) continue;
+                GuestArena::GuestArenaForgetSection_nid_postfix(section);
+                CloseHandle(section);
+            }
+        }
+    } cleanup{memory};
+    GuestArena::GuestArenaCommit_nid_postfix(memory, 3 * Block, PAGE_READWRITE, 3 * Block);
+    GuestArena::GuestArenaCommit_nid_postfix(memory + 3 * Block, 2 * Block, PAGE_READWRITE, 2 * Block);
+    Require(Watched(reinterpret_cast<std::uint64_t>(memory), bytes), "the resident remap fixture is not watched");
+    for (auto& section : cleanup.sections) {
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, 3 * Block, nullptr);
+        Require(section != nullptr, "cannot create the resident remap backing");
+    }
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto nativeType = [&](std::size_t offset) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(memory + offset, &info, sizeof(info)) == sizeof(info), "cannot query the resident remap backing");
+        return info.Type;
+    };
+    for (std::size_t use = 0; use < 2; ++use) {
+        BumpCollectEpoch();
+        const auto before = CollectWrites(base, 3 * Block);
+        Require(before != 0, "the backing before a resident remap was not collected");
+        Unwatch(base + Block, Block);
+        Require(!Watched(base + Block, Block), "the resident remap exclusion was not established");
+        const auto outside = CollectWrites(base + 3 * Block, 2 * Block);
+        const auto mapping = GuestArena::GuestArenaCommitGeneration_nid_postfix();
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, 3 * Block, cleanup.sections[use], 0, PAGE_READWRITE);
+        Require(nativeType(0) == MEM_PRIVATE && nativeType(2 * Block) == MEM_PRIVATE, "the resident remap did not create private memory");
+        Require(Watched(base, 3 * Block), "a resident direct remap retained an old import exclusion");
+        Require(GuestArena::GuestArenaCommitGeneration_nid_postfix() > mapping, "a resident direct remap reused the mapping generation");
+        Require(!UnchangedSince(base, Block, before) && !UnchangedSince(base + 2 * Block, Block, before), "a resident direct remap reused old neighbour stamps");
+        Require(UnchangedSince(base + 3 * Block, 2 * Block, outside), "a resident direct remap invalidated memory outside its range");
+        const auto after = CollectWritesUncached(base, 3 * Block);
+        Require(after > before && UnchangedSince(base, 3 * Block, after), "the resident remap could not establish a current generation");
+        memory[Block + 9] = static_cast<std::uint8_t>(0x51 + use);
+        CollectWritesUncached(base, 3 * Block);
+        Require(!UnchangedSince(base + Block, Block, after), "a CPU store after a resident direct remap was missed");
+        std::cout << "resident direct remap " << use << ": private, watched, new mapping generation, CPU store collected\n";
+    }
+    Unwatch(base, 3 * Block);
+    GuestArena::GuestArenaMap_nid_postfix(memory, 3 * Block, cleanup.sections[0], 0, PAGE_READWRITE);
+    Require(nativeType(0) == MEM_MAPPED, "the shared remap did not create mapped memory");
+    for (std::size_t block = 0; block < 3; ++block) Require(!Watched(base + block * Block, Block), "an ordinary shared remap restored a private import exclusion");
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory + 3 * Block, 2 * Block, cleanup.sections[2], 0, PAGE_READWRITE);
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, 3 * Block, cleanup.sections[2], 0, PAGE_READWRITE);
+    Require(nativeType(0) == MEM_MAPPED && nativeType(Block) == MEM_MAPPED && nativeType(2 * Block) == MEM_PRIVATE, "the mixed direct remap did not establish shared and private spans");
+    Require(!Watched(base, Block) && !Watched(base + Block, Block) && Watched(base + 2 * Block, Block), "the mixed direct remap restored an exclusion outside its new private span");
+    std::cout << "resident direct remap controls: shared exclusions retained, only the new private span restored\n";
+    Unwatch(base, 3 * Block);
+    bool refused = false;
+    try {
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, 3 * Block, cleanup.sections[1], 0, 0);
+    } catch (const std::system_error& error) {
+        Require(error.code().value() == ERROR_INVALID_PARAMETER, "the failed resident remap reported an unexpected error");
+        refused = true;
+    }
+    std::uintptr_t createdBegin = 0;
+    std::uintptr_t createdEnd = 0;
+    Require(refused && GuestArena::GuestArenaResidentSpan_nid_postfix(base, 1, &createdBegin, &createdEnd), "the failing protection change did not leave a new private span");
+    Require(createdBegin == base && createdEnd <= base + 3 * Block && Watched(base, createdEnd - base), "a failed resident remap did not report its completed private span");
+    for (auto block = createdEnd; block < base + 3 * Block; block += Block) Require(!Watched(block, Block), "a failed resident remap restored an uncreated span");
+    std::cout << "resident direct remap failure: completed private span watched, original mapping error retained\n";
+}
+
 void CheckUntrackedHint() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<volatile std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
@@ -730,6 +962,39 @@ void CheckHostHole() {
         return true;
     }) && imported, "an import into an arena host hole did not run");
     Require(!Watched(hole, bytes), "an import made an arena host hole watched");
+}
+
+std::uint64_t failedCollectBegin = 0;
+std::uint64_t failedCollectEnd = 0;
+std::uint64_t unwatchHookBegin = 0;
+std::uint64_t unwatchHookEnd = 0;
+
+void RecordUnwatch(std::uint64_t address, std::size_t bytes) {
+    unwatchHookBegin = address;
+    unwatchHookEnd = address + bytes;
+}
+
+bool FailFreshCollect(std::uintptr_t address, std::size_t bytes, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
+    failedCollectBegin = address;
+    failedCollectEnd = address + bytes;
+    return false;
+}
+
+void CheckFailedCollectUnwatch() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 3 * Block);
+    Require(Watched(base + Block, Block), "the probe block was not watched");
+    SetFreshCollectHook(&FailFreshCollect);
+    SetUnwatchHook(&RecordUnwatch);
+    const auto stored = MarkWritten(base + Block + 0x8000, 4);
+    SetFreshCollectHook(nullptr);
+    SetUnwatchHook(nullptr);
+    Require(stored == 0, "a failed fresh collect produced trusted stamps");
+    Require(!Watched(base + Block, Block), "a failed collect left its block watched");
+    Require(Watched(base, Block) && Watched(base + 2 * Block, Block), "a failed collect unwatched unrelated blocks");
+    Require(failedCollectBegin == base + Block && failedCollectEnd == base + 2 * Block, "the failed fresh collect did not cover its block");
+    Require(unwatchHookBegin <= base + Block && unwatchHookEnd >= base + 2 * Block, "a failed collect did not run the unwatch hook over its block");
 }
 #endif
 
@@ -942,6 +1207,69 @@ void CheckImportWindowZeroPages() {
     Require(changed[2] == BlockWritten && WrittenSince(base + 2 * Block, Block, synced), "a store of new bytes to a zero page within an import window was missed");
     Require(changed[3] == BlockUnchanged && UnchangedSince(base + 3 * Block, Block, synced), "a page after the zero pages of an import window was compared with other bytes");
     Require(changed[4] == BlockWritten && WrittenSince(base + 4 * Block, Block, synced), "a store of new bytes after the zero pages of an import window was missed");
+}
+
+void CheckImportWindowOverUnwatchedBlock() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Unwatch(base + Block, Block);
+    const auto synced = CollectWritesUncached(base + 2 * Block, 2 * Block);
+    const auto syncedFirst = CollectWritesUncached(base, Block);
+    Require(synced != 0 && syncedFirst != 0, "the watched blocks around the unwatched one are not collected");
+    bytes[0x500] = 0x44;
+    Require(ImportWatched(base, 4 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[2 * Block + 0x100] = 0x11;
+        bytes[3 * Block + 0x2000] = 0x22;
+        return true;
+    }), "the import over an unwatched block failed");
+    Require(!Watched(base + Block, Block), "an import window made an unwatched block watched");
+    Require(Watched(base, Block) && Watched(base + 2 * Block, 2 * Block), "an import window over an unwatched block took the watched blocks out of the write watch");
+    const std::array<std::uint64_t, 2> generations{synced, synced};
+    std::array<std::uint8_t, 2> changed{};
+    std::array<std::uint8_t, 2> cpu{};
+    Require(ChangedBlocks(base + 2 * Block, 2 * Block, generations, changed, cpu), "the watched blocks after an unwatched block are not tracked");
+    Require(changed[0] == BlockUnchanged && UnchangedSince(base + 2 * Block, Block, synced), "a page an import window over an unwatched block resolved without changing its bytes reads as written");
+    Require(changed[1] == BlockWritten && WrittenSince(base + 3 * Block, Block, synced), "a store of new bytes within an import window over an unwatched block was missed");
+    Require(WrittenSince(base, Block, syncedFirst), "a store before an import window over an unwatched block was missed");
+    const auto after = CollectWritesUncached(base, Block);
+    bytes[0x100] = 0x33;
+    static_cast<void>(CollectWritesUncached(base, Block));
+    Require(after != 0 && !UnchangedSince(base, Block, after), "a store after an import window over an unwatched block was missed");
+}
+
+void CheckImportWindowFootprint() {
+#ifdef __GLIBC__
+    constexpr std::size_t bytes = std::size_t{64} << 20;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x5a, bytes);
+    Require(CollectWritesUncached(base, bytes) != 0, "the footprint import window block is not collected");
+    const auto heapBytes = [] {
+        const auto info = mallinfo2();
+        return info.uordblks + info.hblkhd;
+    };
+    const auto before = heapBytes();
+    std::size_t during = 0;
+    Require(ImportWatched(base, bytes, [&] {
+        during = heapBytes();
+        return true;
+    }), "the footprint import window import failed");
+    Require(Watched(base, bytes), "the footprint import window left its range unwatched");
+    const auto held = during > before ? during - before : 0;
+    Require(held <= bytes / 64, "an import window over " + std::to_string(bytes >> 20) + " MiB held " + std::to_string(held >> 20) + " MiB of host memory during the import: it copies the range instead of hashing its pages");
+    auto* plain = static_cast<volatile std::uint8_t*>(memory);
+    const auto synced = CollectWritesUncached(base, bytes);
+    Require(ImportWatched(base, bytes, [&] {
+        plain[0x100] = 0x5a;
+        plain[Block + 0x100] = 0x5b;
+        return true;
+    }), "the footprint import window re-import failed");
+    Require(UnchangedSince(base, Block, synced), "a page a hashed import window resolved without changing its bytes reads as written");
+    Require(WrittenSince(base + Block, Block, synced), "a store of new bytes within a hashed import window was missed");
+#endif
 }
 
 void ProtectPage(std::uint64_t address, bool readable) {
@@ -1186,6 +1514,11 @@ void CheckAdoptLatestEpoch() {
 
 int main() {
     try {
+#ifdef _WIN32
+        if (std::wstring_view(GetCommandLineW()).ends_with(L"--metadata-commit")) {
+            return CheckMetadataCommit() ? 0 : 77;
+        }
+#endif
         if (!WriteWatched()) {
             std::cout << "no write watching: skipped\n";
             return 77;
@@ -1195,10 +1528,16 @@ int main() {
             CheckHostHole();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
+            CheckResidentDirectMappingReuse();
+            return 0;
+        }
 #endif
         CheckSharedBlock();
+        CheckStoredOverUsesPageEvidence();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
+        CheckRepeatedPossibleStores();
         CheckOwnStore();
         CheckUnwatch();
         CheckNewestStamp();
@@ -1209,18 +1548,22 @@ int main() {
 #endif
         CheckCoarseRuns();
 #ifdef _WIN32
+        CheckSparseLeafBoundaries();
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
         CheckRewatch();
         CheckUntrackedHint();
         CheckHostHoleInChild();
+        CheckFailedCollectUnwatch();
 #endif
         CheckVersionRanges();
         CheckCollectBoundaries();
         CheckImportWindow();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
+        CheckImportWindowOverUnwatchedBlock();
         CheckStoreAcrossImports();
+        CheckImportWindowFootprint();
         CheckUnwatchedImport();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();

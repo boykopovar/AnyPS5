@@ -356,6 +356,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
 
     std::size_t pos = 0;
     bool operandSizeOverride = false;
+    bool repPrefix = false;
 
     while (pos < info.Length) {
         std::uint8_t b = data[pos];
@@ -374,6 +375,8 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
                 info.AddressSize32 = true;
             if (b == PrefixOperandSize)
                 operandSizeOverride = true;
+            if (b == PrefixRep)
+                repPrefix = true;
             info.RexPrefix = 0;
             ++pos;
             continue;
@@ -393,6 +396,8 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
         info.ModRmRegField = (modrm >> ModRmRegShift) & ModRmRegMask;
         const std::uint8_t mod = registerOnly ? ModRmModRegister : (modrm >> ModRmModShift) & ModRmModMask;
         const std::uint8_t rm = modrm & ModRmRmMask;
+        if (mod != ModRmModRegister)
+            info.HasMemoryOperand = true;
         if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
             info.HasRipRelativeDisp = true;
             info.RipRelativeDispOffset = modrmPos + 1;
@@ -404,9 +409,17 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
 
     const bool xop = op == XopPrefix && pos < info.Length && (data[pos] & Vex3MapMask) >= XopMapMin;
     if (op == OneByteVex2 || op == OneByteVex3 || op == EvexPrefix || xop) {
-        pos += (op == OneByteVex2 ? 1 : (op == OneByteVex3 || xop ? 2 : EvexPrefixLength - 1)) + 1;
-        if (pos < info.Length)
+        const bool vex = op == OneByteVex2 || op == OneByteVex3;
+        const std::size_t vectorOpcodeOffset = pos + (op == OneByteVex2 ? 1 : (op == OneByteVex3 || xop ? 2 : EvexPrefixLength - 1));
+        const std::uint8_t vexMap = op == OneByteVex2 ? 1 : (data[pos] & (op == EvexPrefix ? EvexMapMask : Vex3MapMask));
+        const std::uint8_t vectorOpcode = vectorOpcodeOffset < info.Length ? data[vectorOpcodeOffset] : 0;
+        pos = vectorOpcodeOffset + 1;
+        if (pos < info.Length) {
             readModRm(pos, false);
+            if (vex && vexMap == 1 && vectorOpcode == TwoByteMaskmov &&
+                ((info.ModRmByte >> ModRmModShift) & ModRmModMask) == ModRmModRegister)
+                info.HasMemoryOperand = true;
+        }
         info.FlowKind = ControlFlowKind::Sequential;
         return info;
     }
@@ -480,6 +493,8 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             info.ModRmRegField = reg;
             std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
             std::uint8_t rm = modrm & ModRmRmMask;
+            if (mod != ModRmModRegister)
+                info.HasMemoryOperand = true;
             if (reg == 2) {
                 if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
                     info.FlowKind = ControlFlowKind::Call;
@@ -591,6 +606,21 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
 
     if (hasModRm && pos < info.Length)
         readModRm(pos, twoByteOpcode && op >= TwoByteMovCrDrMin && op <= TwoByteMovCrDrMax);
+
+    if (info.HasModRm && twoByteOpcode) {
+        const std::uint8_t mod = (info.ModRmByte >> ModRmModShift) & ModRmModMask;
+        const std::uint8_t reg = (info.ModRmByte >> ModRmRegShift) & ModRmRegMask;
+        if (op == TwoByteMaskmov && mod == ModRmModRegister)
+            info.HasMemoryOperand = true;
+        else if (op == TwoByteGrp7 && (info.ModRmByte == 0xC8 || info.ModRmByte == 0xFA || info.ModRmByte == 0xFC))
+            info.HasMemoryOperand = true;
+        else if (op == TwoByteGrp15 && repPrefix && reg == 6 && mod == ModRmModRegister)
+            info.HasMemoryOperand = true;
+    }
+
+    if (!twoByteOpcode && ((op >= 0x6c && op <= 0x6f) || (op >= 0xa0 && op <= 0xa7) ||
+                           (op >= 0xaa && op <= 0xaf) || op == 0xd7))
+        info.HasMemoryOperand = true;
 
     info.FlowKind = ControlFlowKind::Sequential;
     return info;

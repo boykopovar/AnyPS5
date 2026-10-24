@@ -40,8 +40,12 @@ static void Require(bool condition, const char* message) {
 }
 
 static void Check(bool net, bool from, int family) {
+    int* error = net ? sceNetErrnoLoc() : __error_nid_postfix();
     const auto create = [&] { return net ? sceNetSocket(nullptr, family, 2, 17) : socket_nid_postfix(family, 2, 17); };
-    const int receiver = create(), sender = create();
+    const auto closeSocket = [&](int descriptor) { return net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor); };
+    const int receiver = create();
+    if (receiver < 0 && family == 28 && *error == 47) return;
+    const int sender = create();
     Require(receiver >= 0 && sender >= 0, "create UDP sockets");
     std::array<unsigned char, 28> destination{};
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
@@ -53,7 +57,12 @@ static void Check(bool net, bool from, int family) {
         return net ? sceNetBind_nid_postfix(descriptor, destination.data(), addressSize) :
             bind_nid_postfix(descriptor, destination.data(), addressSize);
     };
-    Require(bind(receiver) == 0 && bind(sender) == 0, "bind loopback sockets");
+    const int bound = bind(receiver);
+    if (bound < 0 && family == 28 && *error == 49) {
+        Require(closeSocket(sender) == 0 && closeSocket(receiver) == 0, "close sockets without IPv6 loopback");
+        return;
+    }
+    Require(bound == 0 && bind(sender) == 0, "bind loopback sockets");
     auto senderAddress = destination;
     std::uint32_t size = addressSize;
     Require((net ? sceNetGetsockname(sender, senderAddress.data(), &size) :
@@ -66,7 +75,6 @@ static void Check(bool net, bool from, int family) {
     const int enabled = 1;
     Require((net ? sceNetSetsockopt(receiver, 0xffff, 0x1200, &enabled, sizeof(enabled)) :
         fcntl_nid_postfix(receiver, 4, 6)) == 0, "make receiver nonblocking");
-    int* error = net ? sceNetErrnoLoc() : __error_nid_postfix();
     const auto receive = [&](void* buffer, std::size_t length, int flags, void* address, std::uint32_t* addressLength) {
         if (net) return from ? sceNetRecvfrom(receiver, buffer, length, flags, address, addressLength) :
             sceNetRecv(receiver, buffer, length, flags);
@@ -132,8 +140,8 @@ static void Check(bool net, bool from, int family) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     } while (std::chrono::steady_clock::now() < deadline);
     Require(result == 0 && byte == '!', "empty datagram");
-    Require((net ? sceNetSocketClose(receiver) : close_nid_postfix(receiver)) == 0, "close receiver");
-    Require((net ? sceNetSocketClose(sender) : close_nid_postfix(sender)) == 0, "close sender");
+    Require(closeSocket(receiver) == 0, "close receiver");
+    Require(closeSocket(sender) == 0, "close sender");
 }
 
 int main(int argc, char** argv) {

@@ -74,5 +74,34 @@ class ShaderCachePathTests(unittest.TestCase):
             self.assertIn('does not hash', result.stdout + result.stderr)
             self.assertFalse(output.exists())
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows path separator semantics require Windows host')
+    def test_windows_path_separators(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'windows separators'
+            source, listing, output = self.fixture(root)
+            windows_path = str(source).replace('/', '\\')
+            listing.write_text(f'sources {windows_path}\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            windows_version = output.read_bytes()
+            listing.write_text(f'sources {source.as_posix()}\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(windows_version, output.read_bytes())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows path separator semantics require Windows host')
+    def test_windows_path_separators_reject_unhashed_include(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'windows separators'
+            source, listing, output = self.fixture(root)
+            windows_path = str(source).replace('/', '\\')
+            listing.write_text(f'sources {windows_path}\n', encoding='utf-8')
+            (root / 'shared.hpp').write_text('int example();\n', encoding='utf-8')
+            source.write_text('#include "../shared.hpp"\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('does not hash', result.stdout + result.stderr)
+            self.assertFalse(output.exists())
+
 
 unittest.main()

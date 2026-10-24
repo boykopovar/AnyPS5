@@ -82,9 +82,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
         return SCE_NP_TROPHY2_OK;
     }
     const auto trophy = package->trophies.find(trophy_id);
-    if (trophy == package->trophies.end()) {
-        throw std::invalid_argument(std::string(__func__) + ": trophy " + std::to_string(trophy_id) + " is not in " + NpTrophy2::PackagePath(owner->serviceLabel));
-    }
+    if (trophy == package->trophies.end()) return SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID;
     if (details != nullptr) fillDetails(trophy->second, details);
     if (data != nullptr) fillData(*owner, trophy->second, data);
     return SCE_NP_TROPHY2_OK;

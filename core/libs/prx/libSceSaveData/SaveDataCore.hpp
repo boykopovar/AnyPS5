@@ -22,6 +22,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 
 namespace savedata {
@@ -498,14 +499,14 @@ int mount_internal(const SceSaveDataDirName* dir_name, std::uint32_t mount_mode,
         created = true;
         if (write_u64(save_blocks_path(directory), blocks) != SD_OK) {
             std::error_code cleanup;
-            std::filesystem::remove_all(directory, cleanup);
+            RemoveTree(directory, cleanup);
             return SD_ERROR_INTERNAL;
         }
         SaveDataParam initial {};
         std::strncpy(initial.title, "Saved Data", sizeof(initial.title) - 1);
         if (!write_blob(save_param_path(directory), &initial, sizeof(initial))) {
             std::error_code cleanup;
-            std::filesystem::remove_all(directory, cleanup);
+            RemoveTree(directory, cleanup);
             return SD_ERROR_INTERNAL;
         }
     }
@@ -574,7 +575,7 @@ int delete_internal(std::int32_t user_id, const SceSaveDataDirName* dir_name,
     if (!std::filesystem::exists(directory, error) || error) {
         return SD_ERROR_NOT_FOUND;
     }
-    std::filesystem::remove_all(directory, error);
+    RemoveTree(directory, error);
     RecordWrittenPath_nid_no_patch(directory);
     if (error) {
         return SD_ERROR_INTERNAL;

@@ -38,6 +38,10 @@ int main() {
     Require(access_nid_postfix(nullptr, 0) == -1 && *__error_nid_postfix() == 14);
     Require(access_nid_postfix("sample.txt", 8) == -1 && *__error_nid_postfix() == 22);
     Require(access_nid_postfix("sample.txt", -1) == -1 && *__error_nid_postfix() == 22);
+    Require(access_nid_postfix(nullptr, 8) == -1 && *__error_nid_postfix() == 22);
+    Require(access_nid_postfix(nullptr, -1) == -1 && *__error_nid_postfix() == 22);
+    Require(access_nid_postfix("", 8) == -1 && *__error_nid_postfix() == 22);
+    Require(access_nid_postfix("", -1) == -1 && *__error_nid_postfix() == 22);
 #ifdef _WIN32
     Require(SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_READONLY));
     Require(access_nid_postfix("sample.txt", 4) == 0);

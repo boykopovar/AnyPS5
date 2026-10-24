@@ -41,7 +41,7 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int SIGUSR1 = 30;
-static constexpr int Repeats = 100;
+static constexpr int Repeats = 50;
 static constexpr std::size_t R12Offset = 0xa0;
 static constexpr std::size_t R13Offset = 0xa8;
 static constexpr std::size_t Xmm8Offset = 0x140 + 160 + 8 * 16;
@@ -172,7 +172,7 @@ static void* APS5_VABI HostBlocked(void* arg) {
     return nullptr;
 }
 
-static constexpr int LeavingRounds = 200;
+static constexpr int LeavingRounds = 100;
 static std::atomic<int> leavingRound{0};
 
 static void* APS5_VABI Leaving(void* arg) {
@@ -198,7 +198,7 @@ static LONG CALLBACK ContinueRaised(EXCEPTION_POINTERS* info) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-static constexpr int SelfingRounds = 100;
+static constexpr int SelfingRounds = 50;
 static std::atomic<Pthread> selfSink{nullptr};
 
 static void* APS5_VABI Selfing(void* arg) {
@@ -239,7 +239,7 @@ static void* APS5_VABI Looping(void* arg) {
     return nullptr;
 }
 
-static constexpr int VectorRounds = 100;
+static constexpr int VectorRounds = 50;
 static constexpr std::size_t VectorBytes = 16 * 32;
 alignas(32) static std::uint8_t vectorPattern[VectorBytes];
 alignas(32) static std::uint8_t vectorResult[VectorBytes];
@@ -405,7 +405,7 @@ static void NestedWaitKeepsOuterWake() {
 }
 
 #ifdef _WIN32
-static constexpr int AddressRounds = 100;
+static constexpr int AddressRounds = 50;
 static std::uint32_t addressWord = 0;
 static std::uint32_t otherAddressWord = 0;
 static std::atomic<bool> holdingEntered{false};

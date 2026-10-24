@@ -6,12 +6,17 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
+#include <list>
+#include <memory>
 #include <vector>
 
 namespace FreeType {
 
+struct GuestFace;
+
 struct GuestLibrary {
     FT_Library host = nullptr;
+    std::list<std::unique_ptr<GuestFace>> faces;
 };
 
 struct GuestFace {

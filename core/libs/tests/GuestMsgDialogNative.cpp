@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 extern "C" {
+extern int SceMsgDialogNativeModuleLoaded_nid_no_patch;
 int APS5_VABI sceMsgDialogInitialize(void);
 int APS5_VABI sceMsgDialogOpen(const void* param);
 int APS5_VABI sceMsgDialogGetStatus(void);
@@ -32,6 +33,7 @@ constexpr int kButtonIdOk = 1;
 }
 
 int main() {
+    Require(SceMsgDialogNativeModuleLoaded_nid_no_patch == 1);
     std::uint8_t param[0x60]{};
     MsgDialogResult result{};
 

@@ -17,10 +17,13 @@ constexpr std::uint32_t EndStatusUserCanceled = 1;
 constexpr std::uint32_t EndStatusAborted = 2;
 constexpr std::uint32_t MaxTextLength = 2048;
 constexpr int ErrorBusy = static_cast<int>(0x80bc0001u);
+constexpr int ErrorSuspending = static_cast<int>(0x80bc0009u);
 constexpr int ErrorNotOpened = static_cast<int>(0x80bc0002u);
+constexpr int ErrorNotInUse = static_cast<int>(0x80bc0107u);
 constexpr int ErrorInvalidMaxTextLength = static_cast<int>(0x80bc0016u);
 constexpr int ErrorInvalidInputTextBuffer = static_cast<int>(0x80bc0017u);
 constexpr int ErrorInvalidAddress = static_cast<int>(0x80bc0031u);
+constexpr int ErrorInternal = static_cast<int>(0x80bc00ffu);
 
 struct Dialog {
     int status = StatusNone;
@@ -172,6 +175,41 @@ int APS5_VABI sceImeDialogTerm(void) {
     if (g_dialog.status == StatusNone) return ErrorNotOpened;
     ImeSetHostTextSink_nid_no_patch(nullptr);
     g_dialog = Dialog{};
+    return 0;
+}
+
+int APS5_VABI sceImeDialogForTestFunction() {
+    return ErrorInternal;
+}
+
+int APS5_VABI sceImeDialogForceClose(void) {
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
+    ImeSetHostTextSink_nid_no_patch(nullptr);
+    g_dialog = Dialog{};
+    return 0;
+}
+
+int APS5_VABI sceImeDialogGetCurrentStarState(int64_t state) {
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotInUse;
+    if (state == 0) return ErrorInvalidAddress;
+    *reinterpret_cast<std::uint32_t*>(state) = 0;
+    return 0;
+}
+
+int APS5_VABI sceImeDialogInitInternal(Param* param, ExtendedParam* extended) {
+    return sceImeDialogInit(param, extended);
+}
+
+int APS5_VABI sceImeDialogSetPanelPosition(int32_t, int32_t) {
+    std::lock_guard lock(g_mutex);
+    return g_dialog.status == StatusNone ? ErrorNotInUse : ErrorSuspending;
+}
+
+
+int APS5_VABI sceImeDialogInitInternalWithSubInfo() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

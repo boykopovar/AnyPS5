@@ -4,6 +4,7 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <bit>
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
@@ -102,11 +103,27 @@ private:
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (request.shader.stage == ShaderStage::Fragment) {
+            append(key, request.graphics && request.graphics->mesh);
+            return;
+        }
         if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        const auto& barycentrics = request.graphics->meshBarycentrics;
+        append(key, barycentrics.has_value());
+        if (!barycentrics.has_value()) return;
+        append(key, barycentrics->emulation.active);
+        append(key, barycentrics->emulation.smooth);
+        append(key, barycentrics->emulation.linear);
+        append(key, barycentrics->parameters.size());
+        for (const auto& parameter : barycentrics->parameters) {
+            append(key, parameter.location);
+            append(key, parameter.sourceLocation);
+            append(key, parameter.perVertex);
+        }
     }
 
     static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
@@ -115,6 +132,7 @@ private:
         append(key, tessellation != nullptr);
         if (tessellation == nullptr) return;
         for (const auto value : {tessellation->inputControlPoints, tessellation->outputControlPoints, tessellation->domain, tessellation->partitioning, tessellation->outputTopology}) append(key, value);
+        if (request.shader.stage != ShaderStage::TessellationEvaluation) append(key, tessellation->mergedHull);
         if (request.shader.stage == ShaderStage::Local) return;
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
@@ -200,6 +218,12 @@ private:
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
+        append(key, value.targetMerge.target);
+        append(key, value.targetMerge.mask);
+        append(key, value.targetMerge.samples);
+        append(key, value.targetMerge.depthStencilWrites);
+        append(key, value.targetMerge.depthStencilTests);
+        append(key, value.sampleOrder);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
@@ -215,6 +239,10 @@ private:
         append(key, value.fetchEmbedded);
         append(key, value.paClVsOutCntl);
         append(key, value.depthRemapMode);
+        append(key, value.pointList);
+        append(key, std::bit_cast<std::uint32_t>(value.pointSize));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
         append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
@@ -272,6 +300,12 @@ private:
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
+        append(key, value.waveLdsMemoryBarriers);
+        append(key, value.float32DenormPreserve);
+        append(key, value.fusedExactArithmetic);
+        append(key, value.largePixelFunctionLdsBuffer);
+        append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
     }
 };
 

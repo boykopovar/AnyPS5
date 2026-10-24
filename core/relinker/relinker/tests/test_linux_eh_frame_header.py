@@ -10,6 +10,8 @@ PT_GNU_EH_FRAME = 0x6474E550
 PT_GNU_STACK = 0x6474E551
 PT_SCE_VERSION = 0x6FFFFF01
 EH_FRAME_HEADER = (PT_GNU_EH_FRAME, 4, 0x4800, 0x800, 0x800, 16, 16, 4)
+DEFAULT_BASE = 0x400000
+EH_FRAME_OUTPUT = (*EH_FRAME_HEADER[:3], 0x800 + DEFAULT_BASE, 0x800 + DEFAULT_BASE, *EH_FRAME_HEADER[5:])
 
 
 def fixture(header_count, with_frame=True):
@@ -93,7 +95,7 @@ def main():
             assert "PT_GNU_EH_FRAME" not in result.stderr, result.stderr
             headers = program_headers(elf)
             frames = [header for header in headers if header[0] == PT_GNU_EH_FRAME]
-            assert frames == [EH_FRAME_HEADER], ("PT_GNU_EH_FRAME must be kept unchanged", headers)
+            assert frames == [EH_FRAME_OUTPUT], ("PT_GNU_EH_FRAME must only move by the base", headers)
             offset, size = EH_FRAME_HEADER[2], EH_FRAME_HEADER[5]
             assert elf[offset:offset + size] == image[offset:offset + size], "eh_frame_hdr bytes changed"
             assert all(header[0] != PT_SCE_VERSION for header in headers), headers
@@ -103,7 +105,7 @@ def main():
         image[table_end:table_end + 56] = bytes([0xa5]) * 56
         result, elf = relink(relinker, directory, "full-slots", image)
         headers = program_headers(elf)
-        assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == [EH_FRAME_HEADER], headers
+        assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == [EH_FRAME_OUTPUT], headers
         assert len(headers) == 8, headers
         assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
         assert "PT_GNU_EH_FRAME" not in result.stderr, result.stderr
@@ -125,7 +127,7 @@ def main():
             result, elf = relink(relinker, directory, "few-slots-" + str(with_frame), image)
             headers = program_headers(elf)
             assert len(headers) == (8 if with_frame else 7), headers
-            assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == ([EH_FRAME_HEADER] if with_frame else []), headers
+            assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == ([EH_FRAME_OUTPUT] if with_frame else []), headers
             assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
             assert elf[64 + 5 * 56:64 + 6 * 56] == image[64 + 5 * 56:64 + 6 * 56], "Bytes after the input program header table changed"
 

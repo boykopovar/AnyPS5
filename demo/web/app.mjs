@@ -324,7 +324,7 @@ $("theme").onclick = () => {
 };
 update();
 lock(false);
-if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw new Error(`Cannot load release information (${response.status})`); return response.json(); }).then(value => {
+if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw new Error(`Cannot load release information (${response.status}).${response.status === 404 ? " release.json is generated during the site build, so it is missing when serving demo/web directly." : ""}`); return response.json(); }).then(value => {
   if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw new Error("Invalid release information");
   release = value;
   update();

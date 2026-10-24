@@ -67,8 +67,9 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
                 bounded = false;
                 continue;
             }
-            const auto resource = Graphics::DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8));
-            if (resource.baseAddress == 0) continue;
+            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+            if (Graphics::IsNullTextureResource(words)) continue;
+            const auto resource = Graphics::DecodeTextureResource(words);
             const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
             ranges.emplace_back(resource.baseAddress, resource.baseAddress + (surfaceBytes != 0 ? surfaceBytes : UnknownImageBytes));
             if (resource.dccAddress != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownImageBytes));
@@ -180,10 +181,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
     }
     if (stages.empty() || stages.front().program == nullptr) return ranges;
     for (const auto& attribute : stages.front().program->vertexAttributes) {
-        if (Graphics::NullVertexDescriptor(attribute) || Graphics::VertexFetchOutOfRange(attribute)) continue;
+        if (Graphics::NullVertexDescriptor(attribute)) continue;
         const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
         std::uint64_t bytes = 0;
         try {
+            if (Graphics::VertexFetchOutOfRange(attribute)) continue;
             bytes = Graphics::VertexBufferExtent(attribute);
         } catch (const std::runtime_error&) {
             continue;

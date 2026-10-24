@@ -10,6 +10,11 @@
 #include <mutex>
 extern "C" std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords();
 extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadsActivePacketSize();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadCompletePacketSize();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadStreamInactivePacketSize();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverNopDataGetPacketSize(std::uint32_t);
+extern "C" std::uint32_t APS5_VABI sceAgcDriverUserDataGetPacketSize(std::uint32_t);
 extern "C" std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t**, std::uint32_t, std::uint32_t, std::uint32_t, int);
 static void Require(bool value) { if (!value) std::abort(); }
 class Output final : public AgcDriver::IVideoOutput, public AgcDriver::IRenderingWait,
@@ -58,6 +63,13 @@ int main() {
     const auto flipPacketSize = sceAgcDriverGetSetFlipPacketSizeInDwords();
     Require(flipPacketSize == AgcDriver::FlipPacketWords);
     Require(flipPacketSize == 6);
+    Require(sceAgcDriverGetSetWorkloadsActivePacketSize() == 18);
+    Require(sceAgcDriverGetSetWorkloadCompletePacketSize() == 12);
+    Require(sceAgcDriverGetSetWorkloadStreamInactivePacketSize() == 9);
+    Require(sceAgcDriverNopDataGetPacketSize(0) == 2 && sceAgcDriverNopDataGetPacketSize(1) == 3 && sceAgcDriverNopDataGetPacketSize(4) == 3);
+    Require(sceAgcDriverNopDataGetPacketSize(5) == 4 && sceAgcDriverNopDataGetPacketSize(0xffffffffu) == 0x40000002u);
+    Require(sceAgcDriverUserDataGetPacketSize(0) == 3 && sceAgcDriverUserDataGetPacketSize(1) == 4 && sceAgcDriverUserDataGetPacketSize(4) == 4);
+    Require(sceAgcDriverUserDataGetPacketSize(5) == 9 && sceAgcDriverUserDataGetPacketSize(0xffffffffu) == 0x40000007u);
     bool rejected = false;
     try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0); }
     catch (const std::invalid_argument&) { rejected = true; }

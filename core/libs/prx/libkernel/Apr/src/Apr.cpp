@@ -166,7 +166,7 @@ void _readFile(const Apr::ReadFileCommand& command) {
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
     if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.path.string() + " is not writable guest memory");
 #ifdef _WIN32
-    std::array<char, 64u * 1024u> staging;
+    std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
     std::uint64_t read = 0;
     while (read < command.size) {
         const auto wanted = static_cast<std::streamsize>(std::min<std::uint64_t>(command.size - read, staging.size()));

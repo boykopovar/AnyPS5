@@ -22,6 +22,12 @@
 
 namespace {
 
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
 using namespace AgcDriver::Graphics;
 using AgcDriver::OverlayContent;
 using AgcDriver::OverlayCorner;
@@ -353,7 +359,7 @@ void requireTextDrawn(const std::vector<std::uint32_t>& drawn, VkExtent2D extent
                         const auto where = std::string("'") + line[index] + "' of '" + line + "' glyph pixel " + std::to_string(gx) + "," + std::to_string(gy);
                         Require(channel(word, 24) == channel(frameWord, 24), where + " changed the alpha");
                         if (set) {
-                            Require((word & 0x00ffffffu) == 0x00ffffffu, where + " is not white text: 0x" + std::to_string(word));
+                            Require((word & 0x00ffffffu) == 0x00ffffffu, where + " is not white text: " + Hex(word));
                             continue;
                         }
                         for (const unsigned shift : {0u, 8u, 16u}) {

@@ -119,13 +119,11 @@ int main() {
     Msghdr message{nullptr, 0, &part, 1, nullptr, 0, 0};
     Require(Fails(recvmsg_nid_postfix(datagram, &message, 0), WouldBlock));
     Require(Fails(read_nid_postfix(datagram, &byte, sizeof(byte)), WouldBlock));
-#ifndef _WIN32
     Require(Set(datagram, ReceiveTimeout, 60, 0) == 0);
     Require(Fails(recv_nid_postfix(datagram, &byte, sizeof(byte), DontWait), WouldBlock));
     Require(Fails(recvfrom_nid_postfix(datagram, &byte, sizeof(byte), DontWait, nullptr, nullptr), WouldBlock));
     Require(Fails(recvmsg_nid_postfix(datagram, &message, DontWait), WouldBlock));
     Require(Set(datagram, ReceiveTimeout, 0, 60000) == 0);
-#endif
     Require(sendto_nid_postfix(datagram, "d", 1, 0, own.data(), own.size()) == 1);
     Require(recv_nid_postfix(datagram, &byte, sizeof(byte), 0) == 1 && byte == 'd');
 

@@ -107,16 +107,16 @@ void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, 
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message) const {
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
     std::vector<std::pair<std::uint32_t, std::size_t>> gsTraps;
-    std::set<std::uint32_t> branchTargets;
+    std::vector<std::uint32_t> branchTargets;
     std::set<Domain::VirtualAddress> entryRoots;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message);
     std::uint64_t scanned = 0;
 
     for (const auto& header : headers) {
@@ -146,11 +146,12 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max())
-                    branchTargets.insert(static_cast<std::uint32_t>(target));
+                    branchTargets.push_back(static_cast<std::uint32_t>(target));
             }
 
             if (info.SegmentPrefix == 0x65 && !insidePrevious) {
-                gsTraps.emplace_back(rva, info.Length);
+                if (info.HasMemoryOperand)
+                    gsTraps.emplace_back(rva, info.Length);
                 continue;
             }
             if (info.SegmentPrefix != 0 && !(insidePrevious && info.SegmentPrefix != 0x64)) {
@@ -273,11 +274,14 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     code.PatchBranch(skipCallback, code.GetRva());
     code.Emit({0xc3});
 
+    std::sort(branchTargets.begin(), branchTargets.end());
+    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
+
     std::uint64_t patched = 0;
     for (const auto& access : accesses) {
         if (patched % 256 == 0) report(9000 + 900 * patched / accesses.size());
         ++patched;
-        const auto target = branchTargets.upper_bound(access.Rva);
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), access.Rva);
         if (target != branchTargets.end() && *target < access.Rva + access.Length)
             throw Domain::RelinkerException("Branch enters a guest TLS instruction", *target);
         patchAccess(sections, access, code.GetRva());

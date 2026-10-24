@@ -24,12 +24,18 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     }
     if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
         headers.push_back({PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
-    if (end > std::numeric_limits<std::uint64_t>::max() - 0x4000) throw Domain::RelinkerException("Guest virtual address overflow");
+    std::vector<Domain::ProgramHeader> loads;
+    for (const auto& header : headers)
+        if (header.Type == 1) loads.push_back(header);
+    std::stable_sort(loads.begin(), loads.end(), [](const auto& left, const auto& right) { return left.MappedAddress < right.MappedAddress; });
+    for (std::size_t index = 0, next = 0; index < headers.size(); ++index)
+        if (headers[index].Type == 1) headers[index] = loads[next++];
+    if (end >std::numeric_limits<std::uint64_t>::max() - 0x4000) throw Domain::RelinkerException("Guest virtual address overflow");
     Io::AlignBuffer(bytes, 0x4000);
     const auto extraOffset = bytes.size();
     const auto extraAddress = Io::AlignUp64(end, 0x4000);
     const auto address = [&] { return extraAddress + bytes.size() - extraOffset; };
-    const bool passesModuleArgs = image.Init != 0;
+    const bool passesModuleArgs = image.HasInit;
     std::uint64_t argsSlot = 0;
     std::uint64_t resultSlot = 0;
     if (passesModuleArgs) {
@@ -121,7 +127,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         return static_cast<std::uint32_t>(static_cast<std::int32_t>(distance));
     };
     const auto lifecycle = [&](std::uint64_t target) {
-        if (target == 0) return std::uint64_t{};
+        if (!image.HasInit) return std::uint64_t{};
         const auto start = address();
         std::vector<std::uint8_t> stub(kStubSize, 0xc3);
         stub[0x00] = 0x50;

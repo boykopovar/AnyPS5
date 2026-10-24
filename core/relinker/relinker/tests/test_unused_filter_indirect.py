@@ -51,6 +51,11 @@ def load_slot(address):
     return b"\x48\x8b\x05" + rel(address + 7, SLOT) + b"\xc3"
 
 
+def with_import_type(image, relocation_type):
+    struct.pack_into("<Q", image, 0x708, (1 << 32) | relocation_type)
+    return image
+
+
 def run(relinker, work, name, image, level=1):
     source = work / (name + ".elf")
     output = work / (name + ".out")
@@ -123,6 +128,8 @@ def cases():
     yield "undecodable-table-target", False, build(
         at_offset([(0, table_lea), (0x40, load_slot(FUNCTION)), (0x1ff, b"\x0f")]),
         data=[(TABLE, struct.pack("<i", split - TABLE))])
+    table_call = b"\x48\x8d\x05" + rel(CODE + 7, SLOT - 8) + b"\xff\x50\x08\xc3"
+    yield "data-pointer-at-offset", True, with_import_type(build(at_offset([(0, table_call)])), 1)
 
 
 def main():

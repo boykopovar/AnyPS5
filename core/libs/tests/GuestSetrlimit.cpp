@@ -19,6 +19,10 @@ int* APS5_VABI __error_nid_postfix();
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_RLIMIT_DATA = 2;
+static constexpr int GUEST_RLIMIT_STACK = 3;
+static constexpr int GUEST_RLIMIT_RSS = 5;
+static constexpr int GUEST_RLIMIT_MEMLOCK = 6;
+static constexpr int GUEST_RLIMIT_NPROC = 7;
 static constexpr int GUEST_RLIMIT_NOFILE = 8;
 static constexpr int GUEST_RLIM_NLIMITS = 15;
 static constexpr std::int64_t GUEST_RLIM_INFINITY = std::numeric_limits<std::int64_t>::max();
@@ -46,6 +50,26 @@ int main() {
     RequireError(GUEST_RLIM_NLIMITS, nullptr, GUEST_EFAULT);
     RequireError(-1, &infinity, GUEST_EINVAL);
     RequireError(GUEST_RLIM_NLIMITS, &infinity, GUEST_EINVAL);
+
+    static constexpr int unchanged[] = {GUEST_RLIMIT_STACK, GUEST_RLIMIT_RSS, GUEST_RLIMIT_MEMLOCK};
+    for (int resource : unchanged) {
+        ResourceLimit before{};
+        Require(getrlimit_nid_postfix(resource, &before) == 0);
+        *__error_nid_postfix() = 13;
+        Require(setrlimit_nid_postfix(resource, &before) == 0 && *__error_nid_postfix() == 13);
+        ResourceLimit after{};
+        Require(getrlimit_nid_postfix(resource, &after) == 0 && after.rlim_cur == before.rlim_cur && after.rlim_max == before.rlim_max);
+    }
+    ResourceLimit processes{};
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1604 && processes.rlim_max == 1604);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1443 && processes.rlim_max == 1443);
+    const ResourceLimit noProcesses{0, 0};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &noProcesses) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1 && processes.rlim_max == 1);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &infinity) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1443 && processes.rlim_max == 1443);
+    Require(Throws(GUEST_RLIMIT_STACK, ResourceLimit{0x100000, 0x200000}));
 
     ResourceLimit current{};
     Require(getrlimit_nid_postfix(GUEST_RLIMIT_DATA, &current) == 0);

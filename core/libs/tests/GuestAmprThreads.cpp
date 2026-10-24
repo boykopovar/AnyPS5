@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -37,6 +38,7 @@ struct GuestTypeInfo {
 struct GuestSystemError {
     const void* vtable;
     const char* message;
+    int reserved;
     int code;
     const void* category;
 };
@@ -60,7 +62,7 @@ int APS5_VABI _Thrd_join_nid_postfix(Pthread thread, int* code);
 int APS5_VABI _Thrd_sleep_nid_postfix(const GuestXtime* target, GuestXtime* remaining);
 void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void);
 void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void);
-int APS5_VABI wcstombs_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
+int APS5_VABI sceAmprWcstombsS(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI pthread_detach_nid_postfix(Pthread thread);
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
@@ -188,6 +190,23 @@ static void TestThreadSleep() {
     Require(_Thrd_sleep_nid_postfix(&negative, nullptr) == 0);
     Require(RealtimeNanos() >= borrowed.sec * NanosPerSecond + borrowed.nsec);
 
+#ifdef _WIN32
+    for (const auto duration : {100000LL, 2000000LL}) {
+        std::array<std::chrono::nanoseconds, 31> samples{};
+        for (auto& sample : samples) {
+            const auto start = std::chrono::steady_clock::now();
+            const auto shortTarget = XtimeAfter(duration);
+            Require(_Thrd_sleep_nid_postfix(&shortTarget, nullptr) == ThrdSuccess);
+            sample = std::chrono::steady_clock::now() - start;
+            Require(RealtimeNanos() >= shortTarget.sec * NanosPerSecond + shortTarget.nsec);
+        }
+        std::sort(samples.begin(), samples.end());
+        const auto median = samples[samples.size() / 2];
+        std::fprintf(stderr, "_Thrd_sleep(%lld ns) median: %lld ns\n", duration, static_cast<long long>(median.count()));
+        Require(median < std::chrono::milliseconds(12));
+    }
+#endif
+
     bool rejected = false;
     try {
         _Thrd_sleep_nid_postfix(nullptr, nullptr);
@@ -215,43 +234,43 @@ static void TestWcstombs() {
     char buffer[8];
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, sizeof(buffer), text, sizeof(buffer)) == 0);
+    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), text, sizeof(buffer)) == 0);
     Require(result == 3 && std::strcmp(buffer, "abc") == 0);
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, sizeof(buffer), text, 2) == 0);
+    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), text, 2) == 0);
     Require(result == 2 && std::strcmp(buffer, "ab") == 0);
 
     result = 0;
-    Require(wcstombs_s_nid_postfix(&result, nullptr, 0, text, 0) == 0);
+    Require(sceAmprWcstombsS(&result, nullptr, 0, text, 0) == 0);
     Require(result == 3);
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, 3, text, 3) == GuestErange);
+    Require(sceAmprWcstombsS(&result, buffer, 3, text, 3) == GuestErange);
     Require(result == Failed && buffer[0] == '\0');
 
     result = 0;
-    Require(wcstombs_s_nid_postfix(&result, nullptr, 4, text, 4) == GuestEinval);
+    Require(sceAmprWcstombsS(&result, nullptr, 4, text, 4) == GuestEinval);
     Require(result == Failed);
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, sizeof(buffer), nullptr, sizeof(buffer)) == GuestEinval);
+    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), nullptr, sizeof(buffer)) == GuestEinval);
     Require(result == Failed && buffer[0] == '\0');
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(nullptr, buffer, sizeof(buffer), text, sizeof(buffer)) == GuestEinval);
+    Require(sceAmprWcstombsS(nullptr, buffer, sizeof(buffer), text, sizeof(buffer)) == GuestEinval);
     Require(buffer[0] == '\0');
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, 0, text, 4) == GuestEinval);
+    Require(sceAmprWcstombsS(&result, buffer, 0, text, 4) == GuestEinval);
     Require(result == Failed && buffer[0] == 'x');
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(wcstombs_s_nid_postfix(&result, buffer, sizeof(buffer), wide, sizeof(buffer)) == GuestEilseq);
-    Require(result == Failed && buffer[0] == 'a' && buffer[1] == '\0');
+    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), wide, sizeof(buffer)) == 0);
+    Require(result == 3 && std::memcmp(buffer, "a\xc4\x80\0x", 5) == 0);
 
-    Require(wcstombs_s_nid_postfix(&result, nullptr, 0, wide, 0) == GuestEilseq);
-    Require(result == Failed);
+    Require(sceAmprWcstombsS(&result, nullptr, 0, wide, 0) == 0);
+    Require(result == 3);
 }
 
 template<typename TException, typename TCall>

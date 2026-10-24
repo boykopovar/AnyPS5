@@ -51,21 +51,22 @@ std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>
 
 class CallSiteResolver : public ICallSiteResolver {
 public:
-    std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection, FileByteOffset textSectionVAddr, VirtualAddress targetGotOrPltAddress, ByteCount targetGotOrPltSize) override;
+    std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection, FileByteOffset textSectionVAddr, VirtualAddress targetGotOrPltAddress, ByteCount targetGotOrPltSize, const std::vector<CodeRange>& unwindRanges) override;
 private:
     const std::vector<std::uint8_t>* _cachedTextPtr = nullptr;
     std::vector<std::pair<VirtualAddress, FileByteOffset>> _cachedTargetToInstr;
     FileByteOffset _cachedTextVAddr = 0;
+    std::vector<CodeRange> _cachedUnwindRanges;
 };
 
-std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection, const FileByteOffset textSectionVAddr, const VirtualAddress targetGotOrPltAddress, const ByteCount targetGotOrPltSize) {
+std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection, const FileByteOffset textSectionVAddr, const VirtualAddress targetGotOrPltAddress, const ByteCount targetGotOrPltSize, const std::vector<CodeRange>& unwindRanges) {
     if (targetGotOrPltSize > std::numeric_limits<VirtualAddress>::max() - targetGotOrPltAddress)
         throw RelinkerException("Relocation target range exceeds the address space");
     if (textSection.size() > std::numeric_limits<FileByteOffset>::max() - textSectionVAddr)
         throw RelinkerException("Text section range exceeds the address space");
     if (textSection.empty()) return {};
-    if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr) {
-        auto scanner = Codegen::MakeInstructionScanner();
+    if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr || _cachedUnwindRanges != unwindRanges) {
+        auto scanner = Codegen::MakeInstructionScanner({}, unwindRanges);
         _cachedTargetToInstr.clear();
         const auto candidateCount = std::count_if(textSection.begin(), textSection.end(), [](std::uint8_t b) {
             return b == OneByteGrp5Rm || b == OneByteModRmRangeJMax;
@@ -83,6 +84,7 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
         std::sort(_cachedTargetToInstr.begin(), _cachedTargetToInstr.end());
         _cachedTextPtr = &textSection;
         _cachedTextVAddr = textSectionVAddr;
+        _cachedUnwindRanges = unwindRanges;
     }
 
     std::vector<FileByteOffset> sites;

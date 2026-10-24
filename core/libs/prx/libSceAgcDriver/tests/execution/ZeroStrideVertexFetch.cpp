@@ -142,14 +142,28 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        constexpr std::array<Case, 7> cases{{
-            {2u, 1u, true, "OOB_SELECT 2, one record"},
+        constexpr std::uint32_t Wzyx = 7u | (6u << 3u) | (1u << 6u) | (0u << 9u);
+        constexpr std::array<Case, 20> cases{{
+            {0u, 0u, false, "OOB_SELECT 0, no records"},
+            {0u, 1u, false, "OOB_SELECT 0, one record"},
+            {0u, 16u, false, "OOB_SELECT 0, records cover the element's bytes"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff, selectors W Z 1 0", Wzyx},
+            {1u, 0u, false, "OOB_SELECT 1, no records"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS counts the three vertices' records"},
+            {1u, 4u, true, "OOB_SELECT 1, NUM_RECORDS past the vertices"},
+            {1u, 0xffffffffu, true, "OOB_SELECT 1, NUM_RECORDS 0xffffffff"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS 3, selectors W Z 1 0", Wzyx},
             {2u, 0u, false, "OOB_SELECT 2, no records"},
-            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {2u, 1u, true, "OOB_SELECT 2, one record"},
+            {2u, 16u, true, "OOB_SELECT 2, whole element in range"},
             {3u, 0u, false, "OOB_SELECT 3, no records"},
-            {0u, 16u, true, "OOB_SELECT 0, whole element in range"},
-            {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", 7u | (6u << 3u) | (1u << 6u) | (0u << 9u)},
-            {3u, 0u, false, "OOB_SELECT 3, no records, selectors W Z 1 0", 7u | (6u << 3u) | (1u << 6u) | (0u << 9u)},
+            {3u, 8u, false, "OOB_SELECT 3, the element only partly fits"},
+            {3u, 15u, false, "OOB_SELECT 3, the element misses its last byte"},
+            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {3u, 0xffffffffu, true, "OOB_SELECT 3, NUM_RECORDS 0xffffffff"},
+            {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", Wzyx},
+            {3u, 8u, false, "OOB_SELECT 3, partly fits, selectors W Z 1 0", Wzyx},
         }};
         for (const auto& value : cases) {
             Draw(*device, value);

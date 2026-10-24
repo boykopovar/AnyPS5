@@ -19,7 +19,7 @@ std::int32_t APS5_VABI sceDiscMapIsRequestOnHDD(const char* path, std::int64_t o
 }
 
 APS5_EXPORT("ioKMruft1ek", sceDiscMapUnknown_ioKMruft1ek);
-std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int64_t offset, std::int64_t size, void* flags, void* out1, void* out2) {
+std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int64_t offset, std::int64_t size, std::uint64_t* flags, std::uint64_t* out1, std::uint64_t* out2) {
     (void)path;
     (void)offset;
     (void)size;
@@ -27,6 +27,11 @@ std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int6
     (void)out1;
     (void)out2;
     return SCE_DISC_MAP_ERROR_NO_BITMAP_INFO;
+}
+
+int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, int* ret1, int* ret2) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

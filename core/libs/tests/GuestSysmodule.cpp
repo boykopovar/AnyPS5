@@ -26,6 +26,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
+int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
 int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t* handle);
 int APS5_VABI sceKernelDlsym(std::int32_t handle, const char* symbol, void** addr);
@@ -138,6 +139,9 @@ void CheckUnknownIds() {
     int result = 0x5a5a5a5a;
     Require(ThrowsRuntimeError([internalId, &result] { sceSysmoduleLoadModuleInternalWithArg(internalId, 0, nullptr, 0, &result); }));
     Require(result == 0x5a5a5a5a);
+    int unloadResult = 0x5a5a5a5a;
+    Require(ThrowsRuntimeError([internalId, &unloadResult] { sceSysmoduleUnloadModuleInternalWithArg(internalId, 0, nullptr, 0, &unloadResult); }));
+    Require(unloadResult == 0x5a5a5a5a);
 }
 
 #ifdef _WIN32
@@ -312,6 +316,19 @@ int main() {
     Require(sceSysmoduleLoadModuleInternal(kHdrScopesInternalModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternal(kHdrScopesInternalModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternal(kHdrScopesInternalModuleId) == kModuleUnloaded);
+
+    int unloadArgResult = -1;
+    Require(sceSysmoduleUnloadModuleInternalWithArg(0, 0, nullptr, 0, &unloadArgResult) == kInvalidValue);
+    Require(unloadArgResult == -1);
+    Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == kModuleUnloaded);
+    Require(unloadArgResult == -1);
+    int loadArgResult = -1;
+    Require(sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &loadArgResult) == 0);
+    Require(loadArgResult == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
+    Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == 0);
+    Require(unloadArgResult == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == kModuleUnloaded);
 
     Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == kModuleUnloaded);

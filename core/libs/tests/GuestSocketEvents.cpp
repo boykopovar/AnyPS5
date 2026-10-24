@@ -16,6 +16,9 @@ int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 int APS5_VABI close_nid_postfix(int);
+int APS5_VABI pipe_nid_postfix(int*);
+std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
+std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
@@ -44,7 +47,57 @@ static bool Rejects(int (APS5_VABI *add)(KernelEqueue, int, std::size_t, void*),
     return false;
 }
 
+static void PipeReadEvents() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "pipe") == SCE_OK);
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    const KernelUseconds shortTimeout = 20000;
+    const KernelUseconds timeout = 1000000;
+    int marker = 0;
+    int count = 0;
+    std::array<KernelEvent, 4> events{};
+
+    Require(sceKernelAddReadEvent(eq, pipe[0], 64, &marker) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(count == 0);
+    Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(pipe[0]) && events[0].filter == EVFILT_READ);
+    Require(events[0].data == 3 && events[0].udata == &marker && (events[0].flags & EV_EOF) == 0);
+    char buffer[4]{};
+    Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 3);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+
+    const auto start = std::chrono::steady_clock::now();
+    std::thread writer([&pipe] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(write_nid_postfix(pipe[1], "d", 1) == 1);
+    });
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, nullptr) == SCE_OK);
+    writer.join();
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+    Require(count == 1 && events[0].data == 1);
+
+    Require(close_nid_postfix(pipe[1]) == 0);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 1 && (events[0].flags & EV_EOF) != 0);
+    Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 1);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 0 && (events[0].flags & EV_EOF) != 0);
+    Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_OK);
+    Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_KERNEL_ERROR_ENOENT);
+
+    int oneWay[2];
+    Require(pipe_nid_postfix(oneWay) == 0);
+    Require(Rejects(sceKernelAddWriteEvent, eq, oneWay[1], 1));
+    Require(close_nid_postfix(oneWay[0]) == 0 && close_nid_postfix(oneWay[1]) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
+    PipeReadEvents();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};

@@ -13,6 +13,14 @@ const char* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5c_strEv(const void* se
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(void* self, void* libContext);
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(void* self);
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(void* self, const void* element);
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const void* self);
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const void* self, const char* other);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(void* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEED1Ev(void* self);
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(void* self, const void* element);
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V130PostPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv();
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi17getPlayerSessionsEiRKNS4_28ParameterToGetPlayerSessionsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_29GetPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE();
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi26setPlayerSessionPropertiesEiRKNS4_37ParameterToSetPlayerSessionPropertiesERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE();
 }
 
 namespace {
@@ -180,6 +188,69 @@ void TestVectorPushBackCopiesStringContent() {
     Require(VectorGuardIntact(vector));
 }
 
+void TestStringEmptyAndEquals() {
+    std::uint64_t libContext = 1;
+    Storage storage;
+    std::memset(storage.bytes, kFill, sizeof(storage.bytes));
+
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(storage.bytes, &libContext);
+    Require(_ZNK3sce2Np9CppWebApi6Common6String5emptyEv(storage.bytes) == 1);
+    Require(_ZN3sce2Np9CppWebApi6Common6StringeqEPKc(storage.bytes, "rank") == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(storage.bytes, "rank") == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6String5emptyEv(storage.bytes) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6StringeqEPKc(storage.bytes, "rank") == 1);
+    Require(_ZN3sce2Np9CppWebApi6Common6StringeqEPKc(storage.bytes, "rank2") == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6StringeqEPKc(storage.bytes, nullptr) == 0);
+    Require(GuardIntact(storage));
+
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(storage.bytes);
+}
+
+int g_elementDeleterCalls = 0;
+void APS5_VABI ElementDeleter(void*) { ++g_elementDeleterCalls; }
+
+void TestIntrusivePtrVectorPushBack() {
+    std::uint64_t libContext = 1;
+    VectorStorage vector;
+    std::memset(vector.bytes, kFill, sizeof(vector.bytes));
+
+    alignas(8) unsigned char element[0x18];
+    alignas(8) unsigned char elementObject[0x10];
+    std::memset(element, 0, sizeof(element));
+    std::memset(elementObject, 0, sizeof(elementObject));
+    g_elementDeleterCalls = 0;
+
+    void* object = elementObject;
+    auto* deleter = &ElementDeleter;
+    std::memcpy(element + 0x00, &object, sizeof(void*));
+    std::memcpy(element + 0x08, &deleter, sizeof(void*));
+    std::memcpy(element + 0x10, &libContext, sizeof(void*));
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(vector.bytes, &libContext);
+    Require(VectorGuardIntact(vector));
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(vector.bytes, element) == 0);
+
+    void* body;
+    std::memcpy(&body, vector.bytes + kObjectOffset, sizeof(body));
+    Require(body != nullptr);
+    Require(LoadBody<std::int32_t>(body, kBodyReferenceCountOffset) == 1);
+    Require(LoadBody<std::int32_t>(body, kBodyElementKindOffset) == 1);
+    Require(LoadBody<std::uint64_t>(body, kBodySizeOffset) == 1);
+    Require(*reinterpret_cast<std::int32_t*>(elementObject) == 1);
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEED1Ev(vector.bytes);
+    Require(g_elementDeleterCalls == 1);
+    Require(VectorGuardIntact(vector));
+}
+
+void TestOfflineResponses() {
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V130PostPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi17getPlayerSessionsEiRKNS4_28ParameterToGetPlayerSessionsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_29GetPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE() == static_cast<int>(0x80552907));
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi26setPlayerSessionPropertiesEiRKNS4_37ParameterToSetPlayerSessionPropertiesERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE() == static_cast<int>(0x80552907));
+}
+
 }
 
 int main() {
@@ -188,4 +259,7 @@ int main() {
     TestAppendBuildsAndClearsBuffer();
     TestAppendNullKeepsEmpty();
     TestVectorPushBackCopiesStringContent();
+    TestStringEmptyAndEquals();
+    TestIntrusivePtrVectorPushBack();
+    TestOfflineResponses();
 }

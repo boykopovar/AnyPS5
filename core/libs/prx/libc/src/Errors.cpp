@@ -1,3 +1,4 @@
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstring>
@@ -76,8 +77,9 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));
-    if (prefix && *prefix) std::fprintf(stderr, "%s: %s\n", prefix, message);
-    else std::fprintf(stderr, "%s\n", message);
+    auto* stream = GetNativeStream(&_Stderr_nid_postfix);
+    if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
+    else std::fprintf(stream, "%s\n", message);
     *__error_nid_postfix() = saved;
 }
 }

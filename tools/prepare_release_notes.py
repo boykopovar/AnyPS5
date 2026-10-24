@@ -34,6 +34,7 @@ def prepare_notes(source, body, full):
             raise IsADirectoryError(str(destination))
         if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             raise PermissionError(f"Release note destination is read-only: {destination}")
+    body.parent.mkdir(parents=True, exist_ok=True)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_bytes(notes.encode("utf-8"))
     body.write_bytes(release_body(notes).encode("utf-8"))

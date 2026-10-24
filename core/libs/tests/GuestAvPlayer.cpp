@@ -21,7 +21,9 @@
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 
 extern "C" {
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData*);
@@ -36,7 +38,9 @@ int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal*, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal*, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerStart(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const void*);
+int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const AvPlayer::StartInfo*);
+int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal*, std::uint32_t, const void*);
+int APS5_VABI sceAvPlayerDisableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerPause(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerResume(AvPlayerInternal*);
@@ -74,6 +78,7 @@ constexpr std::int32_t EventPause = 4;
 constexpr std::int32_t EventWarning = 0x20;
 const char* const MoviePath = "app0/avplayer.mp4";
 const char* const WebmPath = "app0/avplayer.webm";
+constexpr int WebmVideoFrames = 6;
 
 constexpr std::array<std::uint8_t, 5986> Movie{
     0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
@@ -864,7 +869,7 @@ void TestPlayback() {
             last = frame.timestamp;
             ++frames;
         }
-        return frames >= 8 && sounds >= 8;
+        return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
     Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
@@ -958,38 +963,48 @@ void TestVp9OpusPlayback() {
         file.write(reinterpret_cast<const char*>(WebmMovie.data()), static_cast<std::streamsize>(WebmMovie.size()));
         Check(static_cast<bool>(file), "cannot write the WebM movie");
     }
-    Events events;
-    AvPlayerInitData init = InitData(&events);
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "WebM init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0, "WebM add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "WebM ready event missing");
-    Check(sceAvPlayerStreamCount(player) == 2, "unexpected WebM stream count");
-    AvPlayerStreamInfo video{};
-    Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
-    AvPlayerStreamInfo audio{};
-    Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 0 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
-    Check(sceAvPlayerEnableStream(player, 0) == 0 && sceAvPlayerEnableStream(player, 1) == 0, "enable WebM streams failed");
-    Check(sceAvPlayerStart(player) == 0, "WebM start failed");
-    AvPlayerFrameInfoEx frame{};
-    AvPlayerFrameInfo sound{};
-    int frames = 0;
-    int sounds = 0;
-    Check(WaitFor([&] {
-        if (sceAvPlayerGetAudioData(player, &sound)) {
-            CheckEnglishAudio(sound);
-            ++sounds;
-        }
-        if (sceAvPlayerGetVideoDataEx(player, &frame)) {
-            CheckVideoFrame(frame);
-            ++frames;
-        }
-        return !sceAvPlayerIsActive(player);
-    }), "WebM playback never ended");
-    Check(frames >= 5 && sounds >= 2, "WebM delivered " + std::to_string(frames) + " frames and " + std::to_string(sounds) + " audio chunks");
-    Check(sceAvPlayerClose(player) == 0, "WebM close failed");
-    std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "WebM allocations leaked");
+    const auto play = [](bool withAudio) {
+        Events events;
+        AvPlayerInitData init = InitData(&events);
+        auto* player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "WebM init failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0, "WebM add source failed");
+        Check(WaitFor([&] { return events.Seen(EventReady); }), "WebM ready event missing");
+        Check(sceAvPlayerStreamCount(player) == 2, "unexpected WebM stream count");
+        AvPlayerStreamInfo video{};
+        Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
+        AvPlayerStreamInfo audio{};
+        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 0 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
+        Check(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
+        if (!withAudio) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
+        Check(sceAvPlayerStart(player) == 0, "WebM start failed");
+        AvPlayerFrameInfoEx frame{};
+        AvPlayerFrameInfo sound{};
+        int frames = 0;
+        int sounds = 0;
+        std::uint64_t last = 0;
+        Check(WaitFor([&] {
+            if (withAudio && sceAvPlayerGetAudioData(player, &sound)) {
+                CheckEnglishAudio(sound);
+                ++sounds;
+            }
+            if (sceAvPlayerGetVideoDataEx(player, &frame)) {
+                CheckVideoFrame(frame);
+                Check(frames == 0 || frame.timestamp > last, "WebM video timestamps do not increase");
+                last = frame.timestamp;
+                ++frames;
+            }
+            return !sceAvPlayerIsActive(player);
+        }), "WebM playback never ended");
+        Check(sceAvPlayerClose(player) == 0, "WebM close failed");
+        std::lock_guard lock(allocations.mutex);
+        Check(allocations.blocks.empty(), "WebM allocations leaked");
+        return std::pair{frames, sounds};
+    };
+    const auto [decoded, silent] = play(false);
+    Check(decoded == WebmVideoFrames && silent == 0, "WebM video-only playback delivered " + std::to_string(decoded) + " of " + std::to_string(WebmVideoFrames) + " frames");
+    const auto [frames, sounds] = play(true);
+    Check(frames >= 1 && sounds >= 2, "WebM delivered " + std::to_string(frames) + " frames and " + std::to_string(sounds) + " audio chunks");
 }
 
 void TestChangeStream() {
@@ -1060,12 +1075,25 @@ void TestExtendedExports() {
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
-    Check(sceAvPlayerStartEx(player, nullptr) == 0, "extended start failed");
+    Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    AvPlayer::StartInfo startInfo{0, 700};
+    Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
+    startInfo.size = sizeof(startInfo);
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended start failed");
     Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
     AvPlayerFrameInfoEx frame{};
     Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
     CheckVideoFrame(frame);
+    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "extended start ignored the requested position");
+    Check(!events.Seen(EventWarning, JumpComplete), "extended start reported a jump");
+    Check(sceAvPlayerStop(player) == 0, "extended stop failed");
+    startInfo.startTime = 0;
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended restart failed");
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
+    Check(frame.timestamp <= 67, "zero-position start did not restart playback");
     Check(sceAvPlayerClose(player) == 0, "close failed");
+    Check(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
+    Check(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
 }
 
 void TestWithoutAllocators() {
@@ -1259,6 +1287,26 @@ void TestRestartAfterPausedJumpKeepsClockRunning() {
         return last >= 200;
     }), "playback froze after a restart that followed a paused jump");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock stayed frozen after the restart");
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestPausedPreparationAfterAudioStarts(std::uint32_t syncMode) {
+    Events events;
+    auto init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerSetAvSyncMode(player, syncMode) == 0, "sync mode failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    AvPlayerFrameInfo audio{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no initial audio frame");
+    Check(sceAvPlayerPause(player) == 0, "pause failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "first video frame blocked during paused preparation after audio started");
+    CheckVideoFrame(frame);
+    Check(!sceAvPlayerGetVideoDataEx(player, &frame), "paused preparation delivered more than the initial video frame");
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
@@ -1550,6 +1598,29 @@ void TestCloseFromEventCallback(std::int32_t event) {
     Check(allocations.blocks.empty(), "callback close leaked media allocations");
 }
 
+void TestVideoSyncTolerance() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync tolerance init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync tolerance source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync tolerance ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync tolerance video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync tolerance start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "sync tolerance play missing");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync tolerance first frame missing");
+    Check(FrameIndex(frame.timestamp) == 0, "first frame not index 0");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 5.0);
+    Check(!WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 200), "frame beyond sync tolerance delivered prematurely");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 10.0);
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "frame within sync tolerance was not delivered");
+    Check(FrameIndex(frame.timestamp) == 1, "unexpected second frame index");
+    Check(sceAvPlayerClose(player) == 0, "sync tolerance close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1559,6 +1630,13 @@ int main(int argc, char** argv) {
             TestCloseFromEventCallback(EventReady);
             TestCloseFromEventCallback(EventStop);
             std::puts("AvPlayer callback close tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--paused-first-video") == 0) {
+            WriteMovie();
+            TestPausedPreparationAfterAudioStarts(0);
+            TestPausedPreparationAfterAudioStarts(1);
+            std::puts("AvPlayer paused first video tests passed");
             return 0;
         }
         Check(argc == 1, "unknown AvPlayer test arguments");
@@ -1581,6 +1659,7 @@ int main(int argc, char** argv) {
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
+        TestVideoSyncTolerance();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -22,6 +22,9 @@
 [submodule "3rdparty/ffmpeg-core"]
 	path = 3rdparty/ffmpeg-core
 	url = https://github.com/KytyPS5/ext-ffmpeg-core.git
+[submodule "3rdparty/opus"]
+	path = 3rdparty/opus
+	url = https://github.com/xiph/opus.git
 [submodule "3rdparty/freetype"]
 	path = 3rdparty/freetype
 	url = https://github.com/freetype/freetype.git
@@ -49,3 +52,12 @@
 [submodule "3rdparty/ZArchive"]
 	path = 3rdparty/ZArchive
 	url = https://github.com/Exzap/ZArchive.git
+[submodule "3rdparty/vgmstream"]
+	path = 3rdparty/vgmstream
+	url = https://github.com/vgmstream/vgmstream.git
+[submodule "3rdparty/ogg"]
+	path = 3rdparty/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "3rdparty/vorbis"]
+	path = 3rdparty/vorbis
+	url = https://github.com/xiph/vorbis.git

@@ -125,11 +125,16 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
 
+    std::optional<std::uint64_t> linuxBase;
+    if (!windows && !macos)
+        linuxBase = options.LinuxFixedBase || options.LazyBinding ? options.LinuxFixedBase : std::optional<std::uint64_t>(Elfpatcher::Linux::DefaultFixedBase);
+    if (!windows && !macos && options.LazyBinding)
+        inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase);
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); });
     } else if (windows) {
-        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports);
+        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); });
     } else {
         patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),
@@ -139,7 +144,8 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             ),
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
             byteWriter,
-            options.LinuxFixedBase
+            linuxBase,
+            options.TraceImports
         );
     }
 
@@ -156,7 +162,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::string diagnostics;
     if (windows) diagnostics = std::static_pointer_cast<Elfpatcher::Windows::WindowsPePatcher>(patcher)->GetDiagnostics();
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 1, 1});
-    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics), std::move(appliedPatches)};
+    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics), std::move(appliedPatches), linuxBase};
 } catch (Domain::RelinkerException& error) {
     if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
     throw;

@@ -1,7 +1,9 @@
 #include "SceTypes.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <future>
+#include <thread>
 
 extern "C" {
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
@@ -30,6 +32,11 @@ int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr)
 int APS5_VABI pthread_attr_setschedparam_nid_postfix(PthreadAttr* attr, const KernelSchedParam* param);
 int APS5_VABI pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int policy);
 int APS5_VABI pthread_attr_getschedpolicy_nid_postfix(const PthreadAttr* attr, int* policy);
+int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int state);
+int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
+int APS5_VABI scePthreadKeyDelete(PthreadKey key);
+int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
+Pthread APS5_VABI scePthreadSelf();
 }
 
 static constexpr int SCE_OK = 0;
@@ -47,6 +54,9 @@ static constexpr std::size_t STACK_SIZE = 2u << 20;
 static constexpr std::size_t MIN_STACK_SIZE = 16384;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
+static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
+static constexpr int DETACH_DETACHED = 1;
+static constexpr int DETACHED_THREADS = 32;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -256,12 +266,86 @@ static void CheckThreadScope() {
     Require(scePthreadJoin(inheritedThread, nullptr) == SCE_OK);
 }
 
+static int QueryResult(Pthread thread) {
+    PthreadAttr attr = nullptr;
+    Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrSetstacksize(&attr, STACK_SIZE) == SCE_OK);
+    const int result = scePthreadAttrGet(thread, &attr);
+    std::size_t stackSize = 0;
+    Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK);
+    Require(result == SCE_OK || stackSize == STACK_SIZE);
+    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    return result;
+}
+
+static bool ReportedEnded(Pthread thread) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (QueryResult(thread) == SCE_OK) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return QueryResult(thread) == SCE_KERNEL_ERROR_ESRCH;
+}
+
+struct ExitQuery {
+    PthreadKey key = -1;
+    int result = -1;
+};
+
+static void APS5_VABI QuerySelfAtExit(void* value) {
+    auto* query = static_cast<ExitQuery*>(value);
+    query->result = QueryResult(scePthreadSelf());
+}
+
+static void* APS5_VABI SetExitQuery(void* arg) {
+    auto* query = static_cast<ExitQuery*>(arg);
+    Require(scePthreadSetspecific(query->key, query) == SCE_OK);
+    return nullptr;
+}
+
+static void* APS5_VABI Finish(void*) {
+    return nullptr;
+}
+
+static void CheckEndedThreads() {
+    Require(QueryResult(scePthreadSelf()) == SCE_OK);
+
+    Pthread joined = nullptr;
+    Require(scePthreadCreate(&joined, nullptr, Finish, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadJoin(joined, nullptr) == SCE_OK);
+    Require(QueryResult(joined) == SCE_KERNEL_ERROR_ESRCH);
+    PthreadAttr unset = nullptr;
+    Require(scePthreadAttrGet(joined, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGet(joined, &unset) == SCE_KERNEL_ERROR_EINVAL);
+
+    ExitQuery exitQuery;
+    Require(scePthreadKeyCreate(&exitQuery.key, reinterpret_cast<pthread_key_destructor_func_t>(QuerySelfAtExit)) == SCE_OK);
+    Pthread finished = nullptr;
+    Require(scePthreadCreate(&finished, nullptr, SetExitQuery, &exitQuery, nullptr) == SCE_OK);
+    Require(ReportedEnded(finished));
+    Require(scePthreadJoin(finished, nullptr) == SCE_OK);
+    Require(exitQuery.result == SCE_OK);
+    Require(QueryResult(finished) == SCE_KERNEL_ERROR_ESRCH);
+    Require(scePthreadKeyDelete(exitQuery.key) == SCE_OK);
+
+    PthreadAttr detachedAttr = nullptr;
+    Require(scePthreadAttrInit(&detachedAttr) == SCE_OK);
+    Require(scePthreadAttrSetdetachstate(&detachedAttr, DETACH_DETACHED) == SCE_OK);
+    for (int index = 0; index < DETACHED_THREADS; ++index) {
+        Pthread detached = nullptr;
+        Require(scePthreadCreate(&detached, &detachedAttr, Finish, nullptr, nullptr) == SCE_OK);
+        Require(ReportedEnded(detached));
+    }
+    Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
+}
+
 int main() {
     CheckStackSizeLimit();
     CheckSoloSched();
     CheckSchedArguments();
     CheckSchedulingAttributes();
     CheckThreadScope();
+    CheckEndedThreads();
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);

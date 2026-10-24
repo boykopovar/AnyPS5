@@ -20,6 +20,7 @@
 #include <string>
 #include <limits>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #undef main
@@ -372,6 +373,12 @@ void testDecode() {
     check(group.attribute.option == 0x28, "an added buffer option did not keep the existing bits");
     check(expectFailure([&] { DescribeVideoOutBuffer(registered, group); }).find("buffer option 40") != std::string::npos, "an unsupported added buffer option was accepted");
     check(expectFailure([&] { sceVideoOutAddBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
+    sceVideoOutRemoveBufferAttributeOption(&group.attribute, 0x21);
+    check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY && group.attribute.width == 259 && group.attribute.height == 137, "a removed buffer option was not cleared alone");
+    check(DescribeVideoOutBuffer(registered, group).address == plain.address, "a buffer whose unsupported option was removed was rejected");
+    sceVideoOutRemoveBufferAttributeOption(&group.attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY);
+    check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, "removing the last buffer option did not clear it");
+    check(expectFailure([&] { sceVideoOutRemoveBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted for removal");
     VideoOutBuffer dccBuffer{0, reinterpret_cast<uint64_t>(tiled.data()), 0x7f0000};
     sceVideoOutSetBufferAttribute2(&group.attribute, 0x8000000000000000ull, 0, 259, 137, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, 0x208, 0x11223344);
     group.category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED;
@@ -472,10 +479,12 @@ void testControls() {
     check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &settings && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_VBLANK, "vblank event or updated user data missing");
     check(sceVideoOutAddPreVblankStartEvent(queue, handle, &mode) == 0, "pre-vblank subscription failed");
     check(sceVideoOutWaitVblank(handle) == 0, "vblank wait failed");
-    KernelEvent events[2]{};
-    check(owner->GetTriggeredEvents(events, 2) == 2, "pre-vblank or vblank event missing");
-    const auto& preVblank = sceVideoOutGetEventId(&events[0]) == VIDEO_OUT_EVENT_PRE_VBLANK_START ? events[0] : events[1];
-    check(sceVideoOutGetEventId(&preVblank) == VIDEO_OUT_EVENT_PRE_VBLANK_START && preVblank.udata == &mode, "pre-vblank event missing");
+    std::array<KernelEvent, 8> events{};
+    const int collected = owner->GetTriggeredEvents(events.data(), static_cast<int>(events.size()));
+    check(collected >= 2, "pre-vblank or vblank event missing");
+    const auto end = events.begin() + collected;
+    check(std::any_of(events.begin(), end, [&](KernelEvent& item) { return sceVideoOutGetEventId(&item) == VIDEO_OUT_EVENT_VBLANK && item.udata == &settings; }), "vblank event missing");
+    check(std::any_of(events.begin(), end, [&](KernelEvent& item) { return sceVideoOutGetEventId(&item) == VIDEO_OUT_EVENT_PRE_VBLANK_START && item.udata == &mode; }), "pre-vblank event missing");
     check(sceVideoOutDeletePreVblankStartEvent(queue, handle) == 0, "pre-vblank unsubscription failed");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
@@ -681,7 +690,12 @@ struct BusyLoop {
     std::vector<std::uint32_t> commands;
 };
 
-BusyLoop prepareBusyLoop(std::uint32_t iterations) {
+constexpr std::uint32_t busyLoopTotalIterations = 100000000u;
+constexpr std::uint32_t busyLoopDispatchCount = 100u;
+constexpr std::uint32_t busyLoopIterationsPerDispatch = busyLoopTotalIterations / busyLoopDispatchCount;
+static_assert(busyLoopTotalIterations % busyLoopDispatchCount == 0);
+
+BusyLoop prepareBusyLoop(std::uint32_t iterations, std::uint32_t dispatchCount = 1u) {
     alignas(256) static const std::array<std::uint32_t, 12> code{
         0xbe850380, 0x7e040281, 0xd5690002, 0x00020502, 0x4a040481, 0x80058105,
         0xbf070405, 0xbf85fffa, 0x7e020280, 0xe0701000, 0x80000201, 0xbf810000};
@@ -703,13 +717,17 @@ BusyLoop prepareBusyLoop(std::uint32_t iterations) {
     const auto program = reinterpret_cast<std::uintptr_t>(code.data());
     const auto output = reinterpret_cast<std::uintptr_t>(result);
     const auto target = reinterpret_cast<std::uintptr_t>(label);
-    return {result, label, {
+    std::vector<std::uint32_t> commands{
         0xc0027600, 0x20c, static_cast<std::uint32_t>(program >> 8u), static_cast<std::uint32_t>(program >> 40u),
         0xc0017600, 0x213, 5u << 1u,
         0xc0037600, 0x207, 32, 1, 1,
         0xc0057600, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, 4, 0x31016fac, iterations,
-        0xc0031500, 1, 1, 1, 0x8041,
-        0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0}};
+    };
+    for (std::uint32_t dispatch = 0; dispatch < dispatchCount; ++dispatch) {
+        commands.insert(commands.end(), {0xc0031500, 1, 1, 1, 0x8041});
+    }
+    commands.insert(commands.end(), {0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0});
+    return {result, label, std::move(commands)};
 }
 
 void testReleaseVblank() {
@@ -723,7 +741,7 @@ void testReleaseVblank() {
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
     check(sceVideoOutSetFlipRate(handle, 2) == 0, "flip rate was not applied");
-    auto busy = prepareBusyLoop(100000000u);
+    auto busy = prepareBusyLoop(busyLoopIterationsPerDispatch, busyLoopDispatchCount);
     Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU work was not accepted");
     sceVideoOutSubmitFlip(handle, 0, 1, 1);
@@ -749,8 +767,8 @@ void testFlipAfterGpuWork(bool eop = false) {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
-    constexpr std::uint32_t iterations = 100000000u;
-    auto busy = prepareBusyLoop(iterations);
+    constexpr std::uint32_t iterations = busyLoopIterationsPerDispatch;
+    auto busy = prepareBusyLoop(iterations, busyLoopDispatchCount);
     auto& result = *busy.result;
     auto& label = *busy.label;
     Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
@@ -1036,7 +1054,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s\n", error.what());
         try { LibcRunShutdown_nid_postfix(); }
         catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        if (std::string(error.what()).find("Vulkan support") != std::string::npos && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
+        const std::string what = error.what();
+        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
+        if (noVulkanWindow && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
             std::printf("skipped, no display or Vulkan device: %s\n", error.what());
             return 77;
         }

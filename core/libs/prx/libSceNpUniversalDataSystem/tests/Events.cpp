@@ -2,6 +2,7 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <clocale>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -231,6 +232,40 @@ void testStatEvent() {
     }
 }
 
+void testLocaleIndependentNumberFormatting() {
+    const char* previous = std::setlocale(LC_NUMERIC, nullptr);
+    check(previous != nullptr, "the current locale could not be read");
+    const std::string saved = previous;
+    struct RestoreLocale {
+        std::string saved;
+        ~RestoreLocale() { std::setlocale(LC_NUMERIC, saved.c_str()); }
+    } restore{saved};
+    bool commaDecimal = false;
+    for (const auto* name : {"French", "French_France.1252", "fr_FR.UTF-8", "de_DE.UTF-8"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::string(std::localeconv()->decimal_point) == ",") {
+            commaDecimal = true;
+            break;
+        }
+    }
+    if (!commaDecimal) {
+#ifdef _WIN32
+        throw std::runtime_error("No Windows comma-decimal locale available for regression");
+#else
+        std::puts("Comma-decimal locale regression unavailable on this host");
+        return;
+#endif
+    }
+    NpUniversalDataSystemEvent event;
+    event.properties.Set("float", 0.1f);
+    event.properties.Set("double", 0.1);
+    check(Uds::Describe(event.properties) == R"({"float":0.100000001,"double":0.10000000000000001})",
+          "described event properties changed with the numeric locale");
+    const auto converted = Uds::StatEvent(event);
+    check(converted.properties.size() == 2, "float and double event properties were lost");
+    check(converted.properties[0].text == "0.100000001", "float property text changed with the numeric locale");
+    check(converted.properties[1].text == "0.10000000000000001", "double property text changed with the numeric locale");
+}
+
 struct Unlocks {
     int count = 0;
 };
@@ -286,6 +321,7 @@ int main() {
         testEvents();
         testRecognition();
         testStatEvent();
+        testLocaleIndependentNumberFormatting();
         testPostingIgnoredEvents();
         std::puts("UDS event tests passed");
         return 0;

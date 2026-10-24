@@ -120,6 +120,13 @@ void APS5_VABI sceVideoOutAddBufferAttributeOption(VideoOutBufferAttribute2* att
     attribute->option |= option;
 }
 
+void APS5_VABI sceVideoOutRemoveBufferAttributeOption(VideoOutBufferAttribute2* attribute, uint64_t option) {
+    if (attribute == nullptr) {
+        throw std::runtime_error("sceVideoOutRemoveBufferAttributeOption: null attribute");
+    }
+    attribute->option &= ~option;
+}
+
 int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {

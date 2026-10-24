@@ -102,6 +102,8 @@ int main() {
     RemovePathAlias_nid_no_patch("/anyps5-statvfs-unavailable");
     Require(statvfs_nid_postfix("/anyps5-statvfs-test/file.txt", nullptr) == -1);
     Require(*__error_nid_postfix() == 14);
+    Require(statvfs_nid_postfix("/anyps5-statvfs-test/missing", nullptr) == -1);
+    Require(*__error_nid_postfix() == 14);
 
     const auto unicodeFile = root / std::filesystem::path(u8"\u65e5.txt");
     {

@@ -54,6 +54,7 @@ private:
 struct InputRequests {
     bool toggleFullscreen = false;
     bool togglePerformanceOverlay = false;
+    bool screenshot = false;
     bool toggleMouse = false;
     bool releaseMouse = false;
 };

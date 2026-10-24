@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -45,9 +46,11 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
             std::snprintf(digits, sizeof(digits), "%02x", static_cast<unsigned>(byte));
             uuid += digits;
         }
+        char version[17];
+        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::SourceVersion()));
         char name[160];
         std::snprintf(name, sizeof(name), "vk-pipelines-%04x-%04x-%08x-%s.bin", properties.vendorID, properties.deviceID, properties.driverVersion, uuid.c_str());
-        path = directory / name;
+        path = directory / version / name;
     }
     std::vector<std::byte> initialData;
     if (!path.empty()) {
@@ -93,7 +96,12 @@ PipelineCache::File PipelineCache::readFile() const {
     File file;
     if (!ShaderRecompiler::ReadWholeFile(path, file.contents)) {
         std::error_code error;
+#ifdef _WIN32
+        const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+        const bool exists = !error && std::filesystem::exists(native, error);
+#else
         const bool exists = std::filesystem::exists(path, error);
+#endif
         file.state = exists || error ? FileState::Unreadable : FileState::Missing;
         return file;
     }
@@ -138,7 +146,14 @@ PipelineCache::File PipelineCache::readFile() const {
 }
 
 std::optional<PipelineCache::FileHeader> PipelineCache::readHeader() const {
+#ifdef _WIN32
+    std::error_code error;
+    const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+    if (error) return std::nullopt;
+    std::ifstream file(native, std::ios::binary);
+#else
     std::ifstream file(path, std::ios::binary);
+#endif
     FileHeader header{};
     if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return std::nullopt;
     return header;

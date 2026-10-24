@@ -1935,7 +1935,7 @@ bool supportsNativeVop3SourceModifiers(RdnaOpcode opcode) {
 }
 
 bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
-    if (isVop1FloatResultOpcode(opcode) || isNativeVop3F16TernaryOpcode(opcode)) {
+    if (isVop1FloatResultOpcode(opcode) || isNativeVop3F16TernaryOpcode(opcode) || isCubeOpcode(opcode)) {
         return true;
     }
     switch (opcode) {
@@ -1990,7 +1990,7 @@ bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
         return true;
     }
     return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || usesIntegerSaturateClamp(opcode) ||
-        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode) || isCubeOpcode(opcode);
+        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
 }
 
 void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut, bool scalarDst, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {

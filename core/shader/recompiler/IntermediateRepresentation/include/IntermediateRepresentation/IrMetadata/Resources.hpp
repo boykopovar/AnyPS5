@@ -93,16 +93,19 @@ struct ImageResource {
     bool cubeFaceCompatible = true;
     bool flatVolumeCompatible = true;
     bool singleMipPlaneBiasCompatible = false;
+    bool volumeArraySampleCompatible = false;
     bool flatLineCompatible = true;
     bool flatVolumeLineCompatible = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
+    bool remappedDepth1D = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     std::uint32_t emulatedCompare = 0;
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
+    bool targetMerge = false;
 
     bool operator==(const ImageResource& other) const = default;
 };

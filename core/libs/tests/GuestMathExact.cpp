@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cfenv>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -22,6 +23,10 @@ long double APS5_VABI remainderl_nid_postfix(long double, long double);
 double APS5_VABI drem_nid_postfix(double, double);
 float APS5_VABI dremf_nid_postfix(float, float);
 std::int64_t APS5_VABI lrint_nid_postfix(double);
+double APS5_VABI rint_nid_postfix(double);
+float APS5_VABI rintf_nid_postfix(float);
+long double APS5_VABI rintl_nid_postfix(long double);
+long long APS5_VABI llrint_nid_postfix(double);
 int APS5_VABI finite_nid_postfix(double);
 int APS5_VABI __fpclassifyl_nid_postfix(long double);
 int APS5_VABI __isnanl_nid_postfix(long double);
@@ -96,6 +101,25 @@ static void CheckConsoleQuirks() {
     Require(finite_nid_postfix(1.0) == 1 && finite_nid_postfix(INFINITY) == 0);
 }
 
+static void CheckRoundingModes() {
+    struct Case {
+        int mode;
+        double negative;
+        double positive;
+    };
+    const Case cases[] = {{FE_TONEAREST, -2.0, 2.0}, {FE_DOWNWARD, -2.0, 1.0}, {FE_UPWARD, -1.0, 2.0}, {FE_TOWARDZERO, -1.0, 1.0}};
+    const int saved = std::fegetround();
+    for (const auto& test : cases) {
+        Require(std::fesetround(test.mode) == 0);
+        Require(rint_nid_postfix(-1.5) == test.negative && rint_nid_postfix(1.5) == test.positive);
+        Require(rintf_nid_postfix(-1.5f) == static_cast<float>(test.negative) && rintf_nid_postfix(1.5f) == static_cast<float>(test.positive));
+        Require(rintl_nid_postfix(-1.5L) == test.negative && rintl_nid_postfix(1.5L) == test.positive);
+        Require(lrint_nid_postfix(-1.5) == static_cast<std::int64_t>(test.negative) && llrint_nid_postfix(1.5) == static_cast<long long>(test.positive));
+        Require(std::fegetround() == test.mode);
+    }
+    Require(std::fesetround(saved) == 0);
+}
+
 static void CheckClassification() {
     const long double pseudoDenormal = Extended(0x0000, 0x8000000000000000ull);
     Require(_LDtest_nid_postfix(&pseudoDenormal) == -1 && __fpclassifyl_nid_postfix(pseudoDenormal) == -2);
@@ -112,6 +136,7 @@ int main() {
     CheckSignalingNanPassThrough();
     CheckErrno();
     CheckConsoleQuirks();
+    CheckRoundingModes();
     CheckClassification();
     return 0;
 }

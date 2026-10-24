@@ -32,7 +32,7 @@ int main() {
         Fails(target, 0, 3);
         Fails(target, 15, 3);
     }
-    for (int target : {self + 1, 1000}) {
+    for (int target : {self + 1, self + 1000}) {
         KillpgFails(target, 0, 3);
         KillpgFails(target, 15, 3);
     }

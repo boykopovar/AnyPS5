@@ -37,7 +37,7 @@ static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 static constexpr std::size_t FIBER_HOST_STACK_MARGIN = 1u << 20;
 static constexpr std::size_t FIBER_GUEST_STACK_MIN = 64u << 10;
 
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
+using GuestFiberEntry = FiberEntry;
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never
@@ -515,7 +515,7 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
     if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     if (fiber_info->size != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
-    fiber_info->entry = reinterpret_cast<FiberEntry>(fiber->entry);
+    fiber_info->entry = fiber->entry;
     fiber_info->arg_on_initialize = fiber->argOnInitialize;
     fiber_info->addr_context = SizedWindow(fiber);
     fiber_info->size_context = fiber->contextSize;
@@ -565,5 +565,24 @@ int32_t APS5_VABI sceFiberStopContextSizeCheck(void) {
     return g_contextSizeCheck.compare_exchange_strong(expected, false) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
 
+int APS5_VABI _sceFiberAttachContextAndRun(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                          uint64_t arg_on_run, uint64_t* arg_on_return) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
+int APS5_VABI _sceFiberAttachContextAndSwitch(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                              uint64_t arg_on_run, uint64_t* arg_on_run_out) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject* fiber, const char* name, GuestFiberEntry entry,
+                                                        uint64_t arg_on_initialize, void* addr_context,
+                                                        uint64_t size_context, const FiberOptParam* opt_param,
+                                                        uint32_t flags, uint32_t build_version) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}

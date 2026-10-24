@@ -19,6 +19,10 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 #ifdef _WIN32
@@ -256,6 +260,68 @@ bool CheckWrite(Api api, const char* name, GuestSurface& surface, GuestSurface& 
     return differences == 0;
 }
 
+void CheckConcurrentFlushWait(GuestSurface& surface) {
+    Produce(surface.Data());
+    const auto address = reinterpret_cast<std::uintptr_t>(surface.Data());
+    Require(AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) != nullptr, "file write: concurrent flush setup has no pending image");
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool gpuLocked = false;
+    bool releaseGpu = false;
+    std::thread holder([&] {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        {
+            std::lock_guard lock(mutex);
+            gpuLocked = true;
+        }
+        changed.notify_all();
+        std::unique_lock lock(mutex);
+        changed.wait(lock, [&] { return releaseGpu; });
+    });
+    {
+        std::unique_lock lock(mutex);
+        changed.wait(lock, [&] { return gpuLocked; });
+    }
+    std::exception_ptr flushFailure;
+    std::thread flusher([&] {
+        try { AgcDriver::Graphics::StorageTexture::FlushPending(address, SurfaceBytes, nullptr, "concurrent flush test"); }
+        catch (...) { flushFailure = std::current_exception(); }
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) != nullptr && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    const bool taken = AgcDriver::Graphics::StorageTexture::FindPending(address, SurfaceBytes) == nullptr;
+    std::vector<std::byte> seen(SurfaceBytes);
+    std::atomic<bool> readDone = false;
+    std::exception_ptr readFailure;
+    std::thread reader;
+    if (taken) {
+        reader = std::thread([&] {
+            try {
+                AgcDriver::Graphics::StorageTexture::FlushPending(address, SurfaceBytes, nullptr, "concurrent read test");
+                AgcDriver::GuestMemory::Read(address, seen);
+            } catch (...) {
+                readFailure = std::current_exception();
+            }
+            readDone.store(true, std::memory_order_release);
+            changed.notify_all();
+        });
+        std::unique_lock lock(mutex);
+        changed.wait_for(lock, std::chrono::milliseconds(50), [&] { return readDone.load(std::memory_order_acquire); });
+        releaseGpu = true;
+    } else {
+        std::lock_guard lock(mutex);
+        releaseGpu = true;
+    }
+    changed.notify_all();
+    holder.join();
+    flusher.join();
+    if (reader.joinable()) reader.join();
+    Require(taken, "file write: concurrent flush did not take the pending image");
+    if (flushFailure != nullptr) std::rethrow_exception(flushFailure);
+    if (readFailure != nullptr) std::rethrow_exception(readFailure);
+    Require(std::any_of(seen.begin(), seen.end(), [](std::byte value) { return value != std::byte{}; }), "file write: concurrent guest read returned before an overlapping image was stored");
+}
+
 void CheckShutdownAndGuard() {
     OutputFile file;
     std::vector<std::byte> source(TransferBytes, std::byte{0x5a});
@@ -282,6 +348,7 @@ int main() {
         }
         GuestSurface surface;
         GuestSurface unrelated;
+        CheckConcurrentFlushWait(surface);
         Produce(unrelated.Data());
         bool correct = true;
         const std::array<std::pair<Api, const char*>, 12> cases{{

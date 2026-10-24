@@ -141,6 +141,11 @@ static void RequireError(int resource, ResourceLimit* limit, int error) {
     Require(*__error_nid_postfix() == error);
 }
 
+static void RequireInvalidOutputPointer(int resource) {
+    auto* const invalid = reinterpret_cast<ResourceLimit*>(static_cast<std::uintptr_t>(1));
+    RequireError(resource, invalid, GUEST_EFAULT);
+}
+
 #ifndef _WIN32
 static std::int64_t Guest(rlim_t value) {
     return value == RLIM_INFINITY ? GUEST_RLIM_INFINITY : static_cast<std::int64_t>(value);
@@ -165,17 +170,6 @@ static void LoweredHostLimitIsReported() {
 }
 #endif
 
-static void RequireUnsupported(int resource) {
-    ResourceLimit limit{};
-    bool rejected = false;
-    try {
-        getrlimit_nid_postfix(resource, &limit);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected);
-}
-
 int main() {
 #ifdef _WIN32
     GuestLimit(GUEST_RLIMIT_DATA);
@@ -187,6 +181,8 @@ int main() {
              GUEST_RLIMIT_CPU,
              GUEST_RLIMIT_FSIZE,
              GUEST_RLIMIT_CORE,
+             GUEST_RLIMIT_RSS,
+             GUEST_RLIMIT_MEMLOCK,
              GUEST_RLIMIT_SBSIZE,
              GUEST_RLIMIT_AS,
              GUEST_RLIMIT_NPTS,
@@ -205,14 +201,14 @@ int main() {
     RequireError(GUEST_RLIM_NLIMITS, nullptr, GUEST_EINVAL);
     RequireError(-1, nullptr, GUEST_EINVAL);
     RequireError(GUEST_RLIMIT_DATA, nullptr, GUEST_EFAULT);
-    for (int resource : {
-             GUEST_RLIMIT_STACK,
-             GUEST_RLIMIT_RSS,
-             GUEST_RLIMIT_MEMLOCK,
-             GUEST_RLIMIT_NPROC,
-         }) {
-        RequireUnsupported(resource);
-    }
+    RequireInvalidOutputPointer(GUEST_RLIMIT_DATA);
+    RequireInvalidOutputPointer(GUEST_RLIMIT_NOFILE);
+    const ResourceLimit stack = GuestLimit(GUEST_RLIMIT_STACK);
+    Require(stack.rlim_cur == 0x200000 && stack.rlim_max == 0x200000);
+    RequireError(GUEST_RLIMIT_STACK, nullptr, GUEST_EFAULT);
+    const ResourceLimit processes = GuestLimit(GUEST_RLIMIT_NPROC);
+    Require(processes.rlim_cur == 1604 && processes.rlim_max == 1604);
+    RequireError(GUEST_RLIMIT_NPROC, nullptr, GUEST_EFAULT);
     const ResourceLimit nofile = GuestLimit(GUEST_RLIMIT_NOFILE);
     const int tableSize = getdtablesize_nid_postfix();
     std::int64_t expectedTableSize = nofile.rlim_cur;

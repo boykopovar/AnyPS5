@@ -68,6 +68,7 @@ struct DecodedInstructionInfo {
     bool AddressSize32;
     std::size_t RipRelativeDispOffset;
     bool HasModRm;
+    bool HasMemoryOperand;
     std::uint8_t ModRmByte;
     bool HasBranchTarget;
     std::int64_t BranchDisp;
