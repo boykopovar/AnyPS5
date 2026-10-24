@@ -13,6 +13,7 @@
 
 ### Unknown function info
 
+- [Guest thread MXCSR initial state](../../../core/libs/prx/libkernel/Pthread/src/Thread.cpp) (libkernel) - measured on PS5 firmware 12.70: threads of a PS5 payload process start with MXCSR 0x9fc0 (Flush-to-Zero and Denormals-are-Zero enabled, all FP exceptions masked). Created guest threads initialize 0x9fc0 in Aps5CallGuestEntry_nid_no_patch, retain 0x9fc0 across thread destruction and TSD key destructors in finishThread, and restore the host worker MXCSR upon completion of the thread across both explicit exit and normal return paths; the main ELF thread entry stub is handled separately in #7594 and is not covered here
 - [sceCoredumpRegisterCoredumpHandler, sceCoredumpUnregisterCoredumpHandler](../../../core/libs/prx/libkernel/System/src/Coredump.cpp) retain registration metadata but do not create the native report thread or deliver callbacks. Native registration-state precedence, stack bounds and SDK capture are recovered; thread-creation failures and active-report synchronization remain unimplemented.
 
 - [sceKernelError](../../../core/libs/prx/libkernel/System/src/Error.cpp) follows [shadPS4's kernel implementation](https://github.com/shadps4-emu/shadPS4/blob/23c41333822fe8eca4c609b43119180af63ae4ac/src/core/libraries/kernel/kernel.cpp): zero returns zero; other guest POSIX error values receive the `0x80020000` bias without modifying errno. Arithmetic is defined modulo 32 bits to avoid signed overflow for inputs outside the errno domain. Console behavior for those inputs and PS5 equivalence have not been measured.
