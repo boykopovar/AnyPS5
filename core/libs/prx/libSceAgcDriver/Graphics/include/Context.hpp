@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vulkan/vulkan.h>
 #include <array>
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeapObjects.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -200,6 +201,8 @@ struct Context {
     GraphicsPipelineCache* graphicsPipelines = nullptr;
     // Batches GPU work across guest commands (see Recorder); null before the device finished setup.
     Recorder* recorder = nullptr;
+    bool descriptorHeap = false;
+    VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     // Per-device caches of the immutable descriptor objects a ShaderResources build needs (set
     // layouts, descriptor pools, samplers); null (tests) means every build makes and destroys its own.
     DescriptorCache* descriptorCache = nullptr;
@@ -283,6 +286,9 @@ struct Context {
     TFunction Function(const char* name) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
+        if (descriptorHeap) {
+            if (const auto hooked = DescriptorHeapObjectFunction(device, deviceProc, name); hooked != nullptr) return reinterpret_cast<TFunction>(hooked);
+        }
         const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;

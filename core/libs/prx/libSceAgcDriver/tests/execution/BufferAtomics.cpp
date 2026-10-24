@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -77,11 +78,12 @@ void Run(AgcDriver::VulkanDevice& device) {
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(32),
         {0, 0, 0, 128}
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(result.gpuResolvedImages == AgcDriver::Graphics::DescriptorHeapEnabled(), "the compute heap did not take the buffer stage");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }

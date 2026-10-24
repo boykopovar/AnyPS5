@@ -103,6 +103,7 @@ public:
     ViewRange SampledViewRange(bool firstLayer) const { return firstLayer ? firstLayerRange : viewRange; }
     // The layout the image is kept in while sampled.
     VkImageLayout Layout() const { return layout; }
+    VkImage Image() const { return image; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
     VkFormat ViewFormat() const { return viewFormat; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
@@ -119,8 +120,12 @@ public:
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
     bool Released() const { return released.load(std::memory_order_acquire); }
     void MarkReleased() { released.store(true, std::memory_order_release); }
+    std::uint32_t HeapHolds() const { return heapHolds.load(std::memory_order_relaxed); }
+    void AddHeapHold() { heapHolds.fetch_add(1, std::memory_order_relaxed); }
+    void DropHeapHold() { heapHolds.fetch_sub(1, std::memory_order_relaxed); }
 
 private:
+    std::atomic<std::uint32_t> heapHolds{0};
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();

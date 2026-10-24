@@ -68,7 +68,7 @@ bool usesGds(const IrProgram& program) {
 
 }
 
-BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay) const {
+BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay, bool gpuResolvedImages, bool descriptorMemory) const {
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -113,9 +113,16 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
+    if (gpuResolvedImages) {
+        next.samplerSlotDwords = static_cast<std::uint32_t>(info.samplers.size()) * 2u;
+        next.gpuResolvedImages = true;
+    }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
-    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
-    if (stencilReplay) {
+    next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
+    if (descriptorMemory && gpuResolvedImages) next.dataAddressDword = RuntimeAbi::RootDword;
+    if (stencilReplay && next.UsesDataAddress()) {
+        next.stencilReferenceDword = RuntimeAbi::RootDword + RuntimeAbi::RootStencilReference;
+    } else if (stencilReplay) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");
         next.stencilReferenceDword = offset;
@@ -152,6 +159,14 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             addBinding(next, static_cast<DescriptorBindingKind>(FirstImageBinding + i), std::move(imageGroups[i]));
         }
     }
+
+    next.heapStorageImages = gpuResolvedImages && descriptorMemory && next.gpuResolvedImages;
+    if (gpuResolvedImages && !registrationModules) {
+        for (const auto& descriptor : next.descriptors) {
+            if (next.HeapImageKind(descriptor.kind)) next.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
+        }
+    }
+    if (descriptorMemory && next.gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * 4u;
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {
@@ -204,7 +219,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         result.pushConstantOffsetBytes = result.layout.pushDataStartDword * static_cast<std::uint32_t>(sizeof(std::uint32_t));
         result.pushConstantSizeBytes = result.layout.ShaderDataDwords() * static_cast<std::uint32_t>(sizeof(std::uint32_t));
     }
-    if (stencilReplay) {
+    if (stencilReplay && !result.layout.UsesDataAddress()) {
         result.pushConstantOffsetBytes = layout.pushConstantOffsetBytes;
         result.pushConstantSizeBytes += sizeof(std::uint32_t);
     }

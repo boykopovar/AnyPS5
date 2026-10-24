@@ -39,12 +39,18 @@ struct IrDescriptorBinding {
 
 struct IrBindingLayout {
     std::uint32_t pushDataStartDword = PushData::NoStart;
+    std::uint32_t dataAddressDword = PushData::NoStart;
     std::uint32_t stencilReferenceDword = PushData::NoStart;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;
     bool dispatchThreadLimit = false;
     std::uint32_t runtimeImageCount = 0;
     std::uint32_t runtimeStateDwords = 0;
+    std::uint32_t samplerSlotDwords = 0;
+    std::uint32_t imageSlotDwords = 0;
+    std::uint32_t bufferAddressDwords = 0;
+    bool gpuResolvedImages = false;
+    bool heapStorageImages = false;
     std::vector<std::uint32_t> userDataRegisters;
     std::vector<IrDescriptorBinding> descriptors;
 
@@ -57,19 +63,33 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t RuntimeStateDword() const {
         return ImageMetadataDword() + runtimeImageCount * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
     }
-    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+    [[nodiscard]] std::uint32_t SamplerSlotDword() const {
         return RuntimeStateDword() + runtimeStateDwords;
+    }
+    [[nodiscard]] std::uint32_t ImageSlotDword() const {
+        return SamplerSlotDword() + samplerSlotDwords;
+    }
+    [[nodiscard]] std::uint32_t BufferAddressDword() const {
+        return ImageSlotDword() + imageSlotDwords;
+    }
+    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+        return BufferAddressDword() + bufferAddressDwords;
+    }
+    [[nodiscard]] bool HeapImageKind(DescriptorBindingKind kind) const {
+        const auto value = static_cast<std::uint32_t>(kind);
+        return (value >= RuntimeAbi::FirstImageBinding && value < RuntimeAbi::FirstStorageImageBinding) || (heapStorageImages && RuntimeAbi::GpuHeapStorageKind(value));
     }
     [[nodiscard]] bool UsesPushData() const {
         return pushDataStartDword != PushData::NoStart;
+    }
+    [[nodiscard]] bool UsesDataAddress() const {
+        return dataAddressDword != PushData::NoStart;
     }
     [[nodiscard]] std::uint32_t PushSlotDword() const {
         return UsesPushData() ? pushDataStartDword / PushData::DwordCount * PushData::DwordCount : 0u;
     }
     void AdvancePushData(std::uint32_t& cursor) const {
-        if (UsesPushData()) {
-            cursor = pushDataStartDword + ShaderDataDwords();
-        }
+        if (UsesPushData()) cursor = pushDataStartDword + ShaderDataDwords();
     }
 
     bool operator==(const IrBindingLayout& other) const = default;

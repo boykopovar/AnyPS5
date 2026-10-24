@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
 #include "MeshGeometryFixture.hpp"
@@ -169,7 +170,8 @@ bool ReadsNumWorkgroups(std::span<const std::uint32_t> words) {
 }
 
 void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
-    const auto target = device.Target();
+    auto target = device.Target();
+    target.gpuResolvedImages = AgcDriver::Graphics::DescriptorHeapEnabled();
     std::vector<std::uint32_t> userData(12, 0u);
     const auto index = AgcDriver::Graphics::MeshIndexBufferDescriptor(setup.draw);
     std::copy(index.begin(), index.end(), userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord);
@@ -186,7 +188,7 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     const auto meshResult = ShaderRecompiler::Recompile(geometry);
     Require(ReadsNumWorkgroups(meshResult.spirv), "the mesh program does not read NumWorkgroups, so RADV can keep a previous vertex pipeline's user SGPR count for its dispatch");
     const auto meshPush = static_cast<std::uint32_t>(meshResult.pushConstants.size());
-    Require((meshPush == 0) == (setup.geometryPushBytes == 0), "the geometry program's push data does not follow its layout");
+    Require(meshResult.gpuResolvedImages || (meshPush == 0) == (setup.geometryPushBytes == 0), "the geometry program's push data does not follow its layout");
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.interpolatorCount = 1;
@@ -202,6 +204,7 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
         std::nullopt
     };
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    Require(meshResult.gpuResolvedImages == target.gpuResolvedImages && pixelResult.gpuResolvedImages == target.gpuResolvedImages, "the mesh draw's stages did not take GPU mode");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Mesh, &meshResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(meshPush, target)}

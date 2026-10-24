@@ -381,7 +381,22 @@ std::size_t BufferPool::NextCapacity(std::size_t capacity) {
     return capacity < classLimit ? capacity * 2 : capacity + (std::bit_floor(capacity) >> deviceClassBits);
 }
 
+namespace {
+
+std::atomic<bool> forceAddresses{false};
+
+}
+
+bool BufferPool::ForceAddresses() {
+    return forceAddresses.load(std::memory_order_relaxed);
+}
+
+void BufferPool::SetForceAddresses(bool force) {
+    forceAddresses.store(force, std::memory_order_relaxed);
+}
+
 VkBufferUsageFlags BufferPool::Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
+    if (ForceAddresses() && (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     return DeviceTiered(properties) ? usage | deviceUsage : usage;
 }
 

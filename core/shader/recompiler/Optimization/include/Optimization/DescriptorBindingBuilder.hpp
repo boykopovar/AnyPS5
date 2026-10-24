@@ -32,7 +32,10 @@ struct DescriptorBindingPlan {
     std::vector<PreparedImageMetadata> imageMetadata;
     std::vector<PipelineSpecializationConstant> specialization;
     std::vector<std::uint32_t> runtimeState;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     bool storageData = false;
+    bool addressedBuffers = false;
+    bool addressedData = false;
 };
 
 class DescriptorBindingBuilder {

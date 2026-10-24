@@ -137,6 +137,10 @@ std::uint32_t TypeStorageBufferU8ElementPointer(SpirvEmitterState& state) {
     return TypePointer(state, spv::StorageClassStorageBuffer, TypeU8(state));
 }
 
+std::uint32_t TypePhysicalBufferPointer(SpirvEmitterState& state, bool wide) {
+    return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, wide ? StorageBufferU64Type(state) : StorageBufferType(state));
+}
+
 std::uint32_t TypePhysicalU32Pointer(SpirvEmitterState& state) {
     return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state));
 }

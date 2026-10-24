@@ -266,6 +266,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.depthRangeRemap = target.depthRangeRemap;
     state.registrationModules = target.registrationModules;
+    state.gpuResolvedImages = target.gpuResolvedImages;
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
     state.meshBarycentricPixel = target.meshBarycentricPixel;
     state.meshBarycentricVertex = target.meshBarycentricVertex;
@@ -328,6 +329,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
+        info->bdaStores = state.bdaWritePointerFunction != 0;
     }
     return state.module.Finalize();
 }

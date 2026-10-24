@@ -155,6 +155,23 @@ RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instructio
 MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool wide = false, bool plainLoad = false) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
+    if (state.addressedBuffers) {
+        const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
+        const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * 4u;
+        const auto u64 = TypeScalarU64(state);
+        const auto low = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, dword));
+        const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, dword + 1u)), BdaConstant(state, 32u));
+        const auto address = Binary(state, spv::OpBitwiseOr, u64, low, high);
+        MemoryResourceAccess access;
+        access.kind = memory.kind;
+        access.physical = true;
+        access.objectPointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalBufferPointer(state, wide), access.objectPointer, address);
+        access.byteOffset = state.memoryByteOffsets.at(element);
+        access.memoryAccess = memory.coherent ? spv::MemoryAccessVolatileMask : 0u;
+        access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), EmitShaderDataDwordLoad(state, dword + 2u), ConstantU32(state, wide ? 3u : 2u));
+        return access;
+    }
     const auto variable = wide ? state.storageBufferU64Variable : plainLoad || state.storageBufferCoherentVariable == 0u ? state.storageBufferVariable : state.storageBufferCoherentVariable;
     if (variable == 0u) context.Fail(instruction, "direct buffer descriptor array is missing");
     const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
@@ -194,6 +211,11 @@ std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAcce
     return EmitAddU32(state, relative, base);
 }
 
+bool addressedCoherent(SpirvValueEmitContext& context, const IrValue& instruction) {
+    const auto& state = context.state;
+    return context.Memory(instruction).coherent || (state.requirements.coherentBuffers && state.program.Metadata().invalidatesCaches);
+}
+
 std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t bits, std::uint32_t enable = 0u) {
     if (context.Memory(instruction).gpuDescriptor) return EmitBdaRead(context, instruction, address, bits);
     auto& state = context.state;
@@ -208,7 +230,9 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto load = [&](std::uint32_t word) {
         const auto value = state.module.AllocateId();
         const auto pointer = EmitMemoryElementPointer(state, access, word);
-        if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
+        if (access.physical && addressedCoherent(context, instruction)) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+        else if (access.physical) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess | spv::MemoryAccessAlignedMask, 4u);
+        else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
         else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return value;
     };
@@ -237,6 +261,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
 }
 
 std::uint32_t byteBuffers(SpirvEmitterState& state) {
+    if (state.addressedBuffers) return 0u;
     if (state.storageBufferU8Variable != 0u) return state.storageBufferU8Variable;
     if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
     if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageBuffer8BitAccess)) == state.supportedCapabilities.end()) return 0u;
@@ -305,7 +330,9 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
         if (bits == 32u) {
             EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
                 const auto pointer = EmitMemoryElementPointer(state, access, index);
-                if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
+                if (access.physical && addressedCoherent(context, instruction)) state.module.AddFunction(spv::OpAtomicStore, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+                else if (access.physical) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess | spv::MemoryAccessAlignedMask, 4u);
+                else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
                 else state.module.AddFunction(spv::OpStore, pointer, value);
             });
         }
@@ -769,7 +796,8 @@ struct CoherentPair {
 std::optional<CoherentPair> coherentPair(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t components) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
-    if (components != 2u || !memory.coherent || memory.gpuDescriptor || memory.dataBits != 32u || state.storageBufferU64Variable == 0u) return std::nullopt;
+    const bool wideView = state.addressedBuffers ? state.requirements.bufferU64View : state.storageBufferU64Variable != 0u;
+    if (components != 2u || !memory.coherent || memory.gpuDescriptor || memory.dataBits != 32u || !wideView) return std::nullopt;
     const auto low = address(context, instruction, resource, 0u, 4u);
     const auto high = address(context, instruction, resource, 4u, 4u);
     const auto wide = directAccess(context, instruction, true);

@@ -258,3 +258,4 @@
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
+- [GPU descriptor heap](../../../core/libs/prx/libSceAgcDriver/Graphics/src/BindlessHeap.cpp) (`APS5_GPU_HEAP`) - opt-in, needs `VK_EXT_descriptor_heap`. A stage whose module keeps a set 0 binding (storage images of registration modules, GDS, the fault buffer), mesh and tessellation pipelines and compute stages without images take the per-draw path, and so does every other stage of their draw.

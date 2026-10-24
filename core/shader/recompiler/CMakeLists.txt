@@ -237,8 +237,13 @@ function(add_shader_recompiler target runtimeTarget)
     endif()
     set(shaderCacheReviewedNames
             BdaAbi::RangesOrdered
+            RuntimeAbi::GpuHeapStorageKind
+            StorageElementPointer
+            FirstAtomicStorageImageBinding
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
+            HeapFragmentEligible
+            CompleteHeapDataWords
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources

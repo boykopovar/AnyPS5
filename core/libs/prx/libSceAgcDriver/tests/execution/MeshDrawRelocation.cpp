@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "../MeshGeometryFixture.hpp"
 #include "VulkanTestDevice.hpp"
@@ -103,6 +104,7 @@ std::vector<std::uint32_t> Setup(const std::array<std::uint32_t, 4>& descriptor)
 
 AgcDriver::DriverDetail::DrawEntryCounters Draw(const std::array<std::uint32_t, 4>& descriptor) {
     Pixels.fill(std::byte{0});
+    const auto pushes = AgcDriver::Graphics::DataAddressPushes();
     auto commands = Setup(descriptor);
     const auto address = reinterpret_cast<std::uintptr_t>(Indices.data());
     commands.insert(commands.end(), {0xc0042700u, 3u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3u, 0u});
@@ -110,6 +112,7 @@ AgcDriver::DriverDetail::DrawEntryCounters Draw(const std::array<std::uint32_t, 
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "mesh submission failed");
     AgcDriverWaitIdle_nid_postfix();
     Require(std::to_integer<unsigned>(Pixels[(24u * Width + 16u) * 4u]) > 200u, "the mesh draw did not cover its triangle");
+    Require(!AgcDriver::Graphics::DescriptorHeapEnabled() || AgcDriver::Graphics::DataAddressPushes() > pushes, "the submitted mesh draw did not take the descriptor heap");
     return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
 }
 
