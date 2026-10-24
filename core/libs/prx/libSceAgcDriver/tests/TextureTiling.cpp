@@ -486,6 +486,19 @@ void RunTextureTilingTests() {
         const auto kept = ArrayLayerWindow(fitting, 2048);
         Require(kept.baseAddress == fitting.baseAddress && kept.baseArray == fitting.baseArray && kept.depthOrLastArray == fitting.depthOrLastArray, "an array within maxImageArrayLayers must keep its descriptor");
 
+        auto outsideAllocation = array;
+        outsideAllocation.baseArray = 0;
+        outsideAllocation.depthOrLastArray = 6144;
+        const auto bounded = BoundArrayWindow(outsideAllocation, geometry.layerBytes * 90u);
+        Require(bounded.baseAddress == outsideAllocation.baseAddress && bounded.baseArray == 0 && bounded.depthOrLastArray == 89, "a sampled array view must stop at the registered allocation boundary");
+        auto boundedWindow = outsideAllocation;
+        boundedWindow.baseArray = 6;
+        Require(BoundArrayWindow(boundedWindow, geometry.layerBytes * 90u).depthOrLastArray == 89, "a sampled array window must preserve its in-range starting slice when bounded");
+        boundedWindow.baseArray = 90;
+        const auto firstSlice = BoundArrayWindow(boundedWindow, geometry.layerBytes * 90u);
+        Require(firstSlice.baseArray == 0 && firstSlice.depthOrLastArray == 0, "a sampled array window starting past its allocation must fall back to its first slice");
+        reject([&] { static_cast<void>(BoundArrayWindow(boundedWindow, geometry.layerBytes - 1u)); }, "no complete slice");
+
         auto linear = array;
         linear.tileMode = TextureTileMode::kLinear;
         Require(ArrayLayerWindow(linear, 2048).baseAddress == linear.baseAddress + 1536ull * DescribeSurface(linear).layerBytes, "a linear storage view past maxImageArrayLayers must start at its first viewed slice");

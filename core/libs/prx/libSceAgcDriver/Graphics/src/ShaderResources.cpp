@@ -712,8 +712,15 @@ void reportGuestAllocation(const GuestTextureResource& resource, std::uint64_t g
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D) {
-    const auto resource = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
-    if (resource.baseAddress != requested.baseAddress) guestBytes = 0;
+    auto resource = requested;
+    if (resource.dimension == TextureDimension::k2DArray || resource.dimension == TextureDimension::k1DArray || resource.dimension == TextureDimension::kCube) {
+        if (const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(resource.baseAddress, false)) {
+            const auto offset = resource.baseAddress - range->address;
+            if (offset < range->bytes) resource = BoundArrayWindow(resource, range->bytes - offset);
+        }
+    }
+    resource = ArrayLayerWindow(resource, context.limits.maxImageArrayLayers);
+    if (resource.baseAddress != requested.baseAddress || resource.baseArray != requested.baseArray || resource.depthOrLastArray != requested.depthOrLastArray) guestBytes = 0;
     if (resource.dimension == TextureDimension::k2DMsaa) {
         Require(!depthCompare, "native multisampled depth comparison sampling is not implemented");
         if (auto depth = DepthSurfaceTexture(context, words, resource, components, multisampleViewType)) {
