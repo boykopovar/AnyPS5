@@ -44,4 +44,9 @@ const LibreSsl3Stack* APS5_VABI X509_get0_extensions_nid_postfix(const LibreSsl3
     return Extensions(certificate, __func__);
 }
 
+int APS5_VABI X509_get_ext_count_nid_postfix(const LibreSsl3ExtensionsX509* certificate) {
+    const LibreSsl3Stack* extensions = Extensions(certificate, __func__);
+    return extensions ? extensions->num : 0;
+}
+
 }
