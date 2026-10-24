@@ -278,6 +278,32 @@ if(BUILD_TESTING)
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
 
+    add_test_executable(guest_dinkumware_fetch_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_dinkumware_fetch_tests)
+    if(MINGW)
+        target_link_libraries(guest_dinkumware_fetch_tests PRIVATE libc)
+    endif()
+    add_custom_target(guest_dinkumware_fetch_libraries DEPENDS ${LIBC_PATCHED})
+    add_dependencies(guest_dinkumware_fetch_tests guest_dinkumware_fetch_libraries)
+    foreach(operation IN ITEMS and or xor)
+        foreach(width IN ITEMS 1 2 4)
+            add_test(NAME guest_dinkumware_fetch_${operation}_${width} COMMAND guest_dinkumware_fetch_tests
+                $<TARGET_FILE_DIR:libc> unpatched ${operation} ${width})
+            add_test(NAME guest_dinkumware_fetch_${operation}_${width}_patched COMMAND guest_dinkumware_fetch_tests
+                ${PATCHED_DIR} patched ${operation} ${width})
+            set_tests_properties(guest_dinkumware_fetch_${operation}_${width}
+                guest_dinkumware_fetch_${operation}_${width}_patched PROPERTIES TIMEOUT 20)
+            if(WIN32)
+                set_tests_properties(guest_dinkumware_fetch_${operation}_${width} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+                set_tests_properties(guest_dinkumware_fetch_${operation}_${width}_patched PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${PATCHED_DIR}")
+            endif()
+        endforeach()
+    endforeach()
     add_test_executable(pe_import_first_tests allocator/tests/PeImportFirstTests.cpp allocator/PeImportFirst.cpp)
     target_include_directories(pe_import_first_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(pe_import_first_tests PRIVATE cxx_std_20)
