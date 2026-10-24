@@ -113,6 +113,32 @@ struct GuestOutline {
     std::int32_t flags;
 };
 
+struct GuestGlyphRec {
+    void* library;
+    const void* clazz;
+    std::uint32_t format;
+    GuestVector advance;
+};
+
+struct GuestBitmapGlyphRec {
+    GuestGlyphRec root;
+    std::int32_t left;
+    std::int32_t top;
+    GuestBitmap bitmap;
+};
+
+struct GuestOutlineGlyphRec {
+    GuestGlyphRec root;
+    GuestOutline outline;
+};
+
+static_assert(sizeof(GuestGlyphRec) == 40 && alignof(GuestGlyphRec) == 8);
+static_assert(offsetof(GuestGlyphRec, library) == 0 && offsetof(GuestGlyphRec, clazz) == 8);
+static_assert(offsetof(GuestGlyphRec, format) == 16 && offsetof(GuestGlyphRec, advance) == 24);
+static_assert(sizeof(GuestBitmapGlyphRec) == 88 && offsetof(GuestBitmapGlyphRec, root) == 0);
+static_assert(offsetof(GuestBitmapGlyphRec, left) == 40 && offsetof(GuestBitmapGlyphRec, top) == 44 && offsetof(GuestBitmapGlyphRec, bitmap) == 48);
+static_assert(sizeof(GuestOutlineGlyphRec) == 80 && offsetof(GuestOutlineGlyphRec, root) == 0 && offsetof(GuestOutlineGlyphRec, outline) == 40);
+
 struct GuestGlyphSlotRec {
     void* library;
     void* face;
