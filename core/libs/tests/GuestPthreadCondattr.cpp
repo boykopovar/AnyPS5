@@ -34,11 +34,15 @@ int main() {
 
     PthreadCondattr attr = nullptr;
     Require(scePthreadCondattrInit(&attr) == SCE_OK);
-    for (const KernelClockid clock : {0, 1, 2, Monotonic, 5, 12}) {
+    for (const KernelClockid clock : {0, 1, 2, Monotonic}) {
         Require(scePthreadCondattrSetclock(&attr, clock) == SCE_OK);
         Require(pthread_condattr_setclock_nid_postfix(&attr, clock) == 0);
     }
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
+    for (const KernelClockid clock : {-1, 3, 5, 12, 13, 14, 15}) {
+        Require(scePthreadCondattrSetclock(&attr, clock) == SceEinval);
+        Require(pthread_condattr_setclock_nid_postfix(&attr, clock) == GuestEinval);
+    }
     for (const int invalid : {1, 2, -1}) {
         Require(pthread_condattr_setpshared_nid_postfix(&attr, invalid) == GuestEinval);
         sharing = -1;
