@@ -13,6 +13,9 @@
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#elif defined(__APPLE__)
+#include <new>
+#include <typeinfo>
 #endif
 
 extern "C" {
@@ -30,6 +33,10 @@ void APS5_VABI perror_nid_postfix(const char*);
 int* APS5_VABI __error_nid_postfix();
 extern FileStream* __stderrp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
+#ifdef __APPLE__
+void* APS5_VABI __cxa_allocate_exception_nid_postfix(std::size_t);
+[[noreturn]] void APS5_VABI __cxa_throw_nid_postfix(void*, std::type_info*, void (*)(void*));
+#endif
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -73,7 +80,13 @@ static Outcome Run(Redirect redirect, const std::filesystem::path& probe, bool t
         std::fputs("host\n", stderr);
         if (terminate) {
             SkipCrashHandler();
+#ifdef __APPLE__
+            void* object = __cxa_allocate_exception_nid_postfix(sizeof(std::runtime_error));
+            new (object) std::runtime_error("report kept");
+            __cxa_throw_nid_postfix(object, const_cast<std::type_info*>(&typeid(std::runtime_error)), [](void* thrown) { static_cast<std::runtime_error*>(thrown)->~runtime_error(); });
+#else
             throw std::runtime_error("report kept");
+#endif
         }
         if (redirect == Redirect::Reopen && fflush_nid_postfix(__stderrp_nid_postfix) != 0) ::_exit(71);
         ::_exit(0);
