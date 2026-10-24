@@ -65,6 +65,11 @@ std::size_t Driver::drawCacheEntries() {
     return entries;
 }
 
+bool Driver::drawCacheIndirect() {
+    static const bool indirect = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    return indirect;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
