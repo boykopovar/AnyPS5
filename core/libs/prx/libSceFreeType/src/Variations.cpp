@@ -112,4 +112,15 @@ int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::
     return error;
 }
 
+int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec* face, void* master) {
+    const GuestFace* owner = FaceOf(face);
+    if (owner) RequireLp64(__func__);
+    FT_Multi_Master native{};
+    const FT_Error error = FT_Get_Multi_Master(owner ? owner->host : nullptr, master ? &native : nullptr);
+    if (error != 0 || !master) return error;
+    GuestArena::HostWrite write(master, sizeof(native));
+    std::memcpy(master, &native, sizeof(native));
+    return 0;
+}
+
 }
