@@ -264,6 +264,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     if (now - lastReport < 3000000000ULL) return;
     lastReport = now;
     std::vector<std::pair<std::string, Site>> hot(sites.begin(), sites.end());
+    std::erase_if(hot, [](const auto& item) { return item.second.calls == 0; });
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.nanos > b.second.nanos; });
     std::fprintf(stderr, "[waits]");
     for (std::size_t i = 0; i < hot.size() && i < 8; ++i) {
