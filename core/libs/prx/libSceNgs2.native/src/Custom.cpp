@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,7 +23,8 @@ static const char* BuiltInModuleName(std::uint32_t moduleId) {
     }
 }
 
-static std::uint32_t OptionWord(const Ngs2CustomModuleOption& option) {
+static std::optional<std::uint32_t> OptionWord(const Ngs2CustomModuleOption& option) {
+    if (option.size < sizeof(Ngs2CustomModuleOption) + sizeof(std::uint32_t)) return std::nullopt;
     std::uint32_t word = 0;
     std::memcpy(&word, reinterpret_cast<const std::uint8_t*>(&option) + sizeof(option), sizeof(word));
     return word;
@@ -35,11 +37,15 @@ static int CheckBuiltInModule(const Ngs2CustomRackModuleInfo& info) {
     } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
         if (!stateSizeIs(0)) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
         if (info.option != nullptr && info.option->size != SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
-        if (info.option != nullptr && OptionWord(*info.option) > 1) return SCE_NGS2_ERROR_INVALID_REVERB_OPTION;
+        if (info.option != nullptr) {
+            const auto word = OptionWord(*info.option);
+            if (!word || *word > 1) return SCE_NGS2_ERROR_INVALID_REVERB_OPTION;
+        }
     } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
         if (!stateSizeIs(SCE_NGS2_CUSTOM_PITCH_SHIFT_STATE_SIZE)) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
-        if (info.option != nullptr && info.option->size == SCE_NGS2_CUSTOM_PITCH_SHIFT_OPTION_SIZE && OptionWord(*info.option) != 0) {
-            return SCE_NGS2_ERROR_INVALID_PITCH_SHIFT_OPTION;
+        if (info.option != nullptr && info.option->size == SCE_NGS2_CUSTOM_PITCH_SHIFT_OPTION_SIZE) {
+            const auto word = OptionWord(*info.option);
+            if (!word || *word != 0) return SCE_NGS2_ERROR_INVALID_PITCH_SHIFT_OPTION;
         }
     }
     return SCE_NGS2_OK;

@@ -49,7 +49,6 @@ void X64InstructionRewriter::WriteInt32(std::uint8_t* data, std::int32_t value) 
 std::int64_t X64InstructionRewriter::AdjustedDelta(
     std::int64_t instrPosition,
     std::int64_t targetPosition,
-    std::int64_t cutStart,
     std::int64_t cutEnd,
     std::int64_t sliceSize,
     std::int64_t delta
@@ -181,7 +180,7 @@ RewriteResult X64InstructionRewriter::Rewrite(
                 const auto disp = static_cast<std::int8_t>(codeSection[fieldPosition]);
                 const std::int64_t targetPosition = instrEnd + disp;
                 const std::int64_t adjust = AdjustedDelta(
-                    matchOffset, targetPosition, cutStart, cutEnd,
+                    matchOffset, targetPosition, cutEnd,
                     static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {
@@ -201,7 +200,7 @@ RewriteResult X64InstructionRewriter::Rewrite(
                 const auto disp = ReadInt32(codeSection.data() + fieldPosition);
                 const std::int64_t targetPosition = instrEnd + disp;
                 const std::int64_t adjust = AdjustedDelta(
-                    matchOffset, targetPosition, cutStart, cutEnd,
+                    matchOffset, targetPosition, cutEnd,
                     static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {

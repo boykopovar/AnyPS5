@@ -137,6 +137,7 @@ thread_local double threadWaitedMs = 0;
 
 void CountThreadSync(int source, double ms) {
     threadWaitedMs += ms;
+    if (source < 0 || source >= 5) source = 4;
     const auto tag = GuestMemory::GpuLockThreadTag();
     std::lock_guard lock(threadSyncsMutex);
     auto it = std::find_if(threadSyncs.begin(), threadSyncs.end(), [&](const ThreadSyncs& thread) { return thread.tag == tag; });
@@ -3964,7 +3965,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
         // totals of the [recorder] line keep their meaning; the unlocked count says how many were
         // not held. The relock's wait for the mutex is kept apart (the [lock] line also counts it
         // under 'hook' waits, for a cross-check).
-        syncWaitedMs[source] += ms;
+        if (source >= 0 && source < 5) syncWaitedMs[source] += ms;
         CountThreadSync(source, ms);
         CountSiteWait(ms);
         ++holdCounters.hookUnlockedWaits;
@@ -4078,7 +4079,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
                 const auto now = std::chrono::steady_clock::now();
                 const auto ms = std::chrono::duration<double, std::milli>(now - start).count();
                 waitedMs += ms;
-                syncWaitedMs[source] += ms;
+                if (source >= 0 && source < 5) syncWaitedMs[source] += ms;
                 ++waits;
                 CountThreadSync(source, ms);
                 CountSiteWait(ms);

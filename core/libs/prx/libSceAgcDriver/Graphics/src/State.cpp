@@ -2335,9 +2335,9 @@ bool StencilOperationValueReplaces(const Registers& context) {
 
 bool StencilReferenceUnused(const State& state) {
     if (!state.depth || !state.stencilTest) return true;
-    if (state.depthTest && (state.depthCompare < VK_COMPARE_OP_NEVER || state.depthCompare > VK_COMPARE_OP_ALWAYS)) return false;
+    if (state.depthTest && state.depthCompare > VK_COMPARE_OP_ALWAYS) return false;
     const auto faceUnused = [&](const VkStencilOpState& face) {
-        if (face.compareOp < VK_COMPARE_OP_NEVER || face.compareOp > VK_COMPARE_OP_ALWAYS) return false;
+        if (face.compareOp > VK_COMPARE_OP_ALWAYS) return false;
         for (const auto op : {face.failOp, face.passOp, face.depthFailOp}) {
             if (op < VK_STENCIL_OP_KEEP || op > VK_STENCIL_OP_DECREMENT_AND_WRAP) return false;
         }

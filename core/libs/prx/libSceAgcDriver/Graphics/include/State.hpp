@@ -24,10 +24,10 @@ enum class ShaderPath {
 };
 
 struct ShaderStages {
-    ShaderPath path;
-    std::uint32_t registerValue;
-    std::uint32_t vertexWaveSize;
-    std::uint32_t fragmentWaveSize;
+    ShaderPath path = ShaderPath::Vertex;
+    std::uint32_t registerValue = 0;
+    std::uint32_t vertexWaveSize = 0;
+    std::uint32_t fragmentWaveSize = 0;
     std::optional<ShaderRecompiler::MeshConfiguration> mesh;
     std::optional<ShaderRecompiler::TessellationConfiguration> tessellation;
     float minTessellationLevel = 1.0f;
@@ -35,11 +35,11 @@ struct ShaderStages {
 };
 
 struct ColorTarget {
-    std::uint64_t address;
-    VkExtent2D extent;
-    VkFormat format;
-    std::size_t bytes;
-    std::uint8_t componentMapping;
+    std::uint64_t address = 0;
+    VkExtent2D extent{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    std::size_t bytes = 0;
+    std::uint8_t componentMapping = 0;
     ColorTileMode tileMode = ColorTileMode::Linear;
     std::uint32_t elementBytes = 4;
     ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::None;
@@ -74,12 +74,12 @@ struct ColorTarget {
 };
 
 struct DepthTarget {
-    std::uint64_t address;
-    std::uint64_t stencilAddress;
-    VkExtent2D extent;
-    VkFormat format;
-    float clearDepth;
-    std::uint8_t clearStencil;
+    std::uint64_t address = 0;
+    std::uint64_t stencilAddress = 0;
+    VkExtent2D extent{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    float clearDepth = 0.0f;
+    std::uint8_t clearStencil = 0;
     std::uint64_t htileAddress = 0;
     bool htileStencil = false;
     std::uint32_t samples = 1;
@@ -117,18 +117,18 @@ struct State {
     ColorTarget color;
     std::vector<ColorTarget> colors;
     std::vector<VkPipelineColorBlendAttachmentState> blends;
-    bool hasColorTarget;
+    bool hasColorTarget = false;
     bool rectList = false;
     bool quadList = false;
     bool dualSourceBlend = false;
     std::uint32_t reversedBlend = 0;
-    VkExtent2D renderExtent;
+    VkExtent2D renderExtent{};
     std::uint32_t renderLayers = 1;
     std::uint32_t layerExports = 0;
-    VkPrimitiveTopology topology;
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     bool primitiveRestart = false;
-    VkViewport viewport;
-    bool negativeOneToOne;
+    VkViewport viewport{};
+    bool negativeOneToOne = false;
     bool depthClamp = false;
     float depthScale = 1;
     float depthOffset = 0;
@@ -146,13 +146,13 @@ struct State {
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
-    VkRect2D scissor;
-    VkCullModeFlags cullMode;
+    VkRect2D scissor{};
+    VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
-    VkFrontFace frontFace;
+    VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
-    VkPipelineColorBlendAttachmentState blend;
-    std::array<float, 4> blendConstants;
+    VkPipelineColorBlendAttachmentState blend{};
+    std::array<float, 4> blendConstants{};
     std::uint32_t samples = 1;
     std::array<std::uint8_t, 32> sampleLocations{};
     bool customSampleLocations = false;

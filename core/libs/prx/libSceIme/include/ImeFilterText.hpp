@@ -134,7 +134,7 @@ inline std::uint32_t FilterText(char16_t* dst, std::int32_t* out_length, std::ui
     if (dst == nullptr || out_length == nullptr || param == nullptr || src == nullptr) return kErrorInvalidAddress;
     if (capacity < 2) return kErrorInvalidParam;
     const std::uint32_t type = param->type;
-    if (type >= 5 && type - 0x100 > 3) return kErrorInvalidParam;
+    if (type >= 5 && (type < 0x100 || type - 0x100 > 3)) return kErrorInvalidParam;
 
     std::uint64_t mask = param->mask;
     if (mask == 0) mask = DerivedMask(param->version, param->variant);

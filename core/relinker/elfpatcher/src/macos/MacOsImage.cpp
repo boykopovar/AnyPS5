@@ -597,7 +597,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
 
             auto& site = SegmentAt(segments, access.Rva, access.Length);
             const auto at = access.Rva - site.Rva;
-            const auto displacement = static_cast<std::int64_t>(stub) - static_cast<std::int64_t>(access.Rva + 5);
+            const auto displacement = static_cast<std::int64_t>(stub) - (static_cast<std::int64_t>(access.Rva) + 5);
             std::fill_n(site.Data.begin() + static_cast<std::ptrdiff_t>(at), access.Length, 0x90);
             site.Data[at] = 0xe9;
             Io::WriteU32(site.Data, at + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));

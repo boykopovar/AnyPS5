@@ -39,7 +39,12 @@ inline void DestroyAtThreadExit(void* object, void (*destroy)(void*)) {
             throw std::runtime_error("ThreadOwned: pthread_setspecific failed");
         }
     }
-    owned->push_back({object, destroy});
+    try {
+        owned->push_back({object, destroy});
+    } catch (...) {
+        destroy(object);
+        throw;
+    }
 }
 
 }

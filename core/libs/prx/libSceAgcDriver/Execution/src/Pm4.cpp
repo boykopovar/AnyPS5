@@ -1025,7 +1025,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                     if (!queue.markers.empty()) queue.markers.pop_back();
                     return;
                 case 0x1a:
-                    if (TraceContextState()) std::fprintf(stderr, "[context] op %u: %zu registers, saved %d, cb0 %x info %x mask %x\n", packet[1], queue.context.size(), queue.savedContext.has_value() ? 1 : 0, queue.context.contains(0x318) ? queue.context.at(0x318) : 0u, queue.context.contains(0x31c) ? queue.context.at(0x31c) : 0u, queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u);
+                    if (TraceContextState()) std::fprintf(stderr, "[context] op %u: %zu registers, saved %d, cb0 %x info %x mask %x\n", packet[1], queue.context.size(), queue.savedContext.has_value() ? 1 : 0, queue.context.contains(0x318) ? static_cast<std::uint32_t>(queue.context.at(0x318)) : 0u, queue.context.contains(0x31c) ? static_cast<std::uint32_t>(queue.context.at(0x31c)) : 0u, queue.context.contains(0x8e) ? static_cast<std::uint32_t>(queue.context.at(0x8e)) : 0u);
                     APS5_LOG_OUT_DEBUG("CONTEXT_STATE operation=%u targetMaskBefore=0x%x shaderMaskBefore=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
                     switch (packet[1]) {
                         case 0: queue.ClearContext(); break;

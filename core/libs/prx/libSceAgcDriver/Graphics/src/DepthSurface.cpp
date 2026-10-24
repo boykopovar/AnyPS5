@@ -1855,8 +1855,8 @@ std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32
     const auto widthBits = (pixelBits + ((sampleBits & 1u) == 0u ? 1u : 0u)) / 2u;
     const auto blockWidth = 1u << widthBits;
     const auto blockHeight = 1u << (pixelBits - widthBits);
-    const auto width = static_cast<std::uint64_t>((extent.width + blockWidth - 1u) / blockWidth * blockWidth);
-    const auto height = static_cast<std::uint64_t>((extent.height + blockHeight - 1u) / blockHeight * blockHeight);
+    const auto width = ((static_cast<std::uint64_t>(extent.width) + blockWidth - 1u) / blockWidth) * blockWidth;
+    const auto height = ((static_cast<std::uint64_t>(extent.height) + blockHeight - 1u) / blockHeight) * blockHeight;
     return width * height * bytesPerTexel * samples;
 }
 
