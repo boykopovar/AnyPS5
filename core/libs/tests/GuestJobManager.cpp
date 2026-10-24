@@ -645,62 +645,94 @@ static void APS5_VABI HoldWorker(void* argument, std::uint32_t) {
     worker.release.wait(false);
 }
 
-struct SpinSample {
-    std::int64_t consumed;
-    std::int64_t reference;
-};
-
-static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
-    Block block(SizeFor(2, 2, 4, 2, 2));
+struct WorkerProbe {
+    Block block;
     ManagerObject manager;
-    const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, "WorkerSpin", spin, 0, 0, 0};
-    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
-    auto* factory = Factories(manager.storage, 0);
+    SequenceFactory* factory = nullptr;
     Sequence* held = nullptr;
     Sequence* pulse = nullptr;
-    Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
-    Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
     HeldWorker worker;
-    Require(held->Dispatch(HoldWorker, &worker, 1, nullptr) == 0);
-    worker.started.wait(false);
-    if (pending) {
-        Require(held->SyncPoint() == 0);
-        Require(held->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
-    }
     SpinClock clock;
-    Require(pulse->Dispatch(CaptureSpinClock, &clock, 1, nullptr) == 0 && pulse->Wait() == 0);
-    RequireParked(clock.guest);
-    const auto before = SpinCpuUnits(clock);
-    for (std::uint32_t round = 0; round < rounds; ++round) {
-        Require(pulse->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && pulse->Wait() == 0);
-        Require(sceKernelUsleep_nid_postfix(1000) == 0);
+    std::int64_t before = 0;
+    std::int64_t consumed = 0;
+
+    WorkerProbe(std::uint32_t spin, bool pending, const char* name)
+        : block(SizeFor(2, 2, 4, 2, 2)) {
+        const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, name, spin, 0, 0, 0};
+        Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
+        factory = Factories(manager.storage, 0);
+        Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
+        Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
+        Require(held->Dispatch(HoldWorker, &worker, 1, nullptr) == 0);
+        worker.started.wait(false);
+        if (pending) {
+            Require(held->SyncPoint() == 0);
+            Require(held->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+        }
+        Require(pulse->Dispatch(CaptureSpinClock, &clock, 1, nullptr) == 0 && pulse->Wait() == 0);
+        RequireParked(clock.guest);
     }
-    const auto consumed = SpinCpuUnits(clock) - before;
-    RequireParked(clock.guest);
-    Require(!worker.release);
-    worker.release = true;
-    worker.release.notify_one();
-    Require(held->Wait() == 0);
-    Require(factory->Destroy(held) == 0 && factory->Destroy(pulse) == 0);
-    Require(Shutdown(manager.storage) == 0);
-    return {consumed, clock.reference};
-}
+
+    void Start() {
+        before = SpinCpuUnits(clock);
+    }
+
+    void Pulse() {
+        Require(pulse->Dispatch(Nothing, nullptr, 1, nullptr) == 0 && pulse->Wait() == 0);
+    }
+
+    void Stop() {
+        consumed = SpinCpuUnits(clock) - before;
+        RequireParked(clock.guest);
+    }
+
+    void Release() {
+        Require(!worker.release);
+        worker.release = true;
+        worker.release.notify_one();
+        Require(held->Wait() == 0);
+        Require(factory->Destroy(held) == 0 && factory->Destroy(pulse) == 0);
+        Require(Shutdown(manager.storage) == 0);
+    }
+};
 
 static void WorkerSpinCase() {
     constexpr std::uint32_t rounds = 512;
-    const auto parked = MeasureWorkerSpin(0, rounds, true);
-    const auto spinning = MeasureWorkerSpin(50, rounds, true);
-    const auto noPending = MeasureWorkerSpin(50, rounds, false);
+    WorkerProbe parked(0, true, "WorkerSpinParked");
+    WorkerProbe spinning(50, true, "WorkerSpinSpinning");
+    WorkerProbe noPending(50, false, "WorkerSpinNoPending");
+    std::array<WorkerProbe*, 3> probes{&parked, &spinning, &noPending};
+
+    parked.Start();
+    spinning.Start();
+    noPending.Start();
+
+    for (std::uint32_t round = 0; round < rounds; ++round) {
+        probes[round % 3]->Pulse();
+        probes[(round + 1) % 3]->Pulse();
+        probes[(round + 2) % 3]->Pulse();
+        Require(sceKernelUsleep_nid_postfix(1000) == 0);
+    }
+
+    parked.Stop();
+    spinning.Stop();
+    noPending.Stop();
+
+    parked.Release();
+    spinning.Release();
+    noPending.Release();
+
 #ifdef _WIN32
     constexpr const char* units = "cycles";
 #else
     constexpr const char* units = "ns";
 #endif
     std::fprintf(stderr, "idle worker CPU over %u pulses (%s): spin=0 %lld, spin=50 %lld, no pending work %lld, 5ms active reference %lld\n", rounds, units,
-        static_cast<long long>(parked.consumed), static_cast<long long>(spinning.consumed), static_cast<long long>(noPending.consumed), static_cast<long long>(spinning.reference));
-    const auto interval = spinning.reference * rounds / 100;
+        static_cast<long long>(parked.consumed), static_cast<long long>(spinning.consumed), static_cast<long long>(noPending.consumed), static_cast<long long>(spinning.clock.reference));
+    const auto interval = spinning.clock.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
+    Require(spinning.consumed > noPending.consumed + interval / 3);
     Require(noPending.consumed < parked.consumed + interval / 3);
 }
 
