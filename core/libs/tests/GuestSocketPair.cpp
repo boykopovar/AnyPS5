@@ -29,6 +29,7 @@ struct Msghdr {
 };
 
 extern "C" {
+int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
@@ -247,6 +248,24 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFstat(pair[1], &status) == static_cast<int>(0x80020009u));
+
+    const int idle = socket_nid_postfix(2, Stream, 0);
+    Require(idle >= 0 && fstat_nid_disambig1_nid_postfix(idle, &status) == 0 && status.st_mode == 0140666);
+    Require(close_nid_postfix(idle) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "hi", 2, 0) == 2 && Readable(pair[1]));
+    Require(shutdown_nid_postfix(pair[0], 1) == 0 && Readable(pair[1], In | Hup));
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 2);
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 2);
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140222 && status.st_size == 0);
+    Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == 0 && status.st_mode == 0140444);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && Readable(pair[1], In | Hup));
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && (status.st_mode & 0444) == 0 && status.st_size == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
 
     Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], 3) == 2);

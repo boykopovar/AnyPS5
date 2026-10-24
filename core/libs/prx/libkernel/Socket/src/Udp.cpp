@@ -873,9 +873,19 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     int sendBuffer = 0;
     socklen_t length = sizeof(sendBuffer);
     if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
+    bool peerClosed = false;
+    if (!receiveShut && available == 0) {
+#ifdef _WIN32
+        WSAPOLLFD entry{socket->value, POLLRDNORM, 0};
+        peerClosed = WSAPoll(&entry, 1, 0) > 0 && (entry.revents & POLLHUP) != 0;
+#else
+        pollfd entry{socket->value, POLLIN | POLLRDHUP, 0};
+        peerClosed = ::poll(&entry, 1, 0) > 0 && (entry.revents & POLLRDHUP) != 0;
+#endif
+    }
     *status = FileStat{};
     status->st_mode = 0140000;
-    if (!receiveShut || available > 0) status->st_mode |= 0444;
+    if ((!receiveShut && !peerClosed) || available > 0) status->st_mode |= 0444;
     if (!sendShut) status->st_mode |= 0222;
     status->st_size = available;
     status->st_blksize = sendBuffer > 0 ? static_cast<std::uint32_t>(sendBuffer) : 0;
