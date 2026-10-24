@@ -38,6 +38,7 @@ void FinalizeFace(void* object) {
     auto* host = static_cast<FT_Face>(object);
     auto* face = static_cast<GuestFace*>(host->generic.data);
     if (face->rec.generic.finalizer) face->rec.generic.finalizer(&face->rec);
+    face->finalized = true;
 }
 
 void PublishFace(GuestLibrary* library, std::unique_ptr<GuestFace> face, FT_Face host, GuestFaceRec** aface) {
@@ -140,10 +141,15 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
     return 0;
 }
 
+int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Reference_Face(owner ? owner->host : nullptr);
+}
+
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec* face) {
     GuestFace* owner = FaceOf(face);
     const FT_Error error = FT_Done_Face(owner ? owner->host : nullptr);
-    if (error == 0) owner->library->faces.remove_if([owner](const auto& entry) { return entry.get() == owner; });
+    if (error == 0 && owner->finalized) owner->library->faces.remove_if([owner](const auto& entry) { return entry.get() == owner; });
     return error;
 }
 
