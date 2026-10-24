@@ -31,6 +31,7 @@ static_assert(sizeof(TestX509) == 216);
 
 extern "C" {
 const TestStack* APS5_VABI X509_get0_extensions_nid_postfix(const TestX509*);
+int APS5_VABI X509_get_ext_count_nid_postfix(const TestX509*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -57,7 +58,23 @@ static void TestGet0Extensions() {
     Require(X509_get0_extensions_nid_postfix(&certificate) == &extensions);
 }
 
+static void TestGetExtCount() {
+    TestStack extensions {};
+    TestCertInfo info {};
+    TestX509 certificate {};
+    RequireThrows([] { X509_get_ext_count_nid_postfix(nullptr); });
+    RequireThrows([&] { X509_get_ext_count_nid_postfix(&certificate); });
+    certificate.certInfo = &info;
+    Require(X509_get_ext_count_nid_postfix(&certificate) == 0);
+    info.extensions = &extensions;
+    Require(X509_get_ext_count_nid_postfix(&certificate) == 0);
+    extensions.num = 3;
+    extensions.numAlloc = 8;
+    Require(X509_get_ext_count_nid_postfix(&certificate) == 3);
+}
+
 int main() {
     TestGet0Extensions();
+    TestGetExtCount();
     return 0;
 }
