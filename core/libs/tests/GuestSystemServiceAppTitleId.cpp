@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -6,11 +7,6 @@
 #include <exception>
 #include <limits>
 #include <string_view>
-
-extern "C" int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void);
-extern "C" int APS5_VABI sceSystemServiceGetAppId(const char* titleId);
-extern "C" int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId);
-extern "C" int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId);
 
 namespace {
 

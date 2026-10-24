@@ -1,3 +1,4 @@
+#include "prx/libSceSystemLogger2Delivery/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -421,14 +422,6 @@ int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
 int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
  return SYSTEM_SERVICE_OK;
 }
-
-struct SystemServiceTournamentOccurrenceParam {
-    std::uint64_t size;
-    const char* occurrenceId;
-    std::int32_t userId;
-    std::uint32_t padding;
-    const char* context;
-};
 
 static_assert(sizeof(SystemServiceTournamentOccurrenceParam) == 32);
 static_assert(offsetof(SystemServiceTournamentOccurrenceParam, occurrenceId) == 8);

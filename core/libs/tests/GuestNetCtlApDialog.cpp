@@ -1,18 +1,9 @@
+#include "prx/libSceNetCtlApDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
-
-extern "C" {
-int APS5_VABI sceNetCtlApDialogInitialize(void);
-int APS5_VABI sceNetCtlApDialogTerminate(void);
-int APS5_VABI sceNetCtlApDialogOpen(const NetCtlApDialogParam* param);
-int APS5_VABI sceNetCtlApDialogClose(void);
-int APS5_VABI sceNetCtlApDialogUpdateStatus(void);
-int APS5_VABI sceNetCtlApDialogGetStatus(void);
-int APS5_VABI sceNetCtlApDialogGetResult(void* result);
-}
 
 namespace {
 
@@ -48,7 +39,7 @@ int main() {
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
     Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
     Require(sceNetCtlApDialogClose() == kErrNotInitialized);
-    Require(sceNetCtlApDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
     Require(sceNetCtlApDialogGetStatus() == kStatusNone);
     Require(sceNetCtlApDialogUpdateStatus() == kStatusNone);
 
@@ -59,9 +50,9 @@ int main() {
 
     Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
-    Require(sceNetCtlApDialogGetResult(result) == static_cast<int>(0x80B8000Au));
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == static_cast<int>(0x80B8000Au));
     std::memset(result + 4, 0, 36);
-    Require(sceNetCtlApDialogGetResult(result) == kErrNotFinished);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
 
     param.size = 103;
     Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
@@ -80,7 +71,7 @@ int main() {
     Require(sceNetCtlApDialogUpdateStatus() == kStatusFinished);
 
     Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
-    Require(sceNetCtlApDialogGetResult(result) == kResultUserCanceled);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kResultUserCanceled);
     RequireCanceled(result);
 
     Require(sceNetCtlApDialogOpen(&param) == 0);
@@ -92,6 +83,6 @@ int main() {
     Require(sceNetCtlApDialogInitialize() == 0);
     Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
-    Require(sceNetCtlApDialogGetResult(result) == kErrNotFinished);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
     Require(sceNetCtlApDialogTerminate() == 0);
 }

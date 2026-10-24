@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -18,7 +19,6 @@
 #endif
 
 struct LibcStatvfs;
-extern "C" int APS5_VABI fstatvfs_nid_postfix(int, LibcStatvfs*);
 
 namespace {
 int Fail(int error) {

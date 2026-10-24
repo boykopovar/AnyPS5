@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <array>
@@ -10,20 +13,6 @@
 #include <fstream>
 #include <map>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-int APS5_VABI sceKernelLseek(int, std::int64_t, int);
-int APS5_VABI sceKernelGetdents(int, char*, int);
-int APS5_VABI sceKernelGetdirentries(int, char*, int, std::int64_t*);
-int APS5_VABI getdents_nid_postfix(int, char*, int);
-int APS5_VABI getdirentries_nid_postfix(int, char*, int, std::int64_t*);
-int* APS5_VABI __error_nid_postfix();
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

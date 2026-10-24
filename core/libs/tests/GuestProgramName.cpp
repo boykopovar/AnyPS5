@@ -1,12 +1,13 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <cstring>
 
 extern "C" {
-const char* APS5_VABI getprogname_nid_postfix();
-const char* APS5_VABI _getprogname_nid_postfix();
+
 extern const char* __progname_nid_postfix;
-int* APS5_VABI __error_nid_postfix();
+
 }
 
 static void Require(bool value) { if (!value) std::abort(); }

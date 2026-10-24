@@ -265,7 +265,15 @@ private:
         bool splitHi = false;
         try {
             splitHi = _splitAt(hi);
-            ForgetDirectMemory(static_cast<int64_t>(lo), static_cast<size_t>(hi - lo));
+            for (size_t page = first; page < first + count;) {
+                if (!_used[page]) {
+                    ++page;
+                    continue;
+                }
+                const size_t runStart = page;
+                while (page < first + count && _used[page]) ++page;
+                ForgetDirectMemory(static_cast<int64_t>(runStart * kPage), static_cast<size_t>((page - runStart) * kPage));
+            }
         } catch (...) {
             if (splitHi) _unsplitAt(hi);
             if (splitLo) _unsplitAt(lo);

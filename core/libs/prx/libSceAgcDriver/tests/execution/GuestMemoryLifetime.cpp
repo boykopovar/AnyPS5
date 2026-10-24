@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -16,19 +18,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-void* APS5_VABI memalign_nid_postfix(std::size_t, std::size_t);
-void* APS5_VABI realloc_nid_postfix(void*, std::size_t);
-void APS5_VABI free_nid_postfix(void*);
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-}
 
 namespace {
 
@@ -141,12 +130,14 @@ void CheckHeap(AgcDriver::VulkanDevice& device) {
     Require(!Imported(device, allocation), "host import survived guest realloc");
     CheckPattern(replacement);
     free_nid_postfix(replacement);
+
     for (int iteration = 0; iteration < 3; ++iteration) {
         allocation = memalign_nid_postfix(BlockBytes, BlockBytes);
         Require(allocation != nullptr, "guest heap reuse allocation failed");
         std::memset(allocation, 0, BlockBytes);
         Fill(device, allocation);
         free_nid_postfix(allocation);
+
         Require(!Imported(device, allocation), "host import survived guest free or heap cache eviction");
     }
 }

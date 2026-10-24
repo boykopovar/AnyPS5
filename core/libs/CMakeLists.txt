@@ -289,6 +289,25 @@ if(BUILD_TESTING)
 
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        set(public_header_compiler_args)
+        if(APPLE)
+            foreach(architecture IN LISTS CMAKE_OSX_ARCHITECTURES)
+                list(APPEND public_header_compiler_args --compiler-arg=-arch "--compiler-arg=${architecture}")
+            endforeach()
+            if(CMAKE_OSX_SYSROOT)
+                list(APPEND public_header_compiler_args --compiler-arg=-isysroot "--compiler-arg=${CMAKE_OSX_SYSROOT}")
+            endif()
+        endif()
+        set(public_header_manifest "${CMAKE_CURRENT_BINARY_DIR}/public_headers.json")
+        add_test(NAME public_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --audit-only --manifest "${public_header_manifest}")
+        set_tests_properties(public_headers PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE FIXTURES_SETUP public_headers_manifest)
+        foreach(batch RANGE 0 63)
+            add_test(NAME public_headers_compile_${batch} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --compiler ${CMAKE_CXX_COMPILER} ${public_header_compiler_args}
+                --manifest "${public_header_manifest}" --batch-index ${batch} --batch-count 64)
+            set_tests_properties(public_headers_compile_${batch} PROPERTIES TIMEOUT 30 FIXTURES_REQUIRED public_headers_manifest)
+        endforeach()
         add_test(NAME nid_gnu_hash COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_gnu_hash.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_elf_duplicates COMMAND ${Python3_EXECUTABLE}
@@ -858,6 +877,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_voice_chat PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoiceChat>")
+    endif()
+
+    add_test_executable(guest_gnm_neo_embedded_tests tests/GuestGnmNeoEmbedded.cpp)
+    target_include_directories(guest_gnm_neo_embedded_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_gnm_neo_embedded_tests PRIVATE libSceGnmDriverForNeoMode libc)
+    configure_windows_unwind(guest_gnm_neo_embedded_tests)
+    add_test(NAME guest_gnm_neo_embedded COMMAND guest_gnm_neo_embedded_tests)
+    if(WIN32)
+        set_tests_properties(guest_gnm_neo_embedded PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 
     add_test_executable(guest_np_game_intent_tests tests/GuestNpGameIntent.cpp)

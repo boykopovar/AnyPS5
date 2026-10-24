@@ -1,9 +1,8 @@
+#include "prx/libSceShellUIUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct ShellUIUtilLaunchParameter;
 
 extern "C" {
 

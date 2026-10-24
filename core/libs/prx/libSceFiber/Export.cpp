@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -41,8 +42,6 @@ static constexpr std::uint32_t FIBER_FLAG_CONTEXT_SIZE_CHECK = 0x10;
 static constexpr std::uint32_t FIBER_FLAG_SET_FPU_REGISTERS = 0x100;
 static constexpr std::uint32_t FIBER_DEFAULT_MXCSR = 0x9fc0;
 static constexpr std::uint16_t FIBER_DEFAULT_FPU_CONTROL = 0x037f;
-
-using GuestFiberEntry = FiberEntry;
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never

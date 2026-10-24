@@ -427,8 +427,8 @@ public:
         return (ResolveTextureFormat(resource.format) == expected || depthBits || UnormStencilView(resource)) && oneSlice && resource.width == target.extent.width && resource.height == target.extent.height && resource.baseLevel == 0 && resource.lastLevel == 0 && resource.baseArray == 0;
     }
 
-    std::shared_ptr<Texture> Sampled(std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, bool drawn = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D) {
-        CheckCurrent();
+    std::shared_ptr<Texture> Sampled(std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, bool drawn = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool copySource = false) {
+        if (!copySource) CheckCurrent();
         CheckResource(resource);
         std::array<std::uint32_t, 13> key{};
         std::copy_n(words.begin(), std::min<std::size_t>(words.size(), 8), key.begin());
@@ -468,7 +468,7 @@ public:
         const auto sampledImage = useSampleShadow ? sampleShadow : owned;
         auto texture = std::make_shared<Texture>(context, useSampleShadow ? sampleShadow->image : image, hostFormat, stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT, components, viewType, 0, sampledImage);
         if (multisampled) {
-            Require(samplingActive, "native multisample depth sampling requires its creation-time owner");
+            Require(copySource || samplingActive, "native multisample depth sampling requires its creation-time owner");
             texture->MarkRefreshedPerUse();
         }
         textures.emplace(key, texture);
@@ -509,30 +509,6 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, all);
         if (batch) batch->SubmitAndWait();
         else Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
-    }
-
-    void CopySample(std::uint32_t sample, StorageTexture& destination, VkImageView destinationView) {
-        auto* recorder = Recorder::Active();
-        Require(recorder != nullptr, "depth sample copies need an active recorder");
-        Require(sampleable, "DB depth copy from a depth surface the device cannot sample at its sample count");
-        ApplyFastClear();
-        if (useSampleShadow) {
-            if (sampleShadow == nullptr) createSampleShadow();
-            refreshSampleShadow(false);
-            recorder->Keep(sampleShadow);
-        }
-        if (depthView == VK_NULL_HANDLE) {
-            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            viewInfo.image = useSampleShadow ? sampleShadow->image : image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = hostFormat;
-            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &depthView), "vkCreateImageView depth sample copy");
-        }
-        Require(context.detiler != nullptr, "depth sample copies need the texture detiler");
-        context.detiler->DispatchDepthSample(recorder->Commands(), depthView, target.samples > 1, destinationView, target.extent.width, target.extent.height, sample);
-        Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
-        destination.MarkDirty();
     }
 
     bool Holds(const Texture* texture) const {
@@ -915,7 +891,6 @@ public:
     const VkFormat hostFormat;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
-    VkImageView depthView = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     std::shared_ptr<std::atomic<bool>> active = std::make_shared<std::atomic<bool>>(true);
     bool sampleable = true;
@@ -1175,7 +1150,6 @@ private:
         releaseStencilCopy();
         mirrorPlane = {};
         textures.clear();
-        if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (owned != nullptr) owned.reset();
         else {
@@ -2131,6 +2105,12 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             const bool overlapped = !surface->syncing && plane < end && address < plane + planeBytes;
             if (overlapped && (surface->pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) surface->MarkAllStale(planeBytes);
             if (overlapped && (scope == DepthPlaneScope::Whole || anyUnit(surface->StaleUnitsIn(planeBytes, address, end)))) {
+                if (GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty()) {
+                    static std::atomic<bool> reported{false};
+                    if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] depth plane 0x%llx+0x%llx was unmapped with GPU results pending; they are dropped\n", static_cast<unsigned long long>(plane), static_cast<unsigned long long>(planeBytes));
+                    surface->ClearStale();
+                    continue;
+                }
                 surface->SyncFromMemory(resource);
                 auto units = scope == DepthPlaneScope::Whole ? surface->staleUnits : surface->StaleUnitsIn(planeBytes, address, end);
                 if (anyUnit(units)) {
@@ -2348,6 +2328,12 @@ std::size_t DepthPlaneCopyCount() {
     return planeCopies().size();
 }
 
+namespace {
+
+thread_local bool depthCopySourceActive = false;
+
+}
+
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType multisampleViewType) {
     const auto held = [&](const auto& surface) {
         return surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && !surface->retired && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
@@ -2368,12 +2354,17 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         Require(base.samples > 1u, "multisample reader overlaps a single-sample depth attachment");
         auto* recorder = RecorderFor(context);
         Require(recorder != nullptr, "a native multisampled depth target is sampled only by recorded draws and dispatches");
-        found->CheckCurrent();
-        found->CheckResource(resource);
-        Require(found->pendingClear == 0u, "native multisample depth fast-clear transition is not implemented");
+        if (depthCopySourceActive) {
+            found->CheckResource(resource);
+            found->ApplyFastClear();
+        } else {
+            found->CheckCurrent();
+            found->CheckResource(resource);
+            Require(found->pendingClear == 0u, "native multisample depth fast-clear transition is not implemented");
+        }
         RecordMemoryBarrier(context, recorder->Commands(), VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
-        return found->Sampled(words, resource, components, found == drawnDepth, multisampleViewType);
+        return found->Sampled(words, resource, components, found == drawnDepth, multisampleViewType, depthCopySourceActive);
     }
     if (resource.width != base.extent.width || resource.height != base.extent.height || resource.baseLevel != 0) return nullptr;
     const bool d16 = base.format == VK_FORMAT_D16_UNORM || base.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -2427,7 +2418,7 @@ bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resou
     std::lock_guard lock(surfacesMutex());
     auto* found = planeSurface(context.device, address);
     if (found == nullptr || !found->Holds(texture)) return false;
-    found->CheckCurrent();
+    if (!depthCopySourceActive) found->CheckCurrent();
     found->CheckResource(resource);
     return true;
 }
@@ -2562,15 +2553,23 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
     return layeredDepthStorage(context, surface, resource, mip);
 }
 
-void CopyDepthSample(const Context& context, std::uint64_t depthAddress, std::uint32_t samples, std::uint32_t sample, StorageTexture& destination, VkImageView destinationView, VkExtent2D extent) {
-    std::lock_guard lock(surfacesMutex());
-    auto* found = planeSurface(context.device, depthAddress);
-    Require(found != nullptr && found->target.address == depthAddress, "DB depth copy from a depth plane no draw rendered");
-    Require(found->target.format == VK_FORMAT_D32_SFLOAT || found->target.format == VK_FORMAT_D32_SFLOAT_S8_UINT, "DB depth copy from a depth surface that is not 32-bit float");
-    Require(found->target.samples == samples, "DB depth copy from a depth surface of another sample count");
-    Require(found->target.extent.width == extent.width && found->target.extent.height == extent.height, "DB depth copy from a depth surface of another size");
-    Require(sample < found->target.samples, "DB depth copy of a sample the depth surface does not have");
-    found->CopySample(sample, destination, destinationView);
+DepthCopySourceScope::DepthCopySourceScope(bool active) : previous(depthCopySourceActive) {
+    depthCopySourceActive = active;
+}
+
+DepthCopySourceScope::~DepthCopySourceScope() {
+    depthCopySourceActive = previous;
+}
+
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target) {
+    const bool multisampled = target.samples != 1u;
+    const auto base = (target.address | target.pipeBankXor) >> 8u;
+    const auto metadata = multisampled ? target.htileAddress >> 8u : 0u;
+    const auto count = static_cast<std::uint32_t>(std::countr_zero(target.samples));
+    const auto width = target.extent.width - 1u, height = target.extent.height - 1u;
+    const auto type = multisampled ? 14u : 9u;
+    const auto word6 = (multisampled && target.iterate256 ? 1u << 10u : 0u) | (multisampled && target.htilePipeAligned ? 1u << 19u : 0u) | (metadata != 0 ? 1u << 21u : 0u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u);
+    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (22u << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {

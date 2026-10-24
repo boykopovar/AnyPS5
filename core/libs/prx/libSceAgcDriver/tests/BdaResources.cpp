@@ -602,6 +602,9 @@ void importJoinTests(const Context& context) {
     Require(pieces != nullptr && pieces->base == heapBase && pieces->bytes == 2 * piece && piecesBuffer == pieces->buffer && piecesCopied == 0, "a buffer bound exactly over two pieces no larger than the import window was not imported as one");
     change(heap + 2 * piece, piece, true);
     static_cast<void>(bind(heapBase + 2 * piece - 16));
+    const auto [prefixBuffer, prefixCopied] = bind(heapBase, 2 * piece + 16);
+    const auto* prefix = HostImportFor(importing, heapBase, 2 * piece + 16);
+    Require(prefix != nullptr && prefix->base == heapBase && prefix->bytes == 3 * piece && prefixBuffer == prefix->buffer && prefixCopied == 0, "a buffer bound from the first of three pieces into the last was not imported over the pieces it crosses");
     const auto* kept = HostImportFor(importing, first, 16);
     Require(kept != nullptr && kept->buffer == joinedBuffer && kept->bytes == 2 * large, "a registry change elsewhere re-imported the joined ranges");
     change(guest + 2 * large, large, true);

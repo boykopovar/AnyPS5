@@ -1,17 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-struct GuestStack {
-    void* sp;
-    std::size_t size;
-    int flags;
-};
-extern "C" {
-int APS5_VABI sigaltstack_nid_postfix(const GuestStack*, GuestStack*);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static GuestStack Query() {
     GuestStack current;

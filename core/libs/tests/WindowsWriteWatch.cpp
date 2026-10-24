@@ -359,6 +359,180 @@ void CheckConcurrentWrites() {
     region.Collect(Collection::Armed);
     Require(region.Collect(Collection::Armed).empty(), "concurrent writes did not settle");
 }
+
+void CheckComparedWhenShared() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, 2 * Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(section && first && second, "cannot allocate compared sharing test memory");
+    mappings.ForgetSection(section);
+    const auto collect = [&](unsigned char* address, std::size_t bytes) {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        return mappings.Collect(reinterpret_cast<std::uintptr_t>(address), bytes, pages.data(), &count, true);
+    };
+    const auto protection = [](unsigned char* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "compared sharing protection query failed");
+        return info;
+    };
+    mappings.Map(first, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(protection(first).Type == MEM_PRIVATE, "the compared sharing test memory is not resident");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes);
+    Require(collect(first, 2 * Bytes), "a resident page to be compared when shared stopped being collected");
+    mappings.Map(second, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(protection(first).Type == MEM_MAPPED && protection(second).Type == MEM_MAPPED, "a second mapping kept the first resident");
+    Require(!collect(first, Bytes) && !collect(second, Bytes), "a page to be compared when shared was collected once shared");
+    Require(!collect(first, 2 * Bytes), "a collect over a page to be compared when shared succeeded once shared");
+    Require(protection(first).Protect == PAGE_READWRITE && protection(second).Protect == PAGE_READWRITE, "a page to be compared when shared was armed once shared");
+    const auto before = faults.load();
+    first[8] = 0x5a;
+    second[Small + 8] = 0xa5;
+    Require(faults.load() == before && second[8] == 0x5a && first[Small + 8] == 0xa5, "a store into a page to be compared when shared faulted once shared");
+    Require(collect(first + Bytes, Bytes), "a shared page that was never to be compared stopped being collected");
+    mappings.Reset(first, 2 * Bytes);
+    mappings.Reset(second, 2 * Bytes);
+    for (auto* reserved : {first, second}) {
+        VirtualFree(reserved, 2 * Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(reserved, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
+void CheckResidentOnlyComparedWhenShared() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* second = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && first && second, "cannot allocate resident-only sharing test memory");
+    mappings.ForgetSection(section);
+    mappings.Map(first, Bytes, section, 0, PAGE_READWRITE, true, true);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(first, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE, "the resident-only sharing test memory is not resident");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes, true);
+    mappings.Map(second, Bytes, section, 0, PAGE_READWRITE, true, true);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(!mappings.Collect(reinterpret_cast<std::uintptr_t>(first), Bytes, pages.data(), &count, true), "a resident page marked to be compared was collected once shared");
+    const auto before = faults.load();
+    first[8] = 0x3c;
+    Require(faults.load() == before && second[8] == 0x3c, "a store into a resident page marked to be compared faulted once shared");
+    mappings.Reset(first, Bytes);
+    mappings.Reset(second, Bytes);
+    for (auto* reserved : {first, second}) {
+        VirtualFree(reserved, Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(reserved, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+    Region region;
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(region.first), Bytes, true);
+    Require(region.Collect(Collection::All, 0, 1) == Pages(0, 1), "marking only resident pages changed a shared view");
+    Require(region.Protection(0) == PAGE_READONLY, "a shared view outside a resident-only mark was not armed");
+}
+
+void CheckComparedWhenSharedRemapped() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    std::array<unsigned char*, 3> reserved{};
+    for (auto& address : reserved) address = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(section && reserved[0] && reserved[1] && reserved[2], "cannot allocate remapped compared sharing test memory");
+    mappings.ForgetSection(section);
+    const auto collect = [&](unsigned char* address) {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        return mappings.Collect(reinterpret_cast<std::uintptr_t>(address), Page, pages.data(), &count, true);
+    };
+    const auto memory = [](unsigned char* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "remapped compared sharing query failed");
+        return info;
+    };
+    const auto share = [&] {
+        mappings.Map(reserved[1], Page, section, 0, PAGE_READWRITE, true, true);
+        mappings.Map(reserved[2], Page, section, 0, PAGE_READWRITE, true, true);
+        Require(memory(reserved[1]).Type == MEM_MAPPED && memory(reserved[2]).Type == MEM_MAPPED, "the remapped page is not shared");
+    };
+    const auto unmapShared = [&] {
+        mappings.Reset(reserved[1], Page);
+        mappings.Reset(reserved[2], Page);
+    };
+    mappings.Map(reserved[0], Page, section, 0, PAGE_READWRITE, true, true);
+    Require(memory(reserved[0]).Type == MEM_PRIVATE, "the remapped compared sharing test memory is not resident");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(reserved[0]), Page);
+    mappings.Reset(reserved[0], Page);
+    share();
+    Require(!collect(reserved[1]) && !collect(reserved[2]), "a page to be compared when shared was collected after every view was unmapped and it was mapped again");
+    Require(memory(reserved[1]).Protect == PAGE_READWRITE && memory(reserved[2]).Protect == PAGE_READWRITE, "a page to be compared when shared was armed after every view was unmapped and it was mapped again");
+    const auto before = faults.load();
+    reserved[1][8] = 0x6b;
+    Require(faults.load() == before && reserved[2][8] == 0x6b, "a store into a remapped page to be compared faulted once shared");
+    unmapShared();
+    mappings.ForgetSection(section);
+    share();
+    Require(collect(reserved[1]) && memory(reserved[2]).Protect == PAGE_READONLY, "a forgotten section's handle value kept its pages compared when shared");
+    unmapShared();
+    for (auto* address : reserved) {
+        VirtualFree(address, Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(address, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
+void CheckComparedPagesReportedOnce() {
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, 2 * Bytes, nullptr);
+    std::array<unsigned char*, 3> reserved{};
+    for (auto& address : reserved) address = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(section && reserved[0] && reserved[1] && reserved[2], "cannot allocate compared page report test memory");
+    mappings.ForgetSection(section);
+    const auto listed = [&](unsigned char* base, std::size_t begin, std::size_t count, bool unreported) {
+        const auto address = reinterpret_cast<std::uintptr_t>(base);
+        auto cursor = address + begin * Small;
+        const auto end = cursor + count * Small;
+        std::set<std::size_t> result;
+        while (cursor < end) {
+            std::array<void*, 3> pages{};
+            std::size_t available = pages.size();
+            mappings.ComparedPages(cursor, end - cursor, pages.data(), &available, unreported);
+            for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+            if (available < pages.size()) break;
+            cursor = reinterpret_cast<std::uintptr_t>(pages[available - 1]) + Small;
+        }
+        return result;
+    };
+    auto* first = reserved[0];
+    auto* second = reserved[1];
+    mappings.Map(first, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes);
+    Require(listed(first, 0, 32, false).empty() && listed(first, 0, 32, true).empty(), "a resident page to be compared was listed before it was shared");
+    mappings.Map(second, 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(listed(first, 0, 32, false) == Pages(0, 16) && listed(second, 0, 32, false) == Pages(0, 16), "the compared pages of both mappings were not listed once shared");
+    Require(listed(first, 2, 4, true) == Pages(2, 6), "a partial take did not report exactly its compared pages");
+    std::set<std::size_t> rest = Pages(0, 2);
+    rest.insert(6);
+    for (std::size_t page = 7; page < 16; ++page) rest.insert(page);
+    Require(listed(first, 0, 32, true) == rest, "a compared page was reported twice or not at all");
+    Require(listed(first, 0, 32, true).empty() && listed(first, 0, 32, false) == Pages(0, 16), "a compared page was reported again, or a listing consumed its mark");
+    Require(listed(second, 0, 32, true) == Pages(0, 16) && listed(second, 0, 32, true).empty(), "the second mapping's compared pages were not reported exactly once");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first), Bytes);
+    Require(listed(first, 0, 32, true).empty() && listed(second, 0, 32, true).empty(), "marking compared pages again reported them again");
+    mappings.CompareWhenShared(reinterpret_cast<std::uintptr_t>(first + Bytes), Bytes);
+    Require(listed(first, 16, 16, true) == Pages(16, 32) && listed(second, 16, 16, true) == Pages(16, 32), "shared pages newly marked to be compared were not reported in every mapping");
+    mappings.Map(reserved[2], 2 * Bytes, section, 0, PAGE_READWRITE, true, true);
+    Require(listed(reserved[2], 0, 32, true) == Pages(0, 32) && listed(first, 0, 32, true).empty(), "a new mapping of compared pages was not reported, or reported the others again");
+    for (auto* address : reserved) mappings.Reset(address, 2 * Bytes);
+    for (auto* address : reserved) {
+        VirtualFree(address, 2 * Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        VirtualFree(address, 0, MEM_RELEASE);
+    }
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
 }
 
 int main() {
@@ -373,6 +547,10 @@ int main() {
         CheckPrivate();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
+        CheckComparedWhenShared();
+        CheckResidentOnlyComparedWhenShared();
+        CheckComparedWhenSharedRemapped();
+        CheckComparedPagesReportedOnce();
         CheckPrivateCommitCarvesPlaceholders();
         CheckPrivateCommitEdgeLayouts();
         CheckPrivateCommitTails();

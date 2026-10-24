@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -131,9 +133,6 @@ int HostPoll(KernelSocketPoll::Entry* descriptors, int count, int timeoutMillise
 
 extern "C" {
 
-const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source, char* destination, std::uint32_t capacity);
-int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destination);
-
 const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, uint32_t size) {
     return __inet_ntop_nid_postfix(af, src, dst, size);
 }
@@ -141,8 +140,6 @@ const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, 
 int APS5_VABI inet_pton_nid_postfix(int af, const char* src, void* dst) {
     return __inet_pton_nid_postfix(af, src, dst);
 }
-
-int* APS5_VABI __error_nid_postfix();
 
 void KernelSetSocketPoller_nid_no_patch(KernelSocketPoll::Poller poller) {
     g_socketPoller.store(poller);

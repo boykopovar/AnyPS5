@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
@@ -6,13 +7,9 @@
 #include <cstring>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
-struct Category { const void* const* vtable; };
-struct ErrorCode { int reserved; int value; const Category* category; };
-struct Exception { const void* const* vtable; const char* message; };
-struct SystemError { Exception base; ErrorCode code; };
-static_assert(sizeof(Exception) == 16 && sizeof(SystemError) == 32);
+static_assert(sizeof(LibcException::ExceptionObject) == 16 && sizeof(LibcException::SystemErrorObject) == 32);
 
-using GuestWhat = const char* (APS5_VABI *)(const Exception*);
+using GuestWhat = const char* (APS5_VABI *)(const LibcException::ExceptionObject*);
 using Thrower = void (APS5_VABI *)(const void*);
 
 extern "C" {
@@ -21,31 +18,7 @@ extern const TypeRecord _ZTISt9bad_alloc_nid_postfix;
 extern const TypeRecord _ZTISt12length_error_nid_postfix;
 extern const TypeRecord _ZTISt12system_error_nid_postfix;
 extern const TypeRecord _ZTINSt13__sce_cxxvers16_Error_exceptionE_nid_postfix;
-const Category* APS5_VABI _ZSt16generic_categoryv_nid_postfix();
-void APS5_VABI _ZNSt13__sce_cxxvers16_Error_exceptionC1EPKc_nid_postfix(Exception* self, const char* message);
-void APS5_VABI _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(Exception* self, const char* message);
-void APS5_VABI _ZNSt13__sce_cxxvers16_Error_exceptionC1ERKS0__nid_postfix(Exception* self, const Exception* source);
-void APS5_VABI _ZNSt13__sce_cxxvers16_Error_exceptionD1Ev_nid_postfix(Exception* self);
-void APS5_VABI _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(Exception* self);
-const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(const Exception* self);
-void APS5_VABI _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix(const char* message);
-void APS5_VABI _ZNSt8__sce_v214_Xout_of_rangeEPKc_nid_postfix(const char* message);
-void APS5_VABI _ZNSt8__sce_v218_Xinvalid_argumentEPKc_nid_postfix(const char* message);
-void APS5_VABI _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix(const char* message);
-void APS5_VABI _ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix(const char* message);
-void APS5_VABI _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix(const void*);
-void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(const void*);
-void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix(const void*);
-void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_weak_ptrE_nid_postfix(const void*);
-void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_18bad_variant_accessE_nid_postfix(const void*);
-void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix(const void* error);
-void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const void* error);
-void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const void* failure);
-void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(std::intptr_t code);
-const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value);
-const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value);
-std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
-std::int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
+
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 
 const void* SceV2CatchType = nullptr;
@@ -62,12 +35,12 @@ static void Require(bool value, const char* what) {
     ++failures;
 }
 
-static const TypeRecord* TypeOf(const Exception* object) {
-    return static_cast<const TypeRecord*>(object->vtable[-1]);
+static const TypeRecord* TypeOf(const LibcException::ExceptionObject* object) {
+    return static_cast<const TypeRecord*>(static_cast<const void* const*>(object->vtable)[-1]);
 }
 
-static const char* What(const Exception* object) {
-    return reinterpret_cast<GuestWhat>(const_cast<void*>(object->vtable[2]))(object);
+static const char* What(const LibcException::ExceptionObject* object) {
+    return reinterpret_cast<GuestWhat>(const_cast<void*>(static_cast<const void* const*>(object->vtable)[2]))(object);
 }
 
 static TypeRecord Named(const char* name) {
@@ -75,11 +48,11 @@ static TypeRecord Named(const char* name) {
 }
 
 static char inspected[256];
-static std::size_t inspectBytes = sizeof(Exception);
-static SystemError inspectedSystem {};
+static std::size_t inspectBytes = sizeof(LibcException::ExceptionObject);
+static LibcException::SystemErrorObject inspectedSystem {};
 
 extern "C" void APS5_VABI SceV2Inspect(void* object) {
-    const auto* exception = static_cast<const Exception*>(object);
+    const auto* exception = static_cast<const LibcException::ExceptionObject*>(object);
     std::snprintf(inspected, sizeof(inspected), "%s|%s", TypeOf(exception)->name, What(exception));
     std::memcpy(&inspectedSystem, object, inspectBytes);
 }
@@ -146,17 +119,17 @@ static void CheckCopies() {
     const TypeRecord systemError = Named("NSt8__sce_v212system_errorE");
     const TypeRecord logicError = Named("NSt8__sce_v211logic_errorE");
 
-    Exception range {};
+    LibcException::ExceptionObject range {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&range, "range copy");
     Run({"_Throw(range_error)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix), &range, &runtimeError, &logicError, 2,
         "NSt8__sce_v211range_errorE|range copy"});
     Require(inspectedSystem.base.message == range.message, "_Throw(range_error) shares the message");
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&range);
 
-    SystemError error {};
+    LibcException::SystemErrorObject error {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&error.base, "system copy");
     error.code = {0, 5, _ZSt16generic_categoryv_nid_postfix()};
-    inspectBytes = sizeof(SystemError);
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
     SceV2CatchType = &runtimeError;
     SceV2OtherType = &logicError;
     SceV2Catch(AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix), &error);
@@ -168,20 +141,20 @@ static void CheckCopies() {
     SceV2Catch(AsThrower(_ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix), &error);
     Require(std::strcmp(inspected, "NSt8__sce_v28ios_base7failureE|system copy") == 0, "ios_base::_Throw(failure) type and message");
     Require(inspectedSystem.code.value == 5, "ios_base::_Throw(failure) copies the code");
-    inspectBytes = sizeof(Exception);
+    inspectBytes = sizeof(LibcException::ExceptionObject);
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&error.base);
 }
 
 static void CheckErrorException() {
-    Exception empty {};
+    LibcException::ExceptionObject empty {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC1EPKc_nid_postfix(&empty, nullptr);
     Require(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&empty), "") == 0, "_Error_exception(nullptr) has an empty message");
     Require(std::strcmp(TypeOf(&empty)->name, "NSt13__sce_cxxvers16_Error_exceptionE") == 0, "_Error_exception type name");
     Require(TypeOf(&empty)->base == &_ZTISt9exception_nid_postfix, "_Error_exception derives from std::exception");
 
-    Exception text {};
+    LibcException::ExceptionObject text {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&text, "text");
-    Exception copy {};
+    LibcException::ExceptionObject copy {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC1ERKS0__nid_postfix(&copy, &text);
     Require(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&copy), "text") == 0, "_Error_exception copy keeps the message");
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&text);

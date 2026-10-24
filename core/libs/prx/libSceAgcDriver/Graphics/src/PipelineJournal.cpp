@@ -1,11 +1,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "ShaderDiskCache.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -23,6 +25,7 @@
 #else
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -35,7 +38,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -44,7 +47,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 9u;
+constexpr std::uint32_t FileFormat = 10u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -203,6 +206,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.rectList);
     writer.Bool(state.dualSourceBlend);
     writer.U32(state.reversedBlend);
+    writer.U32(state.colorRop);
     writer.U32(static_cast<std::uint32_t>(state.topology));
     writer.Bool(state.primitiveRestart);
     writer.Bool(state.negativeOneToOne);
@@ -270,6 +274,7 @@ void decodeState(Reader& reader, State& state) {
     state.rectList = reader.Bool();
     state.dualSourceBlend = reader.Bool();
     state.reversedBlend = reader.U32();
+    state.colorRop = static_cast<std::uint8_t>(reader.U32());
     state.topology = static_cast<VkPrimitiveTopology>(reader.U32());
     state.primitiveRestart = reader.Bool();
     state.negativeOneToOne = reader.Bool();
@@ -423,13 +428,100 @@ private:
 #endif
 };
 
+class JournalFile {
+public:
+    explicit JournalFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+        handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
+        LARGE_INTEGER length{};
+        if (handle != INVALID_HANDLE_VALUE && GetFileSizeEx(handle, &length) && length.QuadPart >= 0) {
+            size = static_cast<std::uint64_t>(length.QuadPart);
+        } else if (handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+            handle = INVALID_HANDLE_VALUE;
+        }
+#else
+        descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        struct stat status{};
+        if (descriptor >= 0 && ::fstat(descriptor, &status) == 0 && status.st_size >= 0) {
+            size = static_cast<std::uint64_t>(status.st_size);
+        } else if (descriptor >= 0) {
+            ::close(descriptor);
+            descriptor = -1;
+        }
+#endif
+    }
+
+    ~JournalFile() {
+#ifdef _WIN32
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+#else
+        if (descriptor >= 0) ::close(descriptor);
+#endif
+    }
+
+    JournalFile(const JournalFile&) = delete;
+    JournalFile& operator=(const JournalFile&) = delete;
+
+#ifdef _WIN32
+    [[nodiscard]] bool Open() const { return handle != INVALID_HANDLE_VALUE; }
+#else
+    [[nodiscard]] bool Open() const { return descriptor >= 0; }
+#endif
+    [[nodiscard]] std::uint64_t Size() const { return size; }
+
+    bool Read(std::uint64_t offset, std::span<std::byte> bytes) const {
+        for (std::size_t done = 0; done < bytes.size();) {
+            const auto position = offset + done;
+#ifdef _WIN32
+            struct ReadEvent {
+                HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                ~ReadEvent() {
+                    if (event != nullptr) CloseHandle(event);
+                }
+            };
+            auto& completion = HostThreadLocal<ReadEvent, ReadEvent>();
+            if (completion.event == nullptr) return false;
+            OVERLAPPED at{};
+            at.Offset = static_cast<DWORD>(position);
+            at.OffsetHigh = static_cast<DWORD>(position >> 32u);
+            at.hEvent = completion.event;
+            DWORD count = 0;
+            if (!ReadFile(handle, bytes.data() + done, static_cast<DWORD>(std::min<std::size_t>(bytes.size() - done, MAXDWORD)), nullptr, &at) && GetLastError() != ERROR_IO_PENDING) return false;
+            if (!GetOverlappedResult(handle, &at, &count, TRUE) || count == 0) return false;
+#else
+            const auto count = ::pread(descriptor, bytes.data() + done, bytes.size() - done, static_cast<off_t>(position));
+            if (count < 0 && errno == EINTR) continue;
+            if (count <= 0) return false;
+#endif
+            done += static_cast<std::size_t>(count);
+        }
+        return true;
+    }
+
+    template<typename TValue>
+    bool ReadValue(std::uint64_t offset, TValue& value) const requires std::is_trivially_copyable_v<TValue> {
+        return Read(offset, std::as_writable_bytes(std::span(&value, 1)));
+    }
+
+private:
+#ifdef _WIN32
+    HANDLE handle = INVALID_HANDLE_VALUE;
+#else
+    int descriptor = -1;
+#endif
+    std::uint64_t size = 0;
+};
+
 // The end of the last whole record in [from, size) of the file: records another process appended
 // after this one loaded the file are kept, the torn tail of a record a crashed run left is cut.
 std::uint64_t validTail(const std::filesystem::path& path, std::uint64_t from, std::uint64_t size);
 
 struct LoadedModule {
     ShaderRecompiler::ShaderStage stage;
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+    std::uint64_t payloadOffset = 0;
+    std::uint64_t payloadBytes = 0;
+    std::uint64_t payloadHash = 0;
 };
 
 struct LoadedEntry {
@@ -440,6 +532,7 @@ struct LoadedEntry {
 };
 
 struct LoadedJournal {
+    std::shared_ptr<const JournalFile> file;
     std::map<ShaderRecompiler::PipelineIdentity, LoadedModule> modules;
     std::vector<LoadedEntry> entries;
     std::set<ShaderRecompiler::PipelineIdentity> indexModules;
@@ -650,20 +743,19 @@ public:
         return false;
     }
 
-    // Reads the whole file (modules keep views into the buffer, which lives as long as they do),
-    // fills the dedupe index, and remembers how many bytes parsed so a torn tail is cut before the
-    // next append.
+    // Parses the file a record at a time and keeps it open for the replay, fills the dedupe index,
+    // and remembers how many bytes parsed so a torn tail is cut before the next append.
     LoadedJournal Load() {
         LoadedJournal loaded;
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return loaded;
         const auto started = std::chrono::steady_clock::now();
-        auto file = std::make_shared<std::vector<std::byte>>();
         bool read = false;
         {
             FileLock fileLock(lockPath);
-            read = ShaderRecompiler::ReadWholeFile(path, *file);
+            auto file = std::make_shared<const JournalFile>(path);
+            read = file->Open() && parse(*file, loaded, true);
+            if (read) loaded.file = std::move(file);
         }
-        if (read) parse(*file, file, loaded, true);
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         {
             std::lock_guard lock(mutex);
@@ -783,27 +875,30 @@ private:
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
     // module identities and record hashes) is built. Stops at the first record that does not
     // parse; the bytes before it stay valid.
-    void parse(const std::vector<std::byte>& file, const std::shared_ptr<const std::vector<std::byte>>& owner, LoadedJournal& loaded, bool decode, std::vector<RecordSpan>* spans = nullptr) {
+    bool parse(const JournalFile& file, LoadedJournal& loaded, bool decode, std::vector<RecordSpan>* spans = nullptr) {
         std::uint64_t valid = 0;
         bool header = false;
         std::uint64_t dropped = 0;
-        const auto bytes = std::span<const std::byte>(file);
-        if (bytes.size() >= sizeof(FileHeader)) {
+        const auto size = file.Size();
+        if (size >= sizeof(FileHeader)) {
             FileHeader fileHeader;
-            std::memcpy(&fileHeader, bytes.data(), sizeof(fileHeader));
+            if (!file.ReadValue(0, fileHeader)) return false;
             header = fileHeader.magic == FileMagic && fileHeader.format == FileFormat && fileHeader.runtimeAbi == ShaderRecompiler::RuntimeAbi::Version && fileHeader.sourceVersion == ShaderRecompiler::ShaderDiskCache::SourceVersion() && fileHeader.device == device.load(std::memory_order_relaxed);
         }
         if (header) {
             valid = padded(sizeof(FileHeader));
             std::uint64_t cursor = valid;
-            while (cursor + sizeof(RecordHeader) <= bytes.size()) {
+            std::vector<std::byte> bytes;
+            while (cursor + sizeof(RecordHeader) <= size) {
                 RecordHeader record;
-                std::memcpy(&record, bytes.data() + cursor, sizeof(record));
+                if (!file.ReadValue(cursor, record)) return false;
                 const auto payloadOffset = cursor + sizeof(RecordHeader);
-                if (record.payloadBytes > bytes.size() - payloadOffset) break;
+                if (record.payloadBytes > size - payloadOffset) break;
                 const auto end = padded(payloadOffset + record.payloadBytes);
-                if (end > bytes.size()) break;
-                const auto payload = bytes.subspan(static_cast<std::size_t>(payloadOffset), static_cast<std::size_t>(record.payloadBytes));
+                if (end > size) break;
+                bytes.resize(static_cast<std::size_t>(record.payloadBytes));
+                if (!file.Read(payloadOffset, bytes)) return false;
+                const auto payload = std::span<const std::byte>(bytes);
                 if (ShaderRecompiler::HashBytes(payload) != record.payloadHash) break;
                 if (record.kind == ModuleRecord) {
                     if (payload.size() < 20u) break;
@@ -814,9 +909,9 @@ private:
                     std::memcpy(&stage, payload.data() + 16, sizeof(stage));
                     bool decoded = !decode;
                     if (decode && !loaded.indexModules.contains(identity)) {
-                        auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), *result, owner) && result->Identity() == identity;
-                        if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), std::move(result)});
+                        ShaderRecompiler::RecompileResult result;
+                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), result) && result.Identity() == identity;
+                        if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash});
                         else ++dropped;
                     }
                     if (decoded) loaded.indexModules.insert(identity);
@@ -877,11 +972,12 @@ private:
                 cursor = end;
             }
         }
-        if (valid < bytes.size()) ++dropped;
+        if (valid < size) ++dropped;
         loaded.validBytes = valid;
-        loaded.bytes = bytes.size();
+        loaded.bytes = size;
         loaded.dropped = dropped;
         loaded.headerValid = header;
+        return true;
     }
 
     // The index the writer dedupes against, replaced from the file: what it holds and where it
@@ -889,12 +985,12 @@ private:
     // written until it can be (the next record tries again) and the file is never started over for
     // a read failure.
     bool indexLocked() {
-        std::vector<std::byte> file;
         LoadedJournal index;
         std::error_code error;
-        const bool exists = std::filesystem::exists(path, error);
-        if (exists && !ShaderRecompiler::ReadWholeFile(path, file)) return false;
-        if (exists) parse(file, nullptr, index, false);
+        if (std::filesystem::exists(path, error)) {
+            const JournalFile file(path);
+            if (!file.Open() || !parse(file, index, false)) return false;
+        }
         std::lock_guard lock(mutex);
         indexed = true;
         validBytes = index.validBytes;
@@ -1206,6 +1302,7 @@ std::uint64_t validTail(const std::filesystem::path& path, std::uint64_t from, s
 
 struct ReplayCounters {
     std::atomic<std::uint64_t> graphics{0}, compute{0}, present{0}, skipped{0}, rejected{0}, failed{0};
+    std::atomic<std::uint64_t> held{0}, heldPeak{0};
     std::atomic<std::uint32_t> threads{0};
     std::atomic<double> ms{0};
 };
@@ -1226,6 +1323,7 @@ public:
     Replay(Context context, PipelineJournalHooks hooks, unsigned threads) : context(std::move(context)), hooks(std::move(hooks)), active(threads) {
         started = std::chrono::steady_clock::now();
         replayCounters().threads.store(threads, std::memory_order_relaxed);
+        replayCounters().heldPeak.store(0, std::memory_order_relaxed);
         workers.reserve(threads);
         for (unsigned index = 0; index < threads; ++index) workers.emplace_back([this] { run(); });
     }
@@ -1279,6 +1377,27 @@ private:
         }
     }
 
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> readModule(const ShaderRecompiler::PipelineIdentity& identity, const LoadedModule& module) const {
+        auto bytes = std::make_shared<std::vector<std::byte>>(static_cast<std::size_t>(module.payloadBytes));
+        if (loaded.file == nullptr || !loaded.file->Read(module.payloadOffset, *bytes) || ShaderRecompiler::HashBytes(*bytes) != module.payloadHash) return nullptr;
+        auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
+        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(std::span<const std::byte>(*bytes).subspan(20), *result, bytes) || !(result->Identity() == identity)) return nullptr;
+        return result;
+    }
+
+    struct Held {
+        explicit Held(std::uint64_t bytes) : bytes(bytes) {
+            auto& counters = replayCounters();
+            const auto now = counters.held.fetch_add(bytes, std::memory_order_relaxed) + bytes;
+            auto peak = counters.heldPeak.load(std::memory_order_relaxed);
+            while (peak < now && !counters.heldPeak.compare_exchange_weak(peak, now, std::memory_order_relaxed)) {}
+        }
+        ~Held() { replayCounters().held.fetch_sub(bytes, std::memory_order_relaxed); }
+        Held(const Held&) = delete;
+        Held& operator=(const Held&) = delete;
+        std::uint64_t bytes;
+    };
+
     void replay(const LoadedEntry& entry) {
         struct Replaying {
             Replaying() { replayingHere = true; }
@@ -1291,19 +1410,27 @@ private:
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
-            (hooks.compute(*module->second.result, entry.pushConstants) ? counters.compute : counters.present).fetch_add(1, std::memory_order_relaxed);
+            const Held held(module->second.payloadBytes);
+            const auto result = readModule(module->first, module->second);
+            if (result == nullptr) {
+                counters.rejected.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            (hooks.compute(*result, entry.pushConstants) ? counters.compute : counters.present).fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        std::vector<CompiledShader> shaders;
+        std::vector<const std::pair<const ShaderRecompiler::PipelineIdentity, LoadedModule>*> modules;
+        std::uint64_t bytes = 0;
         for (const auto& stage : entry.graphics.stages) {
             const auto module = loaded.modules.find(stage.identity);
             if (module == loaded.modules.end() || module->second.stage != stage.stage) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
-            shaders.push_back({stage.stage, module->second.result.get(), stage.pushConstantOffset});
+            modules.push_back(&*module);
+            bytes += module->second.payloadBytes;
         }
-        if (shaders.empty() || context.descriptorCache == nullptr) {
+        if (modules.empty() || context.descriptorCache == nullptr) {
             counters.rejected.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -1311,6 +1438,18 @@ private:
         if (store.cached >= store.bound) {
             counters.skipped.fetch_add(1, std::memory_order_relaxed);
             return;
+        }
+        const Held held(bytes);
+        std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> results;
+        std::vector<CompiledShader> shaders;
+        for (std::size_t index = 0; index < modules.size(); ++index) {
+            auto result = readModule(modules[index]->first, modules[index]->second);
+            if (result == nullptr) {
+                counters.rejected.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            shaders.push_back({entry.graphics.stages[index].stage, result.get(), entry.graphics.stages[index].pushConstantOffset});
+            results.push_back(std::move(result));
         }
         const auto layouts = DescribeSetLayouts(context, shaders);
         if (!std::ranges::equal(layouts.mainKey, entry.graphics.mainLayoutKey) || !std::ranges::equal(layouts.fragmentKey, entry.graphics.fragmentLayoutKey) || layouts.layouts.split != entry.graphics.splitSets) {
@@ -1374,6 +1513,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.rectList = state.rectList;
     canonical.dualSourceBlend = state.dualSourceBlend;
     canonical.reversedBlend = state.reversedBlend;
+    canonical.colorRop = state.colorRop;
     canonical.topology = state.topology;
     canonical.primitiveRestart = state.primitiveRestart;
     canonical.negativeOneToOne = state.negativeOneToOne;
@@ -1458,6 +1598,7 @@ PipelineJournalCounters PipelineJournalTotals() {
     totals.replayFailed = replay.failed.load(std::memory_order_relaxed);
     totals.replayMs = replay.ms.load(std::memory_order_relaxed);
     totals.replayThreads = replay.threads.load(std::memory_order_relaxed);
+    totals.replayHeldPeakBytes = replay.heldPeak.load(std::memory_order_relaxed);
     return totals;
 }
 
@@ -1477,9 +1618,9 @@ void FlushPipelineJournal() {
 void ReportPipelineJournal() {
     if (!profiling() || !Journal::Instance().Enabled()) return;
     const auto totals = PipelineJournalTotals();
-    AgcDriver::ProfilePrint_nid_no_patch("[pipeline-journal] loaded %llu pipelines, %llu modules (%.1f MiB, %.0f ms); replay on %u threads: %llu graphics and %llu compute built, %llu present, %llu skipped (store full), %llu rejected, %llu failed in %.0f ms; recorded this run: %llu graphics, %llu compute, %llu modules (%.1f MiB), %llu write failures, %llu records evicted (%.1f MiB)\n",
+    AgcDriver::ProfilePrint_nid_no_patch("[pipeline-journal] loaded %llu pipelines, %llu modules (%.1f MiB, %.0f ms); replay on %u threads: %llu graphics and %llu compute built, %llu present, %llu skipped (store full), %llu rejected, %llu failed in %.0f ms, holding at most %.1f MiB of modules; recorded this run: %llu graphics, %llu compute, %llu modules (%.1f MiB), %llu write failures, %llu records evicted (%.1f MiB)\n",
                                          static_cast<unsigned long long>(totals.loadedRecipes), static_cast<unsigned long long>(totals.loadedModules), static_cast<double>(totals.loadedBytes) / (1024.0 * 1024.0), totals.loadMs, totals.replayThreads,
-                                         static_cast<unsigned long long>(totals.replayedGraphics), static_cast<unsigned long long>(totals.replayedCompute), static_cast<unsigned long long>(totals.replayPresent), static_cast<unsigned long long>(totals.replaySkipped), static_cast<unsigned long long>(totals.replayRejected), static_cast<unsigned long long>(totals.replayFailed), totals.replayMs,
+                                         static_cast<unsigned long long>(totals.replayedGraphics), static_cast<unsigned long long>(totals.replayedCompute), static_cast<unsigned long long>(totals.replayPresent), static_cast<unsigned long long>(totals.replaySkipped), static_cast<unsigned long long>(totals.replayRejected), static_cast<unsigned long long>(totals.replayFailed), totals.replayMs, static_cast<double>(totals.replayHeldPeakBytes) / (1024.0 * 1024.0),
                                          static_cast<unsigned long long>(totals.recordedGraphics), static_cast<unsigned long long>(totals.recordedCompute), static_cast<unsigned long long>(totals.recordedModules), static_cast<double>(totals.writtenBytes) / (1024.0 * 1024.0), static_cast<unsigned long long>(totals.writeFailures), static_cast<unsigned long long>(totals.evictedRecords), static_cast<double>(totals.evictedBytes) / (1024.0 * 1024.0));
 }
 

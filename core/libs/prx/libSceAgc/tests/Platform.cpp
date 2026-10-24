@@ -1,11 +1,10 @@
+#include "prx/libSceAgc/Misc/include/Platform.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
 #include <array>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceAgcGetIsTrinityMode(bool* isTrinityMode);
 
 namespace {
 

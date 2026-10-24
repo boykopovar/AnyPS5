@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -76,7 +77,6 @@ int APS5_VABI sceNpTrophy2RegisterContext(int context, int handle, uint64_t opti
 int APS5_VABI sceNpTrophy2UnregisterUnlockCallback() {
     return SCE_NP_TROPHY2_OK;
 }
-
 
 int APS5_VABI sceNpTrophy2GetRewardIcon(int context, int handle, int reward_id, void* buffer, size_t* size) {
     (void)context;

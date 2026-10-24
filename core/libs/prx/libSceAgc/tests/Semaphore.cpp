@@ -1,3 +1,8 @@
+#include "prx/libSceAgc/include/Agc.hpp"
+#include "prx/libSceAgc/Misc/include/Semaphore.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
+#include "prx/libSceAgc/Cb/include/Sync.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -11,13 +16,6 @@
 #include <new>
 #include <stdexcept>
 #include <vector>
-
-extern "C" int APS5_VABI sceAgcSetAmmSemaphoreMemory(void* memory, std::uint64_t sizeInBytes);
-extern "C" int APS5_VABI sceAgcSetSemaphoreMemory(void* memory, std::uint64_t sizeInBytes);
-extern "C" int APS5_VABI sceAgcGetSemaphoreLabel(std::uint32_t index, void** label);
-extern "C" std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t operation, std::uint32_t modifier, std::uint32_t value);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation);
 
 namespace {
 

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "nid/Sha1.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -14,19 +16,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-struct GuestIovec { void* base; std::size_t length; };
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-std::int64_t APS5_VABI writev_nid_postfix(int, const GuestIovec*, int);
-std::int64_t APS5_VABI pwritev_nid_postfix(int, const GuestIovec*, int, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 namespace {
 int original = -1;
 int replacement = -1;
@@ -76,7 +65,7 @@ void Run(int operation, int boundary) {
     swapped = false;
     armed = true;
     char payload[] = "bad!";
-    GuestIovec vector{payload, 4};
+    KernelIovec vector{payload, 4};
     std::int64_t result = 0;
     switch (operation) {
     case 0: result = write_nid_postfix(original, payload, 4); break;
@@ -114,6 +103,9 @@ extern "C" ssize_t readlink(const char* path, char* buffer, std::size_t length) 
         if (!ReplaceDescriptor()) return -1;
     }
     return result;
+}
+extern "C" ssize_t __readlink_chk(const char* path, char* buffer, std::size_t length, std::size_t) {
+    return readlink(path, buffer, length);
 }
 extern "C" int flock(int descriptor, int operation) {
     const int result = static_cast<int>(::syscall(SYS_flock, descriptor, operation));
