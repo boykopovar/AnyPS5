@@ -28,6 +28,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -64,7 +65,10 @@ std::string _foldCase(std::string text) {
     return text;
 }
 
-bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+std::mutex& g_hostDirectoriesLock = *new std::mutex();
+std::unordered_map<std::string, std::filesystem::path>& g_hostDirectories = *new std::unordered_map<std::string, std::filesystem::path>();
+
+bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes) {
     {
         std::lock_guard lock(g_directoriesLock);
         const auto directory = _foldCase(path.parent_path().string());
@@ -99,6 +103,11 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
             return true;
         }
     }
+    return false;
+}
+
+bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+    if (_listedSize(path, bytes)) return true;
     // Not in the listing (created since, or an unusual name): ask the file system directly.
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error)) return false;
@@ -113,12 +122,37 @@ int _fail(int guestErrno) {
     return -1;
 }
 
+bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::uint64_t& bytes) {
+    const std::string_view text(guestPath);
+    const auto separator = text.find_last_of('/');
+    if (text.empty() || text.front() != '/' || separator == 0) return false;
+    const std::string name(text.substr(separator + 1));
+    if (name.empty() || name == "." || name == ".." || name.find('\\') != std::string::npos) return false;
+    const std::string directory(text.substr(0, separator));
+    std::filesystem::path hostDirectory;
+    {
+        std::lock_guard lock(g_hostDirectoriesLock);
+        if (const auto found = g_hostDirectories.find(directory); found != g_hostDirectories.end()) hostDirectory = found->second;
+    }
+    if (hostDirectory.empty()) {
+        if (ResolvePathError_nid_no_patch(directory.c_str(), hostDirectory) != 0) return false;
+        std::error_code error;
+        if (!std::filesystem::is_directory(hostDirectory, error)) return false;
+        std::lock_guard lock(g_hostDirectoriesLock);
+        g_hostDirectories.emplace(directory, hostDirectory);
+    }
+    hostPath = hostDirectory / name;
+    return _listedSize(hostPath, bytes);
+}
+
 bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
     if (!guestPath) return false;
     std::filesystem::path hostPath;
-    if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
     std::uint64_t bytes = 0;
-    if (!_fileSize(hostPath, bytes)) return false;
+    if (!_listedPath(guestPath, hostPath, bytes)) {
+        if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
+        if (!_fileSize(hostPath, bytes)) return false;
+    }
     std::lock_guard lock(g_filesLock);
     const auto key = hostPath.string();
     auto found = g_idsByPath.find(key);

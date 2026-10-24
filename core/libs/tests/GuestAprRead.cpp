@@ -16,6 +16,7 @@
 
 extern "C" {
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
+int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, std::uint32_t*);
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
 int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
 int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
@@ -106,6 +107,42 @@ void CheckRead(const Fixture& fixture, std::uint8_t* data, std::size_t bytes, st
         const auto expected = offset + index < FileBytes ? FileByte(offset + index) : std::uint8_t{0};
         Require(data[index] == expected, "APR returned incorrect bytes or did not zero-fill EOF");
     }
+}
+
+void WriteBytes(const std::filesystem::path& path, std::size_t bytes) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream << std::string(bytes, 'x');
+    stream.close();
+    Require(!stream.fail(), "cannot create an APR resolve file");
+}
+
+void TestResolve() {
+    const std::filesystem::path directory = "apr_resolve";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory / "sub");
+    WriteBytes(directory / "a.bin", 3);
+    WriteBytes(directory / "B.bin", 5);
+    WriteBytes(directory / "sub" / "c.bin", 7);
+    std::array<const char*, 3> paths{"/apr_resolve/a.bin", "/apr_resolve/b.BIN", "/apr_resolve/sub/c.bin"};
+    std::array<std::uint32_t, 3> ids{};
+    std::array<std::uint64_t, 3> sizes{};
+    std::uint32_t failed = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths.data(), 3, ids.data(), sizes.data(), &failed) == 0, "APR did not resolve absolute paths");
+    Require(sizes == std::array<std::uint64_t, 3>{3, 5, 7}, "APR resolved wrong file sizes");
+    Require(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2], "APR gave two files the same id");
+    std::uint32_t again = 0;
+    std::uint64_t size = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths.data(), 1, &again, &size, &failed) == 0 && again == ids[0] && size == 3, "APR resolved a path again to another id");
+    WriteBytes(directory / "d.bin", 11);
+    const char* created = "/apr_resolve/d.bin";
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&created, 1, &again, &size, &failed) == 0 && size == 11, "APR did not resolve a file created after its directory was listed");
+    std::array<const char*, 2> missing{"/apr_resolve/a.bin", "/apr_resolve/none.bin"};
+    std::array<std::uint32_t, 2> missingIds{};
+    std::array<std::uint64_t, 2> missingSizes{};
+    failed = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(missing.data(), 2, missingIds.data(), missingSizes.data(), &failed) == -1 && failed == 1 && missingSizes[1] == 0, "APR resolved a missing file");
+    std::filesystem::remove_all(directory, ignored);
 }
 
 void TestRead(const Fixture& fixture, std::uint8_t* data) {
@@ -260,7 +297,7 @@ void TestSmallStack(const Fixture& fixture) {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected host, direct, eof, errors, streams, fault or stack");
+        Require(argc == 2, "expected host, direct, eof, errors, streams, resolve, fault or stack");
         const Fixture fixture;
         const std::string mode = argv[1];
         if (mode == "host") {
@@ -275,6 +312,8 @@ int main(int argc, char** argv) {
             TestErrors(fixture);
         } else if (mode == "streams") {
             TestStreams(fixture);
+        } else if (mode == "resolve") {
+            TestResolve();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
