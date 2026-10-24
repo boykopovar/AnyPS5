@@ -1248,6 +1248,9 @@ public:
 
 private:
     void run() {
+#ifdef _WIN32
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#endif
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();
