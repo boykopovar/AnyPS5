@@ -449,6 +449,22 @@ void testControls() {
     }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
+    expectFailure([&] { sceVideoOutColorSettingsSetGamma_(&settings, 1.0f, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutColorSettingsSetGamma_(&settings, 1.2f, sizeof(VideoOutColorSettings)) == 0, "gamma wrapper rejected valid size");
+    check(settings.gamma == 1.2f, "gamma wrapper failed to forward value");
+
+    expectFailure([&] { sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings)) == 0, "adjust color wrapper rejected valid size");
+
+    VideoOutColorSpaceConversionSettings cscSettings{};
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "default SDR to HDR wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "SDR to HDR conversion wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "adjust color space conversion wrapper rejected valid size");
     KernelEqueue queue = 0;
     check(sceKernelCreateEqueue(&queue, "VideoOut test") == 0, "event queue creation failed");
     auto owner = EqueuePin_nid_postfix(queue);

@@ -28,6 +28,8 @@ int APS5_VABI sceVideoOutLatencyControlWaitBeforeInput(int handle);
 int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point);
 int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, float gamma);
 int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* settings);
+int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings, float gamma, uint32_t settings_size);
+int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settings_size);
 int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(VideoOutColorSpaceConversionSettings* settings);
 int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(VideoOutColorSpaceConversionSettings* settings, float lumaScale, uint32_t option);
 int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutColorSpaceConversionSettings* settings);
