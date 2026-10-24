@@ -133,6 +133,8 @@ int ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* style, std
 int ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW = nullptr, float* usedScaleH = nullptr);
 int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
+int ComputeFontMetrics(FontHandle handle, std::uint32_t form, FontMetrics* metrics);
+int ComputeFontStyleInformation(FontHandle handle, FontStyleInformation* information);
 
 }
 

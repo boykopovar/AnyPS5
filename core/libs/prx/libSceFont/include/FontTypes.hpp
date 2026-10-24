@@ -423,12 +423,47 @@ struct FontVerticalLayout {
     float decorationSpan;
 };
 
+struct FontMetrics {
+    std::uint32_t form;
+    float ascender;
+    float descender;
+    float lineGap;
+    float maxAdvance;
+    float verticalDescender;
+    float verticalAscender;
+    float xMin;
+    float yMin;
+    float xMax;
+    float yMax;
+    float emWidth;
+    float emHeight;
+    float effectWeightX;
+    float effectWeightY;
+    float slantRatio;
+};
+
+struct FontStyleInformation {
+    const char* familyName;
+    const char* styleName;
+    std::uint16_t styleFlags;
+    std::uint16_t weight;
+    std::uint16_t width;
+    std::uint16_t layoutFlags;
+};
+
 static_assert(sizeof(FontHandleOpaque) == 0x100);
 static_assert(sizeof(FontMemory) == 0x40);
 static_assert(sizeof(FontMemoryInterface) == 0x30);
 static_assert(sizeof(FontOpenDetail) == 0x20);
 static_assert(sizeof(FontGlyphMetrics) == 0x20);
 static_assert(sizeof(FontKerning) == 0x10);
+static_assert(sizeof(FontMetrics) == 0x40);
+static_assert(offsetof(FontMetrics, maxAdvance) == 0x10);
+static_assert(offsetof(FontMetrics, xMin) == 0x1C);
+static_assert(offsetof(FontMetrics, emWidth) == 0x2C);
+static_assert(offsetof(FontMetrics, effectWeightX) == 0x34);
+static_assert(sizeof(FontStyleInformation) == 0x18);
+static_assert(offsetof(FontStyleInformation, styleFlags) == 0x10);
 static_assert(sizeof(FontGlyphImageMetrics) == 0x18);
 static_assert(sizeof(FontGenerateGlyphDetail) == 0x20);
 static_assert(sizeof(FontResultStage) == 0x18);

@@ -11,8 +11,6 @@ struct FontGraphicsServiceParam;
 struct FontWords;
 struct FontGlyphSupport;
 struct FontOutlineProfile;
-struct FontMetrics;
-struct FontStyleInformation;
 struct FontGlyphExpandBufferState;
 struct FontGraphicsResource;
 struct FontGraphicsFrame;
@@ -180,16 +178,6 @@ int APS5_VABI sceFontDestroyWords(FontWords** words) {
 
 
 int APS5_VABI sceFontGetFontGlyphsOutlineProfile(FontHandle font, FontOutlineProfile* profile) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGetFontMetrics(FontHandle font, std::uint32_t mode, FontMetrics* metrics) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGetFontStyleInformation(FontHandle font, FontStyleInformation* information) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
