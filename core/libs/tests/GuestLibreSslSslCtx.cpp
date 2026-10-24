@@ -31,6 +31,7 @@ static_assert(sizeof(TestCtx) == 120 && offsetof(TestCtx, verifyMode) == 48 && o
 
 extern "C" {
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(TestCtx*);
+void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(TestCtx*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -54,7 +55,20 @@ static void TestGetVerifyMode() {
     Require(SSL_CTX_get_verify_mode_nid_postfix(&ctx) == -1);
 }
 
+static void TestGetCertStore() {
+    int store = 0;
+    int ciphers = 0;
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_get_cert_store_nid_postfix(nullptr); });
+    Require(SSL_CTX_get_cert_store_nid_postfix(&ctx) == nullptr);
+    ctx.cipherList = &ciphers;
+    ctx.certStore = &store;
+    ctx.sessionTimeout = -1;
+    Require(SSL_CTX_get_cert_store_nid_postfix(&ctx) == &store);
+}
+
 int main() {
     TestGetVerifyMode();
+    TestGetCertStore();
     return 0;
 }

@@ -50,4 +50,8 @@ int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).verifyMode;
 }
 
+void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx) {
+    return Context(ctx, __func__).certStore;
+}
+
 }
