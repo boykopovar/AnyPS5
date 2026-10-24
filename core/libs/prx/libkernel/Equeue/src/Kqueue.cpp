@@ -328,7 +328,7 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if (change.filter == EVFILT_TIMER) {
+    if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
     const bool descriptor = change.filter == EVFILT_READ || change.filter == EVFILT_WRITE;

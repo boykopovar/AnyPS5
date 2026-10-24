@@ -197,6 +197,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         while (e.triggered && ret < num) {
             ev[ret++] = e.event;
             if ((e.event.flags & EV_ONESHOT) != 0) {
+                if (e.filter.deleteEventFunc != nullptr) {
+                    auto owner = e.filter.owner;
+                    e.filter.deleteEventFunc(m_handle, &e);
+                }
                 erase = true;
                 break;
             }
