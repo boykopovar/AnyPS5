@@ -1,6 +1,7 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/Jemalloc.cmake)
 
 add_library(libSceJemspace SHARED EXCLUDE_FROM_ALL Export.cpp GuestPages.c GuestPages.cpp)
+set_target_properties(libSceJemspace PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 set_source_files_properties(GuestPages.c GuestPages.cpp PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_source_files_properties(GuestPages.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
