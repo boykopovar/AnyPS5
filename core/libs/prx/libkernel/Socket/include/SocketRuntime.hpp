@@ -38,6 +38,7 @@ bool PipeReadState(int descriptor, std::int64_t* data, bool* eof);
 bool PipeWriteState(int descriptor, std::int64_t* data, bool* eof, bool* writable);
 std::int64_t Readv(int descriptor, const Iovec* iov, int iovcnt);
 std::int64_t Writev(int descriptor, const Iovec* iov, int iovcnt);
+bool ReadGuest(void* destination, const void* source, std::size_t bytes);
 }
 
 extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor);
