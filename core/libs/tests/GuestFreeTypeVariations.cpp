@@ -22,6 +22,7 @@ int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint
 int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
 int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
 int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
+int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
 }
 
 static void Check(bool value, int line) {
@@ -202,6 +203,25 @@ static void TestSetMMBlend() {
     Require(FT_Set_MM_Blend_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_MM_Blend_Coordinates(nullptr, 0, nullptr));
 }
 
+static void TestSetMMDesign() {
+    for (const std::int64_t value : {0LL, 100LL, 400LL, 900LL, 100LL << 16, -5LL}) {
+        for (const std::uint32_t count : {0u, 1u, 2u}) {
+            FacePair pair(VariableFont());
+            const std::int64_t guestCoordinates[2] = {value, value};
+            FT_Long nativeCoordinates[2] = {static_cast<FT_Long>(value), static_cast<FT_Long>(value)};
+            Require(FT_Set_MM_Design_Coordinates_nid_postfix(&pair.guest.rec, count, guestCoordinates) == FT_Set_MM_Design_Coordinates(pair.oracle, count, nativeCoordinates));
+            Require(pair.guest.rec.face_flags == pair.oracle->face_flags);
+        }
+    }
+    FacePair plain(FontFixture::BuildFont(3, {}));
+    const std::int64_t one[1] = {0};
+    FT_Long nativeOne[1] = {0};
+    Require(FT_Set_MM_Design_Coordinates_nid_postfix(&plain.guest.rec, 1, one) == FT_Set_MM_Design_Coordinates(plain.oracle, 1, nativeOne));
+    FacePair pair(VariableFont());
+    Require(FT_Set_MM_Design_Coordinates_nid_postfix(&pair.guest.rec, 1, nullptr) == FT_Set_MM_Design_Coordinates(pair.oracle, 1, nullptr));
+    Require(FT_Set_MM_Design_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_MM_Design_Coordinates(nullptr, 0, nullptr));
+}
+
 int main() {
     TestGetMMVar();
     TestDoneMMVar();
@@ -210,4 +230,5 @@ int main() {
     TestSetBlend();
     TestGetBlend();
     TestSetMMBlend();
+    TestSetMMDesign();
 }
