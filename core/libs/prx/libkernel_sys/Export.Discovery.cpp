@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <cstddef>
 
 extern "C" {
@@ -1027,8 +1028,7 @@ int APS5_VABI sceKernelGetParentApp(void) {
 }
 
 int APS5_VABI sceKernelGetPhysPageSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(PS5_PAGE_SIZE);
 }
 
 int APS5_VABI sceKernelGetProcessName(void) {
