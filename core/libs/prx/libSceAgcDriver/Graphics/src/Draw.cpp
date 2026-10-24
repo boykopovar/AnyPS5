@@ -1164,21 +1164,26 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
 
 }
 
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use) {
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
+    Require(from == 0 || (use == Recorder::SnapshotUse::Vertex && from < bytes), "only a vertex input starts past its address");
     DrawInputCopy copy;
+    copy.from = from;
     if (recorder != nullptr && bytes != 0) {
-        GuestMemory::FlushGpuWrites(address, bytes);
+        GuestMemory::FlushGpuWrites(address + from, bytes - from);
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        copy.generation = GuestMemory::CollectWrites(address, bytes);
-        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
+        copy.generation = GuestMemory::CollectWrites(address + from, bytes - from);
+        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, from, &copy.lowest);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
         }
     }
     copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    GuestMemory::Read(address, copy.buffer->Bytes(), alignment);
+    static const bool poisonPrefix = std::getenv("APS5_POISON_VERTEX_PREFIX") != nullptr;
+    const auto held = copy.buffer->Bytes();
+    if (poisonPrefix) std::fill(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(from), std::byte{0x7f});
+    GuestMemory::Read(address + from, held.subspan(from), alignment);
     return copy;
 }
 
@@ -1199,9 +1204,9 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     return copy;
 }
 
-void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
+void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest) {
     if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
-    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
+    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived, copy.from, lowest);
 }
 
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite) {
@@ -1230,19 +1235,25 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart) {
     const std::span<const std::byte> range(reinterpret_cast<const std::byte*>(address), bytes);
     InPlaceIndices indices;
+    const auto scan = [&] {
+        const auto bounds = DrawIndexRange(range, indexSize, skipRestart);
+        if (!bounds) return;
+        indices.highest = bounds->highest;
+        indices.lowest = bounds->lowest;
+    };
     if (bytes < Recorder::KeptIndexRangeIndices * indexSize) {
-        indices.highest = HighestDrawIndex(range, indexSize, skipRestart);
+        scan();
         return indices;
     }
     const auto use = indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
     const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, bytes);
-    if (generation != 0 && recorder.KnownHighestIndex(address, bytes, use, indices.highest)) {
+    if (generation != 0 && recorder.KnownHighestIndex(address, bytes, use, indices.highest, &indices.lowest)) {
         indices.reused = true;
         return indices;
     }
-    indices.highest = HighestDrawIndex(range, indexSize, skipRestart);
-    recorder.KeepHighestIndex(address, bytes, use, generation, registryGeneration, indices.highest);
+    scan();
+    recorder.KeepHighestIndex(address, bytes, use, generation, registryGeneration, indices.highest, indices.lowest);
     return indices;
 }
 
@@ -1259,6 +1270,7 @@ struct DrawInputs {
     VkBuffer indexHandle = VK_NULL_HANDLE;
     VkDeviceSize indexOffset = 0;
     std::uint32_t maxIndex = 0;
+    std::uint32_t minIndex = 0;
     VertexInputLayout vertexInput;
     std::shared_ptr<const VertexInputLayout> retainedVertexInput;
     std::vector<std::shared_ptr<Buffer>> vertexBuffers;
@@ -1365,6 +1377,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     ValidateSampleMask(context, state, shaders);
     timer.phase(PhaseValidate);
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
+    inputs.minIndex = draw.indexed ? 0u : draw.firstVertex;
     if (state.quadList || StripPatches(state, shaders)) {
         Require(!draw.indirect, state.quadList ? "indirect quad-list draw is unsupported" : "an indirect triangle strip through emulated barycentric patches is unsupported");
         const std::uint32_t primitives = state.quadList ? draw.indexCount / 4u : draw.indexCount >= 3u ? draw.indexCount - 2u : 0u;
@@ -1454,15 +1467,21 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
+        std::uint32_t lowest = 0;
         if (import != nullptr) {
-            highest = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart).highest;
+            const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
+            highest = range.highest;
+            lowest = range.lowest;
         } else if (!copy.reused) {
-            highest = HighestDrawIndex(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart);
-            KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u));
-        } else if (!skipRestart) {
-            highest = copy.derived;
-        } else if (copy.derived != 0) {
-            highest = copy.derived - 1u;
+            if (const auto bounds = DrawIndexRange(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart)) {
+                highest = bounds->highest;
+                lowest = bounds->lowest;
+            }
+            KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u), lowest);
+        } else {
+            lowest = copy.lowest;
+            if (!skipRestart) highest = copy.derived;
+            else if (copy.derived != 0) highest = copy.derived - 1u;
         }
         if (!highest) {
             inputs.nothing = true;
@@ -1476,19 +1495,22 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
                 auto clamped = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
                 const auto bytes = clamped->Bytes().first(static_cast<std::size_t>(indexBytes));
                 GuestMemory::Read(draw.indexAddress, bytes, draw.indexSize);
-                highest = ClampDrawIndices(bytes, draw.indexSize, skipRestart, limit);
+                const auto clampedBounds = ClampDrawIndices(bytes, draw.indexSize, skipRestart, limit);
                 import = nullptr;
                 copy = DrawInputCopy{};
                 copy.buffer = std::move(clamped);
-                if (!highest) {
+                if (!clampedBounds) {
                     inputs.nothing = true;
                     return inputs;
                 }
+                highest = clampedBounds->highest;
+                lowest = clampedBounds->lowest;
             }
         }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = *highest;
+        inputs.minIndex = lowest;
         if (skipRestart && state.stages.mesh && state.stages.mesh->inputPrimitive == 6) {
             const auto indexSpan = import != nullptr ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
             inputs.restartTable = MeshRestartTable(indexSpan, draw.indexSize);
@@ -1517,6 +1539,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     if (draw.indexed) {
         Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - inputs.maxIndex, "indexed draw vertex range overflow");
         inputs.maxIndex += draw.firstVertex;
+        inputs.minIndex += draw.firstVertex;
     }
     std::vector<VertexFetch> fetches;
     std::vector<std::size_t> fetchValid;
@@ -1554,6 +1577,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         plannedFetches.push_back(fetches[f]);
     }
     const auto plan = PlanVertexCopies(plannedFetches);
+    const auto rangeFrom = args == nullptr && !state.stages.mesh ? VertexCopyStarts(plan, plannedFetches, inputs.minIndex, draw.firstInstance) : std::vector<std::size_t>(plan.copies.size(), 0);
     std::vector<VkBuffer> rangeHandles;
     std::vector<VkDeviceSize> rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
@@ -1569,7 +1593,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.inPlaceReads.emplace_back(begin, end);
             continue;
         }
-        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex);
+        auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range]);
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());
         rangeOffsets.push_back(0);

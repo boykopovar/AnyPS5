@@ -10629,10 +10629,15 @@ void validationTests() {
             const std::array selective{attribute, clamped};
             Require(!AgcDriver::Graphics::ZeroFetchVertex(selective).has_value(), "an attribute with out-of-bounds select 2 was taken to read zeros past its records");
             std::array<std::uint32_t, 4> indices{0xffffffffu, 2u, 0x12345u, 0xffffffffu};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, true, 9u) == 9u && indices == std::array<std::uint32_t, 4>{0xffffffffu, 2u, 9u, 0xffffffffu}, "clamping kept an index past the limit or moved a restart index");
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, false, 9u) == 9u && indices == std::array<std::uint32_t, 4>{9u, 2u, 9u, 9u}, "clamping without restart kept a 0xffffffff index");
+            const auto clampedTo = [](const auto& bounds, std::uint32_t lowest, std::uint32_t highest) { return bounds.has_value() && bounds->lowest == lowest && bounds->highest == highest; };
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, true, 9u), 2u, 9u) && indices == std::array<std::uint32_t, 4>{0xffffffffu, 2u, 9u, 0xffffffffu}, "clamping kept an index past the limit or moved a restart index");
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, false, 9u), 2u, 9u) && indices == std::array<std::uint32_t, 4>{9u, 2u, 9u, 9u}, "clamping without restart kept a 0xffffffff index");
             std::array<std::uint16_t, 2> narrow{0xffffu, 1u};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(narrow)), 2, false, 4u) == 4u && narrow[0] == 4u && narrow[1] == 1u, "clamping 16-bit indices failed");
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(narrow)), 2, false, 4u), 1u, 4u) && narrow[0] == 4u && narrow[1] == 1u, "clamping 16-bit indices failed");
+            std::array<std::uint32_t, 3> past{0x30000u, 0xffffffffu, 0x20000u};
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(past)), 4, true, 9u), 9u, 9u) && past == std::array<std::uint32_t, 3>{9u, 0xffffffffu, 9u}, "clamping every index kept a lowest index past the limit");
+            std::array<std::uint16_t, 2> restarts{0xffffu, 0xffffu};
+            Require(!AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(restarts)), 2, true, 4u).has_value(), "a draw of only restart indices reached a vertex after clamping");
         }
         attribute.fetchIndex = 1;
         Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 224, "instance range includes records before the first instance");
@@ -10984,7 +10989,11 @@ void debugBranchTests() {
 }
 
 void highestDrawIndexTests() {
-    using AgcDriver::Graphics::HighestDrawIndex;
+    const auto HighestDrawIndex = [](std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) -> std::optional<std::uint32_t> {
+        const auto bounds = AgcDriver::Graphics::DrawIndexRange(indices, indexSize, skipRestart);
+        if (!bounds) return std::nullopt;
+        return bounds->highest;
+    };
     const auto bytesOf = [](const auto& values) { return std::as_bytes(std::span(values)); };
     const std::array<std::uint16_t, 5> narrow{0, 7, 0xffff, 3, 0xffff};
     Require(HighestDrawIndex(bytesOf(narrow), 2, true) == 7, "a 16-bit restart index counted as a vertex");
@@ -11015,6 +11024,42 @@ void highestDrawIndexTests() {
         std::memcpy(shifted.data() + 1 + 2 * i, &value, sizeof(value));
     }
     Require(HighestDrawIndex(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false) == 0x8001u, "an unaligned 16-bit range with a trailing byte");
+}
+
+void drawIndexRangeTests() {
+    using AgcDriver::Graphics::DrawIndexRange;
+    const auto bytesOf = [](const auto& values) { return std::as_bytes(std::span(values)); };
+    const auto bounds = [](const auto& range, std::uint32_t lowest, std::uint32_t highest) { return range.has_value() && range->lowest == lowest && range->highest == highest; };
+    const std::array<std::uint16_t, 5> narrow{0xffff, 7, 4, 0xffff, 9};
+    Require(bounds(DrawIndexRange(bytesOf(narrow), 2, true), 4, 9), "a 16-bit restart index counted as the lowest or highest vertex");
+    Require(bounds(DrawIndexRange(bytesOf(narrow), 2, false), 4, 0xffff), "a 16-bit all-ones index without restart was skipped");
+    const std::array<std::uint32_t, 4> wide{0xffffffffu, 0x10000u, 0xffffu, 0x80000000u};
+    Require(bounds(DrawIndexRange(bytesOf(wide), 4, true), 0xffff, 0x80000000u), "a 32-bit restart index counted as a vertex, or 0xffff was taken for it");
+    Require(bounds(DrawIndexRange(bytesOf(wide), 4, false), 0xffff, 0xffffffffu), "a 32-bit all-ones index without restart was skipped");
+    const std::array<std::uint16_t, 3> restartOnly{0xffff, 0xffff, 0xffff};
+    Require(!DrawIndexRange(bytesOf(restartOnly), 2, true).has_value(), "a draw of only restart indices reached a vertex");
+    Require(bounds(DrawIndexRange(bytesOf(restartOnly), 2, false), 0xffff, 0xffff), "a 16-bit all-ones index without restart was skipped");
+    const std::array<std::uint16_t, 1> single{0};
+    Require(bounds(DrawIndexRange(bytesOf(single), 2, true), 0, 0), "a draw of index 0 alone");
+    Require(!DrawIndexRange({}, 2, false).has_value() && !DrawIndexRange({}, 4, true).has_value(), "an empty index range reached a vertex");
+    Require(bounds(DrawIndexRange(bytesOf(narrow).subspan(2, 4), 2, true), 4, 7), "the scan read outside its index range");
+    expectFailure([&] { DrawIndexRange(bytesOf(narrow), 3, false); }, "unsupported index size");
+    std::vector<std::uint16_t> long16(1027);
+    for (std::size_t i = 0; i < long16.size(); ++i) long16[i] = static_cast<std::uint16_t>(500u + i % 300u);
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long16)), 2, true), 500, 799), "a long 16-bit range");
+    long16[1026] = 17;
+    long16[3] = 0xffff;
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long16)), 2, true), 17, 799), "a lowest 16-bit index in the tail was missed");
+    std::vector<std::uint32_t> long32(1029, 0xffffffffu);
+    long32[700] = 0x7fffffffu;
+    long32[701] = 0x12345u;
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long32)), 4, true), 0x12345u, 0x7fffffffu), "restart indices around a long 32-bit range");
+    std::vector<std::byte> shifted(2 * 1000 + 3);
+    for (std::size_t i = 0; i < 1000; ++i) {
+        const auto value = static_cast<std::uint16_t>(i == 777 ? 3u : 100u + i % 300u);
+        std::memcpy(shifted.data() + 1 + 2 * i, &value, sizeof(value));
+    }
+    Require(bounds(DrawIndexRange(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false), 3, 399), "an unaligned 16-bit range with a trailing byte");
 }
 
 void storeAtFlipTests() {
@@ -11085,6 +11130,52 @@ void vertexCopyTests() {
     {
         const std::array<VertexFetch, 1> empty{{{0x4000, 0x4000, 16, 0, 4}}};
         expectFailure([&] { PlanVertexCopies(empty); }, "empty vertex fetch");
+    }
+}
+
+void vertexCopyStartTests() {
+    using AgcDriver::Graphics::PlanVertexCopies;
+    using AgcDriver::Graphics::VertexCopyStarts;
+    using AgcDriver::Graphics::VertexFetch;
+    {
+        const std::array<VertexFetch, 1> fetches{{{0x1000, 0x1000 + 32 * 9 + 12, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(VertexCopyStarts(plan, fetches, 0, 0) == std::vector<std::size_t>{0}, "a draw from vertex 0 skipped bytes");
+        Require(VertexCopyStarts(plan, fetches, 4, 0) == std::vector<std::size_t>{128}, "a draw from vertex 4 does not start at its record");
+        Require(VertexCopyStarts(plan, fetches, 9, 7) == std::vector<std::size_t>{288}, "a draw of the last record does not start at it");
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 10, 0); }, "vertex copy starts past its range");
+    }
+    {
+        const std::array<VertexFetch, 3> fetches{{{0x1018, 0x1018 + 32 * 9 + 8, 32, 0, 4}, {0x1000, 0x1000 + 32 * 9 + 12, 32, 0, 4}, {0x100c, 0x100c + 32 * 9 + 12, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 1 && VertexCopyStarts(plan, fetches, 5, 0) == std::vector<std::size_t>{160}, "interleaved attributes do not start at the record of their lowest vertex");
+    }
+    {
+        const std::array<VertexFetch, 2> fetches{{{0x100c, 0x100c + 32 * 9 + 12, 32, 0, 4}, {0x1018, 0x1018 + 32 * 9 + 8, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 1 && VertexCopyStarts(plan, fetches, 5, 0) == std::vector<std::size_t>{160}, "a union starts past its first attribute's fetch");
+    }
+    {
+        const std::array<VertexFetch, 4> fetches{{
+            {0x2000, 0x2000 + 16 * 99 + 16, 16, 0, 4},
+            {0x3000, 0x3000 + 24 * 49 + 8, 24, 1, 4},
+            {0x4000, 0x4010, 0, 0, 4},
+            {0x5000, 0x5010, 0, 1, 4},
+        }};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 4, "fetches of other strides or rates shared a copy");
+        const auto starts = VertexCopyStarts(plan, fetches, 90, 40);
+        Require(starts[plan.copyOf[0]] == 16u * 90u, "a vertex attribute does not start at the lowest vertex");
+        Require(starts[plan.copyOf[1]] == 24u * 40u, "an instance attribute does not start at the first instance");
+        Require(starts[plan.copyOf[2]] == 0 && starts[plan.copyOf[3]] == 0, "a zero-stride attribute skipped its only value");
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 90, 50); }, "vertex copy starts past its range");
+    }
+    {
+        std::array<VertexFetch, 1> fetches{{{0x1000, 0x1100, 16, 2, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 0, 0); }, "unsupported vertex fetch index");
+        const std::array<VertexFetch, 0> none{};
+        expectFailure([&] { VertexCopyStarts(plan, none, 0, 0); }, "vertex copy plan does not match its fetches");
     }
 }
 
@@ -12066,7 +12157,9 @@ int main(int argc, char** argv) {
         stagingPoolBudgetTests();
         validationTests();
         vertexCopyTests();
+        vertexCopyStartTests();
         highestDrawIndexTests();
+        drawIndexRangeTests();
         storeAtFlipTests();
         storeAtLabelTests();
         nullVertexDescriptorTests();
