@@ -479,7 +479,11 @@ size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {
 }
 
 int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
-    return std::strcmp(s1, s2);
+    for (;; ++s1, ++s2) {
+        const int a = static_cast<unsigned char>(*s1);
+        const int b = static_cast<unsigned char>(*s2);
+        if (a != b || a == 0) return a - b;
+    }
 }
 
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
