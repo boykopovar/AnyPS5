@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) batches execute as silent no-ops, and do not execute encoded panner and FFT commands. `sceAcm_ConvReverb_SharedInput` returns success without encoding audio commands.
+- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) batches execute as silent no-ops and do not execute encoded panner and FFT commands.
 
 ### Unknown function info
 
@@ -11,4 +11,4 @@
 
 - [`sceAcmBatchJobNotification`](../../../core/libs/prx/libSceAcm/Export.cpp) is a parameterless pending declaration for import resolution. Its signature and behavior are unverified; it throws through `NotImplemented_nid_no_patch`.
 
-- The shared-input reverb signature and descriptor fields are recovered from native accesses. Input history indices are mutable; block metadata representation, reverb command encoding and DSP interpretation remain unimplemented in [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp).
+- The shared-input reverb signature and descriptor fields are recovered from native accesses. Input history indices are mutable; block metadata representation, reverb command encoding and DSP interpretation remain unimplemented in [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp), and the export throws.

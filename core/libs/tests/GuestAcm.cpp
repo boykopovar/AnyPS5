@@ -12,7 +12,6 @@ int APS5_VABI sceAcmContextDestroy(std::uint32_t);
 int APS5_VABI sceAcmBatchStartBuffer(std::uint32_t, const void*, std::size_t, void*, std::uint32_t*);
 int APS5_VABI sceAcmBatchStartBuffers(std::uint32_t, std::uint32_t, const void* const[], void*, std::uint32_t*);
 int APS5_VABI sceAcmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo*, std::uint32_t, AcmReverbInput*, std::uint32_t, const AcmReverbFilter* const*, const float*, const AcmReverbOutput* const*);
 int APS5_VABI sceAcm_FFT(AcmBatchInfo*, std::int32_t, std::uint32_t, std::int32_t, const void* const*, std::int32_t, void* const*, std::int32_t);
 int APS5_VABI sceAcm_Panner(AcmBatchInfo*, std::uint32_t, const void* const*, std::uint32_t, std::uint32_t, std::uint32_t, const void* const*, const void* const*, const void* const*, void* const*);
 }
@@ -53,7 +52,6 @@ int main() {
     Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == 0 && batch2 != 0);
     Require(sceAcmBatchWait(context2, batch2, 0) == 0);
 
-    Require(sceAcm_ConvReverb_SharedInput(nullptr, 0, nullptr, 0, nullptr, nullptr, nullptr) == 0);
     Require(sceAcm_FFT(nullptr, 0, 0, 0, nullptr, 0, nullptr, 0) == BadPointer);
     alignas(128) std::byte commands[256]{};
     alignas(128) std::uint32_t sourceData[32]{};

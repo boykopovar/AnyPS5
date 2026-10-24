@@ -80,6 +80,7 @@ int APS5_VABI sceAcmContextDestroy(AcmContextId context) {
 }
 
 int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t mode, AcmReverbInput* input, std::uint32_t outputCount, const AcmReverbFilter* const* filters, const float* gains, const AcmReverbOutput* const* outputs) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
