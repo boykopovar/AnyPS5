@@ -14,15 +14,21 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 extern "C" void CallTraceEnter_nid_no_patch();
 
@@ -69,6 +75,39 @@ bool Selected(std::string_view library) {
         if (token == "all" || token == library) return true;
     }
     return false;
+}
+
+bool WriteCallCounts(const std::filesystem::path& path) {
+    const std::size_t recorded = g_recordCount.load(std::memory_order_acquire);
+    const ImportRecord* records = g_records.load(std::memory_order_acquire);
+    std::vector<std::pair<std::uint64_t, const ImportRecord*>> called;
+    for (std::size_t index = 0; index < recorded; ++index) {
+        const std::uint64_t calls = records[index].calls.load(std::memory_order_relaxed);
+        if (calls != 0) called.emplace_back(calls, &records[index]);
+    }
+    std::stable_sort(called.begin(), called.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    for (const auto& [calls, record] : called) file << calls << ' ' << record->library << ' ' << record->name << '\n';
+    file.flush();
+    return static_cast<bool>(file);
+}
+
+void StartCallCountWriter() {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == L'\0') return;
+    std::filesystem::path path(value);
+#else
+    const char* value = std::getenv("APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == '\0') return;
+    std::filesystem::path path(value);
+#endif
+    std::thread([path = std::move(path)] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            WriteCallCounts(path);
+        }
+    }).detach();
 }
 
 std::uint64_t CurrentThread() {
@@ -334,6 +373,7 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
 #ifdef __linux__
         InstallAbortReport();
 #endif
+        StartCallCountWriter();
     }
 #ifdef __linux__
     SnapshotModules();
@@ -384,6 +424,11 @@ std::size_t CopyThreadCallTrace_nid_no_patch(std::uint64_t thread, CallTraceEntr
     }
     std::reverse(entries, entries + count);
     return count;
+}
+
+bool WriteCallCounts_nid_no_patch(const char* path) {
+    if (path == nullptr || *path == '\0') return false;
+    return WriteCallCounts(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
 }
 
 std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t capacity, std::uint64_t* total) {

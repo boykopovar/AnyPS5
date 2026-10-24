@@ -328,6 +328,13 @@ most called traced imports (1 calls in total):
              1 libkernel.prx k+AXqu2-eBc
 ```
 
+To list every import a title calls during a run that ends without a crash, also set `APS5_TRACE_CALLS_FILE` to a file path. Every 10 seconds the file is rewritten with one line per import called so far, most called first: the number of calls, the library and the import name. It survives a run that is killed, up to its last rewrite.
+
+```
+245557 libc.prx gQX+4GDQjpM#guest
+3866 libSceAgc.prx 57labkp+rSQ
+```
+
 Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/relinker.md) technical debt.
 
 ### Performance overlay
