@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <span>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -180,6 +181,7 @@ public:
 
     static bool MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask = nullptr);
     static bool MayDecide(const IrResourcePlan& program, IrValue* value);
+    static bool MayDecide(const IrResourcePlan& program, IrValue* value, std::unordered_map<const IrValue*, bool>& decided);
     static EvaluatorReads Reads(const IrResourcePlan& program, const IrValue& value);
     bool Evaluate(TNode value, std::uint32_t& result);
     bool EvaluateWide(TNode value, std::uint64_t& result);
