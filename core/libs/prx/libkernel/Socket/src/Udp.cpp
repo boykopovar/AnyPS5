@@ -6,6 +6,7 @@
 #include <io.h>
 #else
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/ioctl.h>
 #ifdef __linux__
 #include <linux/sockios.h>
@@ -558,6 +559,19 @@ constexpr short NativePollPriority = POLLPRI;
 constexpr PollFlag RequestFlags[] = {
     {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}, {0x100, POLLWRBAND}};
 constexpr PollFlag StatusFlags[] = {{0x8, POLLERR}, {0x10, POLLHUP}, {GuestPollInvalid, POLLNVAL}};
+template <typename Descriptor>
+bool UrgentPending(Descriptor descriptor) {
+#ifdef __APPLE__
+    fd_set exceptional;
+    FD_ZERO(&exceptional);
+    FD_SET(static_cast<int>(descriptor), &exceptional);
+    timeval none{};
+    return ::select(static_cast<int>(descriptor) + 1, nullptr, nullptr, &exceptional, &none) > 0 && FD_ISSET(static_cast<int>(descriptor), &exceptional);
+#else
+    static_cast<void>(descriptor);
+    return false;
+#endif
+}
 std::shared_ptr<Socket> Find(int descriptor) {
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -1795,11 +1809,15 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
 #ifdef _WIN32
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
+        short revents = native[i].revents;
+        if (!pipe && (entry.events & GuestPollPriority) && (revents & NativePollPriority) == 0 && UrgentPending(native[i].fd)) {
+            revents = static_cast<short>(revents | NativePollPriority);
+        }
         for (const auto& flag : RequestFlags)
-            if ((entry.events & flag.guest) && (native[i].revents & flag.native))
+            if ((entry.events & flag.guest) && (revents & flag.native))
                 entry.revents = static_cast<short>(entry.revents | flag.guest);
         for (const auto& flag : StatusFlags)
-            if (native[i].revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
+            if (revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
         if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if (pipe && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
@@ -1841,6 +1859,31 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         }
     }
 #else
+#ifdef __APPLE__
+    bool waitsForUrgent = false;
+    for (std::size_t i = 0; i < socketCount && !waitsForUrgent; ++i) {
+        waitsForUrgent = (descriptors[owners[i]].events & GuestPollPriority) != 0;
+    }
+    if (waitsForUrgent) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
+        for (;;) {
+            int slice = 0;
+            if (!ready) {
+                if (timeout < 0) {
+                    slice = 10;
+                } else {
+                    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+                    slice = static_cast<int>(std::clamp<long long>(left, 0, 10));
+                }
+            }
+            const int result = ::poll(native.data(), static_cast<nfds_t>(native.size()), slice);
+            if (result < 0) return Fail(NativeError());
+            for (std::size_t i = 0; i < native.size(); ++i) collect(i, i >= socketCount);
+            if (ready) return ready;
+            if (timeout >= 0 && std::chrono::steady_clock::now() >= deadline) return 0;
+        }
+    }
+#endif
     const int wait = ready ? 0 : timeout;
     const int result = ::poll(native.data(), static_cast<nfds_t>(native.size()), wait);
     if (result < 0) return Fail(NativeError());
