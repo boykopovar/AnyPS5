@@ -58,4 +58,13 @@ int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline* outline, std::int6
     return error;
 }
 
+void APS5_VABI FT_Outline_Transform_nid_postfix(const GuestOutline* outline, const GuestMatrix* matrix) {
+    if (!outline || !matrix || !outline->points) return;
+    NativeOutline native(*outline, __func__);
+    const FT_Matrix host{HostCoordinate(matrix->xx, __func__), HostCoordinate(matrix->xy, __func__), HostCoordinate(matrix->yx, __func__),
+                         HostCoordinate(matrix->yy, __func__)};
+    FT_Outline_Transform(&native.outline, &host);
+    native.Publish(*const_cast<GuestOutline*>(outline));
+}
+
 }
