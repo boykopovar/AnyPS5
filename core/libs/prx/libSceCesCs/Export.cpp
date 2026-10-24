@@ -21,6 +21,7 @@
 namespace {
 
 constexpr int CES_ERROR_INVALID_PARAMETER = static_cast<int>(0x805C0001);
+constexpr int CES_ERROR_INVALID_PROFILE = static_cast<int>(0x805C0004);
 constexpr int CES_ERROR_INVALID_SRC_BUFFER = static_cast<int>(0x805C0010);
 constexpr int CES_ERROR_SRC_BUFFER_END = static_cast<int>(0x805C0011);
 constexpr int CES_ERROR_INVALID_ENCODE = static_cast<int>(0x805C0014);
@@ -656,6 +657,47 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     return CES_ERROR_INVALID_ENCODE;
 }
 
+bool jisX0212RowEmpty(uint8_t row) {
+    for (uint32_t cell = 0; cell < 94; ++cell) {
+        if (JisX0212::TO_UCS2[(row - 0xA1) * 94 + cell] != 0) return false;
+    }
+    return true;
+}
+
+int decodeEucJpScalar(const uint8_t* euc, uint32_t eucMax, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = euc[0];
+    length = 1;
+    if (lead == 0x0E || lead == 0xA0 || lead == 0xFF) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xA0 && lead != 0x8E && lead != 0x8F) {
+        code = lead;
+        return 0;
+    }
+    const uint32_t needed = lead == 0x8F ? 3 : 2;
+    for (uint32_t i = 1; i < needed && i < eucMax; ++i) {
+        if (euc[i] == 0) {
+            length = i;
+            return CES_ERROR_INVALID_ENCODE;
+        }
+    }
+    length = needed;
+    if (eucMax < needed) return CES_ERROR_SRC_BUFFER_END;
+    const uint8_t trail = euc[1];
+    if (lead == 0x8E) {
+        if (trail >= 0xA1 && trail <= 0xDF) {
+            code = 0xFF61 + (trail - 0xA1);
+            return 0;
+        }
+        return trail >= 0xE0 && trail <= 0xFE ? CES_ERROR_UNASSIGNED_CODE : CES_ERROR_INVALID_ENCODE;
+    }
+    if (lead == 0x8F) {
+        if (trail < 0xA1 || trail > 0xFE || euc[2] < 0xA1 || euc[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        return jisX0212RowEmpty(trail) ? CES_ERROR_UNASSIGNED_CODE : CES_ERROR_INVALID_ENCODE;
+    }
+    if (trail < 0xA1 || trail > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    code = JisX0208::TO_UCS2[(lead - 0xA1) * 94 + (trail - 0xA1)];
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
 struct JisCell {
     uint16_t code;
     uint16_t cell;
@@ -1265,15 +1307,19 @@ int APS5_VABI sceCesMbcsStrGetUcs2Len(void* context, const uint8_t* mbcs, uint32
 }
 
 int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_t eucMax, uint32_t* eucSize, uint16_t* ucs2) {
+    if (isEucJpX0208(profile)) return profiledToUcs2(isEucJpX0208, profile, euc, eucMax, eucSize, ucs2);
+    if (eucSize) *eucSize = 0;
+    if (ucs2) *ucs2 = 0;
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isEucJp(profile)) return CES_ERROR_INVALID_PARAMETER;
-    if (!euc) return CES_ERROR_INVALID_SRC_BUFFER;
-    if (eucMax == 0) return CES_ERROR_SRC_BUFFER_END;
-    if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
+    if (!euc || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeMbcs(profile, euc, eucMax, length, code); result != 0) return result;
-    *ucs2 = static_cast<uint16_t>(code);
+    const int decoded = decodeEucJpScalar(euc, eucMax, length, code);
     if (eucSize) *eucSize = length;
+    if (decoded != 0) return decoded;
+    if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
+    *ucs2 = static_cast<uint16_t>(code);
     return 0;
 }
 
@@ -1304,19 +1350,23 @@ int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* u
 }
 
 int APS5_VABI sceCesEucJpToUtf8(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+    if (isEucJpX0208(profile)) return mbcsToUtf8(true, profile, eucBuffer, eucMax, eucLength, utf8Buffer, utf8Max, utf8Length);
+    if (eucLength) *eucLength = 0;
+    if (utf8Length) *utf8Length = 0;
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isEucJp(profile)) return CES_ERROR_INVALID_PARAMETER;
-    if (!eucBuffer) return CES_ERROR_INVALID_SRC_BUFFER;
-    if (eucMax == 0) return CES_ERROR_SRC_BUFFER_END;
-    if (!utf8Buffer) return CES_ERROR_INVALID_DST_BUFFER;
+    if (!eucBuffer || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t consumed = 0;
     uint32_t code = 0;
-    if (const int result = decodeMbcs(profile, eucBuffer, eucMax, consumed, code); result != 0) return result;
+    const int decoded = decodeEucJpScalar(eucBuffer, eucMax, consumed, code);
+    if (eucLength) *eucLength = consumed;
+    if (decoded != 0) return decoded;
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
+    if (utf8Length) *utf8Length = produced;
+    if (!utf8Buffer) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf8Max < produced) return CES_ERROR_DST_BUFFER_END;
     std::memcpy(utf8Buffer, encoded, produced);
-    if (eucLength) *eucLength = consumed;
-    if (utf8Length) *utf8Length = produced;
     return 0;
 }
 
