@@ -17,8 +17,27 @@ struct TestOcspResponse {
     void* responseBytes;
 };
 
+struct TestOcspRevokedInfo {
+    TestAsn1String* revocationTime;
+    TestAsn1String* revocationReason;
+};
+
+struct TestOcspCertStatus {
+    int type;
+    void* value;
+};
+
+struct TestOcspSingleResponse {
+    void* certId;
+    TestOcspCertStatus* certStatus;
+    TestAsn1String* thisUpdate;
+    TestAsn1String* nextUpdate;
+    void* singleExtensions;
+};
+
 extern "C" {
 int APS5_VABI OCSP_response_status_nid_postfix(const TestOcspResponse*);
+int APS5_VABI OCSP_single_get0_status_nid_postfix(const TestOcspSingleResponse*, int*, TestAsn1String**, TestAsn1String**, TestAsn1String**);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -74,7 +93,61 @@ static void TestResponseStatus() {
     RequireThrows([] { OCSP_response_status_nid_postfix(nullptr); });
 }
 
+static void TestSingleStatus() {
+    TestAsn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
+    unsigned char keyCompromise[] {1};
+    TestAsn1String reasonValue {1, Enumerated, keyCompromise, 0};
+    TestOcspRevokedInfo revokedInfo {&revoked, &reasonValue};
+    TestOcspCertStatus status {0, nullptr};
+    TestOcspSingleResponse single {nullptr, &status, &thisUpdate, &nextUpdate, nullptr};
+    int reason = 77;
+    TestAsn1String* revocationTime = &other;
+    TestAsn1String* thisResult = nullptr;
+    TestAsn1String* nextResult = nullptr;
+
+    Require(OCSP_single_get0_status_nid_postfix(nullptr, &reason, &revocationTime, &thisResult, &nextResult) == -1);
+    Require(reason == 77 && revocationTime == &other && thisResult == nullptr && nextResult == nullptr);
+
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, &nextResult) == 0);
+    Require(reason == 77 && revocationTime == &other && thisResult == &thisUpdate && nextResult == &nextUpdate);
+
+    status = {2, nullptr};
+    single.nextUpdate = nullptr;
+    nextResult = &other;
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, &nextResult) == 2);
+    Require(reason == 77 && revocationTime == &other && nextResult == nullptr);
+
+    status = {1, &revokedInfo};
+    single.nextUpdate = &nextUpdate;
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, &nextResult) == 1);
+    Require(reason == 1 && revocationTime == &revoked && thisResult == &thisUpdate && nextResult == &nextUpdate);
+
+    revokedInfo.revocationReason = nullptr;
+    reason = 77;
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr) == 1);
+    Require(reason == -1);
+
+    TestAsn1String wrongType {1, Integer, keyCompromise, 0};
+    revokedInfo.revocationReason = &wrongType;
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr) == 1);
+    Require(reason == -1);
+
+    Require(OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr) == 1);
+
+    status = {1, nullptr};
+    Require(OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, &thisResult, nullptr) == 1);
+    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr); });
+    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, &revocationTime, nullptr, nullptr); });
+
+    status = {5, nullptr};
+    Require(OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, nullptr, nullptr) == 5);
+
+    single.certStatus = nullptr;
+    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr); });
+}
+
 int main() {
     TestResponseStatus();
+    TestSingleStatus();
     std::puts("libSceLibreSsl OCSP response tests passed");
 }
