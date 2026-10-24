@@ -8,10 +8,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace AgcDriver::Graphics {
 
 namespace {
+
+thread_local std::uint64_t imageMemoryReleasedBytes = 0;
+
+class MemoryAllocationError : public std::runtime_error {
+public:
+    MemoryAllocationError(VkResult result, const char* details) : std::runtime_error(std::string("AGC graphics: ") + details + ": Vulkan result " + std::to_string(result)), result(result) {}
+    VkResult result;
+};
 
 // APS5_BUFFER_POOL_SHARED=1: one tier for every size, as before the split.
 bool sharedTiers() {
@@ -55,9 +64,10 @@ BufferPool::~BufferPool() {
         }
     }
     for (auto& [memory, block] : slabBlocks) freeBlock(*block);
+    for (const auto& [memory, block] : imageBlocks) freeMemory(device, memory, nullptr);
 }
 
-VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage) {
+VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage, const std::function<bool(std::uint32_t)>& reuse) {
     if (allocatedType != nullptr) *allocatedType = allocation.memoryTypeIndex;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     auto result = allocateMemory(device, &allocation, nullptr, &memory);
@@ -67,7 +77,9 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
     VkDeviceSize released = 0;
     const auto exhausted = [](VkResult value) { return value == VK_ERROR_OUT_OF_DEVICE_MEMORY || value == VK_ERROR_OUT_OF_HOST_MEMORY || value == VK_ERROR_TOO_MANY_OBJECTS; };
     if (exhausted(result)) {
+        if (reuse && reuse(allocation.memoryTypeIndex)) return VK_NULL_HANDLE;
         reclaimed = trim();
+        if (reuse && reuse(allocation.memoryTypeIndex)) return VK_NULL_HANDLE;
         if (reclaimed != 0) {
             memory = VK_NULL_HANDLE;
             result = allocateMemory(device, &allocation, nullptr, &memory);
@@ -76,6 +88,7 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
     }
     if (exhausted(result)) {
         if (cacheReclaim != nullptr) released = cacheReclaim(ReclaimTarget(allocation.allocationSize), newImage);
+        if (reuse && reuse(allocation.memoryTypeIndex)) return VK_NULL_HANDLE;
         if (released != 0) {
             reclaimed += trim();
             memory = VK_NULL_HANDLE;
@@ -84,6 +97,7 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         }
     }
     if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY && hostType.has_value() && *hostType != allocation.memoryTypeIndex) {
+        if (reuse && reuse(*hostType)) return VK_NULL_HANDLE;
         auto host = allocation;
         host.memoryTypeIndex = *hostType;
         memory = VK_NULL_HANDLE;
@@ -116,8 +130,8 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
             used += static_cast<std::size_t>(appended);
         }
     }
-    Check(result, details);
-    return VK_NULL_HANDLE;
+    if (result == VK_ERROR_DEVICE_LOST) ReportDeviceLost();
+    throw MemoryAllocationError(result, details);
 }
 
 VkDeviceSize BufferPool::ImageBudget(VkDeviceSize deviceBudget) {
@@ -173,6 +187,7 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
 
 void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept {
     if (memory == VK_NULL_HANDLE) return;
+    imageMemoryReleasedBytes += bytes;
     if (!imagePooled(bytes, memoryType)) {
         freeMemory(device, memory, nullptr);
         return;
@@ -182,12 +197,12 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
     std::vector<BufferAllocation> evicted;
     try {
         std::lock_guard lock(mutex);
-        if (heapOverBudget()) {
+        if (heapOverBudget() || bytes > imageBudget - std::min(imageBudget, retainedImageSlabBytes.load(std::memory_order_relaxed))) {
             while (imageSlots != 0 && evictOldestImage(evicted)) {
             }
             evicted.push_back(allocation);
         } else {
-            while (imageSlots != 0 && imageBytes + bytes > imageBudget && evictOldestImage(evicted)) {
+            while (imageSlots != 0 && imageBytes + bytes + retainedImageSlabBytes.load(std::memory_order_relaxed) > imageBudget && evictOldestImage(evicted)) {
             }
             while (deviceTier.slots != 0 && (deviceTier.retainedBytes + bytes > deviceTier.budget || deviceTier.slots >= maxSlots)) evictOldest(deviceTier, evicted);
             const SlotKey imageKey{allocation.bytes, 0, allocation.properties, memoryType};
@@ -556,7 +571,7 @@ VkDeviceSize BufferPool::trim() {
         freeBlock(*released);
         bytes += SlabBlockBytes(released->slotBytes);
     }
-    return bytes;
+    return bytes + trimImageBlocks();
 }
 
 void BufferPool::Put(const BufferAllocation& allocation) noexcept {
@@ -580,6 +595,290 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
     for (const auto& gone : evicted) destroy(gone);
 }
 
+ImageAllocation::~ImageAllocation() {
+    Reset();
+}
+
+ImageAllocation::ImageAllocation(ImageAllocation&& other) noexcept {
+    *this = std::move(other);
+}
+
+ImageAllocation& ImageAllocation::operator=(ImageAllocation&& other) noexcept {
+    if (this == &other) return *this;
+    Reset();
+    owner = std::move(other.owner);
+    memory = std::exchange(other.memory, VK_NULL_HANDLE);
+    offset = std::exchange(other.offset, 0);
+    bytes = std::exchange(other.bytes, 0);
+    memoryType = std::exchange(other.memoryType, 0);
+    slab = std::exchange(other.slab, false);
+    dedicated = std::exchange(other.dedicated, false);
+    return *this;
+}
+
+void ImageAllocation::Reset() noexcept {
+    auto pool = std::move(owner);
+    if (memory != VK_NULL_HANDLE) pool->releaseImageAllocation(*this);
+    memory = VK_NULL_HANDLE;
+    offset = 0;
+    bytes = 0;
+    memoryType = 0;
+    slab = false;
+    dedicated = false;
+}
+
+std::optional<std::uint32_t> BufferPool::imageRange(const ImageBlock& block, std::uint32_t units, std::uint32_t alignment) {
+    if (block.freeUnits < units) return std::nullopt;
+    const auto search = [&](std::uint32_t first, std::uint32_t stop) -> std::optional<std::uint32_t> {
+        auto start = (first + alignment - 1u) & ~(alignment - 1u);
+        while (start < stop && start <= imageBlockUnits - units) {
+            const auto end = start + units;
+            auto position = start;
+            while (position < end) {
+                const auto word = position / 64u;
+                const auto bit = position % 64u;
+                const auto count = std::min(64u - bit, end - position);
+                const auto mask = (~std::uint64_t{0} >> (64u - count)) << bit;
+                const auto occupied = block.occupied[word] & mask;
+                if (occupied != 0) {
+                    const auto after = word * 64u + 64u - static_cast<std::uint32_t>(std::countl_zero(occupied));
+                    start = (after + alignment - 1u) & ~(alignment - 1u);
+                    break;
+                }
+                position += count;
+            }
+            if (position == end) return start;
+        }
+        return std::nullopt;
+    };
+    if (const auto found = search(block.hint, imageBlockUnits)) return found;
+    return search(0, block.hint);
+}
+
+void BufferPool::markImageRange(ImageBlock& block, std::uint32_t first, std::uint32_t units, bool occupied) noexcept {
+    const auto end = first + units;
+    for (auto position = first; position < end;) {
+        const auto word = position / 64u;
+        const auto bit = position % 64u;
+        const auto count = std::min(64u - bit, end - position);
+        const auto mask = (~std::uint64_t{0} >> (64u - count)) << bit;
+        if (occupied) block.occupied[word] |= mask;
+        else block.occupied[word] &= ~mask;
+        position += count;
+    }
+}
+
+void BufferPool::linkImageBlock(ImageBlock& block) noexcept {
+    auto& first = imageAvailable[block.memoryType];
+    block.previous = nullptr;
+    block.next = first;
+    if (first != nullptr) first->previous = &block;
+    first = &block;
+}
+
+void BufferPool::unlinkImageBlock(ImageBlock& block) noexcept {
+    if (block.previous != nullptr) block.previous->next = block.next;
+    else imageAvailable[block.memoryType] = block.next;
+    if (block.next != nullptr) block.next->previous = block.previous;
+    block.previous = nullptr;
+    block.next = nullptr;
+}
+
+ImageAllocation BufferPool::takeImageRange(const std::shared_ptr<BufferPool>& pool, std::uint32_t memoryType, VkDeviceSize bytes, VkDeviceSize alignment) {
+    const auto units = static_cast<std::uint32_t>((bytes + imageUnitBytes - 1u) / imageUnitBytes);
+    const auto aligned = static_cast<std::uint32_t>(std::max(alignment, imageUnitBytes) / imageUnitBytes);
+    std::lock_guard lock(imageMutex);
+    for (auto* block = imageAvailable[memoryType]; block != nullptr; block = block->next) {
+        const auto first = imageRange(*block, units, aligned);
+        if (!first) continue;
+        if (block->retained) {
+            block->retained = false;
+            retainedImageSlabBytes.fetch_sub(imageBlockBytes, std::memory_order_relaxed);
+        }
+        markImageRange(*block, *first, units, true);
+        block->freeUnits -= units;
+        ++block->allocations;
+        block->hint = *first + units;
+        if (block->freeUnits == 0) unlinkImageBlock(*block);
+        ImageAllocation allocation;
+        allocation.owner = pool;
+        allocation.memory = block->memory;
+        allocation.offset = static_cast<VkDeviceSize>(*first) * imageUnitBytes;
+        allocation.bytes = bytes;
+        allocation.memoryType = memoryType;
+        allocation.slab = true;
+        return allocation;
+    }
+    return {};
+}
+
+ImageAllocation BufferPool::AllocateImage(const Context& context, VkImage image, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage, bool budgeted) {
+    Require(image != VK_NULL_HANDLE, "an image allocation requires an image");
+    constexpr auto unsupported = VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT | VK_IMAGE_CREATE_SPARSE_ALIASED_BIT | VK_IMAGE_CREATE_DISJOINT_BIT | VK_IMAGE_CREATE_PROTECTED_BIT;
+    Require((imageInfo.flags & unsupported) == 0, "sparse, disjoint and protected images require separate image memory binding");
+    for (auto* next = static_cast<const VkBaseInStructure*>(imageInfo.pNext); next != nullptr; next = next->pNext) {
+        Require(next->sType != VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO && next->sType != VK_STRUCTURE_TYPE_IMAGE_SWAPCHAIN_CREATE_INFO_KHR, "external and swapchain images require separate image memory binding");
+    }
+    VkMemoryDedicatedRequirements dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+    VkMemoryRequirements2 requirements{VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicated};
+    VkImageMemoryRequirementsInfo2 imageRequirements{VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2};
+    imageRequirements.image = image;
+    context.Function<PFN_vkGetImageMemoryRequirements2>("vkGetImageMemoryRequirements2")(device, &imageRequirements, &requirements);
+    const auto& needed = requirements.memoryRequirements;
+    Require(needed.size != 0 && std::has_single_bit(needed.alignment), "invalid image memory requirements");
+    auto pool = GetBufferPool(context);
+    Require(pool.get() == this, "an image allocation must use its context's buffer pool");
+    const bool separate = dedicated.requiresDedicatedAllocation != VK_FALSE || dedicated.prefersDedicatedAllocation != VK_FALSE;
+    static const bool disabled = std::getenv("APS5_NO_IMAGE_SLABS") != nullptr;
+    const bool eligible = !disabled && !separate && imageInfo.tiling == VK_IMAGE_TILING_OPTIMAL && imageInfo.pNext == nullptr && needed.size <= (VkDeviceSize{1} << 20u) && needed.alignment <= imageBlockBytes;
+    const auto preferredType = context.MemoryType(needed.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (eligible) {
+        if (auto existing = takeImageRange(pool, preferredType, needed.size, needed.alignment)) return existing;
+        for (std::uint32_t type = 0; type < memoryProperties.memoryTypeCount; ++type) {
+            if (type == preferredType || (needed.memoryTypeBits & (1u << type)) == 0 || (memoryProperties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0) continue;
+            if (auto existing = takeImageRange(pool, type, needed.size, needed.alignment)) return existing;
+        }
+    }
+    const auto memoryType = budgeted ? context.DeviceMemoryType(needed.memoryTypeBits, needed.size, operation) : preferredType;
+    const auto standalone = [&] {
+        ImageAllocation result;
+        result.owner = pool;
+        result.bytes = needed.size;
+        result.memoryType = memoryType;
+        result.dedicated = separate;
+        VkMemoryDedicatedAllocateInfo imageAllocation{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
+        imageAllocation.image = image;
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.pNext = separate ? &imageAllocation : nullptr;
+        allocation.allocationSize = needed.size;
+        allocation.memoryTypeIndex = memoryType;
+        const auto fallback = context.RefusedDeviceMemoryFallback(needed.memoryTypeBits, memoryType);
+        result.memory = separate ? AllocateMemory(allocation, operation, fallback, &result.memoryType, newImage) : TakeImageMemory(allocation, operation, fallback, &result.memoryType, newImage);
+        return result;
+    };
+    if (!eligible) return standalone();
+    if (auto existing = takeImageRange(pool, memoryType, needed.size, needed.alignment)) return existing;
+    if (context.memoryProperties2 != nullptr && context.physical != VK_NULL_HANDLE) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+        context.memoryProperties2(context.physical, &properties);
+        const auto heap = memoryProperties.memoryTypes[memoryType].heapIndex;
+        const auto budget = reported.heapBudget[heap];
+        const auto usage = reported.heapUsage[heap];
+        if (budget != 0 && (usage >= budget || imageBlockBytes > budget - usage)) return standalone();
+    }
+    const auto dispose = [this](ImageBlock* block) noexcept {
+        if (block->memory != VK_NULL_HANDLE) freeMemory(device, block->memory, nullptr);
+        delete block;
+    };
+    std::unique_ptr<ImageBlock, decltype(dispose)> block(new ImageBlock, dispose);
+    block->memoryType = memoryType;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = imageBlockBytes;
+    allocation.memoryTypeIndex = memoryType;
+    ImageAllocation reused;
+    const auto reuse = [&](std::uint32_t type) {
+        reused = takeImageRange(pool, type, needed.size, needed.alignment);
+        return static_cast<bool>(reused);
+    };
+    try {
+        block->memory = AllocateMemory(allocation, operation, std::nullopt, &block->memoryType, newImage, reuse);
+    } catch (const MemoryAllocationError& error) {
+        if (error.result != VK_ERROR_OUT_OF_DEVICE_MEMORY && error.result != VK_ERROR_OUT_OF_HOST_MEMORY && error.result != VK_ERROR_TOO_MANY_OBJECTS) throw;
+        return standalone();
+    }
+    if (reused) return reused;
+    if (auto existing = takeImageRange(pool, block->memoryType, needed.size, needed.alignment)) return existing;
+    const auto units = static_cast<std::uint32_t>((needed.size + imageUnitBytes - 1u) / imageUnitBytes);
+    markImageRange(*block, 0, units, true);
+    block->freeUnits -= units;
+    block->allocations = 1;
+    block->hint = units;
+    ImageAllocation result;
+    {
+        std::lock_guard lock(imageMutex);
+        auto* created = block.get();
+        const auto entry = imageBlocks.try_emplace(created->memory).first;
+        entry->second.reset(block.release());
+        linkImageBlock(*created);
+        result.owner = pool;
+        result.memory = created->memory;
+        result.memoryType = created->memoryType;
+        result.bytes = needed.size;
+        result.slab = true;
+    }
+    return result;
+}
+
+void BufferPool::releaseImageAllocation(const ImageAllocation& allocation) noexcept {
+    if (!allocation.slab) {
+        if (allocation.dedicated) {
+            freeMemory(device, allocation.memory, nullptr);
+            imageMemoryReleasedBytes += allocation.bytes;
+        }
+        else PutImageMemory(allocation.memory, allocation.bytes, allocation.memoryType);
+        return;
+    }
+    std::unique_ptr<ImageBlock> released;
+    {
+        std::lock_guard budgetLock(mutex);
+        std::lock_guard lock(imageMutex);
+        const auto found = imageBlocks.find(allocation.memory);
+        if (found == imageBlocks.end()) std::terminate();
+        auto& block = *found->second;
+        if (block.freeUnits == 0) linkImageBlock(block);
+        const auto first = static_cast<std::uint32_t>(allocation.offset / imageUnitBytes);
+        const auto units = static_cast<std::uint32_t>((allocation.bytes + imageUnitBytes - 1u) / imageUnitBytes);
+        markImageRange(block, first, units, false);
+        block.freeUnits += units;
+        block.hint = std::min(block.hint, first);
+        if (--block.allocations != 0) return;
+        imageMemoryReleasedBytes += imageBlockBytes;
+        if (retainedImageSlabBytes.load(std::memory_order_relaxed) == 0 && imageBudget >= imageBlockBytes && imageBytes <= imageBudget - imageBlockBytes && !heapOverBudget()) {
+            block.retained = true;
+            retainedImageSlabBytes.store(imageBlockBytes, std::memory_order_relaxed);
+            return;
+        }
+        unlinkImageBlock(block);
+        released = std::move(found->second);
+        imageBlocks.erase(found);
+    }
+    freeMemory(device, released->memory, nullptr);
+}
+
+VkDeviceSize BufferPool::trimImageBlocks() {
+    VkDeviceSize bytes = 0;
+    for (;;) {
+        std::unique_ptr<ImageBlock> released;
+        {
+            std::lock_guard lock(imageMutex);
+            const auto found = std::find_if(imageBlocks.begin(), imageBlocks.end(), [](const auto& entry) { return entry.second->allocations == 0; });
+            if (found == imageBlocks.end()) break;
+            auto& block = *found->second;
+            unlinkImageBlock(block);
+            if (block.retained) retainedImageSlabBytes.fetch_sub(imageBlockBytes, std::memory_order_relaxed);
+            released = std::move(found->second);
+            imageBlocks.erase(found);
+        }
+        freeMemory(device, released->memory, nullptr);
+        bytes += imageBlockBytes;
+    }
+    return bytes;
+}
+
+std::size_t BufferPool::ImageSlabBlocks() {
+    std::lock_guard lock(imageMutex);
+    return imageBlocks.size();
+}
+
+ImageAllocation AllocateImageMemory(const Context& context, VkImage image, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage, bool budgeted) {
+    return GetBufferPool(context)->AllocateImage(context, image, imageInfo, operation, newImage, budgeted);
+}
+
+std::uint64_t ImageMemoryReleasedBytes() noexcept {
+    return imageMemoryReleasedBytes;
+}
+
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {
     if (!context.bufferPool) context.bufferPool = std::make_shared<BufferPool>(context);
     return context.bufferPool;
@@ -596,6 +895,7 @@ void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceS
         return;
     }
     context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    imageMemoryReleasedBytes += bytes;
 }
 
 }

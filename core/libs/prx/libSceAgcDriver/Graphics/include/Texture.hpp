@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -48,12 +49,13 @@ struct OwnedImage {
     OwnedImage(const OwnedImage&) = delete;
     OwnedImage& operator=(const OwnedImage&) = delete;
     ~OwnedImage();
-    void Allocate(const Context& device, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, bool newImage = false);
+    void Allocate(const Context& device, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage = false, bool budgeted = false);
     Context context;
     VkImage image;
     VkDeviceMemory memory;
     VkDeviceSize memoryBytes = 0;
     std::uint32_t memoryType = 0;
+    ImageAllocation allocation;
 };
 
 class Texture {
@@ -621,9 +623,8 @@ private:
     // write here bumps the pending serial although the image was pending already.
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
+    ImageAllocation imageAllocation;
     VkDeviceSize memoryBytes = 0;
-    std::uint32_t memoryType = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
@@ -636,7 +637,7 @@ private:
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;
-    VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
+    ImageAllocation proxyAllocation;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).

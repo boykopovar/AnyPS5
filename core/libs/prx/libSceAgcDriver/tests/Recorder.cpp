@@ -6645,10 +6645,12 @@ class StorageUploadProbe {
 public:
     StorageUploadProbe(Context& context, bool failView) : context(context), resolver(context.deviceProc), failView(failView) {
         Require(active == nullptr, "nested storage upload probe");
+        context.bufferPool.reset();
         active = this;
         context.deviceProc = resolve;
     }
     ~StorageUploadProbe() {
+        context.bufferPool.reset();
         for (const auto view : destroyedViews) function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (imageDestroyed) function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memoryFreed) function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -6660,6 +6662,7 @@ public:
     bool Released() const { return imageDestroyed && memoryFreed; }
     bool FailedView() const { return failedView; }
     std::uint32_t Clears() const { return clears; }
+    void ReleasePool() { context.bufferPool.reset(); }
 
 private:
     template<typename TFunction>
@@ -6773,6 +6776,7 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
         recorder.Sync();
     }
     previous.Activate();
+    probe.ReleasePool();
     Require(threw == failView && probe.FailedView() == failView, "storage view failure injection did not take the requested path");
     Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "recorded storage clear did not reach every texel");
     Require(lifetime.expired() && probe.Released(), "storage upload resources outlived recorder teardown");
