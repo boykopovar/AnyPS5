@@ -113,6 +113,102 @@ inline void PreciseSleepHundredNanos(unsigned long long hundredNanos) {
     QueryPerformanceCounter(&counter);
     PreciseSleepFromCounterWithTimer(counter, hundredNanos, nullptr, false, false);
 }
+
+inline constexpr std::uint64_t PreciseTicksToHundredNanos24MHz(std::uint64_t ticks) {
+    const std::uint64_t seconds = ticks / 24000000ULL;
+    const std::uint64_t remTicks = ticks % 24000000ULL;
+    return seconds * 10000000ULL + (remTicks * 5ULL) / 12ULL;
+}
+
+inline constexpr std::uint64_t PreciseFractionalProductDiv(
+    std::uint64_t value,
+    std::uint64_t multiplier,
+    std::uint64_t divisor,
+    std::uint64_t& remainder) {
+    std::uint64_t quotient = 0;
+    remainder = 0;
+    for (int bit = 63; bit >= 0; --bit) {
+        quotient *= 2ULL;
+        if (remainder >= divisor - remainder) {
+            remainder -= divisor - remainder;
+            ++quotient;
+        } else {
+            remainder += remainder;
+        }
+        if (((multiplier >> bit) & 1ULL) != 0ULL) {
+            if (remainder >= divisor - value) {
+                remainder -= divisor - value;
+                ++quotient;
+            } else {
+                remainder += value;
+            }
+        }
+    }
+    return quotient;
+}
+
+inline void PreciseSleepUntilTicks24MHz(LARGE_INTEGER counter, std::uint64_t targetTicks) {
+    constexpr std::uint64_t kSpinTailTicks = 6000ULL;
+    constexpr std::uint64_t kPauseThresholdTicks = 5ULL;
+    const std::uint64_t nowTicks = static_cast<std::uint64_t>(counter.QuadPart);
+    if (nowTicks >= targetTicks) {
+        return;
+    }
+    const std::uint64_t remainingTicks = targetTicks - nowTicks;
+    if (remainingTicks > kSpinTailTicks) [[unlikely]] {
+        const std::uint64_t timerTicks = remainingTicks - kSpinTailTicks;
+        const unsigned long long timerHundredNanos = static_cast<unsigned long long>(
+            PreciseTicksToHundredNanos24MHz(timerTicks));
+        if (timerHundredNanos > 0) {
+            PreciseSleepWaitableTimerWithHandle(PreciseWaitThreadTimer(), timerHundredNanos);
+        }
+    }
+    for (;;) {
+        QueryPerformanceCounter(&counter);
+        const std::uint64_t currentTicks = static_cast<std::uint64_t>(counter.QuadPart);
+        if (currentTicks >= targetTicks) {
+            break;
+        }
+        if (targetTicks - currentTicks > kPauseThresholdTicks) {
+            YieldProcessor();
+        }
+    }
+}
+
+template <class TDuration>
+inline constexpr std::uint64_t PreciseDurationToTicks24MHz(TDuration duration) {
+    const auto raw = duration.count();
+    if (raw <= 0) [[unlikely]] {
+        return 0;
+    }
+    using ScaleRatio = std::ratio_divide<typename TDuration::period, std::ratio<1, 24000000>>;
+    constexpr std::uint64_t kNum = static_cast<std::uint64_t>(ScaleRatio::num);
+    constexpr std::uint64_t kDen = static_cast<std::uint64_t>(ScaleRatio::den);
+    const std::uint64_t uVal = static_cast<std::uint64_t>(raw);
+    if constexpr (kDen == 1ULL) {
+        if (uVal > UINT64_MAX / kNum) [[unlikely]] {
+            return UINT64_MAX;
+        }
+        return uVal * kNum;
+    } else {
+        const std::uint64_t q = uVal / kDen;
+        const std::uint64_t r = uVal % kDen;
+        std::uint64_t rem = 0;
+        if (r <= (UINT64_MAX - (kDen - 1ULL)) / kNum) {
+            rem = (r * kNum + (kDen - 1ULL)) / kDen;
+        } else {
+            std::uint64_t fractionalRemainder = 0;
+            rem = PreciseFractionalProductDiv(r, kNum, kDen, fractionalRemainder);
+            if (fractionalRemainder != 0ULL) {
+                ++rem;
+            }
+        }
+        if (q > (UINT64_MAX - rem) / kNum) [[unlikely]] {
+            return UINT64_MAX;
+        }
+        return q * kNum + rem;
+    }
+}
 #elif !defined(__EMSCRIPTEN__)
 #include <cerrno>
 #include <time.h>
@@ -223,7 +319,8 @@ template <class TClock, class TDuration>
 inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& deadline) {
 #ifdef _WIN32
     if constexpr (std::is_same_v<TClock, std::chrono::steady_clock>) {
-        if (PreciseQpcFrequency() == 10000000ULL) [[likely]] {
+        const std::uint64_t freq = PreciseQpcFrequency();
+        if (freq == 10000000ULL) [[likely]] {
             const auto rawDeadline = deadline.time_since_epoch().count();
             if (rawDeadline <= 0) [[unlikely]] {
                 return;
@@ -242,6 +339,16 @@ inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& 
             if (nowTicks < targetHns) {
                 PreciseSleepFromCounter(counter, targetHns - nowTicks);
             }
+            return;
+        } else if (freq == 24000000ULL) {
+            const auto rawDeadline = deadline.time_since_epoch().count();
+            if (rawDeadline <= 0) [[unlikely]] {
+                return;
+            }
+            const std::uint64_t targetTicks = PreciseDurationToTicks24MHz(deadline.time_since_epoch());
+            LARGE_INTEGER counter;
+            QueryPerformanceCounter(&counter);
+            PreciseSleepUntilTicks24MHz(counter, targetTicks);
             return;
         }
     }

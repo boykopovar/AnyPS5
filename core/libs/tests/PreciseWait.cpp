@@ -154,6 +154,61 @@ int main() {
     }
 
 #ifdef _WIN32
+    static_assert(PreciseTicksToHundredNanos24MHz(0ULL) == 0ULL);
+    static_assert(PreciseTicksToHundredNanos24MHz(24ULL) == 10ULL);
+    static_assert(PreciseTicksToHundredNanos24MHz(24000000ULL) == 10000000ULL);
+    static_assert(PreciseTicksToHundredNanos24MHz(24000000000ULL) == 10000000000ULL);
+    static_assert(PreciseTicksToHundredNanos24MHz(UINT64_MAX) == 7686143364045646506ULL);
+
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(-5)) == 0ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(0)) == 0ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(1)) == 1ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(41)) == 1ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(42)) == 2ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(125)) == 3ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::microseconds(1)) == 24ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::milliseconds(1)) == 24000ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::seconds(1)) == 24000000ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::seconds(1000)) == 24000000000ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::nanoseconds(INT64_MAX)) == 221360928884514620ULL);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::microseconds(INT64_MAX)) == UINT64_MAX);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::milliseconds(INT64_MAX)) == UINT64_MAX);
+    static_assert(PreciseDurationToTicks24MHz(std::chrono::seconds(INT64_MAX)) == UINT64_MAX);
+    using NearSecondDuration = std::chrono::duration<std::int64_t, std::ratio<1, INT64_MAX>>;
+    static_assert(PreciseDurationToTicks24MHz(NearSecondDuration{INT64_MAX - 1}) == 24000000ULL);
+
+    {
+        LARGE_INTEGER dummyCounter;
+        dummyCounter.QuadPart = 100000000ULL;
+        PreciseSleepUntilTicks24MHz(dummyCounter, 50000000ULL);
+    }
+
+    {
+        LARGE_INTEGER startCounter;
+        QueryPerformanceCounter(&startCounter);
+        const std::uint64_t targetTicks = static_cast<std::uint64_t>(startCounter.QuadPart) + 100ULL;
+        PreciseSleepUntilTicks24MHz(startCounter, targetTicks);
+        LARGE_INTEGER endCounter;
+        QueryPerformanceCounter(&endCounter);
+        if (static_cast<std::uint64_t>(endCounter.QuadPart) < targetTicks) {
+            std::cerr << "PreciseSleepUntilTicks24MHz spin loop returned early\n";
+            return 1;
+        }
+    }
+
+    {
+        LARGE_INTEGER startCounter;
+        QueryPerformanceCounter(&startCounter);
+        const std::uint64_t targetTicks = static_cast<std::uint64_t>(startCounter.QuadPart) + 25000ULL;
+        PreciseSleepUntilTicks24MHz(startCounter, targetTicks);
+        LARGE_INTEGER endCounter;
+        QueryPerformanceCounter(&endCounter);
+        if (static_cast<std::uint64_t>(endCounter.QuadPart) < targetTicks) {
+            std::cerr << "PreciseSleepUntilTicks24MHz hybrid wait returned early\n";
+            return 1;
+        }
+    }
+
     for (const HANDLE badHandle : {static_cast<HANDLE>(nullptr), GetCurrentProcess()}) {
         const auto start = std::chrono::steady_clock::now();
         LARGE_INTEGER counter;
