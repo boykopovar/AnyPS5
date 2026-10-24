@@ -203,7 +203,8 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 }
 
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)batch;
+    (void)priority;
     return 0;
 }
 

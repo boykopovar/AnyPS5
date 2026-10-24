@@ -24,6 +24,7 @@
 - [libScePad internal data and device control](../../../core/libs/prx/libScePad/Export.cpp) - kernel-owned version, telemetry, Lotus-button and update payload fields remain unresolved. Lotus-button parameter units and the three blinking byte meanings are unknown. Port information occupies 152 bytes; history records occupy 72 bytes; Leonardo unique data occupies 24 bytes. Their complete field semantics remain unresolved.
 
 - [libScePad profile writes and virtual devices](../../../core/libs/prx/libScePad/Export.cpp) - profile writes take a handle, profile ID, profile pointer and a 32-bit result pointer; the profile payload direction and fields remain unresolved. Virtual-device creation takes an input record and an output ID pointer, whose width is not exposed by the wrapper. Component information copies 16 bytes; field meanings remain unknown. Virtual trigger state contains two 32-bit states and three control bytes, but the control semantics remain incomplete.
+- PPSA02530 imports declared without parameters, signatures unknown, added without an implementation because the title fails to load without them: [scePadVrControllerGetTriggerEffectStates](../../../core/libs/prx/libScePad/Export.cpp) (libScePad).
 
 ### Functional
 

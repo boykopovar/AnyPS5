@@ -15,6 +15,7 @@ int APS5_VABI sceAcmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo*, std::uint32_t, AcmReverbInput*, std::uint32_t, const AcmReverbFilter* const*, const float*, const AcmReverbOutput* const*);
 int APS5_VABI sceAcm_FFT(AcmBatchInfo*, std::int32_t, std::uint32_t, std::int32_t, const void* const*, std::int32_t, void* const*, std::int32_t);
 int APS5_VABI sceAcm_Panner(AcmBatchInfo*, std::uint32_t, const void* const*, std::uint32_t, std::uint32_t, std::uint32_t, const void* const*, const void* const*, const void* const*, void* const*);
+int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo*, std::uint32_t);
 }
 
 static void Require(bool value) {
@@ -117,6 +118,7 @@ int main() {
     commandBatch = {commands, 0, 152};
     Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == static_cast<int>(0x81940009));
     Require(commandBatch.offset == 0 && commandBatch.buffer_size == 152);
+    Require(sceAcmBatchJobPriority(nullptr, 0) == 0);
 
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
