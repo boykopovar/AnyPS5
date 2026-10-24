@@ -154,9 +154,31 @@ def scan(pr):
     pr["aliases"] = aliases(diff)
 
 
+def probe(pr):
+    changes = git("diff", "--name-only", "--no-renames", "-z", f"refs/pr/base...{pr['ref']}").split("\0")
+    files = {path for path in changes if path}
+    if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
+        return files, set()
+    return files, exports(git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp"))
+
+
+def related(prs, executor):
+    mine = prs[0]
+    scan(mine)
+    others = {n: pr for n, pr in prs.items() if n}
+    chosen = {}
+    for (n, pr), (files, found) in zip(others.items(), executor.map(probe, others.values())):
+        if files & mine["files"] or found & mine["exports"]:
+            chosen[n] = pr
+        else:
+            pr.update(tree=None, files=set(), added=set(), exports=set())
+    return chosen
+
+
 def scan_all(prs, jobs):
     with ThreadPoolExecutor(max_workers=jobs) as executor:
-        list(executor.map(scan, prs.values()))
+        pending = related(prs, executor) if 0 in prs else prs
+        list(executor.map(scan, pending.values()))
 
 
 def hunks(pr, path):
