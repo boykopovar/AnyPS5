@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cerrno>
 #include <charconv>
@@ -397,11 +398,14 @@ std::string_view View(const String& string) {
 }
 
 std::uint32_t CompiledSdk() {
+    static std::atomic<bool> lookupFailed{false};
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
+    if (lookupFailed.load(std::memory_order_relaxed)) return sdk;
     try {
         const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
         if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
     } catch (const std::runtime_error&) {
+        lookupFailed.store(true, std::memory_order_relaxed);
     }
     return sdk;
 }
