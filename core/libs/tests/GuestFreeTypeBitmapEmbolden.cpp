@@ -66,6 +66,15 @@ int main() {
     GuestBitmap bitmap{};
     Require(FT_Bitmap_Embolden_nid_postfix(nullptr, &bitmap, 64, 64) == FT_Err_Invalid_Library_Handle);
     Require(FT_Bitmap_Embolden_nid_postfix(&library, nullptr, 64, 64) == FT_Err_Invalid_Argument);
+    unsigned char pixel = 0x80;
+    GuestBitmap bounded{1, 1, 1, &pixel, 256, FT_PIXEL_MODE_GRAY, 0, nullptr};
+    Require(FT_Bitmap_Embolden_nid_postfix(&library, &bounded, std::numeric_limits<FT_Pos>::max(), 0) == FT_Err_Invalid_Argument);
+    if constexpr (sizeof(FT_Pos) > sizeof(FT_Int)) {
+        constexpr std::int64_t minimumRounded = static_cast<std::int64_t>(std::numeric_limits<FT_Int>::min()) * 64 - 32;
+        constexpr std::int64_t maximumRounded = static_cast<std::int64_t>(std::numeric_limits<FT_Int>::max()) * 64 + 31;
+        Require(FT_Bitmap_Embolden_nid_postfix(&library, &bounded, maximumRounded + 1, 0) == FT_Err_Invalid_Argument);
+        Require(FT_Bitmap_Embolden_nid_postfix(&library, &bounded, minimumRounded - 1, 0) == FT_Err_Invalid_Argument);
+    }
     FT_Bitmap emptyNative{};
     Require(FT_Bitmap_Embolden_nid_postfix(&library, &bitmap, 64, 64) == FT_Bitmap_Embolden(native, &emptyNative, 64, 64));
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(native) == 0);

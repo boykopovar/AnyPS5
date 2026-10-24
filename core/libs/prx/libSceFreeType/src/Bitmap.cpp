@@ -100,6 +100,10 @@ int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary* library, GuestBitmap*
         if (strength < std::numeric_limits<FT_Pos>::min() || strength > std::numeric_limits<FT_Pos>::max()) {
             throw std::runtime_error("FT_Bitmap_Embolden: a strength outside the host FT_Pos range is not implemented");
         }
+        if (strength > std::numeric_limits<FT_Pos>::max() - 32) return FT_Err_Invalid_Argument;
+        constexpr std::int64_t minimumRounded = static_cast<std::int64_t>(std::numeric_limits<FT_Int>::min()) * 64 - 32;
+        constexpr std::int64_t maximumRounded = static_cast<std::int64_t>(std::numeric_limits<FT_Int>::max()) * 64 + 31;
+        if (strength < minimumRounded || strength > maximumRounded) return FT_Err_Invalid_Argument;
     }
     FT_Bitmap native = NativeBitmap(*bitmap);
     const FT_Error error = FT_Bitmap_Embolden(library->host, &native, static_cast<FT_Pos>(xStrength), static_cast<FT_Pos>(yStrength));
