@@ -20,6 +20,7 @@ extern "C" {
 int APS5_VABI sceAjmInitialize(std::int64_t, std::uint32_t*);
 int APS5_VABI sceAjmFinalize(std::uint32_t);
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void*, AjmDecAt9ConfigDataInfo*);
+int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(void*);
 int APS5_VABI sceAjmDecMp3ParseFrame(const std::uint8_t*, std::uint32_t, int, AjmDecMp3ParseFrame*);
 int APS5_VABI sceAjmInstanceCreate(std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t*);
 int APS5_VABI sceAjmInstanceDestroy(std::uint32_t, std::uint32_t);
@@ -2051,5 +2052,6 @@ int main() {
     TestAt9GaplessSegments(context);
     TestAt9RunDecodesWholeInput(context);
     TestPcmResample(context);
+    Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x80B50001));
     Require(sceAjmFinalize(context) == 0);
 }
