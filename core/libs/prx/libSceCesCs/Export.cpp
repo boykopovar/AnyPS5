@@ -824,6 +824,225 @@ int fromMbcs(const void* context, const uint8_t* mbcs, uint32_t mbcsMax, uint32_
     return 0;
 }
 
+constexpr uint8_t ISO2022_RFC1468_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', 'R'};
+constexpr uint8_t ISO2022_CP50221_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', '1'};
+constexpr uint8_t ISO2022_CP50222_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', '2'};
+constexpr uint32_t ISO2022_NO_CHARACTER = 0xFFFFFFFFu;
+
+bool isIso2022(const void* profile) {
+    return hasTag(profile, ISO2022_RFC1468_TAG) || hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+bool iso2022Katakana(const void* profile) {
+    return hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+bool iso2022ShiftsKatakana(const void* profile) {
+    return hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+enum class Iso2022Set : uint8_t { Ascii, Roman, Jis0208, Jis0212, Katakana };
+
+struct Iso2022State {
+    Iso2022Set set = Iso2022Set::Ascii;
+    bool shiftedOut = false;
+};
+
+int decodeIso2022(const void* profile, Iso2022State& state, const uint8_t* iso, uint32_t isoMax, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = iso[0];
+    code = ISO2022_NO_CHARACTER;
+    if (lead == 0x1B) {
+        if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (iso[1] == 0x28) {
+            if (isoMax < 3) return CES_ERROR_SRC_BUFFER_END;
+            length = 3;
+            if (iso[2] == 0x42) state.set = Iso2022Set::Ascii;
+            else if (iso[2] == 0x4A) state.set = Iso2022Set::Roman;
+            else if (iso[2] == 0x49 && iso2022Katakana(profile)) state.set = Iso2022Set::Katakana;
+            else return CES_ERROR_INVALID_ENCODE;
+            return 0;
+        }
+        if (iso[1] == 0x24) {
+            if (isoMax < 3) return CES_ERROR_SRC_BUFFER_END;
+            if (iso[2] == 0x40 || iso[2] == 0x42) {
+                length = 3;
+                state.set = Iso2022Set::Jis0208;
+                return 0;
+            }
+            if (iso[2] == 0x28) {
+                if (isoMax < 4) return CES_ERROR_SRC_BUFFER_END;
+                if (iso[3] != 0x44 || !iso2022Katakana(profile)) return CES_ERROR_INVALID_ENCODE;
+                length = 4;
+                state.set = Iso2022Set::Jis0212;
+                return 0;
+            }
+        }
+        return CES_ERROR_INVALID_ENCODE;
+    }
+    length = 1;
+    if (lead == 0x0E || lead == 0x0F) {
+        if (!iso2022ShiftsKatakana(profile)) return CES_ERROR_INVALID_ENCODE;
+        state.shiftedOut = lead == 0x0E;
+        return 0;
+    }
+    if (lead >= 0x80) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0x21 || lead == 0x7F) {
+        code = lead;
+        return 0;
+    }
+    if (state.shiftedOut || state.set == Iso2022Set::Katakana) {
+        if (lead > 0x5F) return CES_ERROR_UNASSIGNED_CODE;
+        code = 0xFF61 + (lead - 0x21);
+        return 0;
+    }
+    if (state.set == Iso2022Set::Ascii) {
+        code = lead;
+        return 0;
+    }
+    if (state.set == Iso2022Set::Roman) {
+        code = lead == 0x5C ? 0x00A5 : lead == 0x7E ? 0x203E : lead;
+        return 0;
+    }
+    if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    const uint8_t trail = iso[1];
+    if (trail < 0x21 || trail > 0x7E) return CES_ERROR_INVALID_ENCODE;
+    length = 2;
+    const uint32_t cell = (lead - 0x21) * 94 + (trail - 0x21);
+    code = state.set == Iso2022Set::Jis0208 ? jisX0208ToUnicode(false, cell) : JisX0212::TO_UCS2[cell];
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
+uint32_t iso2022Designate(Iso2022State& state, Iso2022Set set, uint8_t* out) {
+    if (state.set == set) return 0;
+    state.set = set;
+    out[0] = 0x1B;
+    if (set == Iso2022Set::Jis0212) {
+        out[1] = 0x24;
+        out[2] = 0x28;
+        out[3] = 0x44;
+        return 4;
+    }
+    out[1] = set == Iso2022Set::Jis0208 ? 0x24 : 0x28;
+    out[2] = set == Iso2022Set::Jis0208 ? 0x42 : set == Iso2022Set::Ascii ? 0x42 : set == Iso2022Set::Roman ? 0x4A : 0x49;
+    return 3;
+}
+
+uint32_t iso2022ShiftIn(Iso2022State& state, uint8_t* out) {
+    if (!state.shiftedOut) return 0;
+    state.shiftedOut = false;
+    out[0] = 0x0F;
+    return 1;
+}
+
+int encodeIso2022(const void* profile, Iso2022State& state, uint32_t code, uint8_t* out, uint32_t& length) {
+    length = 0;
+    if (code < 0x80) {
+        if (code == 0x1B || code == 0x0E || code == 0x0F) return CES_ERROR_UNASSIGNED_CODE;
+        const bool control = code < 0x21 || code == 0x7F;
+        if (control || code == 0x5C || code == 0x7E || state.set != Iso2022Set::Roman) {
+            length += iso2022ShiftIn(state, out + length);
+            if (!control || code == 0x0A || code == 0x0D) length += iso2022Designate(state, Iso2022Set::Ascii, out + length);
+        }
+        out[length++] = static_cast<uint8_t>(code);
+        return 0;
+    }
+    if (code == 0x00A5 || code == 0x203E) {
+        length += iso2022ShiftIn(state, out + length);
+        length += iso2022Designate(state, Iso2022Set::Roman, out + length);
+        out[length++] = code == 0x00A5 ? 0x5C : 0x7E;
+        return 0;
+    }
+    if (code >= 0xFF61 && code <= 0xFF9F) {
+        if (!iso2022Katakana(profile)) return CES_ERROR_UNASSIGNED_CODE;
+        if (iso2022ShiftsKatakana(profile)) {
+            if (!state.shiftedOut) {
+                state.shiftedOut = true;
+                out[length++] = 0x0E;
+            }
+        } else {
+            length += iso2022Designate(state, Iso2022Set::Katakana, out + length);
+        }
+        out[length++] = static_cast<uint8_t>(0x21 + (code - 0xFF61));
+        return 0;
+    }
+    if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
+    const auto& reverse = jisReverse(false);
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
+    if (found == reverse.end() || found->code != code) return CES_ERROR_UNASSIGNED_CODE;
+    if (found->supplementary && !iso2022Katakana(profile)) return CES_ERROR_UNASSIGNED_CODE;
+    length += iso2022ShiftIn(state, out + length);
+    length += iso2022Designate(state, found->supplementary ? Iso2022Set::Jis0212 : Iso2022Set::Jis0208, out + length);
+    out[length++] = static_cast<uint8_t>(0x21 + found->cell / 94);
+    out[length++] = static_cast<uint8_t>(0x21 + found->cell % 94);
+    return 0;
+}
+
+template<typename Source, typename Decode>
+int toIso2022(const void* context, const Source* source, uint32_t sourceMax, uint32_t* sourceLen, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, Decode decode) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(context);
+    if (!isIso2022(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
+    Iso2022State state;
+    uint32_t read = 0;
+    uint32_t written = 0;
+    const auto emit = [&](const uint8_t* encoded, uint32_t size) {
+        if (iso) {
+            if (written + size > isoMax) return CES_ERROR_DST_BUFFER_END;
+            std::memcpy(iso + written, encoded, size);
+        }
+        written += size;
+        return 0;
+    };
+    while (read < sourceMax && source[read] != 0) {
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (const int result = decode(source + read, sourceMax - read, length, code); result != 0) return result;
+        uint8_t encoded[8];
+        uint32_t size = 0;
+        if (const int result = encodeIso2022(profile, state, code, encoded, size); result != 0) return result;
+        if (const int result = emit(encoded, size); result != 0) return result;
+        read += length;
+    }
+    uint8_t tail[4];
+    uint32_t tailSize = iso2022ShiftIn(state, tail);
+    tailSize += iso2022Designate(state, Iso2022Set::Ascii, tail + tailSize);
+    if (const int result = emit(tail, tailSize); result != 0) return result;
+    if (sourceLen) *sourceLen = read;
+    if (isoLen) *isoLen = written;
+    return 0;
+}
+
+template<typename Target, typename Encode>
+int fromIso2022(const void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, Target* target, uint32_t targetMax, uint32_t* targetLen, Encode encode) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(context);
+    if (!isIso2022(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!iso) return CES_ERROR_INVALID_SRC_BUFFER;
+    Iso2022State state;
+    uint32_t read = 0;
+    uint32_t written = 0;
+    while (read < isoMax && iso[read] != 0) {
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (const int result = decodeIso2022(profile, state, iso + read, isoMax - read, length, code); result != 0) return result;
+        read += length;
+        if (code == ISO2022_NO_CHARACTER) continue;
+        Target encoded[4];
+        const uint32_t size = encode(code, encoded);
+        if (size == 0) return CES_ERROR_UNASSIGNED_CODE;
+        if (target) {
+            if (written + size > targetMax) return CES_ERROR_DST_BUFFER_END;
+            std::memcpy(target + written, encoded, size * sizeof(Target));
+        }
+        written += size;
+    }
+    if (hasTag(profile, ISO2022_RFC1468_TAG) && state.set != Iso2022Set::Ascii) return CES_ERROR_INVALID_ENCODE;
+    if (isoLen) *isoLen = read;
+    if (targetLen) *targetLen = written;
+    return 0;
+}
+
 int mbcsToUtf8(bool accepted, const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, uint8_t* utf8, uint32_t utf8Max, uint32_t* utf8Len) {
     if (!accepted) return CES_ERROR_INVALID_PARAMETER;
     if (!mbcs) return CES_ERROR_INVALID_SRC_BUFFER;
@@ -1991,6 +2210,110 @@ int APS5_VABI sceCesUtf32beToBig5(const uint32_t* utf32, const void* profile, ui
 
 int APS5_VABI sceCesUtf32leToBig5(const uint32_t* utf32, const void* profile, uint8_t* big5Buffer, uint32_t big5Max, uint32_t* big5Size) {
     return utf32ToProfiled<false>(isBig5, utf32, profile, big5Buffer, big5Max, big5Size);
+}
+
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG));
+    return sheet;
+}
+
+int APS5_VABI sceCesIso2022UcsContextInit(void* context, const void* profile) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    std::memcpy(context, &profile, sizeof(profile));
+    return 0;
+}
+
+int APS5_VABI sceCesIso2022UcsContextInitCopy(void* context, const void* source) {
+    if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(source);
+    std::memcpy(context, &profile, sizeof(profile));
+    return 0;
+}
+
+int APS5_VABI sceCesUtf8StrToIso2022Str(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf8, utf8max, utf8Len, iso, isoMax, isoLen, decodeUtf8);
+}
+
+int APS5_VABI sceCesUtf8StrGetIso2022Len(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint32_t* isoLen) {
+    return toIso2022(context, utf8, utf8max, utf8Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUtf8);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf8Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len) {
+    if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf8, utf8max, utf8Len, encodeUtf8);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf8Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf8Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint8_t*>(nullptr), 0, utf8Len, encodeUtf8);
+}
+
+int APS5_VABI sceCesUcs2StrToIso2022Str(void* context, const uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, ucs2, ucs2max, ucs2Len, iso, isoMax, isoLen, decodeUcs2);
+}
+
+int APS5_VABI sceCesUcs2StrGetIso2022Len(void* context, const uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len, uint32_t* isoLen) {
+    return toIso2022(context, ucs2, ucs2max, ucs2Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUcs2);
+}
+
+int APS5_VABI sceCesIso2022StrToUcs2Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len) {
+    if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, ucs2, ucs2max, ucs2Len, encodeUcs2);
+}
+
+int APS5_VABI sceCesIso2022StrGetUcs2Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* ucs2Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint16_t*>(nullptr), 0, ucs2Len, encodeUcs2);
+}
+
+int APS5_VABI sceCesUtf16StrToIso2022Str(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf16, utf16max, utf16Len, iso, isoMax, isoLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesUtf16StrGetIso2022Len(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint32_t* isoLen) {
+    return toIso2022(context, utf16, utf16max, utf16Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf16Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
+    if (!utf16) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf16, utf16max, utf16Len, encodeUtf16);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf16Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf16Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint16_t*>(nullptr), 0, utf16Len, encodeUtf16);
+}
+
+int APS5_VABI sceCesUtf32StrToIso2022Str(void* context, const uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf32, utf32max, utf32Len, iso, isoMax, isoLen, decodeUtf32);
+}
+
+int APS5_VABI sceCesUtf32StrGetIso2022Len(void* context, const uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len, uint32_t* isoLen) {
+    return toIso2022(context, utf32, utf32max, utf32Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUtf32);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf32Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len) {
+    if (!utf32) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf32, utf32max, utf32Len, encodeUtf32);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf32Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf32Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint32_t*>(nullptr), 0, utf32Len, encodeUtf32);
 }
 
 }
