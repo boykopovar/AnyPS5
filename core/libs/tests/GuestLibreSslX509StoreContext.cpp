@@ -11,6 +11,7 @@ extern "C" {
 int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void*);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void*, int);
 int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void*);
+void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -27,6 +28,7 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
 constexpr std::size_t ContextSize = 240;
 constexpr std::size_t ErrorDepthOffset = 180;
 constexpr std::size_t ErrorOffset = 184;
+constexpr std::size_t CurrentCertOffset = 192;
 
 struct alignas(8) TestContext {
     unsigned char bytes[ContextSize];
@@ -86,9 +88,21 @@ static void TestGetErrorDepth() {
     RequireThrows([] { X509_STORE_CTX_get_error_depth_nid_postfix(nullptr); });
 }
 
+static void TestGetCurrentCert() {
+    TestContext context;
+    int certificate = 0;
+    context.Write<void*>(CurrentCertOffset, nullptr);
+    Require(X509_STORE_CTX_get_current_cert_nid_postfix(&context) == nullptr);
+    context.Write<void*>(CurrentCertOffset, &certificate);
+    Require(X509_STORE_CTX_get_current_cert_nid_postfix(&context) == &certificate);
+    Require(OnlyChanged(context, CurrentCertOffset, 8));
+    RequireThrows([] { X509_STORE_CTX_get_current_cert_nid_postfix(nullptr); });
+}
+
 int main() {
     TestGetError();
     TestSetError();
     TestGetErrorDepth();
+    TestGetCurrentCert();
     std::puts("libSceLibreSsl X509_STORE_CTX tests passed");
 }
