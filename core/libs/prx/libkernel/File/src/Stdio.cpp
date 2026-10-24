@@ -632,8 +632,14 @@ static bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
 extern "C" int APS5_VABI dup_nid_postfix(int d);
 extern "C" int APS5_VABI close_nid_postfix(int d);
 
+#ifdef _WIN32
+extern "C" int APS5_VABI getrlimit_nid_postfix(int, void*);
+#endif
+
 int File::DuplicateFrom(int fd, int start) {
 #ifdef _WIN32
+    struct { std::int64_t current; std::int64_t maximum; } openFileLimit{};
+    if (getrlimit_nid_postfix(8, &openFileLimit) == 0 && start >= openFileLimit.current) return PosixFailure(GUEST_EINVAL);
     std::vector<int> below;
     int duplicate;
     while ((duplicate = dup_nid_postfix(fd)) >= 0 && duplicate < start) below.push_back(duplicate);
