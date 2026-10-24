@@ -1,6 +1,9 @@
 [submodule "3rdparty/SDL2"]
 	path = 3rdparty/SDL2
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "3rdparty/libressl-openbsd"]
+	path = 3rdparty/libressl-openbsd
+	url = https://github.com/libressl/openbsd.git
 [submodule "3rdparty/Vulkan-Headers"]
 	path = 3rdparty/Vulkan-Headers
 	url = https://github.com/KhronosGroup/Vulkan-Headers.git
