@@ -777,6 +777,143 @@ std::uint64_t APS5_VABI RendererQuery(RendererNative* renderer, std::uint8_t* pa
     return 0;
 }
 
+float ScaledUnits(std::int64_t units, std::int64_t fixed16) {
+    return FromF26Dot6(RoundMulFixed(units, fixed16));
+}
+
+void StoreVerticalFontMetrics(FT_Face face, const TT_OS2* os2, std::int64_t xShift, std::int64_t yShift, FontMetrics* metrics) {
+    const auto xScale = static_cast<std::int64_t>(face->size->metrics.x_scale);
+    const auto yScale = static_cast<std::int64_t>(face->size->metrics.y_scale);
+    const auto unitsPerEm = static_cast<std::int64_t>(static_cast<std::uint16_t>(face->units_per_EM));
+    const auto* vhea = static_cast<const TT_VertHeader*>(FT_Get_Sfnt_Table(face, FT_SFNT_VHEA));
+    if (vhea) {
+        const std::int64_t minTop = vhea->min_Top_Side_Bearing;
+        metrics->ascender = ScaledUnits(minTop + yShift, yScale);
+        metrics->descender = ScaledUnits(static_cast<std::int64_t>(vhea->yMax_Extent) + yShift, yScale);
+        metrics->lineGap = 0.0f;
+        if (vhea->Version >= 0x110000 && vhea->Line_Gap != 0) {
+            metrics->lineGap = FromF26Dot6(RoundMulFixed(vhea->Line_Gap, xScale) - TruncFixed(unitsPerEm * xScale));
+        }
+        metrics->verticalDescender = ScaledUnits(static_cast<std::int64_t>(vhea->Descender) + xShift, xScale);
+        const std::int64_t ascender = os2 ? os2->sTypoAscender : static_cast<std::int32_t>(minTop + face->bbox.yMax);
+        metrics->verticalAscender = ScaledUnits(ascender + yShift, yScale);
+    } else {
+        std::int64_t ascender = 0;
+        if (os2) {
+            ascender = os2->sTypoAscender;
+            metrics->ascender = ScaledUnits(ascender - face->bbox.yMax, yScale);
+            metrics->descender = ScaledUnits(ascender - face->bbox.yMin, yScale);
+            metrics->lineGap = 0.0f;
+        } else {
+            const std::int32_t lineGap = face->height - face->ascender + face->descender;
+            const std::int32_t halfGap = lineGap / 2;
+            metrics->ascender = ScaledUnits(halfGap, yScale);
+            metrics->descender = ScaledUnits(face->ascender - face->descender + halfGap, yScale);
+            metrics->lineGap = ScaledUnits(lineGap, xScale);
+            ascender = face->ascender + halfGap;
+        }
+        metrics->verticalAscender = ScaledUnits(ascender + yShift, yScale);
+        metrics->verticalDescender = ScaledUnits(-static_cast<std::int64_t>(unitsPerEm / 2), xScale);
+    }
+    metrics->maxAdvance = ScaledUnits(face->max_advance_height, yScale);
+}
+
+std::uint32_t StoreHorizontalFontMetrics(FT_Face face, const TT_OS2* os2, std::uint32_t form, std::int64_t xShift, std::int64_t yShift, FontMetrics* metrics) {
+    const auto xScale = static_cast<std::int64_t>(face->size->metrics.x_scale);
+    const auto yScale = static_cast<std::int64_t>(face->size->metrics.y_scale);
+    const auto* hhea = static_cast<const TT_HoriHeader*>(FT_Get_Sfnt_Table(face, FT_SFNT_HHEA));
+    metrics->verticalDescender = 0.0f;
+    metrics->verticalAscender = 0.0f;
+    bool fromHorizontalHeader = form == 1 || ((form == 2 || form == 3) && !os2);
+    if (form == 2 && os2) {
+        metrics->ascender = ScaledUnits(static_cast<std::int64_t>(os2->sTypoAscender) + yShift, yScale);
+        metrics->descender = ScaledUnits(static_cast<std::int64_t>(os2->sTypoDescender) + yShift, yScale);
+        metrics->lineGap = ScaledUnits(os2->sTypoLineGap, yScale);
+        fromHorizontalHeader = metrics->ascender == 0.0f && metrics->descender == 0.0f;
+    } else if (form == 3 && os2) {
+        metrics->ascender = ScaledUnits(static_cast<std::int64_t>(os2->usWinAscent) + yShift, yScale);
+        metrics->descender = FromF26Dot6(-RoundMulFixed(static_cast<std::int64_t>(os2->usWinDescent) - yShift, yScale));
+        metrics->lineGap = hhea ? ScaledUnits(hhea->Line_Gap, yScale) : 0.0f;
+        fromHorizontalHeader = metrics->ascender == metrics->descender;
+    }
+    if (fromHorizontalHeader) {
+        form = 1;
+        if (hhea) {
+            metrics->ascender = ScaledUnits(static_cast<std::int64_t>(hhea->Ascender) + yShift, yScale);
+            metrics->descender = ScaledUnits(static_cast<std::int64_t>(hhea->Descender) + yShift, yScale);
+            metrics->lineGap = ScaledUnits(hhea->Line_Gap, yScale);
+        } else {
+            metrics->ascender = ScaledUnits(static_cast<std::int64_t>(face->ascender) + yShift, yScale);
+            metrics->descender = ScaledUnits(static_cast<std::int64_t>(face->descender) + yShift, yScale);
+            metrics->lineGap = 0.0f;
+        }
+    }
+    metrics->maxAdvance = ScaledUnits(static_cast<std::int64_t>(face->max_advance_width) + xShift, xScale);
+    return form;
+}
+
+int APS5_VABI LibraryGetFontMetrics(FontObj* obj, std::uint32_t form, FontMetrics* metrics) {
+    const FT_Face face = obj ? FaceOf(obj) : nullptr;
+    if (!face || !face->size || !metrics) return SCE_FONT_ERROR_FATAL;
+    const auto xScale = static_cast<std::int64_t>(face->size->metrics.x_scale);
+    const auto yScale = static_cast<std::int64_t>(face->size->metrics.y_scale);
+    const std::int64_t xShift = obj->shift_cache_x;
+    const std::int64_t yShift = obj->shift_cache_y;
+    const auto* os2 = static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2));
+    if (os2 && os2->version == 0xFFFF) os2 = nullptr;
+    if (form == 4) {
+        StoreVerticalFontMetrics(face, os2, xShift, yShift, metrics);
+    } else {
+        form = StoreHorizontalFontMetrics(face, os2, form, xShift, yShift, metrics);
+    }
+    metrics->xMin = ScaledUnits(static_cast<std::int64_t>(face->bbox.xMin) + xShift, xScale);
+    metrics->yMin = ScaledUnits(static_cast<std::int64_t>(face->bbox.yMin) + yShift, yScale);
+    metrics->xMax = ScaledUnits(static_cast<std::int64_t>(face->bbox.xMax) + xShift, xScale);
+    metrics->yMax = ScaledUnits(static_cast<std::int64_t>(face->bbox.yMax) + yShift, yScale);
+    const auto unitsPerEm = static_cast<std::int64_t>(static_cast<std::uint16_t>(face->units_per_EM));
+    metrics->emWidth = FromF26Dot6(TruncFixed(unitsPerEm * xScale));
+    metrics->emHeight = FromF26Dot6(TruncFixed(unitsPerEm * yScale));
+    const auto* handle = reinterpret_cast<const FontHandleNative*>(obj->font_handle);
+    metrics->effectWeightX = handle ? handle->style.effect_weight_x : 0.0f;
+    metrics->effectWeightY = handle ? handle->style.effect_weight_y : 0.0f;
+    metrics->slantRatio = handle ? handle->style.slant_ratio : 0.0f;
+    metrics->form = form;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI LibraryGetOutlineProfile(FontObj* obj, FontOutlineProfile* profile) {
+    const FT_Face face = obj ? FaceOf(obj) : nullptr;
+    if (!face) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    const auto* maxp = static_cast<const TT_MaxProfile*>(FT_Get_Sfnt_Table(face, FT_SFNT_MAXP));
+    if (!maxp) throw std::runtime_error("FontFt: outline profile of a face without a maxp table");
+    if (maxp->version < 0x10000) return SCE_FONT_ERROR_NO_SUPPORT_FUNCTION;
+    profile->maxContours = maxp->maxContours;
+    profile->maxPoints = maxp->maxPoints;
+    profile->maxCompositeContours = maxp->maxCompositeContours;
+    profile->maxCompositePoints = maxp->maxCompositePoints;
+    return SCE_FONT_OK;
+}
+
+std::uint16_t WeightClass(std::uint16_t weight) {
+    return weight >= 100 && weight <= 900 && weight % 100 == 0 ? static_cast<std::uint16_t>(weight / 100) : 0;
+}
+
+int APS5_VABI LibraryGetFontStyleInformation(FontObj* obj, FontStyleInformation* information) {
+    const FT_Face face = obj ? FaceOf(obj) : nullptr;
+    if (!face || !information) return SCE_FONT_ERROR_FATAL;
+    const auto* header = static_cast<const TT_Header*>(FT_Get_Sfnt_Table(face, FT_SFNT_HEAD));
+    if (!header) throw std::runtime_error("FontFt: style information of a face without a head table");
+    const auto* os2 = static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2));
+    if (os2 && os2->version == 0xFFFF) os2 = nullptr;
+    information->familyName = face->family_name;
+    information->styleName = face->style_name;
+    information->styleFlags = static_cast<std::uint16_t>(face->style_flags & (FT_STYLE_FLAG_ITALIC | FT_STYLE_FLAG_BOLD));
+    information->weight = os2 ? WeightClass(os2->usWeightClass) : 0;
+    information->width = os2 && os2->usWidthClass < 10 ? os2->usWidthClass : 0;
+    information->layoutFlags = static_cast<std::uint16_t>(1 + (header->Font_Direction < 0 ? 1 : 0) + (FT_HAS_VERTICAL(face) ? 0x80 : 0));
+    return SCE_FONT_OK;
+}
+
 SysDriver MakeDriverTable() {
     SysDriver driver{};
     driver.pixel_resolution = &LibraryGetPixelResolution;
@@ -791,6 +928,9 @@ SysDriver MakeDriverTable() {
     driver.glyph_index = &LibraryGetGlyphIndex;
     driver.set_char_with_dpi = &LibrarySetCharSizeWithDpi;
     driver.set_char_default_dpi = &LibrarySetCharSizeDefaultDpi;
+    driver.font_metrics = &LibraryGetFontMetrics;
+    driver.style_information = &LibraryGetFontStyleInformation;
+    driver.outline_profile = &LibraryGetOutlineProfile;
     driver.compute_layout = &LibraryComputeLayout;
     driver.compute_layout_alt = &LibraryComputeLayoutAlt;
     driver.load_glyph_cached = &LibraryLoadGlyphCached;
