@@ -1022,6 +1022,81 @@ void testOneDevice() {
     check(next.Serial() == 2, "the GPU work and the flip used more than one device");
 }
 
+void testOutputResolution() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t expected = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    VideoOutOutputStatus status{};
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "a port without buffers did not report the display's resolution");
+    const std::uint32_t width = expected == 2u ? 1920u : 3840u;
+    const std::uint32_t height = expected == 2u ? 1080u : 2160u;
+    std::vector<std::byte> allocation(static_cast<std::size_t>(width) * height * 4 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = width;
+    attribute.height = height;
+    attribute.tiling_mode = 1;
+    attribute.pitch_in_pixel = width;
+    attribute.pixel_format = 0x8000000000000000ull;
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+        check(cfg->width == width && cfg->height == height, "the port did not record the buffer size");
+    }
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "the flipped buffer's size changed the reported resolution");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void setOutputResolution(const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("APS5_OUTPUT_RESOLUTION", value) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#else
+    check((*value != '\0' ? setenv("APS5_OUTPUT_RESOLUTION", value, 1) : unsetenv("APS5_OUTPUT_RESOLUTION")) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#endif
+}
+
+void testOutputResolutionOverride() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    const auto reported = [&] {
+        VideoOutOutputStatus status{};
+        check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
+        return status.resolution;
+    };
+    setOutputResolution("");
+    check(reported() == following, "an unset override changed the display's resolution");
+    const std::pair<const char*, std::uint32_t> overrides[] = {{"1920x1080", 1u}, {"1280x720", 1u}, {"3840x2160", 2u}, {"2560x2160", 2u}, {"3840X1", 2u}};
+    for (const auto& [value, expected] : overrides) {
+        setOutputResolution(value);
+        check(reported() == expected, (std::string("the override ") + value + " did not set the reported resolution").c_str());
+        std::array<std::byte, 80> raw{};
+        VideoOutOutputStatus withVrr{};
+        check(sceVideoOutGetOutputStatusWithVrr(handle, raw.data()) == 0, "the VRR status was not returned");
+        std::memcpy(&withVrr, raw.data(), sizeof(withVrr));
+        check(withVrr.resolution == expected,(std::string("the override ") + value + " did not reach the VRR status").c_str());
+    }
+    for (const char* value : {"1920", "1920x", "x1080", "0x1080", "1920x0", "1920x1080x2", " 1920x1080", "1920x1080 ", "-1920x1080", "1920*1080", "4294967296x1080", "high"}) {
+        setOutputResolution(value);
+        const auto message = expectFailure([&] { reported(); });
+        check(message.find("APS5_OUTPUT_RESOLUTION") != std::string::npos && message.find(value) != std::string::npos, (std::string("the malformed value ") + value + " was not rejected by name").c_str());
+    }
+    setOutputResolution("");
+    check(reported() == following, "clearing the override did not restore the display's resolution");
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1047,6 +1122,8 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
         else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
+        else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
+        else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;

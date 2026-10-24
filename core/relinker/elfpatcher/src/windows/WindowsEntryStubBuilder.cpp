@@ -157,6 +157,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<std::uint32_t> searchCounts;
     std::vector<bool> platformTlsResolvers;
     std::vector<bool> imported(libraries.size());
+    std::vector<bool> executableImports(guestModules.size());
     const bool unscopedImports = std::any_of(imports.begin(), imports.end(), [](const auto& import) { return import.Library.empty(); });
     for (const auto& import : imports) {
         const auto library = Domain::NeededLibraryName(import.Library);
@@ -167,6 +168,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             const bool guestName = index < guestModules.size() &&
                 std::find(guestModules[index].Names.begin(), guestModules[index].Names.end(), import.Library) != guestModules[index].Names.end();
             if (import.Library.empty() || name == library || guestName) order.push_back(CheckedRva(index));
+            if (import.TargetModule < 0 && !import.Library.empty() && index < guestModules.size() && (name == library || guestName)) executableImports[index] = true;
         }
         if (order.empty()) throw Domain::RelinkerException("Import module is not a dependency: " + import.Library);
         const bool hostModule = !import.Library.empty() &&
@@ -249,6 +251,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto searched = addString("Searched libraries:\n");
     const auto indent = addString("  ");
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
+    std::vector<std::uint32_t> deferredImports;
+    for (std::size_t index = 0; index < guestModules.size(); ++index) {
+        if (guestModules[index].DeferInitialization && executableImports[index])
+            deferredImports.push_back(addString("Deferred module " + guestModules[index].Path + ": the executable imports from it, but it starts only when the title loads it\n"));
+    }
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
         resolvedPaths.push_back(reserve(PathCapacity));
@@ -717,6 +724,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x85, 0xc0});
         unresolvedBranches.push_back(code.Branch({0x0f, 0x85}));
     }
+    for (const auto message : deferredImports) writeString(message);
     guestStartup.Initialize(code, guestModules, handles);
     writeString(enteringElf);
     code.Rip({0x48, 0x8d, 0x0d}, shellLibrary);

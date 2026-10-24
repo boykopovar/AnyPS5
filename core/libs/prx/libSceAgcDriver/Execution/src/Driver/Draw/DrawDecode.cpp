@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <spirv/unified1/spirv.hpp>
@@ -28,6 +29,25 @@ void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi
         program.userData.push_back(staticAbi ? ReadGraphicsRegister(queue.shader, program.userDataBase + i) : readUserData(queue.shader, program.userDataBase + i));
     }
     if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
+}
+
+ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<Graphics::DecodeRead>& reads, std::uint32_t hiddenUserWords) {
+    const auto decode = [&] {
+        reads.clear();
+        return Graphics::DecodeVertexStageInfo(header, headerAddress, userData, &reads, false, hiddenUserWords);
+    };
+    if (!DrawPipeline::Active()) return decode();
+    auto& queue = DrawPipeline::Queue0();
+    const auto watch = queue.WatchWrites();
+    auto info = decode();
+    if (watch.items == 0 && !queue.Busy() && queue.Retired() == watch.retired) return info;
+    std::vector<DrawPipeline::Range> ranges;
+    ranges.reserve(reads.size());
+    for (const auto& read : reads) ranges.emplace_back(read.address, read.address + read.size);
+    if (!queue.WrittenSince(watch, ranges)) return info;
+    queue.NoteDecodeDrain();
+    queue.Drain(DrawPipeline::DrainReason::Capture);
+    return decode();
 }
 
 void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32_t pointerBase, bool pointerRequired, bool staticAbi) {
@@ -159,12 +179,14 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     auto product = std::make_shared<DrawDecode>();
     product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
     DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
+    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true); });
     product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyDepthRemap(context, product->state);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;
+    product->pixel.targetMerge = Graphics::ExportTargetMerge(product->state);
     product->pixel.alphaToCoverage = product->state.alphaToCoverage;
     product->pixel.quadPixelMask = Graphics::QuadPixelMask(product->state);
     if (product->state.sampleLocationGrid) {

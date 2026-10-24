@@ -108,6 +108,13 @@ void APS5_VABI warn_nid_postfix(const char* format, ...) {
     APS5_ERR_VA_END(args);
 }
 
+void APS5_VABI _warn_nid_postfix(const char* format, ...) {
+    APS5_ERR_VA_LIST args;
+    APS5_ERR_VA_START(args, format);
+    vwarn_nid_postfix(format, reinterpret_cast<VaList*>(args));
+    APS5_ERR_VA_END(args);
+}
+
 void APS5_VABI warnx_nid_postfix(const char* format, ...) {
     APS5_ERR_VA_LIST args;
     APS5_ERR_VA_START(args, format);
@@ -126,6 +133,12 @@ void APS5_VABI warnx_nid_postfix(const char* format, ...) {
     APS5_ERR_VA_LIST args;
     APS5_ERR_VA_START(args, format);
     verrc_nid_postfix(status, code, format, reinterpret_cast<VaList*>(args));
+}
+
+[[noreturn]] void APS5_VABI _err_nid_postfix(int status, const char* format, ...) {
+    APS5_ERR_VA_LIST args;
+    APS5_ERR_VA_START(args, format);
+    verr_nid_postfix(status, format, reinterpret_cast<VaList*>(args));
 }
 
 [[noreturn]] void APS5_VABI errx_nid_postfix(int status, const char* format, ...) {

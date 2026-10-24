@@ -100,14 +100,12 @@ int main() {
     Require(setpriority_nid_postfix(PrioProcess, 0, -99) == 0 && getpriority_nid_postfix(PrioProcess, 0) == -20);
     Require(setpriority_nid_postfix(PrioProcess, 0, 0) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 0);
     GuestRtPrio rtprio{7, 7};
+    Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     bool rtprioThrew = false;
-    try { rtprio_thread_nid_postfix(0, 0, &rtprio); } catch (const std::exception&) { rtprioThrew = true; }
-    Require(rtprioThrew);
-    rtprioThrew = false;
     try { rtprio_thread_nid_postfix(1, 0, &rtprio); } catch (const std::exception&) { rtprioThrew = true; }
     Require(rtprioThrew);
     *__error_nid_postfix() = 0;
-    Require(rtprio_thread_nid_postfix(2, 0, &rtprio) == -1 && *__error_nid_postfix() == 22);
+    Require(rtprio_thread_nid_postfix(2, 0, &rtprio) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;
     Require(rtprio_thread_nid_postfix(0, 0, nullptr) == -1 && *__error_nid_postfix() == 14);
     *__error_nid_postfix() = 0;

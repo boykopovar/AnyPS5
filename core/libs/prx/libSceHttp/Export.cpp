@@ -138,6 +138,7 @@ struct HttpEpoll {
 
 static std::mutex g_stateMutex;
 static std::unordered_set<int> g_contexts;
+static std::unordered_map<int, uint64_t> g_contextPoolSizes;
 static std::unordered_map<HttpEpollHandle, std::shared_ptr<HttpEpoll>> g_epolls;
 
 static std::shared_ptr<HttpEpoll> FindEpoll(HttpEpollHandle eh) {
@@ -181,6 +182,16 @@ int APS5_VABI sceHttpCookieFlush(int httpCtxId) {
     std::lock_guard lock(g_stateMutex);
     if (g_contexts.empty()) return ERROR_BEFORE_INIT;
     if (!g_contexts.contains(httpCtxId)) return ERROR_INVALID_ID;
+    return 0;
+}
+
+int APS5_VABI sceHttpGetMemoryPoolStats(int httpCtxId, HttpMemoryPoolStats* currentStat) {
+    if (!currentStat) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_stateMutex);
+    if (g_contexts.empty()) return ERROR_BEFORE_INIT;
+    const auto pool = g_contextPoolSizes.find(httpCtxId);
+    if (pool == g_contextPoolSizes.end()) return ERROR_INVALID_ID;
+    *currentStat = {static_cast<std::size_t>(pool->second), 0, 0};
     return 0;
 }
 
@@ -295,9 +306,9 @@ int APS5_VABI sceHttpGetStatusCode(int request_id, int* status_code) {
 int APS5_VABI sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
     (void)memid;
     (void)ssl_ctx_id;
-    (void)pool_size;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_stateMutex);
+    g_contextPoolSizes[id] = pool_size;
     g_contexts.insert(id);
     AddHttpContext(id);
     return id;
@@ -420,6 +431,7 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
     std::vector<std::shared_ptr<HttpEpoll>> epolls;
     {
         std::lock_guard lock(g_stateMutex);
+        g_contextPoolSizes.erase(http_ctx_id);
         if (g_contexts.empty()) return ERROR_BEFORE_INIT;
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
@@ -685,11 +697,6 @@ int APS5_VABI sceHttpDbgSetPrintf(void) {
 }
 
 int APS5_VABI sceHttpDbgShowStat(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpGetMemoryPoolStats(int contextId, HttpMemoryPoolStats* stats) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

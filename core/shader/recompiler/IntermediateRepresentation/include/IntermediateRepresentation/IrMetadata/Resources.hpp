@@ -96,6 +96,7 @@ struct ImageResource {
     bool volumeArraySampleCompatible = false;
     bool flatLineCompatible = true;
     bool flatVolumeLineCompatible = true;
+    bool dimensionQueryOnly = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
@@ -105,6 +106,7 @@ struct ImageResource {
     std::uint32_t emulatedCompare = 0;
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
+    bool targetMerge = false;
 
     bool operator==(const ImageResource& other) const = default;
 };
