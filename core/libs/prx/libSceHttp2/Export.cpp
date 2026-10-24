@@ -511,4 +511,10 @@ int APS5_VABI sceHttp2SetPreSendCallback(void) {
     return 0;
 }
 
+int APS5_VABI sceHttp2Unknown_001_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("AS45QoYHjc4", sceHttp2Unknown_001_nid_no_patch);
+
 }

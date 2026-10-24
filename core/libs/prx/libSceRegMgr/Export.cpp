@@ -327,4 +327,10 @@ int APS5_VABI sceRegMgrPrintInfo(void) {
     return 0;
 }
 
+int APS5_VABI sceRegMgrUnknown_001_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("HGxgXwGSAzQ", sceRegMgrUnknown_001_nid_no_patch);
+
 }
