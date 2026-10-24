@@ -37,6 +37,7 @@ int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI close_nid_postfix(int);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI socket_nid_postfix(int, int, int);
+int APS5_VABI kqueue_nid_postfix();
 std::int64_t APS5_VABI readlink_nid_postfix(const char*, char*, std::size_t);
 int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
 std::int64_t APS5_VABI pathconf_nid_postfix(const char*, int);
@@ -647,6 +648,10 @@ int main() {
     Require(socketDescriptor >= 0);
     Require(fchdir_nid_postfix(socketDescriptor) == -1 && Error() == 22);
     Require(close_nid_postfix(socketDescriptor) == 0);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    Require(fchdir_nid_postfix(kqueueDescriptor) == -1 && Error() == 22);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
     Require(fchdir_nid_postfix(directory) == 0);
     char directoryPath[1024];
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath);
