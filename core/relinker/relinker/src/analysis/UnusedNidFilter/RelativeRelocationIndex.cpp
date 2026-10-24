@@ -175,7 +175,6 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
         if (segOff > elfBytes.size() || segSz > elfBytes.size() - segOff) throw RelinkerException("PT_DYNAMIC segment out of bounds");
-        if (segSz % 16 != 0) throw RelinkerException("Invalid dynamic segment size", segOff);
 
         std::optional<VirtualAddress> relaVa;
         std::optional<std::uint64_t> relaSz;
