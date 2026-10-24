@@ -534,7 +534,9 @@ void SleepNanos(std::uint64_t nanos) {
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);
+    const int savedErrno = errno;
     while (nanosleep(&req, &req) == -1 && errno == EINTR) {}
+    errno = savedErrno;
 #endif
 }
 

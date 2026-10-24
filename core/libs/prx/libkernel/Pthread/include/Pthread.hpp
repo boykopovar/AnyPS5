@@ -140,7 +140,11 @@ struct PthreadPrivate {
     int scope = GUEST_SCOPE_SYSTEM;
     int cpuClockThread = 0;
 #ifndef _WIN32
+#ifdef __APPLE__
+    unsigned hostMachThread = 0;
+#else
     clockid_t hostCpuClock{};
+#endif
     bool hostCpuClockBound = false;
     void* guestStack = nullptr;
     std::size_t guestStackBytes = 0;
