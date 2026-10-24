@@ -22,6 +22,7 @@ int APS5_VABI close_nid_postfix(int);
 std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
+int APS5_VABI kqueue_nid_postfix();
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 int APS5_VABI ioctl_nid_postfix(int, std::uint64_t, void*);
 int APS5_VABI sendfile_nid_postfix(int, int, std::int64_t, std::uint64_t, const Hdtr*, std::int64_t*, int);
@@ -98,6 +99,17 @@ int main() {
     Require(unconnected >= 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, unconnected, size + 10, 0, nullptr, &sent, 0), 57) && sent == 0);
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 16, &parts, &sent, 0), 22) && sent == 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(queue, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    Require(close_nid_postfix(queue) == 0 && close_nid_postfix(random) == 0);
 
     const std::string large = Content(32 << 20);
     const int largeFile = OpenWritten("sendfile_large.bin", large);
