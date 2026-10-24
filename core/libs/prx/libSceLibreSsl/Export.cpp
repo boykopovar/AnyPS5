@@ -1011,11 +1011,6 @@ int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

@@ -63,4 +63,8 @@ void APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(LibreSslCallbackCtx*
     callbacks.appVerifyArg = arg;
 }
 
+void APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(LibreSslCallbackCtx* ctx, void* callback) {
+    Callbacks(ctx, __func__).clientCertCb = callback;
+}
+
 }
