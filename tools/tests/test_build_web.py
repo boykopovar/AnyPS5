@@ -26,6 +26,40 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_original_archive_paths_are_rejected_before_decompression(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for name in ("libs/libc.prx\0ignored", "libs/sub\0dir/libc.prx",
+                     "libs\\libc.prx", "libs/sub\\libc.prx"):
+            with self.subTest(name=name):
+                placeholder = name.replace("\0", "!").replace("\\", "!")
+                invalid = library_zip([(placeholder, b"content")])
+                invalid = invalid.replace(placeholder.encode(), name.encode())
+                with zipfile.ZipFile(io.BytesIO(invalid)) as archive:
+                    self.assertEqual(archive.infolist()[0].orig_filename, name)
+                with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+                    with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+                        self.publish(invalid, valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_rewritten_path_in_second_platform_preserves_previous_manifest(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        invalid = library_zip([("libs/libc.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libc.prx!ignored", b"libs/libc.prx\0ignored")
+        with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+            self.publish(valid, invalid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(self.existing.read_bytes(), b"previous archive")
+        self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+    def test_unicode_archive_paths_are_published_unchanged(self):
+        payload = library_zip([("libs/\u65e5\u672c\u8a9e/\u00e9.prx", b"content"),
+                               ("libs/licenses/Third party.txt", b"license")])
+        self.publish(payload, payload)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for asset in manifest["platforms"].values():
+            self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
+
     def test_expanded_limit_is_checked_before_decompression(self):
         payload = library_zip([("libs/libc.prx", b"a" * 4097)])
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True), \
