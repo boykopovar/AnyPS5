@@ -21,9 +21,11 @@
 namespace {
 
 constexpr int CES_ERROR_INVALID_PARAMETER = static_cast<int>(0x805C0001);
+constexpr int CES_ERROR_INVALID_PROFILE = static_cast<int>(0x805C0004);
 constexpr int CES_ERROR_INVALID_SRC_BUFFER = static_cast<int>(0x805C0010);
 constexpr int CES_ERROR_SRC_BUFFER_END = static_cast<int>(0x805C0011);
 constexpr int CES_ERROR_INVALID_ENCODE = static_cast<int>(0x805C0014);
+constexpr int CES_ERROR_ILLEGAL_CODE = static_cast<int>(0x805C0015);
 constexpr int CES_ERROR_UNASSIGNED_CODE = static_cast<int>(0x805C0020);
 constexpr int CES_ERROR_INVALID_DST_BUFFER = static_cast<int>(0x805C0030);
 constexpr int CES_ERROR_DST_BUFFER_END = static_cast<int>(0x805C0031);
@@ -34,13 +36,13 @@ constexpr const uint8_t* CP1251_PROFILE = PROFILES[1];
 constexpr const uint8_t* CP1250_PROFILE = PROFILES[2];
 
 constexpr uint16_t CP1252_HIGH[32] = {
-    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
-    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x0000, 0x017D, 0x0000,
+    0x0000, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x0000, 0x017E, 0x0178,
 };
 
 constexpr uint16_t CP1251_HIGH[128] = {
     0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021, 0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x040C, 0x040B, 0x040F,
-    0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0098, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,
+    0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0000, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,
     0x00A0, 0x040E, 0x045E, 0x0408, 0x00A4, 0x0490, 0x00A6, 0x00A7, 0x0401, 0x00A9, 0x0404, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x0407,
     0x00B0, 0x00B1, 0x0406, 0x0456, 0x0491, 0x00B5, 0x00B6, 0x00B7, 0x0451, 0x2116, 0x0454, 0x00BB, 0x0458, 0x0405, 0x0455, 0x0457,
     0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, 0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F,
@@ -50,8 +52,8 @@ constexpr uint16_t CP1251_HIGH[128] = {
 };
 
 constexpr uint16_t CP1250_HIGH[128] = {
-    0x20AC, 0x0081, 0x201A, 0x0083, 0x201E, 0x2026, 0x2020, 0x2021, 0x0088, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
-    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0098, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
+    0x20AC, 0x0000, 0x201A, 0x0000, 0x201E, 0x2026, 0x2020, 0x2021, 0x0000, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
+    0x0000, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0000, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
     0x00A0, 0x02C7, 0x02D8, 0x0141, 0x00A4, 0x0104, 0x00A6, 0x00A7, 0x00A8, 0x00A9, 0x015E, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x017B,
     0x00B0, 0x00B1, 0x02DB, 0x0142, 0x00B4, 0x00B5, 0x00B6, 0x00B7, 0x00B8, 0x0105, 0x015F, 0x00BB, 0x013D, 0x02DD, 0x013E, 0x017C,
     0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7, 0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
@@ -79,9 +81,12 @@ const uint16_t* sbcHighTable(const void* profile) {
     return nullptr;
 }
 
-uint32_t sbcToUnicode(const uint8_t* profile, uint8_t sbc) {
-    if (const uint16_t* high = sbcHighTable(profile)) return sbc >= 0x80 ? high[sbc - 0x80] : sbc;
-    return sbc >= 0x80 && sbc < 0xA0 ? CP1252_HIGH[sbc - 0x80] : sbc;
+bool sbcToUnicode(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
+    code = sbc;
+    if (sbc < 0x80) return true;
+    if (const uint16_t* high = sbcHighTable(profile)) code = high[sbc - 0x80];
+    else if (sbc < 0xA0) code = CP1252_HIGH[sbc - 0x80];
+    return code != 0;
 }
 
 bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
@@ -130,6 +135,35 @@ int decodeUtf8(const uint8_t* utf8, uint32_t utf8max, uint32_t& length, uint32_t
         code = code << 6 | (utf8[i] & 0x3F);
     }
     if (code < minimum || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return CES_ERROR_INVALID_ENCODE;
+    return 0;
+}
+
+int decodeScalarUtf8(const uint8_t* utf8, uint32_t utf8max, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = utf8[0];
+    length = 0;
+    uint32_t minimum = 0;
+    if (lead < 0x80) {
+        length = 1;
+        code = lead;
+        return 0;
+    }
+    if (lead < 0xC0 || lead >= 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xE0) { length = 2; code = lead & 0x1F; minimum = 0x80; }
+    else if (lead < 0xF0) { length = 3; code = lead & 0x0F; minimum = 0x800; }
+    else if (lead < 0xF8) { length = 4; code = lead & 0x07; minimum = 0x10000; }
+    else if (lead < 0xFC) { length = 5; code = lead & 0x03; minimum = 0x200000; }
+    else { length = 6; code = lead & 0x01; minimum = 0x4000000; }
+    const bool truncated = utf8max < length;
+    const uint32_t present = truncated ? utf8max : length;
+    for (uint32_t i = 1; i < present; ++i) {
+        if ((utf8[i] & 0xC0) != 0x80) {
+            length = truncated ? i + 1 : i;
+            return CES_ERROR_INVALID_ENCODE;
+        }
+        code = code << 6 | (utf8[i] & 0x3F);
+    }
+    if (truncated) return CES_ERROR_SRC_BUFFER_END;
+    if (code < minimum || (code >= 0xD800 && code <= 0xDFFF)) return CES_ERROR_ILLEGAL_CODE;
     return 0;
 }
 
@@ -577,8 +611,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     const uint8_t lead = mbcs[0];
     if (isSbc(profile)) {
         length = 1;
-        code = sbcToUnicode(static_cast<const uint8_t*>(profile), lead);
-        return 0;
+        return sbcToUnicode(static_cast<const uint8_t*>(profile), lead, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
@@ -987,8 +1020,7 @@ uint32_t encodeUtf32(uint32_t code, uint32_t* utf32) {
 int sbcToUnit(const uint8_t* profile, uint8_t sbc, const void* target, uint32_t& code) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    code = sbcToUnicode(profile, sbc);
-    return 0;
+    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
 template<bool BigEndian>
@@ -1278,28 +1310,35 @@ int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_
 }
 
 int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
+    if (utf8_len) *utf8_len = 0;
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
-    if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
-
+    uint32_t code = 0;
+    if (!sbcToUnicode(profile, sbc, code)) return CES_ERROR_UNASSIGNED_CODE;
     uint8_t encoded[4];
-    const uint32_t length = encodeUtf8(sbcToUnicode(profile, sbc), encoded);
+    const uint32_t length = encodeUtf8(code, encoded);
+    if (utf8_len) *utf8_len = length;
+    if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf8max < length) return CES_ERROR_DST_BUFFER_END;
     for (uint32_t i = 0; i < length; ++i) utf8[i] = encoded[i];
-    if (utf8_len) *utf8_len = length;
     return 0;
 }
 
 int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len, const uint8_t* profile, uint8_t* sbc) {
-    if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
-    if (!utf8) return CES_ERROR_INVALID_SRC_BUFFER;
-    if (utf8max == 0) return CES_ERROR_SRC_BUFFER_END;
-    if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
-
+    if (utf8_len) *utf8_len = 0;
+    if (sbc) *sbc = 0;
+    if (!utf8 || utf8max == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeUtf8(utf8, utf8max, length, code); result != 0) return result;
-    if (!unicodeToSbc(profile, code, *sbc)) return CES_ERROR_UNASSIGNED_CODE;
+    const int decoded = decodeScalarUtf8(utf8, utf8max, length, code);
     if (utf8_len) *utf8_len = length;
+    if (decoded != 0) return decoded;
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
+    if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
+    uint8_t value = 0;
+    if (!unicodeToSbc(profile, code, value)) return CES_ERROR_UNASSIGNED_CODE;
+    if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
+    *sbc = value;
     return 0;
 }
 

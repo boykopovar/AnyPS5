@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -73,6 +74,82 @@ static int Utf8ToSbc(const std::uint8_t* profile, const char* utf8, std::uint32_
     std::uint32_t length = 0;
     std::uint8_t sbc = 0;
     return sceCesUtf8ToSbc(reinterpret_cast<const std::uint8_t*>(utf8), utf8max, &length, profile, &sbc);
+}
+
+static void RequireSbcRoundTrip(const std::uint8_t* profile, std::initializer_list<int> unassigned) {
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    for (int sbc = 1; sbc < 256; ++sbc) {
+        std::uint8_t utf8[4] = {};
+        std::uint32_t length = 7;
+        std::uint8_t back = 0;
+        if (std::find(unassigned.begin(), unassigned.end(), sbc) != unassigned.end()) {
+            Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), utf8, sizeof(utf8), &length) == unassignedCode && length == 0);
+            continue;
+        }
+        Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), utf8, sizeof(utf8), &length) == 0);
+        Require(sceCesUtf8ToSbc(utf8, length, &length, profile, &back) == 0 && back == sbc);
+    }
+}
+
+struct MeasuredUtf8 {
+    const char* bytes;
+    std::uint32_t available;
+    int result;
+    std::uint32_t length;
+};
+
+static void RequireMeasuredUtf8ToSbc(const std::uint8_t* profile) {
+    constexpr MeasuredUtf8 cases[] = {
+        {"\xE2\x41", 1, static_cast<int>(0x805C0011), 3},
+        {"\xE2\x41", 2, static_cast<int>(0x805C0014), 2},
+        {"\xE2\x41\xAC", 3, static_cast<int>(0x805C0014), 1},
+        {"\xE2\x82\x41", 3, static_cast<int>(0x805C0014), 2},
+        {"\xE2\x82", 2, static_cast<int>(0x805C0011), 3},
+        {"\xE2\xC0", 2, static_cast<int>(0x805C0014), 2},
+        {"\xF0\x41\x98", 3, static_cast<int>(0x805C0014), 2},
+        {"\xF0\x9F\x41", 3, static_cast<int>(0x805C0014), 3},
+        {"\xF0\x41\x98\x80", 4, static_cast<int>(0x805C0014), 1},
+        {"\xF0\x9F\x98\x41", 4, static_cast<int>(0x805C0014), 3},
+        {"\xF0\x9F\x98", 3, static_cast<int>(0x805C0011), 4},
+        {"\xC3\x41", 2, static_cast<int>(0x805C0014), 1},
+        {"\xC3", 1, static_cast<int>(0x805C0011), 2},
+        {"\x80", 1, static_cast<int>(0x805C0014), 0},
+        {"\xFE", 1, static_cast<int>(0x805C0014), 0},
+        {"\xFF", 1, static_cast<int>(0x805C0014), 0},
+        {"\xC0\x80", 2, static_cast<int>(0x805C0015), 2},
+        {"\xC1\xBF", 2, static_cast<int>(0x805C0015), 2},
+        {"\xE0\x80\x80", 3, static_cast<int>(0x805C0015), 3},
+        {"\xE0\x9F\xBF", 3, static_cast<int>(0x805C0015), 3},
+        {"\xED\xA0\x80", 3, static_cast<int>(0x805C0015), 3},
+        {"\xF0\x8F\xBF\xBF", 4, static_cast<int>(0x805C0015), 4},
+        {"\xF8\x80\x80\x80\x80", 5, static_cast<int>(0x805C0015), 5},
+        {"\xFC\x80\x80\x80\x80\x80", 6, static_cast<int>(0x805C0015), 6},
+        {"\xE0\xA0\x80", 3, static_cast<int>(0x805C0020), 3},
+        {"\xED\x9F\xBF", 3, static_cast<int>(0x805C0020), 3},
+        {"\xEF\xBF\xBF", 3, static_cast<int>(0x805C0020), 3},
+        {"\xF0\x90\x80\x80", 4, static_cast<int>(0x805C0020), 4},
+        {"\xF4\x90\x80\x80", 4, static_cast<int>(0x805C0020), 4},
+        {"\xF5\x80\x80\x80", 4, static_cast<int>(0x805C0020), 4},
+        {"\xF7\xBF\xBF\xBF", 4, static_cast<int>(0x805C0020), 4},
+        {"\xF8\x88\x80\x80\x80", 4, static_cast<int>(0x805C0011), 5},
+        {"\xF8\x88\x80\x80\x80", 5, static_cast<int>(0x805C0020), 5},
+        {"\xFB\xBF\xBF\xBF\xBF", 5, static_cast<int>(0x805C0020), 5},
+        {"\xFC\x84\x80", 3, static_cast<int>(0x805C0011), 6},
+        {"\xFC\x84\x80\x80\x80\x80", 6, static_cast<int>(0x805C0020), 6},
+        {"\xFD\xBF\xBF\xBF\xBF\xBF", 6, static_cast<int>(0x805C0020), 6},
+        {"\xC2\x80", 2, static_cast<int>(0x805C0020), 2},
+        {"\xC2\x81", 2, static_cast<int>(0x805C0020), 2},
+        {"\xC2\x8D", 2, static_cast<int>(0x805C0020), 2},
+        {"\xC2\xA0", 2, 0, 2},
+        {"\xC5\x92", 2, 0, 2},
+    };
+    for (const MeasuredUtf8& measured : cases) {
+        std::uint32_t length = 0xAAAAAAAA;
+        std::uint8_t sbc = 0xBB;
+        Require(sceCesUtf8ToSbc(reinterpret_cast<const std::uint8_t*>(measured.bytes), measured.available, &length, profile, &sbc) == measured.result);
+        Require(length == measured.length);
+        Require(measured.result != 0 ? sbc == 0 : sbc != 0);
+    }
 }
 
 static void RequireSbcCode(const std::uint8_t* profile, std::uint8_t sbc, std::uint32_t code) {
@@ -260,7 +337,6 @@ int main() {
     RequireSbcToUtf8(profile, 'A', "A");
     RequireSbcToUtf8(profile, 0x80, "\xE2\x82\xAC");
     RequireSbcToUtf8(profile, 0x9F, "\xC5\xB8");
-    RequireSbcToUtf8(profile, 0x81, "\xC2\x81");
     RequireSbcToUtf8(profile, 0xE9, "\xC3\xA9");
     RequireSbcToUtf8(profile, 0xFF, "\xC3\xBF");
 
@@ -268,29 +344,48 @@ int main() {
     RequireUtf8ToSbc(profile, "\xE2\x82\xAC", 0x80);
     RequireUtf8ToSbc(profile, "\xE2\x84\xA2", 0x99);
     RequireUtf8ToSbc(profile, "\xC3\xA9", 0xE9);
-    RequireUtf8ToSbc(profile, "\xC2\x8D", 0x8D);
-    for (int sbc = 1; sbc < 256; ++sbc) {
-        std::uint8_t utf8[4] = {};
-        std::uint32_t length = 0;
-        std::uint8_t back = 0;
-        Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), utf8, sizeof(utf8), &length) == 0);
-        Require(sceCesUtf8ToSbc(utf8, length, &length, profile, &back) == 0 && back == sbc);
-    }
+    RequireSbcRoundTrip(profile, {0x81, 0x8D, 0x8F, 0x90, 0x9D});
+    RequireMeasuredUtf8ToSbc(profile);
 
     std::uint8_t utf8[4] = {};
     std::uint32_t length = 0;
     std::uint8_t sbc = 0;
-    Require(sceCesSbcToUtf8(nullptr, 'A', utf8, sizeof(utf8), &length) == invalidParameter);
-    Require(sceCesSbcToUtf8(profile, 'A', nullptr, sizeof(utf8), &length) == invalidDstBuffer);
-    Require(sceCesSbcToUtf8(profile, 0x80, utf8, 2, &length) == dstBufferEnd);
-    Require(sceCesUtf8ToSbc(utf8, 1, &length, nullptr, &sbc) == invalidParameter);
-    Require(sceCesUtf8ToSbc(nullptr, 1, &length, profile, &sbc) == invalidSrcBuffer);
-    Require(sceCesUtf8ToSbc(utf8, 1, &length, profile, nullptr) == invalidDstBuffer);
-    Require(Utf8ToSbc(profile, "A", 0) == srcBufferEnd);
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
+    constexpr int illegalCode = static_cast<int>(0x805C0015);
+    length = 7;
+    Require(sceCesSbcToUtf8(nullptr, 'A', utf8, sizeof(utf8), &length) == invalidProfile && length == 0);
+    Require(sceCesSbcToUtf8(nullptr, 0x81, utf8, sizeof(utf8), &length) == invalidProfile && length == 0);
+    Require(sceCesSbcToUtf8(profile, 0x80, nullptr, sizeof(utf8), &length) == invalidDstBuffer && length == 3);
+    Require(sceCesSbcToUtf8(profile, 0x81, nullptr, sizeof(utf8), &length) == unassignedCode && length == 0);
+    Require(sceCesSbcToUtf8(profile, 0x81, utf8, 0, &length) == unassignedCode && length == 0);
+    utf8[0] = 0xBB;
+    Require(sceCesSbcToUtf8(profile, 0x80, utf8, 2, &length) == dstBufferEnd && length == 3 && utf8[0] == 0xBB);
+    Require(sceCesSbcToUtf8(profile, 'A', utf8, 0, &length) == dstBufferEnd && length == 1 && utf8[0] == 0xBB);
+    Require(sceCesSbcToUtf8(profile, 0xE9, utf8, 1, nullptr) == dstBufferEnd);
+    const auto* euro = reinterpret_cast<const std::uint8_t*>("\xE2\x82\xAC");
+    const auto* han = reinterpret_cast<const std::uint8_t*>("\xE4\xB8\x80");
+    const auto* letter = reinterpret_cast<const std::uint8_t*>("A");
+    sbc = 0xBB;
+    Require(sceCesUtf8ToSbc(letter, 1, &length, nullptr, &sbc) == invalidProfile && length == 1 && sbc == 0);
+    Require(sceCesUtf8ToSbc(letter, 1, &length, nullptr, nullptr) == invalidProfile && length == 1);
+    Require(sceCesUtf8ToSbc(euro, 3, &length, nullptr, &sbc) == invalidProfile && length == 3);
+    Require(sceCesUtf8ToSbc(euro, 2, &length, nullptr, &sbc) == srcBufferEnd && length == 3);
+    Require(sceCesUtf8ToSbc(reinterpret_cast<const std::uint8_t*>("\xFF"), 1, &length, nullptr, &sbc) == invalidEncode && length == 0);
+    sbc = 0xBB;
+    Require(sceCesUtf8ToSbc(nullptr, 1, &length, nullptr, &sbc) == invalidSrcBuffer && length == 0 && sbc == 0);
+    Require(sceCesUtf8ToSbc(nullptr, 1, &length, profile, nullptr) == invalidSrcBuffer && length == 0);
+    sbc = 0xBB;
+    Require(sceCesUtf8ToSbc(letter, 0, &length, profile, &sbc) == invalidSrcBuffer && length == 0 && sbc == 0);
+    Require(sceCesUtf8ToSbc(euro, 3, &length, profile, nullptr) == invalidDstBuffer && length == 3);
+    Require(sceCesUtf8ToSbc(han, 3, &length, profile, nullptr) == unassignedCode && length == 3);
+    sbc = 0xBB;
+    Require(sceCesUtf8ToSbc(han, 3, &length, profile, &sbc) == unassignedCode && length == 3 && sbc == 0);
+    Require(sceCesUtf8ToSbc(euro, 3, nullptr, profile, &sbc) == 0 && sbc == 0x80);
+    Require(Utf8ToSbc(profile, "A", 0) == invalidSrcBuffer);
     Require(Utf8ToSbc(profile, "\xE2\x82\xAC", 2) == srcBufferEnd);
     Require(Utf8ToSbc(profile, "\x80", 1) == invalidEncode);
-    Require(Utf8ToSbc(profile, "\xC0\xAF", 2) == invalidEncode);
-    Require(Utf8ToSbc(profile, "\xED\xA0\x80", 3) == invalidEncode);
+    Require(Utf8ToSbc(profile, "\xC0\xAF", 2) == illegalCode);
+    Require(Utf8ToSbc(profile, "\xED\xA0\x80", 3) == illegalCode);
     Require(Utf8ToSbc(profile, "\xE3\x81\x82", 3) == unassignedCode);
     Require(Utf8ToSbc(profile, "\xF0\x9F\x98\x80", 4) == unassignedCode);
 
@@ -304,13 +399,7 @@ int main() {
     RequireSbcToUtf8(cyrillic, 0xB9, "\xE2\x84\x96");
     RequireUtf8ToSbc(cyrillic, "\xD0\x9F", 0xCF);
     RequireUtf8ToSbc(cyrillic, "\xD1\x91", 0xB8);
-    for (int sbc = 1; sbc < 256; ++sbc) {
-        std::uint8_t cp[4] = {};
-        std::uint32_t cpLength = 0;
-        std::uint8_t back = 0;
-        Require(sceCesSbcToUtf8(cyrillic, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
-        Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, cyrillic, &back) == 0 && back == sbc);
-    }
+    RequireSbcRoundTrip(cyrillic, {0x98});
     Require(Utf8ToSbc(cyrillic, "\xC3\xA9", 2) == unassignedCode);
     Require(Utf8ToSbc(profile, "\xD0\x90", 2) == unassignedCode);
 
@@ -318,7 +407,6 @@ int main() {
     Require(latin2 != nullptr && latin2 == sceCesRefersUcsProfileCp1250() && latin2 != profile && latin2 != cyrillic);
     RequireSbcToUtf8(latin2, 'A', "A");
     RequireSbcToUtf8(latin2, 0x80, "\xE2\x82\xAC");
-    RequireSbcToUtf8(latin2, 0x81, "\xC2\x81");
     RequireSbcToUtf8(latin2, 0x8A, "\xC5\xA0");
     RequireSbcToUtf8(latin2, 0xA3, "\xC5\x81");
     RequireSbcToUtf8(latin2, 0xA5, "\xC4\x84");
@@ -328,13 +416,7 @@ int main() {
     RequireUtf8ToSbc(latin2, "\xC5\xA0", 0x8A);
     RequireUtf8ToSbc(latin2, "\xC5\x81", 0xA3);
     RequireUtf8ToSbc(latin2, "\xC3\xA9", 0xE9);
-    for (int sbc = 1; sbc < 256; ++sbc) {
-        std::uint8_t cp[4] = {};
-        std::uint32_t cpLength = 0;
-        std::uint8_t back = 0;
-        Require(sceCesSbcToUtf8(latin2, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
-        Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, latin2, &back) == 0 && back == sbc);
-    }
+    RequireSbcRoundTrip(latin2, {0x81, 0x83, 0x88, 0x90, 0x98});
     Require(Utf8ToSbc(latin2, "\xD0\x90", 2) == unassignedCode);
     char latin2Context[256] = {};
     Require(sceCesMbcsUcsContextInit(latin2Context, latin2) == 0);
