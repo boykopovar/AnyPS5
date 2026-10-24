@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -32,6 +33,8 @@ int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 int APS5_VABI close_nid_postfix(int);
+int APS5_VABI dup_nid_postfix(int);
+int APS5_VABI dup2_nid_postfix(int, int);
 int APS5_VABI shutdown_nid_postfix(int, int);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
@@ -128,6 +131,26 @@ static void PollsFilesAndDirectories(int socket) {
     Require(mixed[0].revents == 0 && mixed[1].revents == Out && mixed[2].revents == ReadNormal);
     Require(close_nid_postfix(directory) == 0 && close_nid_postfix(file) == 0);
     Require(rmdir_nid_postfix(directoryPath.c_str()) == 0 && unlink_nid_postfix(filePath.c_str()) == 0);
+}
+
+static void StandardDescriptorFile(int descriptor) {
+    const int saved = dup_nid_postfix(descriptor);
+    const std::string path = "anyps5-poll-input-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(file >= 0);
+    Require(dup2_nid_postfix(file, descriptor) == descriptor);
+    if (file != descriptor) Require(close_nid_postfix(file) == 0);
+    PollDescriptor input{descriptor, static_cast<short>(In | Out | ReadNormal | Priority), -1};
+    const int ready = poll_nid_postfix(&input, 1, 0);
+    if (ready != 1) std::fprintf(stderr, "poll on a regular file at descriptor %d returned %d instead of 1\n", descriptor, ready);
+    Require(ready == 1 && input.revents == (In | Out | ReadNormal));
+    input.events = Priority;
+    Require(poll_nid_postfix(&input, 1, 0) == 0 && input.revents == 0);
+    if (saved >= 0) {
+        Require(dup2_nid_postfix(saved, descriptor) == descriptor);
+        Require(close_nid_postfix(saved) == 0);
+    } else Require(close_nid_postfix(descriptor) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
 }
 
 static void TestPipes(int socket) {
@@ -288,6 +311,7 @@ static void PollsAStreamWhosePeerClosed() {
 }
 
 int main() {
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
     const int listener = socket_nid_postfix(2, 1, 0);
