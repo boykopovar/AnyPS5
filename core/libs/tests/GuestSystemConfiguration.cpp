@@ -733,6 +733,10 @@ static void CheckNameToMib() {
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
+        {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+        {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+        {"kern.stackprot", {1, 2147483151}, 2},
+        {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
         {"kern.proc.pathname", {1, 14, 12}, 3},
     };
     *__error_nid_postfix() = 13;

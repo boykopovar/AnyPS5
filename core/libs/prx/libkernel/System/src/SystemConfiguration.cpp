@@ -502,6 +502,10 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.maxproc", {1, 6}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
         {"kern.ps_strings", {1, 32}, 2},
+        {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+        {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+        {"kern.stackprot", {1, 2147483151}, 2},
+        {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
         {"kern.rng_pseudo", {1, 50}, 2},
     };
     constexpr std::size_t MaximumPath = 1024;

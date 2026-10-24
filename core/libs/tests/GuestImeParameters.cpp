@@ -8,6 +8,7 @@ extern "C" {
 void APS5_VABI sceImeParamInit(Param* param);
 int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height);
 int APS5_VABI sceImeClose_nid_postfix(void);
+int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(bool enabled);
 int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form);
 int APS5_VABI sceImeSetCaret(const Caret* caret);
 int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
@@ -154,10 +155,16 @@ static void CheckKeyboardResourceIds() {
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
 }
 
+static void CheckConsecutiveClauseConversion() {
+    Require(sceImeSetConsecutiveClauseConversionEnabled(true) == 0, "enable must succeed");
+    Require(sceImeSetConsecutiveClauseConversionEnabled(false) == 0, "disable must succeed");
+}
+
 int main() {
     CheckInitialization();
     CheckPanelSizes();
     CheckErrors();
     CheckClosedPanel();
     CheckKeyboardResourceIds();
+    CheckConsecutiveClauseConversion();
 }
