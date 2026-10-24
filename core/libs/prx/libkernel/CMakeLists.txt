@@ -359,7 +359,8 @@ if(BUILD_TESTING)
         target_link_libraries(guest_host_standard_error_windows_tests PRIVATE libkernel libc)
         configure_windows_unwind(guest_host_standard_error_windows_tests)
         add_test(NAME guest_host_standard_error_windows COMMAND guest_host_standard_error_windows_tests)
-        set_tests_properties(guest_host_standard_error_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_host_standard_buffering_windows COMMAND guest_host_standard_error_windows_tests --buffering)
+        set_tests_properties(guest_host_standard_error_windows guest_host_standard_buffering_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_truncate_tests ${LIBS_INCLUDE_DIR}/tests/GuestTruncate.cpp)

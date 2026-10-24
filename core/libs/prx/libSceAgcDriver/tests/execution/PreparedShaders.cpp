@@ -437,6 +437,15 @@ void SharedCodeHeaders() {
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
     AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    const auto snapshots = [&] {
+        const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+        Require(registry != nullptr, "shared-code headers published no shader registry");
+        auto pair = std::pair{AgcDriver::DriverDetail::RegisteredHeader(*registry, &vertex.shader), AgcDriver::DriverDetail::RegisteredHeader(*registry, &mesh.shader)};
+        Require(pair.first != nullptr && pair.second != nullptr && pair.first != pair.second, "the shared-code headers were not registered apart");
+        return pair;
+    };
+    const auto [vertexSnapshot, meshSnapshot] = snapshots();
+    Require(vertexSnapshot->registeredState != meshSnapshot->registeredState, "a header with other registers shared another header's registered state");
     Shader copy = vertex.shader;
     copy.user_data = nullptr;
     AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive);
@@ -461,6 +470,8 @@ void SharedCodeHeaders() {
     mesh.shader.cx_registers = mesh.context.data();
     mesh.shader.num_cx_registers = mesh.context.size();
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    const auto [sameVertex, sameMesh] = snapshots();
+    Require(sameVertex->registeredState == sameMesh->registeredState && sameMesh->registeredState->context.at(0x2d5) == 0x2000u, "two headers with the same code and registers decoded their registered state twice");
     AgcDriverResolveShaderAbi_nid_postfix(&mesh.shader, {}, primitive);
     AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "same-type registered header draw failed");

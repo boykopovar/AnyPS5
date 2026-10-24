@@ -708,7 +708,33 @@ double APS5_VABI fmod_nid_postfix(double x, double y) {
 }
 float APS5_VABI roundf_nid_postfix(float x) { return std::round(x); }
 double APS5_VABI round_nid_postfix(double x) { return std::round(x); }
-float APS5_VABI cbrtf_nid_postfix(float x) { return std::cbrt(x); }
+float APS5_VABI cbrtf_nid_postfix(float x) {
+    const std::uint32_t B1 = 709958130;
+    const std::uint32_t B2 = 642849266;
+    std::uint32_t hx = std::bit_cast<std::uint32_t>(x);
+    const std::uint32_t sign = hx & 0x80000000u;
+    hx ^= sign;
+    if (hx >= 0x7f800000u) {
+        return x + x;
+    }
+    float t;
+    if (hx < 0x00800000u) {
+        if (hx == 0) {
+            return x;
+        }
+        t = 0x1p24f * x;
+        const std::uint32_t high = std::bit_cast<std::uint32_t>(t);
+        t = std::bit_cast<float>(sign | ((high & 0x7fffffffu) / 3 + B2));
+    } else {
+        t = std::bit_cast<float>(sign | (hx / 3 + B1));
+    }
+    double T = t;
+    double r = T * T * T;
+    T = T * (static_cast<double>(x) + x + r) / (x + r + r);
+    r = T * T * T;
+    T = T * (static_cast<double>(x) + x + r) / (x + r + r);
+    return static_cast<float>(T);
+}
 float APS5_VABI remainderf_nid_postfix(float x, float y) { return std::remainder(x, y); }
 float APS5_VABI nextafterf_nid_postfix(float x, float y) { return std::nextafter(x, y); }
 double APS5_VABI nextafter_nid_postfix(double x, double y) { return std::nextafter(x, y); }

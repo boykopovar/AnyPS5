@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -487,6 +488,43 @@ static void CheckInjectedState(const std::filesystem::path& path) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
+    PadData drained[64]{};
+    Pad::Read(drained, 64);
+    PadInputState physical;
+    physical.buttons = 0x2000;
+    PadPublishInput_nid_postfix(physical);
+    const auto before = Pad::ReadState();
+    std::ofstream(path) << "5 16384 300\n";
+    PadData pressed{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        pressed = Pad::ReadState();
+        if ((pressed.buttons & 0x4000) != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require(pressed.buttons == 0x6000 && pressed.timestamp > before.timestamp);
+    PadData queued{};
+    Require(Pad::Read(&queued, 1) == 1);
+    Require(queued.buttons == pressed.buttons);
+    if (queued.timestamp < pressed.timestamp) {
+        std::fputs("queued input predates its injected button press\n", stderr);
+        std::abort();
+    }
+    physical.sticks[0] = 130;
+    PadPublishInput_nid_postfix(physical);
+    std::this_thread::sleep_for(std::chrono::milliseconds(310));
+    const auto released = Pad::ReadState();
+    Require(released.buttons == 0x2000 && released.timestamp > pressed.timestamp);
+    Require(Pad::Read(&queued, 1) == 1);
+    Require(queued.buttons == released.buttons && queued.left_stick_x == 130);
+    if (queued.timestamp < released.timestamp) {
+        std::fputs("queued input predates its injected button release\n", stderr);
+        std::abort();
+    }
+    PadPublishInput_nid_postfix(PadInputState{});
+}
+
 int main() {
     CheckInputCommands();
     std::uint32_t accessibilityState = 7;
@@ -569,6 +607,7 @@ int main() {
     CheckTrackerDevices(handle);
     CheckAccessibilityControllerState(handle);
     CheckInjectedState(commandPath);
+    CheckInjectedQueueTimes(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK);
     Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);

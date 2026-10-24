@@ -2304,6 +2304,18 @@ void Driver::RegisterShader(const Shader* shader) {
         localDevice = device;
     }
     snapshot.registeredState = std::make_shared<const RegisteredShaderState>(DecodeRegisteredState(snapshot));
+    {
+        std::lock_guard lock(mutex);
+        if (shaders != nullptr) {
+            if (const auto found = shaders->find(snapshot.codeAddress); found != shaders->end()) {
+                for (const auto& current : found->second) {
+                    if (current->registeredState == nullptr || current->type != snapshot.type || current->code != snapshot.code || *current->registeredState != *snapshot.registeredState) continue;
+                    snapshot.registeredState = current->registeredState;
+                    break;
+                }
+            }
+        }
+    }
     QueueState registered{};
     registered.shader = snapshot.registeredState->shader;
     registered.context = snapshot.registeredState->context;
