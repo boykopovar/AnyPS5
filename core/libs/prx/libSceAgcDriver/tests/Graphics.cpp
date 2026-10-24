@@ -6275,6 +6275,32 @@ void resourceTests() {
     expectSingleAccepted(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {false}; }), "a read-only strided V# whose last record runs 8 bytes into the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {true}; }), "aliases the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(60); }), "aliases the render target");
+    {
+        mock = MockVulkan{};
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::Recorder recorder(context);
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto strided = changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); });
+        strided.bufferWritten = {false};
+        vertex.bindings.push_back(strided);
+        AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
+        const auto movedFor = [&](std::uint32_t past) {
+            auto drawn = vertex;
+            drawn.bindings[0].guestDescriptor = stridedBefore(past);
+            const std::array<AgcDriver::Graphics::CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &drawn, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+            return resources.MovedReadOnlyBuffers(stages, recorder, &state.color);
+        };
+        const auto listed = [](const auto& moved) { return !moved.has_value() ? std::string("refused") : std::to_string(moved->size()) + " moved" + (moved->empty() ? std::string() : ", the first " + std::to_string(moved->front().size) + " bytes"); };
+        auto moved = movedFor(8);
+        Require(moved.has_value() && moved->empty(), "a cached build whose strided buffer runs 8 bytes into the render target took it as moved for the same words and target (" + listed(moved) + ")");
+        moved = movedFor(4);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 236u && moved->front().size == 236, "a strided buffer that moved to run 4 bytes into the render target was not listed at its size up to the target (" + listed(moved) + ")");
+        moved = movedFor(60);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 180u && moved->front().size == 240, "a strided buffer that moved to run a whole stride into the render target was cut (" + listed(moved) + ")");
+        recorder.Sync();
+    }
+    Require(mock.live == 0, "the strided buffer's moved check leaked Vulkan objects");
     expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
     expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");
     expectSingleFailure(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "per-stage limits");
