@@ -1,24 +1,52 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cerrno>
+#include <climits>
+#include <cstdlib>
+#include <stdexcept>
 #include <string_view>
 
 extern "C" {
 
-char* APS5_VABI basename_nid_postfix(const char* path) {
-    thread_local char buffer[1024];
+long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, long long maximum, const char** error) {
+    const int savedError = errno;
+    const auto fail = [error](const char* message, int number) -> long long {
+        if (error) *error = message;
+        errno = number;
+        return 0;
+    };
+    if (minimum > maximum) return fail("invalid", 22);
+    errno = 0;
+    char* end = nullptr;
+    const long long value = std::strtoll(text, &end, 10);
+    if (errno == EINVAL || end == text || *end != '\0') return fail("invalid", 22);
+    if ((value == LLONG_MIN && errno == ERANGE) || value < minimum) return fail("too small", 34);
+    if ((value == LLONG_MAX && errno == ERANGE) || value > maximum) return fail("too large", 34);
+    if (error) *error = nullptr;
+    errno = savedError;
+    return value;
+}
+
+char* APS5_VABI basename_r_nid_postfix(const char* path, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("basename_r: null buffer");
     std::string_view name = path && *path ? path : ".";
     while (name.size() > 1 && name.back() == '/') name.remove_suffix(1);
     if (name != "/") {
         const auto separator = name.find_last_of('/');
         if (separator != std::string_view::npos) name.remove_prefix(separator + 1);
     }
-    if (name.size() >= sizeof(buffer)) { errno = 63; return nullptr; }
+    if (name.size() >= 1024) { errno = 63; return nullptr; }
     std::memcpy(buffer, name.data(), name.size());
     buffer[name.size()] = '\0';
     return buffer;
+}
+
+char* APS5_VABI basename_nid_postfix(const char* path) {
+    thread_local char buffer[1024];
+    return basename_r_nid_postfix(path, buffer);
 }
 
 char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address) {
@@ -141,7 +169,6 @@ char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters) {
     thread_local char* state = nullptr;
     return strtok_r_nid_postfix(text, delimiters, &state);
 }
-
 
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
     std::uint8_t parts[3];

@@ -193,6 +193,88 @@ alignas(256) constexpr std::array<std::uint32_t, 30> OtherVgprCode{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 30> SadCode{
+    0x7e020280, 0x7e040280,
+    0xd55d0005, 0x04150010,
+    0xd70f7d08, 0x00021011,
+    0xf4080506, 0xfa000000,
+    0xf4080606, 0xfa000010,
+    0x02060b08,
+    0xbf8cc07f,
+    0xe0002000, 0x80050a03,
+    0xe0002000, 0x80060b03,
+    0xbf8c3f70,
+    0x4a08170a, 0x34080884,
+    0x7e180301, 0x7e1a0302, 0x7e1c0305, 0x7e1e0308,
+    0xe0781000, 0x80020c04,
+    0x7e200280, 0x7e2202f2,
+    0xf80008cf, 0x11101010,
+    0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 30> ExecAllCode{
+    0xbefe04c1, 0x7e040280,
+    0xd70f7d05, 0x00020a10,
+    0xd70f7d08, 0x00021011,
+    0xf4080506, 0xfa000000,
+    0xf4080606, 0xfa000010,
+    0x02060b08,
+    0xbf8cc07f,
+    0xe0002000, 0x80050a03,
+    0xe0002000, 0x80060b03,
+    0xbf8c3f70,
+    0x4a08170a, 0x34080884,
+    0x7e180301, 0x7e1a0302, 0x7e1c0305, 0x7e1e0308,
+    0xe0781000, 0x80020c04,
+    0x7e200280, 0x7e2202f2,
+    0xf80008cf, 0x11101010,
+    0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 34> ReloadCode{
+    0x7e020280, 0x7e040280,
+    0xd70f7d05, 0x00020a10,
+    0xd70f7d08, 0x00021011,
+    0xf4080506, 0xfa000000,
+    0xf4080606, 0xfa000010,
+    0x02060b08,
+    0xbf8cc07f,
+    0xe0002000, 0x80050a03,
+    0xe0002000, 0x80060b03,
+    0xbf8c3f70,
+    0x4a08170a, 0x34080884,
+    0x7e180301, 0x7e1a0302, 0x7e1c0305, 0x7e1e0308,
+    0xe0781000, 0x80020c04,
+    0x7e200280, 0x7e2202f2,
+    0xf80008cf, 0x11101010,
+    0xf4040407, 0xfa000000,
+    0xbf8cc07f,
+    0x80121110,
+    0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 33> SkippedReloadCode{
+    0x7e020280, 0x7e040280,
+    0xd70f7d05, 0x00020a10,
+    0xd70f7d08, 0x00021011,
+    0xf4080506, 0xfa000000,
+    0xf4080606, 0xfa000010,
+    0x02060b08,
+    0xbf8cc07f,
+    0xe0002000, 0x80050a03,
+    0xe0002000, 0x80060b03,
+    0xbf8c3f70,
+    0x4a08170a, 0x34080884,
+    0x7e180301, 0x7e1a0302, 0x7e1c0305, 0x7e1e0308,
+    0xe0781000, 0x80020c04,
+    0x7e200280, 0x7e2202f2,
+    0xf80008cf, 0x11101010,
+    0xbf840001,
+    0xbe900380,
+    0x80121110,
+    0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 5> PixelCode{0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
 
 constexpr std::uint32_t Width = 64;
@@ -372,7 +454,7 @@ std::string Analysis(Fixture& fixture) {
         bool vertex;
         bool instance;
     };
-    const std::array<Case, 8> cases{{
+    const std::array<Case, 12> cases{{
         {"a program that copies v5 and v8 before its fetch adds", VertexCode, true, true},
         {"a program whose fetch adds are the only readers of v5, v8, s16 and s17", PostAddCode, false, false},
         {"a program that reads the instance add's carry", CarryCode, false, true},
@@ -381,6 +463,10 @@ std::string Analysis(Fixture& fixture) {
         {"a program that writes EXEC before its fetch adds", ExecCode, true, true},
         {"a program that writes another add's carry to s17 before its fetch adds", CarryWriteCode, false, true},
         {"a program whose s16 add writes v0, not v5", OtherVgprCode, true, false},
+        {"a program whose vertex add is an unclamped v_sad_u32", SadCode, false, false},
+        {"a program that sets every EXEC bit with s_mov_b64 before its fetch adds", ExecAllCode, false, false},
+        {"a program that reloads s16 and s17 with s_load_dwordx2 from s[14:15] after its fetch adds and reads them", ReloadCode, false, false},
+        {"a program that reads s16 and s17 after a branch that can skip the write of s16", SkippedReloadCode, true, true},
     }};
     const auto userData = fixture.UserData(0x51u, 0x62u);
     std::string failures;

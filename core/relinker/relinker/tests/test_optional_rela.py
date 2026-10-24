@@ -8,12 +8,14 @@ import subprocess
 import sys
 import tempfile
 
+from signal_run import run_without_core_dump
 from test_dynamic_segment import fixture as base_fixture
 from test_linux_dynamic_strings import dynamic_strings, file_offset
 from test_linux_load_alignment import loads
 from test_windows_import_modules import provider
 
 
+DEFAULT_BASE = 0x400000
 SCE_TAGS = {2: 0x6100002D, 3: 0x61000027, 5: 0x61000035, 6: 0x61000039,
             7: 0x6100002F, 8: 0x61000031, 9: 0x61000033, 10: 0x61000037,
             11: 0x6100003B, 20: 0x6100002B, 23: 0x61000029}
@@ -101,14 +103,14 @@ def main():
                         if relative or plt:
                             offset = file_offset(data, loads(data), dynamic[23 if plt else 7])
                             destination, info, addend = struct.unpack_from("<QQq", data, offset)
-                            assert destination == 0x300 and info & 0xFFFFFFFF == (7 if plt else 8), case.name
-                            assert addend == (0 if plt else 0x210), case.name
+                            assert destination == 0x300 + DEFAULT_BASE and info & 0xFFFFFFFF == (7 if plt else 8), case.name
+                            assert addend == (0 if plt else 0x210 + DEFAULT_BASE), case.name
                     if target == "windows" and os.name == "nt":
                         run = subprocess.run([str(output)], capture_output=True, timeout=20)
                         assert run.returncode == 42, (case.name, run.returncode, run.stderr)
                     if target == "linux" and plt and sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64"):
                         output.chmod(0o755)
-                        run = subprocess.run([str(output)], capture_output=True, timeout=20)
+                        run = run_without_core_dump([str(output)], capture_output=True, timeout=20)
                         assert run.returncode == -signal.SIGTRAP, (case.name, run.returncode, run.stderr)
 
             invalid = (("missing-address", ((8, 24), (9, 24)), (), "DT_RELA"),

@@ -358,6 +358,15 @@ bool WindowsImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& c
     }
     return false;
 }
+#else
+bool ImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& context) {
+    if (context.hostImportAlignment == 0) return true;
+    const auto probe = AgcDriver::Graphics::ProbeImportWriteProtection(context);
+    if (probe.failure == nullptr && probe.writtenAfterSubmit == 0) return true;
+    if (probe.failure != nullptr) std::printf("skipped, the device reports no host import probe result: it failed at %s (%d)\n", probe.failure, static_cast<int>(probe.result));
+    else std::printf("skipped, the device reports %u of %u host-imported pages written after a GPU read, so a watched imported table cannot be vouched for\n", probe.writtenAfterSubmit, probe.pages);
+    return false;
+}
 #endif
 
 }
@@ -371,6 +380,8 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
             if (argc == 2 && std::string(argv[1]) == "--vouched-lookups" &&
                 !WindowsImportsStayWatchedThroughReads(device->graphicsContext())) return VulkanTestSkipped;
+#else
+            if (argc == 2 && std::string(argv[1]) == "--vouched-lookups" && !ImportsStayWatchedThroughReads(device->graphicsContext())) return VulkanTestSkipped;
 #endif
         }
         GuestBlock block;

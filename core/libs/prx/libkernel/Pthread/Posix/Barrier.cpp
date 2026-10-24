@@ -1,4 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <climits>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -6,24 +8,11 @@
 #include <stdexcept>
 #include <string>
 
-struct PthreadBarrierPrivate {
-    std::mutex mutex;
-    std::condition_variable changed;
-    unsigned count;
-    unsigned arrived = 0;
-    unsigned active = 0;
-    std::uint64_t generation = 0;
-};
-
 namespace {
 
 constexpr int PROCESS_PRIVATE = 0;
 
 }
-
-struct PthreadBarrierattrPrivate {
-    int pshared = PROCESS_PRIVATE;
-};
 
 extern "C" {
 
@@ -60,7 +49,7 @@ int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPriva
 
 int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
     (void)attr;
-    if (!barrier || count == 0) return 22;
+    if (!barrier || count == 0 || count > INT_MAX) return 22;
     try {
         auto* value = new PthreadBarrierPrivate;
         value->count = count;

@@ -15,7 +15,7 @@ def main():
         work = Path(directory) / "title space \u00e9"
         work.mkdir()
 
-        def convert(name, image, expected, flags, module=None, extra=False):
+        def convert(name, image, expected, flags, module=None, extra=False, module_name="broken \u00e9.prx"):
             case = work / name
             case.mkdir()
             source = case / "eboot.bin"
@@ -25,7 +25,7 @@ def main():
             if module is not None:
                 modules = case / "sce_module"
                 modules.mkdir()
-                offending = modules / "broken \u00e9.prx"
+                offending = modules / module_name
                 offending.write_bytes(module)
                 options = ["--sce-module-path", str(case)]
             elif extra:
@@ -71,9 +71,12 @@ def main():
             for name, image, message in cases:
                 convert(f"{index}-{name}", image, message, flags)
             convert(f"{index}-extra", cases[0][1], cases[0][2], flags, extra=True)
+            if "--windows" in flags:
+                convert(f"{index}-module-name", None, "Unsupported Windows guest filename", flags, module=guest_fixture(PLAIN_SITE))
             module = guest_fixture(PLAIN_SITE)
             struct.pack_into("<QQ", module, 176 + 32, 17, 17)
             convert(f"{index}-module", None, "Missing or invalid ELF load/dynamic segments", flags, module=module)
+            convert(f"{index}-module-syscall", None, "Forbidden syscall instruction", flags, module=guest_fixture(b"\x0f\x05" + b"\x90" * 4), module_name="broken.prx")
     if failures:
         raise AssertionError(failures)
     print("Conversion diagnostics tests passed")

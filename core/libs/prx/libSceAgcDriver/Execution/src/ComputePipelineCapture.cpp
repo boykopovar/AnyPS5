@@ -296,8 +296,13 @@ std::filesystem::path ComputePipelineCapture::Write(const std::filesystem::path&
     CheckCaptureIo(error, "cannot enumerate capture directory");
     while (iterator != std::filesystem::directory_iterator{}) {
         const auto& entry = *iterator;
-        RequireCaptureCapacity(++count < 128, "capture directory reached 128 entries");
         const auto entryStatus = CaptureStatus(entry.path());
+        if (std::filesystem::is_regular_file(entryStatus) && entry.path().filename() == ".DS_Store") {
+            iterator.increment(error);
+            CheckCaptureIo(error, "cannot advance capture directory");
+            continue;
+        }
+        RequireCaptureCapacity(++count < 128, "capture directory reached 128 entries");
         RequireCapture(std::filesystem::is_directory(entryStatus) && !std::filesystem::is_symlink(entryStatus), "capture directory contains an unexpected entry");
         const auto capture = entry.path() / "capture.aps5cp";
         const auto captureStatus = CaptureStatus(capture);

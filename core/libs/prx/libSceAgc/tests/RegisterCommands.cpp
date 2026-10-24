@@ -1,36 +1,12 @@
+#include "prx/libSceAgc/Patch/include/IndirectRegisters.hpp"
+#include "prx/libSceAgc/DcbState/include/Registers.hpp"
+#include "prx/libSceAgc/Cb/include/Registers.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbSetCfRegisterDirect(CommandBuffer*, ShaderRegister);
-std::uint32_t* APS5_VABI sceAgcDcbSetCfRegisterRangeDirect(CommandBuffer*, std::uint32_t, const std::uint32_t*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcDcbSetCxRegisterDirect(CommandBuffer*, ShaderRegister);
-std::uint32_t* APS5_VABI sceAgcDcbSetShRegisterDirect(CommandBuffer*, ShaderRegister);
-std::uint32_t* APS5_VABI sceAgcDcbSetUcRegisterDirect(CommandBuffer*, ShaderRegister);
-std::uint32_t APS5_VABI sceAgcDcbSetCxRegisterDirectGetSize();
-std::uint32_t APS5_VABI sceAgcDcbSetShRegisterDirectGetSize();
-std::uint32_t APS5_VABI sceAgcDcbSetUcRegisterDirectGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbSetCxRegistersIndirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcDcbSetShRegistersIndirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcDcbSetUcRegistersIndirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetCxRegistersIndirectGetSize(std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetShRegistersIndirectGetSize(std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetUcRegistersIndirectGetSize(std::uint32_t);
-int APS5_VABI sceAgcSetCxRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceAgcSetShRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceAgcSetUcRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceAgcSetCxRegIndirectPatchSetAddress(std::uint32_t*, const volatile ShaderRegister*);
-int APS5_VABI sceAgcSetShRegIndirectPatchSetAddress(std::uint32_t*, const volatile ShaderRegister*);
-int APS5_VABI sceAgcSetUcRegIndirectPatchSetAddress(std::uint32_t*, const volatile ShaderRegister*);
-std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcCbSetUcRegistersDirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcCbSetShRegistersDirectGetSize(std::uint32_t);
-std::uint32_t APS5_VABI sceAgcCbSetUcRegistersDirectGetSize(std::uint32_t);
-}
 
 namespace {
 
@@ -92,9 +68,35 @@ void testConfig() {
     expectFailure([&] { sceAgcDcbSetCfRegisterDirect(nullptr, {0, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, values.data(), 0); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0xffffu, values.data(), 2); });
-    const auto* misaligned = reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const unsigned char*>(values.data()) + 1);
-    expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, misaligned, 1); });
     check(storage.words == before && storage.buffer.cursor_up == reserved + 4, "invalid config register write modified buffer");
+}
+
+void testRangeFromAnyByte() {
+    const std::array writers{sceAgcCbSetShRegisterRangeDirect, sceAgcCbSetUcRegisterRangeDirect, sceAgcDcbSetCfRegisterRangeDirect};
+    const std::array headers{0xc0047600u, 0xc0047900u, 0xc0046800u};
+    alignas(16) std::array<unsigned char, 32> bytes{};
+    for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<unsigned char>(0x10u + i);
+    struct Case {
+        std::size_t offset;
+        std::array<std::uint32_t, 4> values;
+    };
+    const std::array cases{
+        Case{1, {0x14131211u, 0x18171615u, 0x1c1b1a19u, 0x201f1e1du}},
+        Case{2, {0x15141312u, 0x19181716u, 0x1d1c1b1au, 0x21201f1eu}},
+        Case{3, {0x16151413u, 0x1a191817u, 0x1e1d1c1bu, 0x2221201fu}},
+        Case{13, {0x201f1e1du, 0x24232221u, 0x28272625u, 0x2c2b2a29u}},
+    };
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (const auto& entry : cases) {
+            Storage storage;
+            storage.words.fill(0xabcdef01u);
+            const auto* values = reinterpret_cast<const std::uint32_t*>(bytes.data() + entry.offset);
+            auto* packet = writers[i](&storage.buffer, 0x40u, values, 4);
+            check(packet == storage.words.data() && storage.buffer.cursor_up == packet + 6, "unaligned register range allocation mismatch");
+            check(packet[0] == headers[i] && packet[1] == 0x40u && std::equal(entry.values.begin(), entry.values.end(), packet + 2), "unaligned register values were not read byte for byte");
+            check(packet[6] == 0xabcdef01u, "unaligned register range overwrote the following word");
+        }
+    }
 }
 
 void testIndirect() {
@@ -210,6 +212,7 @@ int main() {
     try {
         testDirect();
         testConfig();
+        testRangeFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
         testDirectList();

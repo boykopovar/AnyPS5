@@ -1,9 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -29,9 +31,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 
 static_assert(sizeof(Packet) == 16);
 static_assert(offsetof(Packet, addr) == 0);
@@ -573,6 +572,49 @@ void testCopyIntoHostMemory() {
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
 
+void testSmallCopyBehindPendingSource() {
+    alignas(64) static volatile std::uint32_t copied = 0, settledCopied = 0, hostCopied = 0;
+    constexpr std::size_t words = 32768;
+    constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
+    constexpr std::size_t smallWords = 1024;
+    constexpr auto smallBytes = static_cast<std::uint32_t>(smallWords * 4);
+    auto* produced = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, smallBytes));
+    for (std::size_t i = 0; i < words; ++i) {
+        produced[i] = 0xc3000000u | static_cast<std::uint32_t>(i);
+        source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    }
+    std::fill(destination, destination + smallWords, 0u);
+    const auto before = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(destination, source, smallBytes), writeData(&copied, 1)));
+    waitFor(&copied, 1, "the label after a small copy behind a pending source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy did not see the GPU copy into its source before it");
+    if (std::getenv("APS5_COPY_SYNC") != nullptr) check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy that has to wait for a completion store over its source went through the GPU copy");
+    else check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before + 1, "a small copy whose source the GPU still stores into was not recorded on the GPU");
+    std::fill(destination, destination + smallWords, 0u);
+    const auto settled = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(destination, produced, smallBytes), writeData(&settledCopied, 1)));
+    waitFor(&settledCopied, 1, "the label after a small copy of a settled source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy of a settled source lost bytes");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == settled, "a small copy of a settled source was recorded on the GPU");
+    std::vector<std::uint32_t> hostDestination(smallWords);
+    for (std::size_t i = 0; i < words; ++i) source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    const auto hostCopies = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    const auto aliasChecks = AgcDriver::VulkanDevice::CopyAliasCounts().noSource;
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(hostDestination.data(), source, smallBytes), writeData(&hostCopied, 1)));
+    waitFor(&hostCopied, 1, "the label after a small copy into memory that is not imported never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(hostDestination.begin(), hostDestination.end(), produced), "a small copy into memory that is not imported did not see the GPU copy into its source");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == hostCopies, "a small copy into memory that is not imported was recorded on the GPU");
+    check(AgcDriver::VulkanDevice::CopyAliasCounts().noSource == aliasChecks + 1, "a small copy into memory that is not imported went through the GPU copy before its CPU path");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+    GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
 void testShaderHeaderAlignment() {
     alignas(256) static const std::array<std::uint32_t, 64> code{0xbf810000};
     struct Header {
@@ -881,6 +923,13 @@ int main(int argc, char** argv) {
         }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--small-copy-sync") {
+            testHeaderWithoutProgramAddress();
+            testSmallCopyBehindPendingSource();
+            LibcRunShutdown_nid_postfix();
+            std::puts("Small copies with APS5_COPY_SYNC passed");
+            return 0;
+        }
         alignas(256) std::array<std::uint32_t, 64> rawCode{};
         rawCode.fill(0xbf800000);
         rawCode[0] = 0xbe8003ff;
@@ -975,6 +1024,7 @@ int main(int argc, char** argv) {
         testHeaderWithoutProgramAddress();
         testCopyIntoHostMemory();
         testLargeDataFill();
+        testSmallCopyBehindPendingSource();
         testRegisteredFloatMode();
         testDispatchFloatMode();
         testReadOnlyResummarize();

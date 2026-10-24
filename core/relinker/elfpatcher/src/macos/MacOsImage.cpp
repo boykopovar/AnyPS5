@@ -33,6 +33,7 @@ constexpr std::uint32_t MhDylib = 6;
 constexpr std::uint32_t MhNoUndefs = 0x1;
 constexpr std::uint32_t MhDyldLink = 0x4;
 constexpr std::uint32_t MhTwoLevel = 0x80;
+constexpr std::uint32_t MhWeakDefines = 0x8000;
 
 constexpr std::uint32_t LcSegment64 = 0x19;
 constexpr std::uint32_t LcSymtab = 0x2;
@@ -86,11 +87,13 @@ constexpr std::uint8_t EntryStub[] = {
     0x4c, 0xc4, 0x08, 0x49, 0xff, 0xc0, 0xeb, 0xed, 0x48, 0xc7, 0x44, 0xfc, 0x08, 0x00, 0x00, 0x00,
     0x00, 0x4c, 0x8d, 0x54, 0xfc, 0x10, 0x45, 0x31, 0xc0, 0x49, 0x39, 0xc8, 0x74, 0x0d, 0x4e, 0x8b,
     0x0c, 0xc2, 0x4f, 0x89, 0x0c, 0xc2, 0x49, 0xff, 0xc0, 0xeb, 0xee, 0x49, 0xc7, 0x04, 0xca, 0x00,
-    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0xff, 0x15, 0x00,
-    0x00, 0x00, 0x00, 0x0f, 0x0b,
+    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xec,
+    0x10, 0x0f, 0xae, 0x1c, 0x24, 0xc7, 0x44, 0x24, 0x04, 0xc0, 0x9f, 0x00, 0x00, 0x0f, 0xae, 0x54,
+    0x24, 0x04, 0xff, 0x15, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xae, 0x14, 0x24, 0x48, 0x83, 0xc4, 0x10,
+    0x0f, 0x0b,
 };
 constexpr std::size_t EntryStubEntryDisplacement = 0x69;
-constexpr std::size_t EntryStubStartDisplacement = 0x6f;
+constexpr std::size_t EntryStubStartDisplacement = 0x84;
 
 struct Section {
     std::string Name;
@@ -154,6 +157,33 @@ void PadTo(std::vector<std::uint8_t>& out, const std::size_t alignment) {
     while (out.size() % alignment != 0) out.push_back(0);
 }
 
+void FitDyldSegmentLimit(std::vector<Windows::PeSection>& sections, const std::size_t limit) {
+    while (sections.size() > limit) {
+        auto best = sections.end();
+        std::uint64_t bestGap = 0;
+        for (auto section = sections.begin(); std::next(section) != sections.end(); ++section) {
+            const auto next = std::next(section);
+            if (section->Name == ".amdstub" || next->Name == ".amdstub" || section->Characteristics != next->Characteristics ||
+                section->Rva + section->MemorySize() != next->Rva)
+                continue;
+            const auto gap = next->Rva - section->Rva - section->Data.size();
+            if (best == sections.end() || gap < bestGap) {
+                best = section;
+                bestGap = gap;
+            }
+        }
+        if (best == sections.end()) return;
+        const auto next = std::next(best);
+        const auto memorySize = next->Rva + next->MemorySize() - best->Rva;
+        if (!next->Data.empty()) {
+            best->Data.resize(next->Rva - best->Rva);
+            best->Data.insert(best->Data.end(), next->Data.begin(), next->Data.end());
+        }
+        best->VirtualSize = static_cast<std::uint32_t>(memorySize);
+        sections.erase(next);
+    }
+}
+
 std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segments, const std::uint64_t rva, const std::uint64_t size) {
     for (std::size_t index = 0; index < segments.size(); ++index) {
         const auto& segment = segments[index];
@@ -166,7 +196,9 @@ std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segmen
 
 Segment& SegmentAt(std::vector<Segment>& segments, const std::uint64_t rva, const std::uint64_t size) {
     for (auto& segment : segments) {
-        if (rva >= segment.Rva && rva - segment.Rva + size <= segment.Data.size()) return segment;
+        if (rva < segment.Rva || rva - segment.Rva + size > segment.MemorySize) continue;
+        if (rva - segment.Rva + size > segment.Data.size()) segment.Data.resize(rva - segment.Rva + size);
+        return segment;
     }
     throw Domain::RelinkerException("Mach-O image patch is outside the image data", rva);
 }
@@ -220,10 +252,10 @@ struct TlsScan {
     std::vector<GsTrap> GsTraps;
 };
 
-TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image) {
+TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message) {
     TlsScan scan;
     const Codegen::X64InstructionDecoder decoder;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, nullptr, message);
     for (const auto& header : headers) {
         if (header.Type == 7) {
             if (scan.Tls != nullptr) throw Domain::RelinkerException("Multiple ELF TLS segments");
@@ -244,7 +276,8 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             }
             if (info.SegmentPrefix == 0 || (insidePrevious && info.SegmentPrefix != 0x64)) continue;
             if (info.SegmentPrefix == 0x65) {
-                scan.GsTraps.push_back({rva, info.Length});
+                if (info.HasMemoryOperand)
+                    scan.GsTraps.push_back({rva, info.Length});
                 continue;
             }
             const auto position = info.OpcodeOffset;
@@ -311,7 +344,7 @@ public:
 private:
     struct Node {
         std::vector<std::pair<std::string, std::unique_ptr<Node>>> Children;
-        std::optional<std::uint32_t> Rva;
+        std::optional<MacOsExport> Export;
         std::uint64_t Offset = 0;
     };
 
@@ -343,8 +376,8 @@ private:
                 rest = {};
             }
         }
-        if (node->Rva) throw Domain::RelinkerException("Duplicate Mach-O export: " + entry.Symbol);
-        node->Rva = entry.Rva;
+        if (node->Export) throw Domain::RelinkerException("Duplicate Mach-O export: " + entry.Symbol);
+        node->Export = entry;
     }
 
     static void Collect(Node* node, std::vector<Node*>& order) {
@@ -354,9 +387,9 @@ private:
 
     static std::vector<std::uint8_t> TerminalBytes(const Node& node) {
         std::vector<std::uint8_t> bytes;
-        if (!node.Rva) return bytes;
-        AppendUleb(bytes, 0);
-        AppendUleb(bytes, *node.Rva);
+        if (!node.Export) return bytes;
+        AppendUleb(bytes, node.Export->Flags);
+        AppendUleb(bytes, node.Export->Value);
         return bytes;
     }
 
@@ -381,8 +414,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     auto& image = *input.Image;
     const auto& headers = *input.Headers;
     const auto imageBase = image.GetImageBase();
-    const auto tls = ScanTls(*input.Source, headers, image);
-    const bool hasTls = tls.Tls != nullptr && tls.Tls->MemorySize != 0;
+    const auto tls = ScanTls(*input.Source, headers, image, input.Message);
+    const bool hasTls = tls.Tls != nullptr && (tls.Tls->MemorySize != 0 || !tls.Accesses.empty());
     if (!hasTls && !tls.Accesses.empty()) throw Domain::RelinkerException("Guest TLS access without a non-empty PT_TLS");
     if (!hasTls && !input.TlsModuleSlots.empty()) throw Domain::RelinkerException("Guest TLS module relocation without a non-empty PT_TLS");
 
@@ -392,6 +425,9 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto guestSegments = segments.size();
     auto sections = image.BuildSections();
     for (const auto& trap : tls.GsTraps) {
+        const auto target = tls.BranchTargets.upper_bound(trap.Rva);
+        if (target != tls.BranchTargets.end() && *target < trap.Rva + trap.Length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
         if (input.Trampolines != nullptr) {
             for (const auto& site : *input.Trampolines) {
                 const auto siteRva = image.GetRva(site.Address, site.Length);
@@ -419,6 +455,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         auto stubRva = Windows::AlignRva(image.GetEndRva());
         Windows::WindowsTrampolineBuilder().Build(*input.Trampolines, image, sections, stubRva);
     }
+    FitDyldSegmentLimit(sections, 16 - guestSegments - 2);
     std::uint64_t guestEnd = image.GetEndRva();
     for (auto& section : sections) {
         std::uint32_t protection = 0;
@@ -481,7 +518,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         Io::WriteU64(meta, at, imageBase + descriptor);
         Io::WriteU64(meta, at + 8, variable.Offset);
         input.Rebases.push_back(metaRva + static_cast<std::uint32_t>(at));
-        input.Exports.push_back({variable.Symbol, metaRva + static_cast<std::uint32_t>(at)});
+        input.Exports.push_back({variable.Symbol, metaRva + static_cast<std::uint32_t>(at), variable.Flags});
     }
     const auto codeRva = static_cast<std::uint32_t>(AlignUp(metaRva + metaEnd, PageSize));
     Windows::WindowsStubEmitter code(codeRva);
@@ -860,7 +897,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     Io::WriteU32(file, 12, input.Executable ? MhExecute : MhDylib);
     Io::WriteU32(file, 16, commandCount);
     Io::WriteU32(file, 20, static_cast<std::uint32_t>(commands.size()));
-    Io::WriteU32(file, 24, MhNoUndefs | MhDyldLink | MhTwoLevel);
+    const bool weakDefinitions = std::any_of(input.Exports.begin(), input.Exports.end(), [](const auto& entry) { return (entry.Flags & ExportWeakDefinition) != 0; });
+    Io::WriteU32(file, 24, MhNoUndefs | MhDyldLink | MhTwoLevel | (weakDefinitions ? MhWeakDefines : 0));
     std::copy(commands.begin(), commands.end(), file.begin() + HeaderSize);
     return file;
 }

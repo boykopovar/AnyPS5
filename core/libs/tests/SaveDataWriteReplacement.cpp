@@ -1,3 +1,4 @@
+#include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -13,11 +14,9 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate(void);
-int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
+
 #ifndef SAVEDATA_NATIVE_BACKEND
-int APS5_VABI sceSaveDataSyncSaveDataMemory(const void*);
+
 #endif
 }
 

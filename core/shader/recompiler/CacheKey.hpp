@@ -4,7 +4,10 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <type_traits>
 
@@ -102,11 +105,27 @@ private:
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (request.shader.stage == ShaderStage::Fragment) {
+            append(key, request.graphics && request.graphics->mesh);
+            return;
+        }
         if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        const auto& barycentrics = request.graphics->meshBarycentrics;
+        append(key, barycentrics.has_value());
+        if (!barycentrics.has_value()) return;
+        append(key, barycentrics->emulation.active);
+        append(key, barycentrics->emulation.smooth);
+        append(key, barycentrics->emulation.linear);
+        append(key, barycentrics->parameters.size());
+        for (const auto& parameter : barycentrics->parameters) {
+            append(key, parameter.location);
+            append(key, parameter.sourceLocation);
+            append(key, parameter.perVertex);
+        }
     }
 
     static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
@@ -115,6 +134,7 @@ private:
         append(key, tessellation != nullptr);
         if (tessellation == nullptr) return;
         for (const auto value : {tessellation->inputControlPoints, tessellation->outputControlPoints, tessellation->domain, tessellation->partitioning, tessellation->outputTopology}) append(key, value);
+        if (request.shader.stage != ShaderStage::TessellationEvaluation) append(key, tessellation->mergedHull);
         if (request.shader.stage == ShaderStage::Local) return;
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
@@ -200,6 +220,12 @@ private:
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
+        append(key, value.targetMerge.target);
+        append(key, value.targetMerge.mask);
+        append(key, value.targetMerge.samples);
+        append(key, value.targetMerge.depthStencilWrites);
+        append(key, value.targetMerge.depthStencilTests);
+        append(key, value.sampleOrder);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
@@ -215,6 +241,10 @@ private:
         append(key, value.fetchEmbedded);
         append(key, value.paClVsOutCntl);
         append(key, value.depthRemapMode);
+        append(key, value.pointList);
+        append(key, std::bit_cast<std::uint32_t>(value.pointSize));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
         append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
@@ -247,13 +277,35 @@ private:
         append(key, value.maxEvaluationOutputComponents);
     }
 
+    static void appendFeatureDigest(std::vector<std::uint64_t>& key, std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
+        std::uint64_t low = 0xcbf29ce484222325ull;
+        std::uint64_t high = 0x6a09e667f3bcc909ull;
+        const auto mix = [&](std::uint64_t value) {
+            low = (low ^ value) * 0x100000001b3ull;
+            high = (high ^ (value * 0x9e3779b97f4a7c15ull)) * 0xff51afd7ed558ccdull;
+            high ^= high >> 29u;
+        };
+        mix(capabilities.size());
+        for (const auto capability : capabilities) mix(capability);
+        mix(extensions.size());
+        for (const auto extension : extensions) {
+            mix(extension.size());
+            for (std::size_t offset = 0; offset < extension.size(); offset += sizeof(std::uint64_t)) {
+                std::uint64_t chunk = 0;
+                std::memcpy(&chunk, extension.data() + offset, std::min(sizeof(std::uint64_t), extension.size() - offset));
+                mix(chunk);
+            }
+        }
+        key.push_back(low);
+        key.push_back(high);
+    }
+
     static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
         append(key, value.vulkanVersion);
         append(key, value.spirvVersion);
         append(key, value.subgroupSize);
         append(key, value.bdaAbiVersion);
-        append(key, value.supportedCapabilities);
-        append(key, value.supportedExtensions);
+        appendFeatureDigest(key, value.supportedCapabilities, value.supportedExtensions);
         append(key, value.fragmentShaderBarycentricEnabled);
         append(key, value.maxWorkgroupSize);
         append(key, value.maxWorkgroupInvocations);
@@ -272,6 +324,12 @@ private:
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
+        append(key, value.waveLdsMemoryBarriers);
+        append(key, value.float32DenormPreserve);
+        append(key, value.fusedExactArithmetic);
+        append(key, value.largePixelFunctionLdsBuffer);
+        append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
     }
 };
 

@@ -33,8 +33,8 @@ constexpr std::array<IntegerType, 8> kIntegerTypes{{
     {"i8", 8, true}, {"i16", 16, true}, {"i32", 32, true}, {"i64", 64, true},
 }};
 
-constexpr std::array<std::string_view, 7> kIgnoredTopLevelKeys{"relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "settings", "settings_sha256"};
-constexpr std::array<std::string_view, 8> kReservedNames{"format", "relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "settings", "settings_sha256"};
+constexpr std::array<std::string_view, 8> kIgnoredTopLevelKeys{"relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "linux_base", "settings", "settings_sha256"};
+constexpr std::array<std::string_view, 9> kReservedNames{"format", "relinker_version", "relinker_commit", "config", "config_sha256", "main_target", "linux_base", "settings", "settings_sha256"};
 constexpr std::array<std::string_view, 10> kEntryKeys{"name", "target", "va", "type", "expected", "value", "min", "max", "align", "description"};
 
 std::string HexValue(const std::uint64_t value) {
@@ -240,6 +240,15 @@ PatchEntry BuildEntry(const Table& table, const std::size_t headerLine, std::set
     return entry;
 }
 
+std::string Describe(const PatchEntry& entry) {
+    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
+}
+
+void ValidateWidth(const PatchEntry& entry) {
+    if (entry.Expected.empty() || entry.Expected.size() != entry.Value.size())
+        throw Domain::RelinkerException(Describe(entry) + ": expected and value must have the same nonzero width");
+}
+
 struct EntryRange {
     std::optional<PatchedRange> Range;
     std::string Reason;
@@ -275,12 +284,11 @@ std::vector<EntryRange> ResolveEach(const ElfReader& reader, const std::vector<P
     const auto segments = reader.ReadProgramHeaders();
     const auto header = reader.ReadHeader();
     std::vector<EntryRange> resolved;
-    for (const auto& entry : entries) resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    for (const auto& entry : entries) {
+        ValidateWidth(entry);
+        resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    }
     return resolved;
-}
-
-std::string Describe(const PatchEntry& entry) {
-    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
 }
 
 bool Overlaps(const std::uint64_t firstOffset, const std::uint64_t firstLength, const std::uint64_t secondOffset, const std::uint64_t secondLength) {
@@ -300,8 +308,8 @@ void RejectEntryOverlaps(const std::vector<PatchEntry>& entries, const std::vect
     }
 }
 
-bool IsElfDyn(const std::vector<std::uint8_t>& bytes) {
-    return bytes.size() >= 18 && bytes[0] == 0x7f && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F' && bytes[16] == Elfpatcher::ET_DYN && bytes[17] == 0;
+bool IsElfOfType(const std::vector<std::uint8_t>& bytes, const std::uint16_t type) {
+    return bytes.size() >= 18 && bytes[0] == 0x7f && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F' && bytes[16] == (type & 0xff) && bytes[17] == (type >> 8);
 }
 
 VerifyResult VerifyOne(const PatchEntry& entry, const EntryRange& resolved, const std::vector<std::uint8_t>& bytes, const bool outputMode) {
@@ -410,6 +418,10 @@ PatchFile ParsePatchFile(const std::string_view text) {
         if (!mainTarget->IsString || mainTarget->Text.empty()) FailLine(mainTarget->Line, "main_target must be a nonempty string", "main_target");
         file.MainTarget = mainTarget->Text;
     }
+    if (const auto* linuxBase = Find(top, "linux_base")) {
+        if (linuxBase->IsString || linuxBase->Number.Negative) FailLine(linuxBase->Line, "linux_base must be a non-negative integer", "linux_base");
+        file.LinuxBase = linuxBase->Number.Magnitude;
+    }
     return file;
 }
 
@@ -427,7 +439,10 @@ std::vector<PatchedRange> ResolveRanges(const ElfReader& reader, const std::vect
 std::vector<AppliedPatch> ApplyPatches(std::vector<std::uint8_t>& bytes, const std::string& target, const std::vector<PatchEntry>& entries, const std::vector<PatchedRange>& ranges) {
     if (entries.size() != ranges.size()) throw Domain::RelinkerException("Patch ranges do not match patch entries");
     for (std::size_t index = 0; index < entries.size(); ++index) {
+        ValidateWidth(entries[index]);
         const auto& range = ranges[index];
+        if (range.Length != entries[index].Expected.size())
+            throw Domain::RelinkerException(Describe(entries[index]) + ": range length does not match the patch width", range.Offset);
         if (range.Offset > bytes.size() || range.Length > bytes.size() - range.Offset) throw Domain::RelinkerException(Describe(entries[index]) + ": range exceeds the image", range.Offset);
         const auto first = bytes.begin() + static_cast<std::ptrdiff_t>(range.Offset);
         if (!std::equal(entries[index].Expected.begin(), entries[index].Expected.end(), first))
@@ -466,6 +481,8 @@ void CheckOverlaps(const std::string& target, const std::vector<PatchedRange>& p
     for (const auto& site : writers.Trampolines) sites.push_back({site.Offset, site.Length, "Intel trampoline site"});
     for (const auto& patch : writers.RelinkPatches) sites.push_back({patch.Offset, patch.Bytes.size(), "relinker patch"});
     sites.insert(sites.end(), writers.Traps.begin(), writers.Traps.end());
+    for (const auto& site : writers.RedZoneSites) sites.push_back({site.Offset, site.Length, "red-zone frame site"});
+    for (const auto& moved : writers.RedZoneDisplacements) sites.push_back({moved.Offset, moved.Bytes.size(), "red-zone moved displacement"});
     const auto relaViolation = [&](const std::span<const std::uint8_t> table, const char* name, const PatchedRange& range) {
         for (std::size_t position = 0; position + 24 <= table.size(); position += 24) {
             std::uint64_t relocation = 0;
@@ -505,7 +522,7 @@ std::vector<AppliedPatch> AggregateManifest(const std::vector<std::vector<Applie
     return merged;
 }
 
-std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath) {
+std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath, const std::optional<std::uint64_t> linuxBase) {
     const auto holdable = [](const std::string& text) {
         return std::none_of(text.begin(), text.end(), [](const char character) {
             return character == '"' || character == '\\' || (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
@@ -519,6 +536,7 @@ std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::s
     if (!config.empty() && !holdable(config)) config = std::filesystem::path(Io::NativePath(configPath)).filename().generic_string();
     std::ostringstream manifest;
     manifest << "format = 1\nmain_target = " << quoted(mainTarget, "main_target") << '\n';
+    if (linuxBase) manifest << "linux_base = " << HexValue(*linuxBase) << '\n';
     if (!config.empty()) manifest << "config = " << quoted(config, "config") << '\n';
     for (const auto& patch : patches) {
         manifest << "\n[[patch]]\n";
@@ -553,8 +571,12 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
         for (std::size_t index = 0; index < executables.size(); ++index)
             for (std::size_t other = index + 1; other < executables.size(); ++other)
                 if (executables[index].Name == executables[other].Name) throw Domain::RelinkerException("ambiguous patch target: " + executables[index].Name);
-        for (const auto& executable : executables)
-            if (!IsElfDyn(executable.Bytes)) throw Domain::RelinkerException(executable.Name + " is not an ET_DYN Linux ELF output (ET_EXEC from --linux-fixed-base, PE and Mach-O outputs are not supported): verify the input instead");
+        for (const auto& executable : executables) {
+            const bool fixed = IsElfOfType(executable.Bytes, Elfpatcher::ET_EXEC);
+            if (!fixed && !IsElfOfType(executable.Bytes, Elfpatcher::ET_DYN)) throw Domain::RelinkerException(executable.Name + " is not a Linux ELF output (PE and Mach-O outputs are not supported): verify the input instead");
+            if (fixed && !file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_EXEC Linux ELF output, but the patch file has no linux_base: verify the manifest written by its conversion");
+            if (!fixed && file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_DYN Linux ELF output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
+        }
     } else {
         std::vector<std::string> names;
         for (const auto& executable : executables) names.push_back(executable.Name);
@@ -583,13 +605,19 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
             }
             continue;
         }
+        const std::uint64_t base = outputMode && IsElfOfType(target->Bytes, Elfpatcher::ET_EXEC) ? *file.LinuxBase : 0;
         std::vector<PatchEntry> own;
-        for (const auto other : indices) own.push_back(file.Entries[other]);
+        for (const auto other : indices) {
+            own.push_back(file.Entries[other]);
+            if (own.back().VirtualAddress > std::numeric_limits<std::uint64_t>::max() - base) throw Domain::RelinkerException(Describe(own.back()) + " lies outside the address space at linux_base = " + HexValue(base));
+            own.back().VirtualAddress += base;
+        }
         const ElfReader reader(target->Bytes);
         const auto resolved = ResolveEach(reader, own);
         RejectEntryOverlaps(own, resolved);
         for (std::size_t position = 0; position < indices.size(); ++position) {
             results[indices[position]] = VerifyOne(own[position], resolved[position], target->Bytes, outputMode);
+            results[indices[position]].VirtualAddress = file.Entries[indices[position]].VirtualAddress;
             done[indices[position]] = true;
         }
     }

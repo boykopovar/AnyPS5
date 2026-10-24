@@ -1,4 +1,5 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/RedundantValueEliminator.hpp"
 #include "Recompiler.hpp"
 #include <array>
@@ -256,6 +257,34 @@ int main() {
         return b.eliminate() == 0u && AllUsed({&plain, &flagged, &otherType, &floatImmediate});
     });
 
+    passed &= run("four-operand expressions retain distinct trailing immediates across a large block", [] {
+        Builder b;
+        auto& source = b.unknown();
+        std::vector<IrValue*> reads;
+        std::vector<IrValue*> duplicates;
+        std::vector<IrValue*> different;
+        for (std::uint32_t index = 0; index < 256u; ++index) {
+            const auto composite = [&](std::uint32_t last) -> IrValue& {
+                return b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&source, &b.constant(index), &b.constant(7u), &b.constant(last)});
+            };
+            auto& first = composite(0u);
+            auto& second = composite(0u);
+            auto& changed = composite(1u);
+            auto& firstRead = b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&first, &b.constant(3u)});
+            auto& secondRead = b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&second, &b.constant(3u)});
+            auto& changedRead = b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&changed, &b.constant(3u)});
+            for (auto* read : {&firstRead, &secondRead, &changedRead}) b.keep(*read);
+            reads.push_back(&firstRead);
+            duplicates.push_back(&second);
+            duplicates.push_back(&secondRead);
+            different.push_back(&changedRead);
+        }
+        if (b.eliminate() != 512u || !AllUsed(different)) return false;
+        for (const auto* duplicate : duplicates) if (duplicate->HasUses()) return false;
+        for (const auto* read : reads) if (read->UseCount() != 2u) return false;
+        return true;
+    });
+
     passed &= run("float immediates compare by bits: +0 and -0 and two NaN payloads stay apart, one NaN merges", [] {
         Builder b;
         auto& x = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&b.unknown()});
@@ -296,6 +325,149 @@ int main() {
         return b.eliminate() == 1u && !dominated.HasUses() && first.UseCount() == 2u && AllUsed({&thenOnly, &sibling, &merged});
     });
 
+    passed &= run("GetSrtResource and ReadConst with the same operands merge in a dominated block, while another slot or a sibling block stays", [] {
+        Builder b;
+        IrBlock& head = *b.block;
+        IrBlock& then = b.newBlock();
+        IrBlock& otherwise = b.newBlock();
+        IrBlock& merge = b.newBlock();
+        head.AddBranch(&then);
+        head.AddBranch(&otherwise);
+        then.AddBranch(&merge);
+        otherwise.AddBranch(&merge);
+        auto& srtHead = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {&b.constant(0u)});
+        auto& readHead = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtHead, &b.constant(2u)});
+        b.keep(readHead);
+        b.block = &then;
+        auto& srtDominated = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {&b.constant(0u)});
+        auto& readDominated = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtDominated, &b.constant(2u)});
+        auto& readOtherSlot = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtDominated, &b.constant(3u)});
+        auto& srtThenOnly = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {&b.constant(1u)});
+        auto& readThenOnly = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtThenOnly, &b.constant(4u)});
+        b.keep(readDominated);
+        b.keep(readOtherSlot);
+        b.keep(readThenOnly);
+        b.block = &otherwise;
+        auto& srtSibling = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {&b.constant(1u)});
+        auto& readSibling = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtSibling, &b.constant(4u)});
+        b.keep(readSibling);
+        b.block = &merge;
+        auto& srtMerge = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {&b.constant(0u)});
+        auto& readMerge = b.emit(IrOpcode::ReadConst, IrType::U32, {&srtMerge, &b.constant(2u)});
+        b.keep(readMerge);
+        return b.eliminate() == 4u && !srtDominated.HasUses() && !readDominated.HasUses() && !srtMerge.HasUses() && !readMerge.HasUses() && srtHead.UseCount() == 4u && readHead.UseCount() == 3u && AllUsed({&readOtherSlot, &srtThenOnly, &readThenOnly, &srtSibling, &readSibling});
+    });
+
+    passed &= run("two ReadConst instructions of the same slot separated by a store to the table address stay", [] {
+        Builder b;
+        auto& tableAddress = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&b.constant(0x1000u), &b.constant(0u)});
+        auto& tableRead = b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.truth()});
+        b.program.Resources().srtReads.push_back({&tableRead, 0u});
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& first = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        static_cast<void>(b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.constant(7u), &b.truth()}));
+        auto& second = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(first);
+        b.keep(second);
+        return b.eliminate() == 0u && AllUsed({&first, &second});
+    });
+
+    passed &= run("a store on one branch keeps ReadConst in the merge block while the clean sibling branch reuses the head read", [] {
+        Builder b;
+        IrBlock& head = *b.block;
+        IrBlock& then = b.newBlock();
+        IrBlock& otherwise = b.newBlock();
+        IrBlock& merge = b.newBlock();
+        head.AddBranch(&then);
+        head.AddBranch(&otherwise);
+        then.AddBranch(&merge);
+        otherwise.AddBranch(&merge);
+        auto& tableAddress = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&b.constant(0x1000u), &b.constant(0u)});
+        auto& tableRead = b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.truth()});
+        b.program.Resources().srtReads.push_back({&tableRead, 0u});
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& readHead = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(readHead);
+        b.block = &then;
+        static_cast<void>(b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.constant(7u), &b.truth()}));
+        auto& readThenAfterStore = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(readThenAfterStore);
+        b.block = &otherwise;
+        auto& readOtherwise = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(readOtherwise);
+        b.block = &merge;
+        auto& readMerge = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(readMerge);
+        return b.eliminate() == 1u && !readOtherwise.HasUses() && readHead.UseCount() == 2u && AllUsed({&readHead, &readThenAfterStore, &readMerge});
+    });
+
+    passed &= run("a store on a loop backedge prevents reusing a pre-loop ReadConst in the loop header", [] {
+        Builder b;
+        IrBlock& header = b.newBlock();
+        IrBlock& body = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        b.block->AddBranch(&header);
+        header.AddBranch(&body);
+        header.AddBranch(&exit);
+        body.AddBranch(&header);
+        auto& tableAddress = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&b.constant(0x1000u), &b.constant(0u)});
+        auto& tableRead = b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.truth()});
+        b.program.Resources().srtReads.push_back({&tableRead, 0u});
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& beforeLoop = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(beforeLoop);
+        b.block = &header;
+        auto& inHeader = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inHeader);
+        b.block = &body;
+        auto& inBodyBeforeStore = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        static_cast<void>(b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.constant(7u), &b.truth()}));
+        auto& inBodyAfterStore = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inBodyBeforeStore);
+        b.keep(inBodyAfterStore);
+        b.block = &exit;
+        auto& afterLoop = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(afterLoop);
+        return b.eliminate() == 2u && !inBodyBeforeStore.HasUses() && !afterLoop.HasUses() && beforeLoop.UseCount() == 1u && inHeader.UseCount() == 3u && AllUsed({&beforeLoop, &inHeader, &inBodyAfterStore});
+    });
+
+    passed &= run("a store in an inner loop propagates to the outer loop header across fixed-point iterations", [] {
+        Builder b;
+        IrBlock& outerHeader = b.newBlock();
+        IrBlock& innerHeader = b.newBlock();
+        IrBlock& innerBody = b.newBlock();
+        IrBlock& outerLatch = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        b.block->AddBranch(&outerHeader);
+        outerHeader.AddBranch(&innerHeader);
+        outerHeader.AddBranch(&exit);
+        innerHeader.AddBranch(&innerBody);
+        innerHeader.AddBranch(&outerLatch);
+        innerBody.AddBranch(&innerHeader);
+        outerLatch.AddBranch(&outerHeader);
+        auto& tableAddress = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {&b.constant(0x1000u), &b.constant(0u)});
+        auto& tableRead = b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.truth()});
+        b.program.Resources().srtReads.push_back({&tableRead, 0u});
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& beforeOuter = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(beforeOuter);
+        b.block = &outerHeader;
+        auto& inOuterHeader = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inOuterHeader);
+        b.block = &innerHeader;
+        auto& inInnerHeader = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inInnerHeader);
+        b.block = &innerBody;
+        static_cast<void>(b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&tableAddress, &b.constant(8u), &b.constant(0u), &b.constant(7u), &b.truth()}));
+        b.block = &outerLatch;
+        auto& inOuterLatch = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inOuterLatch);
+        b.block = &exit;
+        auto& inExit = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(inExit);
+        return b.eliminate() == 2u && !inOuterLatch.HasUses() && !inExit.HasUses() && beforeOuter.UseCount() == 1u && inOuterHeader.UseCount() == 2u && inInnerHeader.UseCount() == 2u && AllUsed({&beforeOuter, &inOuterHeader, &inInnerHeader});
+    });
+
     passed &= run("a loop body reuses a value of its header, the loop exit does not reuse a value of the body", [] {
         Builder b;
         IrBlock& header = b.newBlock();
@@ -332,6 +504,55 @@ int main() {
         info.condition = &second;
         b.program.Metadata().blockInfo.push_back(info);
         return b.eliminate() == 1u && b.program.Metadata().blockInfo.front().condition == &first;
+    });
+
+    passed &= run("descriptor dwords name the surviving values after redundancy and dead code elimination", [] {
+        Builder b;
+        auto& input = b.unknown();
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 8u;
+        std::array<IrValue*, 8> kept{};
+        std::array<IrValue*, 8> removed{};
+        for (std::uint32_t index = 0; index < 8u; ++index) {
+            auto& first = b.emit(IrOpcode::IAdd32, IrType::U32, {&input, &b.constant(index + 1u)});
+            auto& second = b.emit(IrOpcode::IAdd32, IrType::U32, {&input, &b.constant(index + 1u)});
+            b.keep(first);
+            b.keep(second);
+            descriptor.dwords[index] = &second;
+            kept[index] = &first;
+            removed[index] = &second;
+        }
+        b.program.Resources().descriptorSources.push_back(descriptor);
+        b.program.Resources().descriptorSources.emplace_back();
+        if (b.eliminate() != 8u) return false;
+        DeadCodeEliminator{}.Eliminate(b.program);
+        const auto& descriptors = b.program.Resources().descriptorSources;
+        for (std::size_t index = 0; index < kept.size(); ++index) {
+            if (descriptors[0].dwords[index] != kept[index] || kept[index]->Parent() != b.block || removed[index]->Parent() != nullptr || descriptors[1].dwords[index] != nullptr) return false;
+        }
+        return true;
+    });
+
+    passed &= run("a selected table column keeps its surviving runtime offset", [] {
+        Builder b;
+        auto& input = b.unknown();
+        auto& first = b.emit(IrOpcode::IMul32, IrType::U32, {&input, &b.constant(48u)});
+        auto& second = b.emit(IrOpcode::IMul32, IrType::U32, {&input, &b.constant(48u)});
+        b.keep(first);
+        b.keep(second);
+        DescriptorSource selection;
+        selection.dwordCount = 1u;
+        selection.dwords[0] = &second;
+        DescriptorSource image;
+        image.tableColumn.emplace();
+        image.tableColumn->selected = true;
+        image.tableColumn->selection = 0u;
+        b.program.Resources().descriptorSources = {selection, image};
+        if (b.eliminate() != 1u) return false;
+        DeadCodeEliminator{}.Eliminate(b.program);
+        const auto& descriptors = b.program.Resources().descriptorSources;
+        const auto selected = descriptors[1].tableColumn->selection;
+        return descriptors[selected].dwords[0] == &first && first.Parent() == b.block && second.Parent() == nullptr;
     });
 
     passed &= run("lane reads are not merged", [] {

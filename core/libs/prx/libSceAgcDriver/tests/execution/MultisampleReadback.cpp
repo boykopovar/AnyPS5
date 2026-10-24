@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "VulkanTestDevice.hpp"
 #include "MsaaReadbackVertex_spv.h"
 #include "MsaaReadbackUint_spv.h"
@@ -69,8 +70,8 @@ void CheckSupportSelection() {
     static_assert(!SurfaceFits(VkImageFormatProperties{}, 4u));
 }
 
-bool SurfaceSupported(const Context& context, VkFormat format, std::uint32_t samples, std::uint32_t width = 17u, std::uint32_t height = 5u, std::uint32_t layers = 2u) {
-    const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | (format == VK_FORMAT_D32_SFLOAT ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+bool SurfaceSupported(const Context& context, VkFormat format, std::uint32_t samples, std::uint32_t width = 17u, std::uint32_t height = 5u, std::uint32_t layers = 2u, bool writable = false) {
+    const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | (format == VK_FORMAT_D32_SFLOAT ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) | (writable ? VK_IMAGE_USAGE_STORAGE_BIT : 0u);
     VkImageFormatProperties supported{};
     const auto result = context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0u, &supported);
     if (result != VK_ERROR_FORMAT_NOT_SUPPORTED) Check(result, "readback fixture format query");
@@ -97,11 +98,11 @@ struct Surface {
     std::vector<VkImageView> views;
     std::vector<VkFramebuffer> framebuffers;
 
-    Surface(const Context& context, VkFormat format, std::uint32_t elementBytes, std::uint32_t samples, std::uint32_t width = 17u, std::uint32_t height = 5u, std::uint32_t layers = 2u) : context(context), format(format), elementBytes(elementBytes), samples(samples), width(width), height(height), layers(layers) {
+    Surface(const Context& context, VkFormat format, std::uint32_t elementBytes, std::uint32_t samples, std::uint32_t width = 17u, std::uint32_t height = 5u, std::uint32_t layers = 2u, bool writable = false) : context(context), format(format), elementBytes(elementBytes), samples(samples), width(width), height(height), layers(layers) {
         try {
             const bool depth = format == VK_FORMAT_D32_SFLOAT;
             const auto aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-            const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+            const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) | (writable ? VK_IMAGE_USAGE_STORAGE_BIT : 0u);
             VkImageFormatProperties supported{};
             Check(context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0u, &supported), "readback fixture format query");
             Require(SurfaceFits(supported, samples, width, height, layers), "readback fixture format does not support its sample count or extent");
@@ -275,15 +276,15 @@ struct Surface {
             const auto layer = pixel / (width * height);
             const auto value = x + y * width + layer * width * height + sample * 31u;
             std::array<std::uint32_t, 4> words{0x91352700u ^ value, 0x45219b00u ^ (value * 3u), 0xc7391d00u ^ (value * 5u), 0x6b43e100u ^ (value * 7u)};
-            if (format == VK_FORMAT_D32_SFLOAT) words[0] = std::bit_cast<std::uint32_t>(0.125f + static_cast<float>(element + 1u) / 65536.0f);
+            if (format == VK_FORMAT_D32_SFLOAT) words[0] = std::bit_cast<std::uint32_t>(0.125f + static_cast<float>(element + 1u) / 1048576.0f);
             std::memcpy(result.data() + static_cast<std::size_t>(index) * elementBytes, words.data(), elementBytes);
         }
         return result;
     }
 };
 
-void CheckReadback(TextureDetiler& reader, const Surface& surface, std::uint32_t first, std::uint32_t elements, std::uint32_t repetitions, std::size_t extraBytes = 0u) {
-    const auto expected = surface.Expected(first, elements);
+std::vector<std::byte> CheckReadback(TextureDetiler& reader, const Surface& surface, std::uint32_t first, std::uint32_t elements, std::uint32_t repetitions, std::size_t extraBytes = 0u, std::span<const std::byte> supplied = {}) {
+    const auto expected = supplied.empty() ? surface.Expected(first, elements) : std::vector<std::byte>(supplied.begin(), supplied.end());
     const auto bytes = ((expected.size() + 3u) & ~std::size_t{3u}) + extraBytes;
     const auto alignment = std::max<std::size_t>(4u, surface.context.limits.minStorageBufferOffsetAlignment);
     const auto offset = (16u + alignment - 1u) / alignment * alignment;
@@ -291,7 +292,7 @@ void CheckReadback(TextureDetiler& reader, const Surface& surface, std::uint32_t
     std::fill(output.Bytes().begin(), output.Bytes().end(), std::byte{0xa5});
     reader.BeginBatch();
     CommandBatch batch(surface.context);
-    RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     for (std::uint32_t repeat = 0u; repeat < repetitions; ++repeat) {
         reader.DispatchMultisampleReadback(batch.Handle(), surface.format, output.Handle(), offset, bytes, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first, elements);
         if (repeat + 1u < repetitions) RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
@@ -304,6 +305,61 @@ void CheckReadback(TextureDetiler& reader, const Surface& surface, std::uint32_t
     if (mismatch.first != expected.end()) std::printf("readback mismatch: format=%u first=%u byte=%zu expected=0x%02x actual=0x%02x\n", static_cast<std::uint32_t>(surface.format), first, static_cast<std::size_t>(mismatch.first - expected.begin()), std::to_integer<unsigned>(*mismatch.first), std::to_integer<unsigned>(*mismatch.second));
     Require(std::equal(expected.begin(), expected.end(), data.begin() + offset), "multisample readback changed a rendered sample, component, layer or pixel");
     for (std::size_t index = 0u; index < data.size(); ++index) Require((index >= offset && index < offset + expected.size()) || data[index] == std::byte{0xa5}, "multisample readback changed a buffer sentinel or packed tail");
+    return {data.begin() + offset, data.begin() + offset + expected.size()};
+}
+
+void CheckRetile(TextureDetiler& reader, const Surface& surface) {
+    const auto elements = surface.width * surface.height * surface.layers * surface.samples;
+    const auto linear = CheckReadback(reader, surface, 0u, elements, 1u);
+    const auto expected = surface.Expected(0u, elements);
+    constexpr std::array<std::array<std::uint32_t, 3>, 7> coordinates{{
+        {0u, 0u, 0u}, {128u, 66u, 16u}, {64u, 32u, 1u}, {32u, 64u, 2u},
+        {63u, 31u, 7u}, {127u, 65u, 15u}, {1u, 1u, 3u}
+    }};
+    constexpr std::array<TextureTileMode, 2> modes{TextureTileMode::kR64KBX, TextureTileMode::kZ64KBX};
+    constexpr std::array<std::array<std::uint64_t, 7>, 2> references{{
+        {0ull, 6621216ull, 493568ull, 1016832ull, 2766588ull, 6170780ull, 1215508ull},
+        {0ull, 6637700ull, 460808ull, 1000460ull, 2815728ull, 6219892ull, 1182776ull}
+    }};
+    for (std::size_t mode = 0u; mode < modes.size(); ++mode) {
+        for (const auto pipeBankXor : {0u, 0x8100u}) {
+            const MultisampleTextureLayout layout(modes[mode], surface.elementBytes, surface.samples, surface.width, surface.height, surface.layers, pipeBankXor);
+            std::vector<std::byte> tiled(static_cast<std::size_t>(layout.Bytes()) + 32u, std::byte{0xa5});
+            auto payload = std::span(tiled).subspan(16u, layout.Bytes());
+            layout.Tile(linear, payload);
+            std::vector<bool> covered(payload.size());
+            std::size_t position = 0u;
+            for (std::uint32_t layer = 0u; layer < surface.layers; ++layer) {
+                for (std::uint32_t y = 0u; y < surface.height; ++y) {
+                    for (std::uint32_t x = 0u; x < surface.width; ++x) {
+                        for (std::uint32_t fragment = 0u; fragment < surface.samples; ++fragment) {
+                            const auto address = layout.Offset(x, y, layer, fragment);
+                            Require(address + surface.elementBytes <= payload.size(), "readback retile exceeds its allocation");
+                            for (std::uint32_t byte = 0u; byte < surface.elementBytes; ++byte) {
+                                Require(!covered[address + byte], "readback retile elements overlap");
+                                covered[address + byte] = true;
+                                Require(payload[address + byte] == expected[position++], "readback and retile disagree on layer, pixel or fragment order");
+                            }
+                        }
+                    }
+                }
+            }
+            for (std::size_t index = 0u; index < covered.size(); ++index) Require(covered[index] || payload[index] == std::byte{0xa5}, "readback retile changed tile padding");
+            for (std::size_t index = 0u; index < coordinates.size(); ++index) {
+                const auto& coordinate = coordinates[index];
+                const auto fragment = static_cast<std::uint32_t>(index) % surface.samples;
+                const auto source = (((coordinate[2] * surface.height + coordinate[1]) * surface.width + coordinate[0]) * surface.samples + fragment) * surface.elementBytes;
+                const auto reference = references[mode][index];
+                const auto address = (reference & ~65535ull) | ((reference & 65535ull) ^ pipeBankXor);
+                Require(address + surface.elementBytes <= payload.size() && std::equal(expected.begin() + source, expected.begin() + source + surface.elementBytes, payload.begin() + address), "rendered readback differs at an AMD reference fragment address");
+            }
+            std::vector<std::byte> restored(expected.size());
+            layout.Detile(payload, restored);
+            Require(restored == expected && linear == expected, "readback retile roundtrip changed rendered element bits");
+            for (std::size_t index = 0u; index < tiled.size(); ++index) Require((index >= 16u && index < 16u + payload.size()) || tiled[index] == std::byte{0xa5}, "readback retile changed an allocation sentinel");
+            std::printf("multisample readback retile: format=%u mode=%s xor=0x%x samples=%u layers=%u elements=%u reference-points=7 padding/sentinels/roundtrip=passed\n", static_cast<std::uint32_t>(surface.format), mode == 0u ? "R_X" : "Z_X", pipeBankXor, surface.samples, surface.layers, elements);
+        }
+    }
 }
 
 template<typename TAction>
@@ -331,6 +387,106 @@ void CheckRefusals(TextureDetiler& reader, const Surface& surface) {
     std::puts("multisample readback invalid-input refusals passed");
 }
 
+std::vector<std::byte> Upload(TextureDetiler& transfer, TextureDetiler& reader, const Surface& surface, std::vector<std::byte>& expected, std::uint32_t first, std::uint32_t elements, std::uint32_t repetitions = 1u, std::span<const std::byte> supplied = {}) {
+    const auto bytes = static_cast<std::size_t>(elements) * surface.elementBytes;
+    const auto padded = (bytes + 3u) & ~std::size_t{3};
+    const auto alignment = std::max<std::size_t>({4u, surface.elementBytes, surface.context.limits.minStorageBufferOffsetAlignment});
+    const auto offset = (16u + alignment - 1u) / alignment * alignment;
+    Buffer source(surface.context, offset + padded + 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::fill(source.Bytes().begin(), source.Bytes().end(), std::byte{0x5a});
+    Require(supplied.empty() || supplied.size() == bytes, "multisample upload fixture source size mismatch");
+    for (std::size_t index = 0; index < bytes; ++index) source.Bytes()[offset + index] = supplied.empty() ? static_cast<std::byte>((index * 29u + first * 17u + elements * 7u) & 255u) : supplied[index];
+    const std::vector<std::byte> retained(source.Bytes().begin(), source.Bytes().end());
+    std::copy_n(retained.begin() + offset, bytes, expected.begin() + static_cast<std::size_t>(first) * surface.elementBytes);
+    const auto stride = 256u / alignment * alignment;
+    Require(stride != 0u, "upload fixture cannot hold an aligned chunk");
+    transfer.BeginBatch();
+    CommandBatch batch(surface.context);
+    RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    for (std::uint32_t repeat = 0; repeat < repetitions; ++repeat) {
+        for (std::size_t done = 0; done < bytes; done += stride) {
+            const auto count = std::min(stride, bytes - done);
+            transfer.DispatchMultisampleImage(batch.Handle(), surface.elementBytes, source.Handle(), offset + done, (count + 3u) & ~std::size_t{3}, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first + static_cast<std::uint32_t>(done / surface.elementBytes), static_cast<std::uint32_t>(count / surface.elementBytes));
+        }
+        RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    }
+    batch.SubmitAndWait();
+    source.Invalidate();
+    Require(std::equal(retained.begin(), retained.end(), source.Bytes().begin()), "multisample upload changed source bytes or sentinels");
+    return CheckReadback(reader, surface, 0u, surface.width * surface.height * surface.layers * surface.samples, 1u, 0u, expected);
+}
+
+void CheckUploadRefusals(TextureDetiler& transfer, const Surface& surface) {
+    Buffer source(surface.context, 256u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    CommandBatch batch(surface.context);
+    const auto call = [&](std::uint32_t bytes, std::uint32_t fragments, std::uint32_t first, std::uint32_t elements, std::uint64_t offset = 0u, std::uint64_t range = 4u) {
+        transfer.DispatchMultisampleImage(batch.Handle(), bytes, source.Handle(), offset, range, surface.arrayView, 1u, 1u, 1u, fragments, first, elements);
+    };
+    for (const auto bytes : {0u, 3u, 32u}) Refused([&] { call(bytes, 4u, 0u, 1u); }, "element size is unsupported");
+    for (const auto fragments : {0u, 1u, 3u, 16u}) Refused([&] { call(4u, fragments, 0u, 1u); }, "fragment count is unsupported");
+    for (const auto range : {std::array{0u, 0u}, std::array{4u, 1u}, std::array{3u, 2u}, std::array{0xffffffffu, 2u}}) Refused([&] { call(4u, 4u, range[0], range[1]); }, "element range is invalid");
+    for (const auto range : {std::array<std::uint64_t, 2>{1u, 4u}, std::array<std::uint64_t, 2>{0u, 0u}, std::array<std::uint64_t, 2>{0u, 3u}, std::array<std::uint64_t, 2>{0u, 260u}, std::array<std::uint64_t, 2>{~std::uint64_t{0} - 3u, 8u}}) Refused([&] { call(4u, 4u, 0u, 1u, range[0], range[1]); }, "buffer range is invalid");
+    Refused([&] { transfer.DispatchMultisampleImage(VK_NULL_HANDLE, 4u, source.Handle(), 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
+    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, VK_NULL_HANDLE, 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
+    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, VK_NULL_HANDLE, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
+    for (const auto extent : {std::array{0u, 1u, 1u}, std::array{1u, 0u, 1u}, std::array{1u, 1u, 0u}, std::array{16385u, 1u, 1u}, std::array{1u, 16385u, 1u}, std::array{1u, 1u, 8193u}}) Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, extent[0], extent[1], extent[2], 4u, 0u, 1u); }, "extent is unsupported");
+    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, 16384u, 16384u, 8192u, 8u, 0u, 1u); }, "element range is invalid");
+    for (const bool multisample : {false, true}) {
+        auto unsupported = surface.context;
+        if (multisample) unsupported.storageImageMultisample = false;
+        else unsupported.storageImageWriteWithoutFormat = false;
+        TextureDetiler unavailable(unsupported);
+        Refused([&] { unavailable.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "does not enable multisampled storage image writes without format");
+    }
+}
+
+void CheckUpload(const Context& context) {
+    Require(context.storageImageMultisample && context.storageImageWriteWithoutFormat, "upload fixture requires enabled multisampled formatless storage writes");
+    auto limited = context;
+    limited.limits.maxComputeWorkGroupCount[0] = 1u;
+    limited.limits.maxStorageBufferRange = 256u;
+    TextureDetiler transfer(limited);
+    TextureDetiler reader(context);
+    std::uint32_t exercised = 0u;
+    for (const auto bytes : {1u, 2u, 4u, 8u, 16u}) {
+        const auto format = TextureDetiler::ImageElementFormat(bytes);
+        for (const auto samples : {2u, 4u, 8u}) {
+            if (!SurfaceSupported(context, format, samples, 17u, 5u, 2u, true)) continue;
+            Surface surface(context, format, bytes, samples, 17u, 5u, 2u, true);
+            surface.Render();
+            const auto elements = surface.width * surface.height * surface.layers * samples;
+            auto expected = surface.Expected(0u, elements);
+            Upload(transfer, reader, surface, expected, 3u, 1u);
+            Upload(transfer, reader, surface, expected, 1u, elements - 3u);
+            Upload(transfer, reader, surface, expected, 0u, elements);
+            Upload(transfer, reader, surface, expected, elements - 1u, 1u, samples == 4u ? 65u : 1u);
+            if (bytes == 4u && samples == 4u) CheckUploadRefusals(transfer, surface);
+            std::printf("multisample upload: bytes=%u samples=%u layers=2 full/partial/packed/source-sentinels/chunks/reuse=passed\n", bytes, samples);
+            ++exercised;
+        }
+    }
+    Require(exercised != 0u, "no supported multisample upload subcase was exercised");
+    const MultisampleTextureLayout active(TextureTileMode::kR64KBX, 8u, 4u, 17u, 5u, 2u);
+    if (SurfaceSupported(context, VK_FORMAT_R32G32_UINT, 4u, active.Pitch(), active.PaddedHeight(), 2u, true)) {
+        for (const auto xorValue : {0u, 0x8100u}) {
+            const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, 8u, 4u, active.Pitch(), active.PaddedHeight(), 2u, xorValue);
+            std::vector<std::byte> tiled(static_cast<std::size_t>(layout.Bytes()));
+            for (std::size_t byte = 0; byte < tiled.size(); ++byte) tiled[byte] = static_cast<std::byte>((byte * 37u + (byte >> 8u) * 13u + (byte >> 15u) * 71u + (byte >> 16u) * 101u) & 255u);
+            std::vector<std::byte> linear(static_cast<std::size_t>(layout.LinearBytes()));
+            layout.Detile(tiled, linear);
+            Surface surface(context, VK_FORMAT_R32G32_UINT, 8u, 4u, layout.Pitch(), layout.PaddedHeight(), 2u, true);
+            surface.Render();
+            const auto elements = surface.width * surface.height * surface.layers * surface.samples;
+            auto expected = surface.Expected(0u, elements);
+            const auto actual = Upload(transfer, reader, surface, expected, 0u, elements, 1u, linear);
+            std::vector<std::byte> retiled(tiled.size(), std::byte{0xa5});
+            layout.Tile(actual, retiled);
+            Require(retiled == tiled, "multisample padded initialization changed color bytes, fragments, layers, XOR or padding");
+            std::printf("multisample padded upload: active=17x5 backing=%ux%u layers=2 fragments=4 bytes=%zu xor=0x%x exact roundtrip passed\n", surface.width, surface.height, retiled.size(), xorValue);
+        }
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -343,8 +499,8 @@ int main(int argc, char** argv) {
         else if (mode == "uint16") { format = VK_FORMAT_R16_UINT; bytes = 2u; }
         else if (mode == "uint64") { format = VK_FORMAT_R32G32_UINT; bytes = 8u; }
         else if (mode == "uint128") { format = VK_FORMAT_R32G32B32A32_UINT; bytes = 16u; }
-        else Require(mode == "uint32" || mode == "depth", "unknown multisample readback test mode");
-        if (mode == "depth") format = VK_FORMAT_D32_SFLOAT;
+        else Require(mode == "uint32" || mode == "depth" || mode == "upload" || mode == "retile" || mode == "depth_retile", "unknown multisample readback test mode");
+        if (mode == "depth" || mode == "depth_retile") format = VK_FORMAT_D32_SFLOAT;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -357,9 +513,28 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device does not support per-sample shading");
             return VulkanTestSkipped;
         }
+        if (mode == "upload") {
+            if (!context.storageImageMultisample || !context.storageImageWriteWithoutFormat) {
+                std::puts("skipped, the device does not enable multisampled formatless storage writes");
+                return VulkanTestSkipped;
+            }
+            CheckUpload(context);
+            Require(checkedPipelineCacheUses != 0u, "upload fixture did not check pipeline cache use");
+            std::printf("multisample upload guarded pipeline creation checks=%u passed\n", checkedPipelineCacheUses);
+            return 0;
+        }
         auto limited = context;
         limited.limits.maxComputeWorkGroupCount[0] = 1u;
         TextureDetiler reader(limited);
+        if (mode == "retile" || mode == "depth_retile") {
+            if (!SurfaceSupported(context, format, 4u, 129u, 67u, 17u)) return VulkanTestSkipped;
+            Surface surface(context, format, bytes, 4u, 129u, 67u, 17u);
+            surface.Render();
+            CheckRetile(reader, surface);
+            Require(checkedPipelineCacheUses != 0u, "retile fixture did not check pipeline cache use");
+            std::printf("multisample retile guarded pipeline creation checks=%u passed\n", checkedPipelineCacheUses);
+            return 0;
+        }
         std::uint32_t checked = 0u;
         for (const auto samples : {2u, 4u, 8u}) {
             if (!SurfaceSupported(context, format, samples)) continue;

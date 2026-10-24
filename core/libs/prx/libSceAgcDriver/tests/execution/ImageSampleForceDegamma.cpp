@@ -25,6 +25,9 @@ constexpr std::uint32_t Size = 4;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Format8888Srgb = 130;
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format8888SNorm = 57;
+constexpr std::uint32_t FormatBc4UNorm = 175;
+constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
@@ -173,7 +176,13 @@ int main() {
         Require(unormPlain[0] != unormPoint[0] || unormPlain[4] != unormPoint[4], "8_8_8_8_UNORM without FORCE_DEGAMMA sampled the decoded values");
         FillInput(false);
         RequireSame(Sample(*device, Format8888UNorm, FilterBilinear, ForceDegamma), forcedBilinear, "8_8_8_8_UNORM, bilinear", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
-        Reject(*device, Format32Float, "guest format 22, which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding");
+        RequireSame(Sample(*device, Format32Float, FilterPoint, ForceDegamma), Sample(*device, Format32Float, FilterPoint, 0u), "32_FLOAT, point");
+        RequireSame(Sample(*device, FormatBc4UNorm, FilterPoint, ForceDegamma), Sample(*device, FormatBc4UNorm, FilterPoint, 0u), "BC4_UNORM, point");
+        FillInput(true);
+        RequireSame(Sample(*device, Format8888SNorm, FilterPoint, ForceDegamma), forcedPoint, "8_8_8_8_SNORM, point", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        FillInput(false);
+        RequireSame(Sample(*device, Format8888SNorm, FilterBilinear, ForceDegamma), forcedBilinear, "8_8_8_8_SNORM, bilinear", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        Reject(*device, Format32UInt, "guest format 20, which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding");
         std::puts("image sample force degamma tests passed");
         return 0;
     } catch (const std::exception& error) {

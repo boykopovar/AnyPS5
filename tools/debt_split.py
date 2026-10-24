@@ -71,7 +71,7 @@ def read_debt(root, name):
     sections = {}
     if path.exists():
         section = None
-        for kind, item_section, text in parse(path.read_text(encoding="utf-8")):
+        for kind, item_section, text in parse(path.read_text(encoding="utf-8-sig")):
             if kind == "heading" and item_section and text.startswith("### "):
                 section = item_section
                 sections.setdefault(section, [])
@@ -115,7 +115,7 @@ def split(text):
 def render_index(index):
     out = []
     for kind, item in index:
-        if kind == "heading" and out and out[-1] != "":
+        if kind in ("heading", "text") and out and out[-1] != "":
             out.append("")
         out.append(item)
         if kind == "heading" or kind == "text":
@@ -129,7 +129,7 @@ def index_note():
 
 
 def command_split(root):
-    text = (root / INDEX).read_text(encoding="utf-8")
+    text = (root / INDEX).read_text(encoding="utf-8-sig")
     index, files, order = split(text)
     if not files:
         sys.exit(f"{INDEX} has no entries to move")
@@ -145,7 +145,7 @@ def command_split(root):
 
 
 def git(root, *args, check=True):
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8", check=check).stdout
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=check).stdout
 
 
 def apply_change(root, base, new, index_text):
@@ -228,11 +228,14 @@ def command_resolve(root):
     print("\n".join(touched))
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=f"Split {INDEX} into one file per library or component, and move entries of a change made before the split")
     parser.add_argument("command", choices=("split", "resolve"),
                         help=f"split: move the entries of {INDEX} into {DEBT_DIR}/; resolve: during a rebase stopped on {INDEX}, apply the stopped commit's entry changes to {DEBT_DIR}/ and stage them")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
     command_split(root) if args.command == "split" else command_resolve(root)
 

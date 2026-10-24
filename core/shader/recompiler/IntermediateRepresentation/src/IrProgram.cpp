@@ -173,6 +173,21 @@ std::string formatHex64(std::uint64_t value) {
     return stream.str();
 }
 
+bool carriesMemoryInfo(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConstBuffer || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || BufferComponentCount(opcode) != 0u || SharedComponentCount(opcode) != 0u || ImageOpcodeInfoOf(opcode).access != ImageAccess::None;
+}
+
+std::string memoryToString(const IrProgram& program, const IrValue& inst) {
+    const auto flags = inst.Flags<MemoryFlags>();
+    const auto& memoryInfo = program.Resources().memoryInfo;
+    if (flags.index >= memoryInfo.size()) {
+        return " [pc=" + formatHex32(flags.pc) + " mem=?]";
+    }
+    std::ostringstream stream;
+    stream << " [pc=" << formatHex32(flags.pc) << " off=0x" << std::hex << memoryInfo[flags.index].offset << "]";
+    return stream.str();
+}
+
 std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, const IrValue* value) {
     if (value == nullptr) {
         return "<null>";
@@ -208,9 +223,22 @@ std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, cons
 }
 
 std::size_t IrProgram::ReclaimUnusedValues() {
-    std::unordered_set<IrValue*> live;
+    std::vector<IrValue*> owned(nextValueId, nullptr);
+    for (const auto& value : values) owned[value->Id()] = value.get();
+    std::vector<bool> live(nextValueId, false);
+    std::unordered_set<IrValue*> liveElsewhere;
     std::vector<IrValue*> pending;
-    const auto keep = [&](IrValue* value) { if (value != nullptr && live.insert(value).second) pending.push_back(value); };
+    const auto keep = [&](IrValue* value) {
+        if (value == nullptr) return;
+        if (const auto id = value->Id(); id < owned.size() && owned[id] == value) {
+            if (live[id]) return;
+            live[id] = true;
+        } else if (!liveElsewhere.insert(value).second) {
+            return;
+        }
+        pending.push_back(value);
+    };
+    const auto isLive = [&](const IrValue& value) { return live[value.Id()]; };
     const auto keepBlocks = [&](const auto& storage) {
         for (const auto& block : storage) {
             for (IrValue* instruction : block->Instructions()) keep(instruction);
@@ -235,13 +263,13 @@ std::size_t IrProgram::ReclaimUnusedValues() {
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) keep(value->Argument(index));
     }
     for (const auto& value : values) {
-        if (live.contains(value.get())) continue;
+        if (isLive(*value)) continue;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) value->ReplaceArgument(index, nullptr);
     }
     for (const auto& value : values) {
-        if (!live.contains(value.get()) && value->HasUses()) throw std::runtime_error("an unused IR value has an external user");
+        if (!isLive(*value) && value->HasUses()) throw std::runtime_error("an unused IR value has an external user");
     }
-    const auto removed = std::erase_if(values, [&](const auto& value) { return !live.contains(value.get()); });
+    const auto removed = std::erase_if(values, [&](const auto& value) { return !isLive(*value); });
     values.shrink_to_fit();
     return removed;
 }
@@ -391,7 +419,11 @@ std::string ProgramToString(const IrProgram& program) {
                     text += valueToString(ids, inst->Argument(index));
                 }
             }
-            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")\n";
+            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")";
+            if (carriesMemoryInfo(inst->Opcode())) {
+                text += memoryToString(program, *inst);
+            }
+            text += "\n";
         }
     }
     return text;
@@ -573,11 +605,11 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (fixedSignature && inst->ArgumentCount() != IrOpcodeOperandCount(inst->Opcode())) {
                 fail(std::string(IrOpcodeName(inst->Opcode())) + " has " + std::to_string(inst->ArgumentCount()) + " arguments, expected " + std::to_string(IrOpcodeOperandCount(inst->Opcode())));
             }
+            if (carriesMemoryInfo(inst->Opcode()) && inst->Flags<MemoryFlags>().index >= program.Resources().memoryInfo.size()) {
+                fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
+            }
             if (inst->Opcode() == IrOpcode::ReadConstBuffer) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid scalar-memory resource kind");
@@ -590,9 +622,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto addressInfo = AddressOpcodeInfoOf(inst->Opcode());
             if (addressInfo.access != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
@@ -607,9 +636,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto bufferComponents = BufferComponentCount(inst->Opcode());
             if (bufferComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has a non-buffer resource kind");
@@ -624,9 +650,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto sharedComponents = SharedComponentCount(inst->Opcode());
             if (sharedComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if ((memory.kind != ResourceKind::Lds && memory.kind != ResourceKind::Gds) || memory.resource != 0u || memory.sampler != 0u || memory.componentCount == 0u || memory.componentIndex >= memory.componentCount) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid shared-memory metadata");
@@ -644,9 +667,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
             if (imageInfo.access != ImageAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Image || imageInfo.resourceClass == ImageResourceClass::None) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid image-memory metadata");

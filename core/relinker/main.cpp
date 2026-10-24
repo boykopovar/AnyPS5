@@ -6,6 +6,7 @@
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
 #include <io/NativePath.hpp>
+#include <io/FileIdentity.hpp>
 #include <elfpatcher/linux/LinuxDesktopEntryWriter.hpp>
 #include <io/FileWriter.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
@@ -34,11 +35,13 @@ struct ConvertedExecutable {
     std::vector<std::uint8_t> Bytes;
     std::string Diagnostics;
     std::vector<Relinker::GamePatch::AppliedPatch> AppliedPatches;
+    std::optional<std::uint64_t> LinuxBase;
 };
 
 ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
     Io::FileReader fileReader;
     Relinker::ConversionInput input;
+    Relinker::ElfReader(fileReader.ReadPrefix(inputPath, 0x40)).ValidateMagic();
     input.Executable = fileReader.Read(inputPath);
     input.InputPath = std::filesystem::absolute(Io::NativePath(inputPath)).lexically_normal();
     input.OutputPath = Io::NativePath(absPath);
@@ -54,6 +57,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.Target = args.toWindows ? Relinker::TargetSystem::Windows : args.toMacos ? Relinker::TargetSystem::MacOs : Relinker::TargetSystem::Linux;
     options.ToIntel = args.toIntel;
     options.ToRosetta = args.toRosetta;
+    options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
     options.UnusedFilterLevel = args.unusedFilterLevel;
@@ -72,7 +76,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     progress.IncludeFile(Io::Utf8Path(input.OutputPath));
     for (const auto& module : input.Modules) progress.IncludeFile(Io::Utf8Path(module.Path));
     auto converted = Relinker::Conversion(progress).Convert(std::move(input), options);
-    return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics), std::move(converted.AppliedPatches)};
+    return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics), std::move(converted.AppliedPatches), converted.LinuxBase};
 }
 
 class OutputIdentityDirectory {
@@ -104,11 +108,9 @@ public:
         }
     }
 
-    std::filesystem::path GetPath() const { return directory / "file"; }
     const std::filesystem::path& GetDirectory() const { return directory; }
 
     void Remove() {
-        std::filesystem::remove(GetPath());
         std::filesystem::remove(directory);
         directory.clear();
     }
@@ -118,25 +120,7 @@ private:
 };
 
 bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::path& second) {
-    if (std::filesystem::equivalent(first, second)) return true;
-#ifdef _WIN32
-    if (std::filesystem::status(first).permissions() != std::filesystem::status(second).permissions() &&
-        std::filesystem::hard_link_count(first) > 1 && std::filesystem::hard_link_count(second) > 1) {
-        for (const auto& path : {first, second}) {
-            if ((std::filesystem::status(path).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none)
-                throw Domain::RelinkerException("Cannot compare read-only output identities: " + Io::Utf8Path(path));
-        }
-        OutputIdentityDirectory firstDirectory(first.parent_path());
-        OutputIdentityDirectory secondDirectory(second.parent_path());
-        std::filesystem::create_hard_link(first, firstDirectory.GetPath());
-        std::filesystem::create_hard_link(second, secondDirectory.GetPath());
-        const bool same = std::filesystem::equivalent(firstDirectory.GetPath(), secondDirectory.GetPath());
-        secondDirectory.Remove();
-        firstDirectory.Remove();
-        return same;
-    }
-#endif
-    return false;
+    return Io::SameFile(first, second);
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second) {
@@ -305,10 +289,10 @@ int Run(const int argc, char* argv[]) {
             const auto relative = ExecutableRelative(executable);
             const auto input = ResolveExtraExecutable(moduleRoot, moduleDirectories, relative, executable);
             const auto output = Relinker::GamePatch::OutputExecutablePath(Io::NativePath(absPath), executable);
-            if (std::filesystem::equivalent(Io::NativePath(args.inputPath), input)) throw Domain::RelinkerException("Executable is converted twice: " + executable);
+            if (Io::SameFile(Io::NativePath(args.inputPath), input)) throw Domain::RelinkerException("Executable is converted twice: " + executable);
             if (output.lexically_normal() == Io::NativePath(absPath).lexically_normal()) throw Domain::RelinkerException("Executable outputs collide: " + Io::Utf8Path(output));
             for (const auto& extra : extraExecutables) {
-                if (std::filesystem::equivalent(extra.Input, input)) throw Domain::RelinkerException("Executable is converted twice: " + executable);
+                if (Io::SameFile(extra.Input, input)) throw Domain::RelinkerException("Executable is converted twice: " + executable);
                 if (extra.Output.lexically_normal() == output.lexically_normal()) throw Domain::RelinkerException("Executable outputs collide: " + Io::Utf8Path(output));
             }
             extraExecutables.push_back({executable, relative, input, output});
@@ -351,13 +335,20 @@ int Run(const int argc, char* argv[]) {
         std::filesystem::path manifestPath;
         std::string manifestText;
         if (!appliedPatches.empty()) manifestPath = Io::NativePath(absPath).parent_path() / Io::NativePath(Io::Utf8Path(Io::NativePath(absPath).stem()) + Relinker::GamePatch::ManifestSuffix);
-        if (!manifestPath.empty()) manifestText = Relinker::GamePatch::WriteManifest(appliedPatches, mainTarget, Io::Utf8Path(patchFile));
+        if (!manifestPath.empty()) manifestText = Relinker::GamePatch::WriteManifest(appliedPatches, mainTarget, Io::Utf8Path(patchFile), executables.front().LinuxBase);
 
         const Elfpatcher::Linux::LinuxDesktopEntryWriter desktopEntryWriter;
-        const auto desktopEntry = args.toWindows || args.toMacos ? std::nullopt : desktopEntryWriter.Prepare(Io::NativePath(args.inputPath).parent_path() / "sce_sys", Io::NativePath(absPath));
+        const auto metadataRoot = Io::NativePath(args.inputPath).parent_path() / "sce_sys";
+        const auto desktopEntry = args.toWindows || args.toMacos ? std::nullopt : desktopEntryWriter.Prepare(metadataRoot, Io::NativePath(absPath));
+        std::vector<std::filesystem::path> metadataInputs;
+        if (args.toWindows || desktopEntry) metadataInputs.push_back(metadataRoot / "icon0.png");
+        if (desktopEntry) metadataInputs.push_back(metadataRoot / "param.json");
 
         const auto checkOutputInputs = [&](const std::filesystem::path& path, const char* kind) {
             if (!std::filesystem::exists(path)) return;
+            for (const auto& input : metadataInputs)
+                if (std::filesystem::exists(input) && SameOutputFile(input, path))
+                    throw Domain::RelinkerException(std::string(kind) + " output would overwrite input metadata: " + Io::Utf8Path(path));
             for (const auto& executable : executables)
                 if (SameOutputFile(Io::NativePath(executable.InputPath), path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite the input executable: " + Io::Utf8Path(path));

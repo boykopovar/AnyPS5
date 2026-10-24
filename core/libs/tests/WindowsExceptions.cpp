@@ -151,6 +151,26 @@ static void testGuestAbortReport() {
         throw std::runtime_error(std::string("guest abort child exited with ") + code + " and printed:\n" + output);
 }
 
+[[gnu::noinline, noreturn]] static void GuestAssertProbe() {
+    __asm__ volatile("int $0x41");
+    __builtin_unreachable();
+}
+
+static int RunAssertChild() {
+    std::fprintf(stderr, "assert probe\n");
+    std::fflush(stderr);
+    GuestAssertProbe();
+}
+
+static void testGuestAssertReport() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" guest-assert", exitCode);
+    char code[16];
+    std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(exitCode));
+    if (exitCode != 0xC0000005 || output.find("guest assert/break (int 0x41)") == std::string::npos)
+        throw std::runtime_error(std::string("guest assert child exited with ") + code + " and printed:\n" + output);
+}
+
 static int destroyed;
 struct Guard { ~Guard() { ++destroyed; } };
 static void ThrowNested() {
@@ -299,11 +319,13 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         if (std::strcmp(argv[1], "throw-uncaught") == 0) return RunThrowChild();
         if (std::strcmp(argv[1], "guest-abort") == 0) return RunAbortChild();
+        if (std::strcmp(argv[1], "guest-assert") == 0) return RunAssertChild();
         return 100;
     }
     TestTypeInfoVtables();
     testUnhandledThrowSite();
     testGuestAbortReport();
+    testGuestAssertReport();
     testExceptionPointer();
     testFutureException();
     testMadeExceptionPointer();

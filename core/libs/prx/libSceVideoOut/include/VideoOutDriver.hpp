@@ -44,6 +44,7 @@ static constexpr int VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE = -2144796642;
 static constexpr int VIDEO_OUT_BUS_TYPE_MAIN = 0;
 static constexpr int VIDEO_OUT_BUS_TYPE_OVERLAY = 1;
 static constexpr int VIDEO_OUT_BUS_TYPE_SUB = 2;
+static constexpr int VIDEO_OUT_BUS_TYPE_HMD2_MAIN = 0x20;
 
 static constexpr uint32_t VIDEO_OUT_DEFAULT_WIDTH = 1920;
 static constexpr uint32_t VIDEO_OUT_DEFAULT_HEIGHT = 1080;
@@ -94,6 +95,9 @@ static constexpr std::uint64_t VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR = 1;
 
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_59_94HZ = 3;
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_119_88HZ = 13;
+
+static constexpr std::uint32_t VIDEO_OUT_RESOLUTION_1080P = 1;
+static constexpr std::uint32_t VIDEO_OUT_RESOLUTION_2160P = 2;
 
 struct VideoOutBuffer {
     int groupIndex = -1;
@@ -225,6 +229,7 @@ public:
     bool HasConfig(int handle);
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
+    std::uint32_t GetDisplayResolution();
 
     // 0, or VIDEO_OUT_ERROR_FLIP_QUEUE_FULL when the title has VIDEO_OUT_FLIP_QUEUE_CAPACITY flips pending.
     int SubmitFlip(int handle, int index, int flipMode, int64_t flipArg);
@@ -251,6 +256,7 @@ private:
     HostHdrProbe hdrProbe;
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
+    std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};
 
     std::jthread presentThread;
     std::jthread vblankThread;

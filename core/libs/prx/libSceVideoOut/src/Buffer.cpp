@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Buffer.hpp"
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -118,6 +119,13 @@ void APS5_VABI sceVideoOutAddBufferAttributeOption(VideoOutBufferAttribute2* att
         throw std::runtime_error("sceVideoOutAddBufferAttributeOption: null attribute");
     }
     attribute->option |= option;
+}
+
+void APS5_VABI sceVideoOutRemoveBufferAttributeOption(VideoOutBufferAttribute2* attribute, uint64_t option) {
+    if (attribute == nullptr) {
+        throw std::runtime_error("sceVideoOutRemoveBufferAttributeOption: null attribute");
+    }
+    attribute->option &= ~option;
 }
 
 int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option) try {

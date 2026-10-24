@@ -464,6 +464,12 @@ void testToggleRequests() {
     const auto overlay = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, true), now);
     check(overlay.togglePerformanceOverlay && !overlay.toggleFullscreen, "F10 asks to toggle the performance overlay");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, false), now).togglePerformanceOverlay, "releasing F10 asks for nothing");
+    const auto screenshot = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F12, true), now);
+    check(screenshot.screenshot && !screenshot.toggleFullscreen && !screenshot.togglePerformanceOverlay, "F12 asks for a screenshot");
+    auto repeated = KeyEvent(SDL_SCANCODE_F12, true);
+    repeated.key.repeat = 1;
+    check(!keyboardMouse.HandleEvent(repeated, now).screenshot, "a repeated F12 asks for nothing");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F12, false), now).screenshot, "releasing F12 asks for nothing");
 }
 
 void testDefaultL2() {

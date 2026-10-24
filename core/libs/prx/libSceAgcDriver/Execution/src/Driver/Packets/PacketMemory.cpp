@@ -11,6 +11,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -50,6 +52,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 countLabelOutcome(reason);
                 ++immediateLabels;
             } else {
+                if (localDevice != nullptr) Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before interrupt");
                 ++noOpLabels;
             }
             if (reason == 0 || reason == 5) {
@@ -114,7 +117,29 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     if (!drainAll && !cpuStores && (opcode == 0x40 || opcode == 0x50 || opcode == 0x83)) {
         constexpr std::size_t gpuStoreLimit = 65536;
         bool drained = true;
-        if (const auto store = Pm4::ResolveStore(packet, queue, gpuStoreLimit)) {
+        const auto copy = opcode == 0x50 ? Pm4::DecodeMemoryCopy(packet) : std::nullopt;
+        const auto copyBehindPendingSource = [&] {
+            if (!copy.has_value() || copy->bytes > gpuStoreLimit || !GuestMemory::Accessible(reinterpret_cast<const void*>(copy->source), copy->bytes) || !GuestMemory::Accessible(reinterpret_cast<const void*>(copy->destination), copy->bytes, true)) return false;
+            const auto end = copy->source + copy->bytes;
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{copy->source, end}}};
+            const auto& queued = deferredLabels().labels;
+            const bool labelQueued = std::any_of(queued.begin(), queued.end(), [&](const DeferredLabel& label) { return label.address < end && copy->source < label.address + label.size; });
+            if (!labelQueued && !Graphics::Recorder::SnapshotWriteOverlaps(copy->source, copy->bytes) && !Graphics::StorageTexture::AnyPendingOverlaps(range) && !Graphics::AnyShadowedOverlaps(copy->source, copy->bytes)) return false;
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Copy);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            const auto localDevice = device.Load();
+            if (localDevice == nullptr) return false;
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            if (!localDevice->StoresPendingOver(copy->source, copy->bytes) || !localDevice->GpuCopyPossible(copy->destination, copy->source, copy->bytes)) return false;
+            const auto outcome = localDevice->CopyBuffer(copy->destination, copy->source, copy->bytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, submission.queue, [](std::span<const std::byte>, std::uint64_t) {});
+            if (outcome.path != 1 && outcome.path != 3) throw std::runtime_error("AGC driver: a DMA_DATA copy of up to 64 KiB that GpuCopyPossible accepted took copy path " + std::to_string(outcome.path));
+            return true;
+        };
+        if (copyBehindPendingSource()) {
+            ++copiesBehindPendingSources;
+            wroteOnGpu = true;
+            drained = false;
+        } else if (const auto store = Pm4::ResolveStore(packet, queue, gpuStoreLimit)) {
             const auto bytes = store->Bytes();
             if (bytes.empty()) {
 
@@ -147,7 +172,6 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             }
         }
         if (drained && opcode == 0x50) {
-            const auto copy = Pm4::DecodeMemoryCopy(packet);
             if (copy.has_value() && copy->bytes > gpuStoreLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->source), copy->bytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->destination), copy->bytes, true)) {
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Copy);
                 std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -357,9 +381,15 @@ void Driver::commitDmaStore(std::uint32_t queue, std::uint64_t address, std::spa
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
 }
 
-bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+bool Driver::labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode) {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
     if (!ordered || !DeferLabels() || (opcode != 0x49 && opcode != 0x37) || !deferredLabels().labels.empty()) return false;
+    if (Pm4::DecodeLabelWrite(packet).has_value()) return true;
+    return opcode == 0x49 && ((packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0);
+}
+
+bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+    if (!labelPacketQueues(packet, opcode)) return false;
     const auto interruptSelect = opcode == 0x49 ? (packet[2] >> 24u) & 7u : 0u;
     const bool endOfPipeInterrupt = interruptSelect != 0 && interruptSelect != 3;
     const auto label = Pm4::DecodeLabelWrite(packet);
@@ -383,10 +413,23 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
     }
     if (endOfPipeInterrupt) bumpEpoch(&EpochBumps::drains);
     auto stored = bytes;
-    DrawPipeline::Queue0().Enqueue([this, queue, opcode, address, bytes = std::move(bytes), endOfPipeInterrupt] {
-        GuestMemory::SetCurrentPacket(opcode, queue);
-        commitLabel(queue, address, bytes, endOfPipeInterrupt);
-    }, std::move(writes), address, std::move(stored));
+    auto labelBytes = bytes;
+    auto enqueue =[this, queue, opcode, address, bytes = std::move(bytes), endOfPipeInterrupt, writes, stored = std::move(stored)]() mutable {
+        DrawPipeline::Queue0().Enqueue([this, queue, opcode, address, bytes = std::move(bytes), endOfPipeInterrupt] {
+            GuestMemory::SetCurrentPacket(opcode, queue);
+            commitLabel(queue, address, bytes, endOfPipeInterrupt);
+        }, std::move(writes), address, std::move(stored));
+    };
+    if (queue == 0 && DrawFinisher::Overlap() && DrawFinisher::Busy()) {
+        DrawFinisher::Pending held;
+        held.unknown = false;
+        held.writes = std::move(writes);
+        held.labelAddress = address;
+        held.labelBytes = std::move(labelBytes);
+        DrawFinisher::Get().Enqueue(std::move(enqueue), std::move(held));
+        return true;
+    }
+    enqueue();
     return true;
 }
 

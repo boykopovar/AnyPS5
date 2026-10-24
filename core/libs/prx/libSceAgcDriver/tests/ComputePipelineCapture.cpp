@@ -260,8 +260,17 @@ void CheckOptionalInvalid() {
     Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a non-directory existing record");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path.parent_path()) == 1u, "non-directory record disabled optional capture or was changed");
     Directory unexpected;
+    const auto finder = unexpected.path / ".DS_Store";
+    std::ofstream(finder, std::ios::binary).put('x');
+    capture.specialization[0].value = 1u;
+    Require(!capture.Write(unexpected.path).empty(), "strict capture rejected a Finder metadata file");
+    capture.specialization[0].value = 2u;
+    Require(!capture.WriteOptional(unexpected.path).empty() && AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture rejected a Finder metadata file");
+    Require(std::filesystem::file_size(finder) == 1u, "Finder metadata file was changed");
+    capture.specialization[0].value = 3u;
     const auto foreign = unexpected.path / "foreign";
     std::ofstream(foreign, std::ios::binary).put('x');
+    RejectWithMessage([&] { capture.Write(unexpected.path); }, "capture directory contains an unexpected entry");
     Reject([&] { capture.WriteOptional(unexpected.path); }, "optional capture swallowed an unexpected directory entry");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(foreign) == 1u, "unexpected entry disabled optional capture or was changed");
 }

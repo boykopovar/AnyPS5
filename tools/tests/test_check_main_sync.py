@@ -1,4 +1,6 @@
 from pathlib import Path
+import contextlib
+import io
 import os
 import subprocess
 import sys
@@ -65,6 +67,14 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertEqual((data["behind"], data["ahead"], data["conflicts"], data["shared"]), (0, 1, [], []))
         self.assertEqual(run_tool(self.repo.path, "--head", "feature", "--strict").returncode, 0)
 
+    def test_main_with_explicit_argv(self):
+        self.branch("feature")
+        self.repo.write("other.txt", "y\n")
+        self.repo.commit("feature change")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = check_main_sync.main(["--repo", str(self.repo.path), "--base", "main", "--head", "feature"])
+        self.assertEqual(code, 0)
+
     def test_behind_main_is_reported_and_only_fails_when_strict(self):
         self.branch("feature")
         self.repo.write("other.txt", "y\n")
@@ -110,6 +120,26 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertIn("merge: clean", result.stdout)
         self.assertIn("1 file(s) changed on both sides", result.stdout)
         self.assertIn("#77", result.stdout)
+
+    def test_a_subdirectory_reports_the_same_conflicts_and_pull_requests(self):
+        (self.repo.path / "docs").mkdir()
+        self.repo.write("docs/notes.txt", "x\n")
+        self.repo.commit("add docs")
+        self.branch("feature")
+        self.repo.write("shared.txt", "one\nmine\nthree\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("checkout", "-q", "-b", "theirs")
+        self.repo.write("shared.txt", "one\ntheirs\nthree\n")
+        self.repo.commit("their edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.merge_pull(77, "theirs")
+        from_root = check_main_sync.report(self.repo.path, "main", "feature")
+        self.assertEqual((from_root["conflicts"], from_root["pulls"].keys()), (["shared.txt"], {77}))
+        self.assertEqual(check_main_sync.report(self.repo.path / "docs", "main", "feature"), from_root)
+        result = run_tool(self.repo.path / "docs", "--head", "feature")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, run_tool(self.repo.path, "--head", "feature").stdout)
 
     def test_paths_with_spaces_and_unicode_are_reported_verbatim(self):
         name = "sp ace \u00e9.txt"
@@ -182,6 +212,14 @@ class CheckMainSyncTests(unittest.TestCase):
             subprocess.run(["git", "clone", "-q", self.directory.name, other], check=True, capture_output=True)
             self.repo.git("remote", "add", "upstream", other)
             result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--base", "upstream/main", "--fetch"], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("merge: clean", result.stdout)
+
+    def test_default_base_is_fetched_before_it_is_resolved(self):
+        with tempfile.TemporaryDirectory() as other:
+            subprocess.run(["git", "clone", "-q", self.directory.name, other], check=True, capture_output=True)
+            self.repo.git("remote", "add", "upstream", other)
+            result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--fetch"], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("merge: clean", result.stdout)
 

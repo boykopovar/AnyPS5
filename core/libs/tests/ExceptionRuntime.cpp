@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #undef NDEBUG
 #include <cassert>
 #include <cstdio>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <optional>
 #include <csignal>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -18,27 +20,6 @@
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
-#include <unwind.h>
-
-extern "C" unsigned __cxa_uncaught_exceptions_nid_postfix();
-extern "C" void* __cxa_current_primary_exception_nid_postfix();
-extern "C" void __cxa_decrement_exception_refcount_nid_postfix(void*);
-extern "C" void __cxa_rethrow_primary_exception_nid_postfix(void*);
-
-extern "C" [[noreturn]] void _ZSt14_Xout_of_rangePKc_nid_postfix(const char*);
-extern "C" [[noreturn]] void _ZSt13_Xrange_errorPKc_nid_postfix(const char*);
-extern "C" [[noreturn]] void _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
-extern "C" [[noreturn]] void __cxa_bad_cast_nid_postfix();
-extern "C" [[noreturn]] void _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
-extern "C" [[noreturn]] void _ZSt26__throw_bad_variant_accessv_nid_postfix();
-extern "C" [[noreturn]] void _ZNKSt9exception6_RaiseEv_nid_postfix(const void*);
-extern "C" void* __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, void(*)(void*), void(*)(void*), void*(*)(std::size_t), void(*)(void*, std::size_t));
-extern "C" void __cxa_vec_delete3_nid_postfix(void*, std::size_t, std::size_t, void(*)(void*), void(*)(void*, std::size_t));
-extern "C" _Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*);
-extern "C" _Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception*, _Unwind_Stop_Fn, void*);
-extern "C" std::uintptr_t _Unwind_GetIP_nid_postfix(_Unwind_Context*);
-extern "C" std::uintptr_t _Unwind_GetGR_nid_postfix(_Unwind_Context*, int);
-extern "C" void (*_ZSt13set_terminatePFvvE_nid_postfix(void(*)()))();
 
 thread_local int destroyed = 0;
 struct Guard {
@@ -97,7 +78,7 @@ void CheckForeign() {
         assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT); ++foreignDeleted; delete p;
     };
     try {
-        try { _Unwind_RaiseException(exception); assert(false); }
+        try { _Unwind_RaiseException_nid_postfix(exception); assert(false); }
         catch (...) { assert(__cxa_current_primary_exception_nid_postfix() == nullptr); throw; }
     } catch (...) {}
     assert(foreignDeleted == 1);
@@ -132,6 +113,7 @@ void CheckArrays() {
     failArray = true;
     try {
         __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
+
         assert(false);
     } catch (int value) { assert(value == 73); }
     assert(arrayConstructed == 2 && arrayDestroyed == 2 && arrayFreed == 1);
@@ -139,6 +121,7 @@ void CheckArrays() {
     failArray = false;
     void* array = __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
     __cxa_vec_delete3_nid_postfix(array, sizeof(int), sizeof(std::size_t), ArrayDestroy, ArrayFree);
+
     assert(arrayConstructed == 4 && arrayDestroyed == 4 && arrayFreed == 1);
 }
 void* ThreadTest(void*) {
@@ -224,6 +207,7 @@ int main() {
     try { __cxa_rethrow_primary_exception_nid_postfix(retained); assert(false); }
     catch (int value) { assert(value == 27); }
     __cxa_decrement_exception_refcount_nid_postfix(retained);
+
     {
         auto made = std::make_exception_ptr(Counted());
         try { std::rethrow_exception(made); assert(false); } catch (const Counted&) {}
@@ -246,18 +230,38 @@ int main() {
     catch (const std::range_error&) {}
     bool badFunctionCall = false;
     try { _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(); }
-    catch (const std::bad_function_call&) { badFunctionCall = true; }
+    catch (const std::bad_function_call&) { std::abort(); }
+    catch (const std::exception& value) {
+        if (std::strcmp(typeid(value).name(), "NSt8__sce_v217bad_function_callE") != 0) std::abort();
+        if (std::strcmp(value.what(), "bad function call") != 0) std::abort();
+        badFunctionCall = true;
+    }
     if (!badFunctionCall) std::abort();
+    bool plainBadFunctionCall = false;
+    try { _ZSt19_Xbad_function_callv_nid_postfix(); }
+    catch (const std::bad_function_call&) { plainBadFunctionCall = true; }
+    if (!plainBadFunctionCall) std::abort();
     try { __cxa_bad_cast_nid_postfix(); }
     catch (const std::exception& value) { assert(value.what() != nullptr); }
     try { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); std::abort(); }
     catch (const std::bad_weak_ptr& value) { if (std::strcmp(value.what(), "bad_weak_ptr") != 0) std::abort(); }
     try { _ZSt26__throw_bad_variant_accessv_nid_postfix(); std::abort(); }
     catch (const std::bad_variant_access& value) { if (std::strcmp(value.what(), "bad_variant_access") != 0) std::abort(); }
+    try { _ZSt26_Throw_bad_optional_accessv_nid_postfix(); std::abort(); }
+    catch (const std::bad_optional_access& value) { if (std::strcmp(value.what(), "bad_optional_access") != 0) std::abort(); }
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); assert(false); }
     catch (const std::invalid_argument&) {}
-    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); assert(false); }
+    LibcException::ExceptionObject exceptionObject {};
+    _ZNSt9exceptionC1Ev_nid_postfix(&exceptionObject);
+    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&exceptionObject); assert(false); }
     catch (const std::exception& value) { assert(std::strcmp(value.what(), "std::exception") == 0); }
+    _ZNSt9exceptionD1Ev_nid_postfix(&exceptionObject);
+    try { _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(nullptr); assert(false); }
+    catch (const std::invalid_argument&) {}
+    _ZNSt8bad_castC1Ev_nid_postfix(&exceptionObject);
+    try { _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(&exceptionObject); assert(false); }
+    catch (const std::bad_cast&) {}
+    _ZNSt8bad_castD1Ev_nid_postfix(&exceptionObject);
     CheckRtti();
     CheckForeign();
     CheckStaticInitialization();

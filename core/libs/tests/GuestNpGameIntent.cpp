@@ -1,20 +1,10 @@
+#include "prx/libSceNpGameIntent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpGameIntentInitParamInit(NpGameIntentInitParam* param);
-int APS5_VABI sceNpGameIntentInfoInit(NpGameIntentInfo* info);
-int APS5_VABI sceNpGameIntentInitialize(const void* initParam);
-int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo);
-int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize);
-int APS5_VABI sceNpGameIntentVshInitialize(void);
-int APS5_VABI sceNpGameIntentVshTerminate(void);
-int APS5_VABI sceNpGameIntentTerminate(void);
-}
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -61,6 +51,16 @@ int main() {
     Require(sceNpGameIntentVshInitialize() == 0, "vsh init failed");
     Require(sceNpGameIntentVshTerminate() == 0, "vsh terminate failed");
     Require(sceNpGameIntentTerminate() == 0, "terminate failed");
+
+    unsigned char appLauncherParam[0x28]{};
+    *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;
+    Require(sceNpAppLauncherInitialize(appLauncherParam) == 0, "app launcher init failed");
+    Require(Throws<std::runtime_error>([] { sceNpAppLauncherLaunchApp(); }),
+            "app launcher launch must throw until implemented");
+    Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
+    *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x10;
+    Require(sceNpAppLauncherInitialize(appLauncherParam) == 0,
+            "app launcher init must accept any init parameter");
 
     std::puts("NpGameIntent tests passed");
     return 0;

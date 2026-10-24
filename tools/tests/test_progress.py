@@ -10,7 +10,202 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
 
 
+class ProgressSnapshotTests(unittest.TestCase):
+    def snapshot(self):
+        return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
+
+    def assert_rejected(self, snapshot, message):
+        for position in (0, 1):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "base snapshot.json", Path(directory) / "head snapshot.json"]
+                snapshots = [self.snapshot(), self.snapshot()]
+                snapshots[position] = snapshot
+                for path, data in zip(paths, snapshots):
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", *map(str, paths)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn(str(paths[position]), stderr.getvalue())
+                self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_non_object_snapshots_are_usage_errors(self):
+        for snapshot in (None, [], "progress", 7, True):
+            with self.subTest(snapshot=snapshot):
+                self.assert_rejected(snapshot, "snapshot must be an object")
+
+    def test_sections_must_be_present_objects(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, [], "progress", 7):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section] = value
+                    self.assert_rejected(snapshot, section + " must be an object")
+            snapshot = self.snapshot()
+            del snapshot[section]
+            self.assert_rejected(snapshot, section + " must be an object")
+
+    def test_groups_must_be_lists_of_named_objects(self):
+        for section in ("libraries", "shaders"):
+            for groups in (None, {}, "groups", [None], ["group"], [{}], [{"name": []}]):
+                with self.subTest(section=section, groups=groups):
+                    snapshot = self.snapshot()
+                    snapshot[section]["groups"] = groups
+                    self.assert_rejected(snapshot, section + ".groups")
+            snapshot = self.snapshot()
+            del snapshot[section]["groups"]
+            self.assert_rejected(snapshot, section + ".groups")
+
+    def test_symbol_lists_cannot_be_strings_or_unhashable_values(self):
+        for field in ("done_names", "todo_names", "inert_names"):
+            for value in ("Ready", None, {}, [7], [["Ready"]]):
+                with self.subTest(field=field, value=value):
+                    snapshot = self.snapshot()
+                    snapshot["libraries"]["groups"] = [{"name": "libSceExample", field: value}]
+                    self.assert_rejected(snapshot, "." + field + " must be a list of strings")
+
+    def test_shared_source_owners_must_be_strings(self):
+        for value in (None, [], {}, 7, True):
+            with self.subTest(value=value):
+                snapshot = self.snapshot()
+                snapshot["libraries"]["groups"] = [{"name": "libSceExample.native", "shared_sources": value}]
+                self.assert_rejected(snapshot, ".shared_sources must be a string")
+
+    def test_percentages_must_be_finite_numbers_in_range(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, "0", True, [], {}, -1, 101, float("nan"), float("inf"), -float("inf")):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section]["percent"] = value
+                    self.assert_rejected(snapshot, section + ".percent")
+            snapshot = self.snapshot()
+            del snapshot[section]["percent"]
+            self.assert_rejected(snapshot, section + ".percent")
+
+    def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
+        base, head = self.snapshot(), self.snapshot()
+        base["libraries"]["groups"] = [{"name": "libSceExample", "todo_names": ["Ready"]}, {"name": "libEmpty"}]
+        head["libraries"]["groups"] = [{"name": "libSceExample", "done_names": ["Ready"], "future_field": True},
+                                       {"name": "libEmpty"}, {"name": "libSceExample.native", "shared_sources": "libSceExample"}]
+        head["libraries"]["percent"] = 100
+        expected = progress.report(base, head)
+        self.assertIn("Ready", expected)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / "base.json", Path(directory) / "head.json"]
+            for path, snapshot in zip(paths, (base, head)):
+                path.write_text(json.dumps(snapshot), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", *map(str, paths)]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", str(paths[0]), str(paths[0])]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
+
+
 class ProgressTests(unittest.TestCase):
+    def report_library(self, name, done=(), todo=(), **extra):
+        return {"name": name, "label": name, "done": len(done), "todo": len(todo),
+                "done_names": list(done), "todo_names": list(todo), **extra}
+
+    def report_snapshot(self, *groups):
+        return {"libraries": progress.summarize(list(groups)), "shaders": progress.summarize([])}
+
+    def test_report_shows_each_changed_library_and_keeps_global_details(self):
+        pad = self.report_library("libScePad", ["Ready"], ["Pending"])
+        video = self.report_library("libSceVideoOut", ["A", "B", "C"], ["D"])
+        unchanged = self.report_library("libSceUnused", ["Keep"])
+        base = self.report_snapshot(video, unchanged, pad)
+        head = self.report_snapshot(self.report_library("libScePad", ["Ready", "Pending"]), unchanged,
+                                    self.report_library("libSceVideoOut", ["A", "B"], ["C", "D"]))
+        report = progress.report(base, head)
+        self.assertIn("**System libraries**", report)
+        self.assertIn("| Library | Name |", report)
+        self.assertIn("| libScePad | 1/2 (50.00%) | 2/2 (100.00%) | +50.00 pp |", report)
+        self.assertIn("| libSceVideoOut | 3/4 (75.00%) | 2/4 (50.00%) | -25.00 pp |", report)
+        table = report.split("#### Changed libraries (implemented exports)")[1]
+        self.assertNotIn("libSceUnused", table)
+        self.assertLess(table.index("libScePad"), table.index("libSceVideoOut"))
+
+    def test_report_includes_changed_function_names_when_counts_stay_equal(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Old"], ["Pending"]))
+        head = self.report_snapshot(self.report_library("libScePad", ["New"], ["Pending"]))
+        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%) | +0.00 pp |", progress.report(base, head))
+
+    def test_report_marks_new_removed_and_empty_libraries_without_percentages(self):
+        base = self.report_snapshot(self.report_library("libSceRemoved", ["Ready"]),
+                                    self.report_library("libSceEmptied", ["Old"]))
+        head = self.report_snapshot(self.report_library("libSceAdded", ["New"], ["Pending"]),
+                                    self.report_library("libSceEmpty"), self.report_library("libSceEmptied"))
+        report = progress.report(base, head)
+        self.assertIn("| libSceAdded | Not present | 1/2 (50.00%) | n/a |", report)
+        self.assertIn("| libSceRemoved | 1/1 (100.00%) | Not present | n/a |", report)
+        self.assertIn("| libSceEmpty | Not present | No exports | n/a |", report)
+        self.assertIn("| libSceEmptied | 1/1 (100.00%) | No exports | n/a |", report)
+
+    def test_report_marks_missing_counts_unavailable_with_no_delta(self):
+        complete = {"name": "libSceLegacy", "done": 1, "todo": 0, "done_names": ["Current"]}
+        for missing in ({"done_names": ["Legacy"]}, {"done": 0}, {"todo": 0}, {}):
+            minimal = {"name": "libSceLegacy", **missing}
+            for before, after in ((minimal, complete), (complete, minimal)):
+                with self.subTest(before=before, after=after):
+                    base = {"libraries": {"groups": [before], "percent": 0},
+                            "shaders": {"groups": [], "percent": 0}}
+                    head = {"libraries": {"groups": [after], "percent": 0},
+                            "shaders": {"groups": [], "percent": 0}}
+                    report = progress.report(base, head)
+                    self.assertIn("Counts unavailable", report)
+                    self.assertIn("| n/a |", report)
+                    self.assertNotIn("No exports", report)
+
+    def test_report_omits_unchanged_minimal_snapshots(self):
+        minimal = {"name": "libSceLegacy"}
+        snapshot = {"libraries": {"groups": [minimal], "percent": 0},
+                    "shaders": {"groups": [], "percent": 0}}
+        self.assertEqual(progress.report(snapshot, snapshot), "")
+
+    def test_report_labels_shared_sources_without_duplicate_counts(self):
+        owner = self.report_library("libScePad", ["Ready"], ["Pending"])
+        alias = self.report_library("libScePad.native", ["Ready"], ["Pending"])
+        shared = self.report_library("libScePad.native", shared_sources="libScePad")
+        base, head = self.report_snapshot(owner, alias), self.report_snapshot(owner, shared)
+        report = progress.report(base, head)
+        self.assertIn("| libScePad.native | 1/2 (50.00%) | Shared sources: `libScePad` | n/a |", report)
+        self.assertNotIn("removed", report)
+        reverse = progress.report(head, base)
+        self.assertIn("| libScePad.native | Shared sources: `libScePad` | 1/2 (50.00%) | n/a |", reverse)
+        changed = self.report_snapshot(owner, self.report_library("libScePad.native", shared_sources="libSceOther"))
+        self.assertIn("| libScePad.native | Shared sources: `libScePad` | Shared sources: `libSceOther` | n/a |",
+                      progress.report(head, changed))
+
+    def test_report_omits_unchanged_libraries_and_preserves_shader_report(self):
+        library = self.report_library("libScePad", ["Ready"])
+        base, head = self.report_snapshot(library), self.report_snapshot(dict(library, inert_names=["Ready"]))
+        self.assertEqual(progress.report(base, head), "")
+        head["shaders"] = progress.summarize([self.report_library("VOP1", ["V_MOV_B32"])])
+        report = progress.report(base, head)
+        self.assertEqual(report, "\n".join(progress.compare("GPU shader instructions", "Encoding", "instructions",
+                                                          base["shaders"], head["shaders"])))
+        self.assertNotIn("Changed libraries", report)
+
+    def test_report_rounds_percentage_point_change_without_negative_zero(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
+        head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
+        self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
+        before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
+        after = dict(before, todo=100001)
+        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+
+    def test_report_limits_library_rows(self):
+        head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
+        report = progress.report(self.report_snapshot(), head)
+        table = report.split("#### Changed libraries (implemented exports)")[1]
+        self.assertEqual(sum(line.startswith("| libSce") for line in table.splitlines()), progress.REPORT_ROWS)
+        self.assertIn("3 more libraries", table)
+
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
         source += 'int APS5_VABI Real() { return 7; }\n'
@@ -386,6 +581,46 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn("--compare does not combine with --module or --json", stderr.getvalue())
 
+
+    def test_compare_names_a_snapshot_it_cannot_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "good.json"
+            good.write_text("{}", encoding="utf-8")
+            broken = Path(directory) / "broken snapshot.json"
+            broken.write_text("not json", encoding="utf-8")
+            for name, path in (("invalid", broken), ("missing", Path(directory) / "missing snapshot.json")):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", str(good), str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(path), stderr.getvalue())
+
+    def test_output_directory_that_cannot_be_written_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory) / "blocked output"
+            blocked.write_text("a file, not a directory", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main([str(blocked)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(blocked), stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_root_must_be_a_source_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty tree"
+            empty.mkdir()
+            half = Path(directory) / "half tree"
+            (half / "core" / "libs" / "prx").mkdir(parents=True)
+            for name, path in (("missing", Path(directory) / "missing tree"), ("empty", empty), ("no opcodes", half)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
+                    self.assertIn(str(path), stderr.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

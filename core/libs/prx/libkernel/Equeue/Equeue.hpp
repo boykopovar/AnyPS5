@@ -42,6 +42,7 @@ static constexpr uint16_t EV_EOF = 0x8000;
 static constexpr int EQUEUE_OK = 0;
 
 struct KernelEqueueEvent;
+class KernelEqueuePrivate;
 
 using EqueueTriggerFunc = void (*)(KernelEqueueEvent* event, void* triggerData);
 using EqueueResetFunc = void (*)(KernelEqueueEvent* event);
@@ -55,6 +56,9 @@ struct KernelFilter {
     EqueueResetFunc resetFunc = nullptr;
     EqueueDeleteFunc deleteEventFunc = nullptr;
     EqueuePollFunc pollFunc = nullptr;
+    int waitDescriptor = -1;
+    bool repoll = false;
+    std::shared_ptr<KernelEqueuePrivate> watched;
 };
 
 struct KernelEqueueEvent {
@@ -86,6 +90,8 @@ public:
     int EditEvent(uintptr_t ident, int16_t filter, const std::function<void(KernelEqueueEvent&)>& edit);
     int GetTriggeredEvents(KernelEvent* ev, int num);
     bool HasTriggeredEvents();
+    std::size_t CountTriggeredEvents();
+    std::vector<std::shared_ptr<KernelEqueuePrivate>> WatchedQueues();
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
     void RemoveDescriptorEvents(uintptr_t ident);
@@ -93,13 +99,18 @@ public:
     static uint64_t MonotonicNs();
 
 private:
+    struct WaitSet;
     void TriggerExpiredTimers(uint64_t nowNs);
     bool NextTimerWaitMicros(uint64_t nowNs, uint32_t* out) const;
     int CollectTriggered(KernelEvent* ev, int num);
     int CollectOncePerWait(KernelEvent* ev, int num);
     bool PollEvents();
+    void MeasureFiles(std::unique_lock<std::mutex>& lock);
     void WakePollers();
     void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
+    void GatherInterests(WaitSet& wait, std::uintptr_t waker, bool nested);
+    static void GatherWatched(WaitSet& wait, const std::shared_ptr<KernelEqueuePrivate>& queue, std::uintptr_t waker);
+    static void ReleaseWatched(WaitSet& wait, std::uintptr_t waker);
 
     std::list<KernelEqueueEvent> m_events;
     std::vector<std::uintptr_t> m_pollers;

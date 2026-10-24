@@ -1,35 +1,12 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cfenv>
 #include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-long double APS5_VABI fdiml_nid_postfix(long double, long double);
-long double APS5_VABI fmodl_nid_postfix(long double, long double);
-long double APS5_VABI remquol_nid_postfix(long double, long double, int*);
-int APS5_VABI ilogbl_nid_postfix(long double);
-long double APS5_VABI roundl_nid_postfix(long double);
-long double APS5_VABI modfl_nid_postfix(long double, long double*);
-long double APS5_VABI nanl_nid_postfix(const char*);
-long double APS5_VABI scalblnl_nid_postfix(long double, std::int64_t);
-long double APS5_VABI fmal_nid_postfix(long double, long double, long double);
-double APS5_VABI scalb_nid_postfix(double, double);
-double APS5_VABI scalbln_nid_postfix(double, std::int64_t);
-long double APS5_VABI remainderl_nid_postfix(long double, long double);
-double APS5_VABI drem_nid_postfix(double, double);
-float APS5_VABI dremf_nid_postfix(float, float);
-std::int64_t APS5_VABI lrint_nid_postfix(double);
-int APS5_VABI finite_nid_postfix(double);
-int APS5_VABI __fpclassifyl_nid_postfix(long double);
-int APS5_VABI __isnanl_nid_postfix(long double);
-int APS5_VABI __isnormall_nid_postfix(long double);
-short APS5_VABI _LDtest_nid_postfix(const long double*);
-int APS5_VABI _Dclass_nid_postfix(double);
-short APS5_VABI _LDsign_nid_postfix(long double);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -65,6 +42,7 @@ static void CheckErrno() {
     Require(std::isnan(remquol_nid_postfix(1.0L, 0.0L, &quotient)) && errno == EDOM);
     errno = 0;
     remquol_nid_postfix(NAN, 0.0L, &quotient);
+
     Require(errno == 0);
     Require(remquol_nid_postfix(-7.0L, 2.0L, &quotient) == 1.0L && quotient == -4);
     errno = 0;
@@ -96,6 +74,25 @@ static void CheckConsoleQuirks() {
     Require(finite_nid_postfix(1.0) == 1 && finite_nid_postfix(INFINITY) == 0);
 }
 
+static void CheckRoundingModes() {
+    struct Case {
+        int mode;
+        double negative;
+        double positive;
+    };
+    const Case cases[] = {{FE_TONEAREST, -2.0, 2.0}, {FE_DOWNWARD, -2.0, 1.0}, {FE_UPWARD, -1.0, 2.0}, {FE_TOWARDZERO, -1.0, 1.0}};
+    const int saved = std::fegetround();
+    for (const auto& test : cases) {
+        Require(std::fesetround(test.mode) == 0);
+        Require(rint_nid_postfix(-1.5) == test.negative && rint_nid_postfix(1.5) == test.positive);
+        Require(rintf_nid_postfix(-1.5f) == static_cast<float>(test.negative) && rintf_nid_postfix(1.5f) == static_cast<float>(test.positive));
+        Require(rintl_nid_postfix(-1.5L) == test.negative && rintl_nid_postfix(1.5L) == test.positive);
+        Require(lrint_nid_postfix(-1.5) == static_cast<std::int64_t>(test.negative) && llrint_nid_postfix(1.5) == static_cast<long long>(test.positive));
+        Require(std::fegetround() == test.mode);
+    }
+    Require(std::fesetround(saved) == 0);
+}
+
 static void CheckClassification() {
     const long double pseudoDenormal = Extended(0x0000, 0x8000000000000000ull);
     Require(_LDtest_nid_postfix(&pseudoDenormal) == -1 && __fpclassifyl_nid_postfix(pseudoDenormal) == -2);
@@ -112,6 +109,7 @@ int main() {
     CheckSignalingNanPassThrough();
     CheckErrno();
     CheckConsoleQuirks();
+    CheckRoundingModes();
     CheckClassification();
     return 0;
 }

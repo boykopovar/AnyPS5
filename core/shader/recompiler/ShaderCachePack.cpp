@@ -40,7 +40,10 @@ std::vector<std::filesystem::path> PrebuiltCachePaths(const std::filesystem::pat
 CachePack::CachePack(const std::filesystem::path& path) {
     static_assert(std::endian::native == std::endian::little);
 #ifdef _WIN32
-    const auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    std::error_code pathError;
+    const auto filename = NativeCachePath_nid_no_patch(path, pathError);
+    if (pathError) { error = "cannot resolve"; return; }
+    const auto handle = CreateFileW(filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) { error = "cannot open"; return; }
     LARGE_INTEGER size{};
     if (!GetFileSizeEx(handle, &size) || size.QuadPart < static_cast<LONGLONG>(sizeof(PackHeader)) || static_cast<std::uint64_t>(size.QuadPart) > std::numeric_limits<std::size_t>::max()) {

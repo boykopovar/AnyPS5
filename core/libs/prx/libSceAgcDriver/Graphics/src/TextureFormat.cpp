@@ -170,6 +170,14 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
     }
 }
 
+bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
+    switch (guestFormat) {
+        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
+        case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
+        default: return false;
+    }
+}
+
 std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32_t elementBytes) {
     for (const auto& entry : kFormatLookup) {
         if (!entry.blockCompressed && entry.vkFormat == format && entry.bytesPerElement == elementBytes) return entry.guestFormat;

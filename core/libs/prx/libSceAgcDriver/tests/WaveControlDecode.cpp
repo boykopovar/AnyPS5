@@ -105,6 +105,8 @@ void verifyTranslation() {
     const auto orderedAdd = withStore({0xd8fe0000u, 0x05000001u});
     require(recompile(orderedAdd).empty(), "ds_ordered_count adding to a GDS counter is refused: " + recompile(orderedAdd));
     require(recompile(orderedAdd, 32u).empty(), "ds_ordered_count of a wave64 on 32-lane subgroups is refused: " + recompile(orderedAdd, 32u));
+    const auto orderedSwap = withStore({0xd8fe1000u, 0x05000001u});
+    require(recompile(orderedSwap).empty(), "ds_ordered_count swapping a GDS counter is refused: " + recompile(orderedSwap));
 
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
         {"s_sethalt 1", withStore({0xbf8d0001u}), "s_sethalt 1 at pc 0 halts the wave"},
@@ -117,7 +119,6 @@ void verifyTranslation() {
         {"ds_gws_sema_p", withStore({0xd8720000u, 0x00000000u}), "ds_gws_sema_p at pc 0: global wave sync"},
         {"ds_gws_sema_release_all", withStore({0xd8620000u, 0x00000000u}), "ds_gws_sema_release_all at pc 0: global wave sync"},
         {"ds_gws_barrier", withStore({0xd8760000u, 0x00000003u}), "ds_gws_barrier at pc 0: global wave sync"},
-        {"ds_ordered_count swap", withStore({0xd8fe1000u, 0x05000001u}), "ds_ordered_count at pc 0: ordered swap is not modeled"},
         {"ds_ordered_count of two dwords", withStore({0xd8fe4000u, 0x05000001u}), "ds_ordered_count at pc 0: counting more than one dword is not modeled"},
     };
     for (const auto& [name, code, message] : refused) {

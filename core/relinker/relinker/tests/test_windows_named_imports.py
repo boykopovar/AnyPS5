@@ -2,12 +2,11 @@ import os
 import struct
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "macos"))
 
-from guest_import_fixtures import executable
+from guest_import_fixtures import executable, fixture_directory
 from nid import nid
 from test_guest_tls import guest_with_tls
 from test_windows_import_modules import provider
@@ -47,7 +46,7 @@ def run(output):
 
 def main():
     relinker = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="anyps5-windows-named-imports-") as directory:
+    with fixture_directory("anyps5-windows-named-imports-") as directory:
         work = Path(directory)
         by_nid = native_library(relinker, work / "nid-provider", nid("shared"), 22)
         by_name = native_library(relinker, work / "name-provider", "shared", 33)

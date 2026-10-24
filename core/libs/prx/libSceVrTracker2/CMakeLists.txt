@@ -1,0 +1,16 @@
+add_library(libSceVrTracker2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVrTracker2 PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVrTracker2 PRIVATE libc)
+configure_windows_unwind(libSceVrTracker2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vr_tracker2_tests ${LIBS_INCLUDE_DIR}/tests/GuestVrTracker2.cpp)
+    target_include_directories(guest_vr_tracker2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vr_tracker2_tests PRIVATE libSceVrTracker2 libc)
+    configure_windows_unwind(guest_vr_tracker2_tests)
+    add_test(NAME guest_vr_tracker2 COMMAND guest_vr_tracker2_tests)
+    if(WIN32)
+        set_tests_properties(guest_vr_tracker2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker2>")
+    endif()
+endif()

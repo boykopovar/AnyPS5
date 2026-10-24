@@ -1,34 +1,17 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata);
-int APS5_VABI sceKernelDeleteReadEvent(KernelEqueue eq, int fd);
-int APS5_VABI sceKernelAddWriteEvent(KernelEqueue eq, int fd, std::size_t size, void* udata);
-int APS5_VABI sceKernelDeleteWriteEvent(KernelEqueue eq, int fd);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int EVFILT_READ = -1;
 static constexpr int EVFILT_WRITE = -2;
 static constexpr std::uint16_t EV_EOF = 0x8000;
@@ -44,7 +27,132 @@ static bool Rejects(int (APS5_VABI *add)(KernelEqueue, int, std::size_t, void*),
     return false;
 }
 
+static void PipeReadEvents() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "pipe") == SCE_OK);
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    const KernelUseconds shortTimeout = 20000;
+    const KernelUseconds timeout = 1000000;
+    int marker = 0;
+    int count = 0;
+    std::array<KernelEvent, 4> events{};
+
+    Require(sceKernelAddReadEvent(eq, pipe[0], 64, &marker) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(count == 0);
+    Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(pipe[0]) && events[0].filter == EVFILT_READ);
+    Require(events[0].data == 3 && events[0].udata == &marker && (events[0].flags & EV_EOF) == 0);
+    char buffer[4]{};
+    Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 3);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+
+    const auto start = std::chrono::steady_clock::now();
+    std::thread writer([&pipe] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(write_nid_postfix(pipe[1], "d", 1) == 1);
+    });
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, nullptr) == SCE_OK);
+    writer.join();
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+    Require(count == 1 && events[0].data == 1);
+
+    Require(close_nid_postfix(pipe[1]) == 0);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 1 && (events[0].flags & EV_EOF) != 0);
+    Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 1);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 0 && (events[0].flags & EV_EOF) != 0);
+    Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_OK);
+    Require(sceKernelDeleteReadEvent(eq, pipe[0]) == SCE_KERNEL_ERROR_ENOENT);
+
+    int oneWay[2];
+    Require(pipe_nid_postfix(oneWay) == 0);
+    Require(Rejects(sceKernelAddWriteEvent, eq, oneWay[1], 1));
+    Require(close_nid_postfix(oneWay[0]) == 0 && close_nid_postfix(oneWay[1]) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
+static void RegularFileEvents() {
+    const std::string path = "anyps5-equeue-file-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(file >= 0);
+    Require(write_nid_postfix(file, "0123456789", 10) == 10);
+    Require(lseek_nid_postfix(file, 2, 0) == 2);
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "file") == SCE_OK);
+    const KernelUseconds shortTimeout = 20000;
+    const KernelUseconds timeout = 1000000;
+    int marker = 0;
+    int count = 0;
+    std::array<KernelEvent, 4> events{};
+    Require(sceKernelAddReadEvent(eq, file, 1, &marker) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(file) && events[0].filter == EVFILT_READ);
+    Require(events[0].data == 8 && events[0].udata == &marker);
+    Require(lseek_nid_postfix(file, 0, 2) == 10);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    const int appender = open_nid_postfix(path.c_str(), 0x0002, 0);
+    Require(appender >= 0);
+    std::thread writer([appender] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(lseek_nid_postfix(appender, 0, 2) == 10);
+        Require(write_nid_postfix(appender, "abc", 3) == 3);
+    });
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, nullptr) == SCE_OK);
+    writer.join();
+    Require(count == 1 && events[0].data == 3);
+    Require(sceKernelDeleteReadEvent(eq, file) == SCE_OK);
+    Require(sceKernelAddWriteEvent(eq, file, 0, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].filter == EVFILT_WRITE && events[0].data == 0);
+    Require(sceKernelDeleteWriteEvent(eq, file) == SCE_OK);
+    Require(Rejects(sceKernelAddReadEvent, eq, file, 64));
+    Require(Rejects(sceKernelAddWriteEvent, eq, file, 64));
+    Require(sceKernelAddReadEvent(eq, file, 0, nullptr) == SCE_OK);
+    Require(close_nid_postfix(file) == 0);
+    Require(sceKernelDeleteReadEvent(eq, file) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelAddReadEvent(eq, file, 0, nullptr) == SCE_KERNEL_ERROR_EBADF);
+    Require(close_nid_postfix(appender) == 0);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(std::filesystem::remove(path));
+}
+
+static void CloseWhileWaitingOnFile() {
+    const std::string path = "anyps5-equeue-close-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int created = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(created >= 0);
+    Require(close_nid_postfix(created) == 0);
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "close") == SCE_OK);
+    std::atomic<bool> stop{false};
+    std::thread waiter([eq, &stop] {
+        const KernelUseconds timeout = 1000;
+        std::array<KernelEvent, 4> events{};
+        int count = 0;
+        while (!stop.load()) {
+            Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+        }
+    });
+    for (int i = 0; i < 2000; ++i) {
+        const int file = open_nid_postfix(path.c_str(), 0x0002, 0);
+        Require(file >= 0);
+        Require(sceKernelAddReadEvent(eq, file, 0, nullptr) == SCE_OK);
+        Require(close_nid_postfix(file) == 0);
+    }
+    stop.store(true);
+    waiter.join();
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(std::filesystem::remove(path));
+}
+
 int main() {
+    PipeReadEvents();
+    RegularFileEvents();
+    CloseWhileWaitingOnFile();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};

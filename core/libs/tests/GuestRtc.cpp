@@ -1,67 +1,21 @@
+#include "prx/libSceRtc/include/Rtc.hpp"
 #include "SceTypes.hpp"
+#include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <string_view>
 #include <initializer_list>
 #include <limits>
-
-extern "C" {
-int APS5_VABI sceRtcCheckValid(const RtcDateTime*);
-int APS5_VABI sceRtcIsLeapYear(int);
-int APS5_VABI sceRtcGetDaysInMonth(int, int);
-int APS5_VABI sceRtcGetDayOfWeek(int, int, int);
-int APS5_VABI sceRtcGetTickResolution(void);
-int APS5_VABI sceRtcGetTick(const RtcDateTime*, RtcTick*);
-int APS5_VABI sceRtcSetTick(RtcDateTime*, const RtcTick*);
-int APS5_VABI sceRtcGetCurrentTick(RtcTick*);
-int APS5_VABI sceRtcGetCurrentClock(RtcDateTime*, int);
-int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime*);
-int APS5_VABI sceRtcConvertUtcToLocalTime(const RtcTick*, RtcTick*);
-int APS5_VABI sceRtcConvertLocalTimeToUtc(const RtcTick*, RtcTick*);
-int APS5_VABI sceRtcGetTime_t(const RtcDateTime*, std::int64_t*);
-int APS5_VABI sceRtcSetTime_t(RtcDateTime*, std::int64_t);
-int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime*, std::uint64_t*);
-int APS5_VABI sceRtcSetWin32FileTime(RtcDateTime*, std::uint64_t);
-int APS5_VABI sceRtcGetDosTime(const RtcDateTime*, std::uint32_t*);
-int APS5_VABI sceRtcSetDosTime(RtcDateTime*, std::uint32_t);
-int APS5_VABI sceRtcGetYear(const RtcDateTime*);
-int APS5_VABI sceRtcSetYear(RtcDateTime*, int);
-int APS5_VABI sceRtcGetMonth(const RtcDateTime*);
-int APS5_VABI sceRtcSetMonth(RtcDateTime*, int);
-int APS5_VABI sceRtcGetDay(const RtcDateTime*);
-int APS5_VABI sceRtcSetDay(RtcDateTime*, int);
-int APS5_VABI sceRtcGetHour(const RtcDateTime*);
-int APS5_VABI sceRtcSetHour(RtcDateTime*, int);
-int APS5_VABI sceRtcGetMinute(const RtcDateTime*);
-int APS5_VABI sceRtcSetMinute(RtcDateTime*, int);
-int APS5_VABI sceRtcGetSecond(const RtcDateTime*);
-int APS5_VABI sceRtcSetSecond(RtcDateTime*, int);
-int APS5_VABI sceRtcGetMicrosecond(const RtcDateTime*);
-int APS5_VABI sceRtcSetMicrosecond(RtcDateTime*, int);
-int APS5_VABI sceRtcFormatRFC3339(char*, const RtcTick*, int);
-int APS5_VABI sceRtcParseRFC3339(RtcTick*, const char*);
-int APS5_VABI sceRtcParseDateTime(RtcTick*, const char*);
-int APS5_VABI sceRtcTickAddTicks(RtcTick*, const RtcTick*, std::int64_t);
-int APS5_VABI sceRtcTickAddMicroseconds(RtcTick*, const RtcTick*, std::int64_t);
-int APS5_VABI sceRtcTickAddSeconds(RtcTick*, const RtcTick*, std::int64_t);
-int APS5_VABI sceRtcTickAddMinutes(RtcTick*, const RtcTick*, std::int64_t);
-int APS5_VABI sceRtcTickAddHours(RtcTick*, const RtcTick*, std::int32_t);
-int APS5_VABI sceRtcTickAddDays(RtcTick*, const RtcTick*, std::int32_t);
-int APS5_VABI sceRtcTickAddWeeks(RtcTick*, const RtcTick*, std::int32_t);
-int APS5_VABI sceRtcTickAddMonths(RtcTick*, const RtcTick*, std::int32_t);
-int APS5_VABI sceRtcTickAddYears(RtcTick*, const RtcTick*, std::int16_t);
-int APS5_VABI sceRtcFormatRFC3339LocalTime(char*, const RtcTick*);
-int APS5_VABI sceRtcFormatRFC2822(char*, const RtcTick*, int);
-int APS5_VABI sceRtcFormatRFC2822LocalTime(char*, const RtcTick*);
-int APS5_VABI sceRtcFormatRFC3339Precise(char*, const RtcTick*, int, int);
-int APS5_VABI sceRtcFormatRFC3339PreciseLocalTime(char*, const RtcTick*, int);
-int APS5_VABI sceRtcCompareTick(const RtcTick*, const RtcTick*);
-int APS5_VABI sceRtcGetCurrentAdNetworkTick(RtcTick*);
-int APS5_VABI sceRtcSetCurrentTick(const RtcTick*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -80,7 +34,65 @@ static bool Equal(const RtcDateTime& left, const RtcDateTime& right) {
         && left.minute == right.minute && left.second == right.second && left.microsecond == right.microsecond;
 }
 
-int main() {
+enum class Add { Ticks, Microseconds, Seconds, Minutes, Hours, Days, Weeks, Months, Years };
+
+struct AddCase {
+    Add function;
+    std::uint64_t source;
+    std::int64_t amount;
+    bool written;
+    std::uint64_t result;
+};
+
+static int CallAdd(Add function, RtcTick* destination, const RtcTick* source, std::int64_t amount) {
+    switch (function) {
+    case Add::Ticks: return sceRtcTickAddTicks(destination, source, amount);
+    case Add::Microseconds: return sceRtcTickAddMicroseconds(destination, source, amount);
+    case Add::Seconds: return sceRtcTickAddSeconds(destination, source, amount);
+    case Add::Minutes: return sceRtcTickAddMinutes(destination, source, amount);
+    case Add::Hours: return sceRtcTickAddHours(destination, source, static_cast<std::int32_t>(amount));
+    case Add::Days: return sceRtcTickAddDays(destination, source, static_cast<std::int32_t>(amount));
+    case Add::Weeks: return sceRtcTickAddWeeks(destination, source, static_cast<std::int32_t>(amount));
+    case Add::Months: return sceRtcTickAddMonths(destination, source, static_cast<std::int32_t>(amount));
+    case Add::Years: return sceRtcTickAddYears(destination, source, static_cast<std::int16_t>(amount));
+    }
+    std::abort();
+}
+
+static void SetCompiledSdkVersion(std::byte* process, std::uint32_t version) {
+    std::memcpy(process + 16, &version, sizeof(version));
+}
+
+static void EnterTitleDirectory(const char* titleId) {
+    const auto directory = std::filesystem::temp_directory_path() / ("rtc-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory / "app0" / "sce_sys");
+    std::filesystem::current_path(directory);
+    if (titleId == nullptr) return;
+    struct Entry { std::uint16_t key, format; std::uint32_t length, maximum, offset; };
+    const std::uint32_t header[5] = {0x46535000, 0x0101, 52, 72, 2};
+    const Entry entries[2] = {{0, 0x0204, 8, 8, 0}, {6, 0x0204, 10, 12, 8}};
+    std::ofstream file("app0/sce_sys/param.sfo", std::ios::binary);
+    file.write(reinterpret_cast<const char*>(header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(entries), sizeof(entries));
+    file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << titleId << std::string("\0\0\0", 3);
+}
+
+int main(int argc, char** argv) {
+    static std::array<std::byte, 64> process{};
+    Require(ProcessParametersFixture::Install(process.data(), process.size()));
+    SetCompiledSdkVersion(process.data(), 0x01000051);
+    if (argc == 2 && std::string_view(argv[1]) == "ps5-title") {
+        EnterTitleDirectory(nullptr);
+        RtcDateTime untouched{0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaaaaaau};
+        RtcDateTime converted = untouched;
+        Require(sceRtcGetDayOfWeek(10000, 1, 1) == static_cast<int>(0x80B50008) && sceRtcGetDayOfWeek(0, 13, 1) == static_cast<int>(0x80B50009));
+        Require(sceRtcSetTime_t(&converted, -1) == static_cast<int>(0x80B50003) && Equal(converted, untouched));
+        char text[64];
+        RtcTick tick{std::numeric_limits<std::uint64_t>::max()};
+        Require(sceRtcFormatRFC3339(text, &tick, 1) == static_cast<int>(0x80B50003));
+        return 0;
+    }
+    EnterTitleDirectory("CUSA00000");
     constexpr int invalidPointer = static_cast<int>(0x80B50002);
     constexpr int invalidValue = static_cast<int>(0x80B50003);
     constexpr int badParse = static_cast<int>(0x80B50007);
@@ -103,6 +115,7 @@ int main() {
     Require(sceRtcGetDaysInMonth(10000, 1) == 31);
     Require(sceRtcGetDaysInMonth(9999, 1) == 31);
     Require(sceRtcGetDayOfWeek(1, 1, 1) == 1 && sceRtcGetDayOfWeek(2026, 9, 26) == 6);
+    Require(sceRtcGetDayOfWeek(10000, 1, 1) == 6);
     Require(sceRtcGetDayOfWeek(2023, 2, 29) == invalidDay);
 
     RtcDateTime leapDay{2024, 2, 29, 12, 34, 56, 789000};
@@ -125,7 +138,7 @@ int main() {
     tick.tick = maxTick;
     Require(sceRtcSetTick(&converted, &tick) == 0 && Equal(converted, RtcDateTime{9999, 12, 31, 23, 59, 59, 999999}));
     tick.tick = maxTick + 1;
-    Require(sceRtcSetTick(&converted, &tick) == invalidValue);
+    Require(sceRtcSetTick(&converted, &tick) == 0 && Equal(converted, RtcDateTime{10000, 1, 1, 0, 0, 0, 0}));
 
     Require(sceRtcGetCurrentClock(nullptr, 0) == invalidPointer);
     Require(sceRtcGetCurrentClock(&converted, 0) == 0 && sceRtcCheckValid(&converted) == 0);
@@ -140,10 +153,24 @@ int main() {
     RtcDateTime millennium{2000, 1, 1, 0, 0, 0, 0};
     Require(sceRtcGetTime_t(&millennium, &seconds) == 0 && seconds == 946684800);
     Require(sceRtcSetTime_t(&converted, 946684800) == 0 && Equal(converted, millennium));
-    Require(sceRtcSetTime_t(&converted, -1) == invalidValue);
+    Require(sceRtcSetTime_t(&converted, -1) == 0 && Equal(converted, RtcDateTime{2106, 2, 7, 6, 28, 15, 0}));
+    Require(sceRtcSetTime_t(&converted, 0x100000001ll) == 0 && Equal(converted, RtcDateTime{1970, 1, 1, 0, 0, 1, 0}));
+    Require(sceRtcSetTime_t(&converted, -0x80000000ll) == 0 && Equal(converted, RtcDateTime{2038, 1, 19, 3, 14, 8, 0}));
+    const RtcDateTime past2106{2106, 2, 7, 6, 28, 16, 0};
+    Require(sceRtcGetTime_t(&past2106, &seconds) == 0 && seconds == 0x100000000ll);
+    const RtcDateTime beforeEpoch{1969, 12, 31, 23, 59, 59, 0};
+    seconds = -1;
+    Require(sceRtcGetTime_t(&beforeEpoch, &seconds) == invalidYear && seconds == 0);
+    const RtcDateTime badMonth{1969, 13, 1, 0, 0, 0, 0};
+    seconds = -1;
+    Require(sceRtcGetTime_t(&badMonth, &seconds) == invalidMonth && seconds == -1);
     std::uint64_t fileTime = 0;
     Require(sceRtcGetWin32FileTime(&epoch, &fileTime) == 0 && fileTime == 116444736000000000ull);
     Require(sceRtcSetWin32FileTime(&converted, 116444736000000000ull) == 0 && Equal(converted, epoch));
+    const RtcDateTime before1601{1600, 12, 31, 23, 59, 59, 0};
+    fileTime = 1;
+    Require(sceRtcGetWin32FileTime(&before1601, &fileTime) == invalidYear && fileTime == 0);
+    Require(sceRtcSetWin32FileTime(&converted, std::numeric_limits<std::uint64_t>::max()) == 0 && Equal(converted, RtcDateTime{60056, 5, 28, 5, 36, 10, 955161}));
     std::uint32_t dosTime = 0xffffffffu;
     const RtcDateTime dosDate{2024, 2, 29, 12, 34, 57, 789000};
     Require(sceRtcGetDosTime(&dosDate, &dosTime) == 0 && dosTime == 0x585d645cu);
@@ -239,8 +266,31 @@ int main() {
         Require(sceRtcFormatRFC3339(text, &tick, offset) == invalidValue);
         Require(std::memcmp(text, original, sizeof(text)) == 0);
     }
+    RtcTick edge{maxTick + 1};
+    Require(sceRtcFormatRFC3339(text, &edge, 0) == invalidYear);
+    edge.tick = std::numeric_limits<std::uint64_t>::max();
+    Require(sceRtcFormatRFC3339(text, &edge, 0) == invalidYear);
+    edge.tick = maxTick;
+    Require(sceRtcFormatRFC3339(text, &edge, 1) == invalidYear);
+    edge.tick = 59999999;
+    Require(sceRtcFormatRFC3339(text, &edge, -1) == invalidYear);
+    edge.tick = 60000000;
+    Require(sceRtcFormatRFC3339(text, &edge, -1) == 0 && std::strcmp(text, "0001-01-01T00:00:00.00-00:01") == 0);
+    edge.tick = std::numeric_limits<std::uint64_t>::max();
+    Require(sceRtcFormatRFC3339(text, &edge, 1) == 0 && std::strcmp(text, "0001-01-01T00:00:59.99+00:01") == 0);
+    edge.tick = 1ull << 63;
+    Require(sceRtcFormatRFC3339(text, &edge, -1) == invalidYear);
+    edge.tick = maxTick + 1;
+    Require(sceRtcFormatRFC3339(text, &edge, -1) == 0 && std::strcmp(text, "9999-12-31T23:59:00.00-00:01") == 0);
     Require(sceRtcFormatRFC3339(nullptr, &tick, 1440) == invalidPointer);
-    Require(sceRtcFormatRFC3339(text, nullptr, 1440) == invalidPointer);
+    Require(sceRtcFormatRFC3339(text, nullptr, 1440) == invalidValue);
+    {
+        RtcTick before{}, after{}, parsed{};
+        Require(sceRtcGetCurrentTick(&before) == 0);
+        Require(sceRtcFormatRFC3339(text, nullptr, 0) == 0);
+        Require(sceRtcGetCurrentTick(&after) == 0);
+        Require(sceRtcParseRFC3339(&parsed, text) == 0 && parsed.tick + 10000 > before.tick && parsed.tick <= after.tick);
+    }
     Require(sceRtcParseRFC3339(&tick, "2024-02-29T14:04:56.789+01:30") == 0 && tick.tick == leapDayTick);
     Require(sceRtcParseRFC3339(&tick, "2024-02-29t12:34:56.789z") == 0 && tick.tick == leapDayTick);
     Require(sceRtcParseRFC3339(&tick, "1970-01-01T00:00:00Z") == 0 && tick.tick == unixEpochTick);
@@ -335,6 +385,11 @@ int main() {
         {"Thu, 01 Mar 2024 12:34:56 nzdt", 0, march, 780},
         {"Thu, 01 Mar 2024 12:34:56 KST", 0, march, 540},
         {"Thu, 01 Mar 2024 12:34:56 HST", 0, march, 420},
+        {"Thu, 01 Mar 2024 12:34:56 DNT", 0, march, 60},
+        {"Thu, 01 Mar 2024 12:34:56 NFT", 0, march, -150},
+        {"Thu, 01 Mar 2024 12:34:56 NOR", 0, march, 60},
+        {"Thu, 01 Mar 2024 12:34:56 SET", 0, march, 60},
+        {"Thu, 01 Mar 2024 12:34:56 SETX", 0, march, 60},
         {"Thu, 01 Mar 2024 12:34:56 Jt", 0, march, 450},
         {"Thu, 01 Mar 2024 12:34:56 ut", 0, march, -420},
         {"Thu, 01 Mar 2024 12:34:56 xT", 0, march, 0},
@@ -395,6 +450,8 @@ int main() {
         const char* name;
         std::int64_t minutes;
     } additionalZones[] = {
+        {"LIGT", 600}, {"AWSST", 540}, {"CETDST", 120},
+        {"DNT", 60}, {"NOR", 60}, {"SET", 60}, {"NFT", -150},
         {"SWT", 60}, {"MEZ", 60}, {"WETDST", 60}, {"METDST", 120}, {"EETDST", 180},
         {"AESST", 660}, {"ACSST", 630}, {"CAST", 570}, {"CADT", 630}, {"SAST", 570}, {"SADT", 630}, {"WST", 480}, {"WDT", 540},
     };
@@ -420,6 +477,20 @@ int main() {
         Require(tick.tick == at(2000, 3, 1, 8, 9, 10) - static_cast<std::uint64_t>(zone.minutes * 60000000));
     }
 
+    const struct {
+        const char* name;
+        std::int64_t minutes;
+    } secondLetterZones[] = {
+        {"MT", 0}, {"mt", 510}, {"IT", 0}, {"it", 210},
+        {"BT", 0}, {"bt", 180}, {"NT", 0}, {"nt", -660},
+    };
+    for (const auto& zone : secondLetterZones) {
+        char text[80];
+        std::snprintf(text, sizeof(text), "Thu, 29 Feb 2024 12:34:56 %s", zone.name);
+        Require(sceRtcParseDateTime(&tick, text) == 0);
+        Require(tick.tick == leapDayTick - 789000ull - static_cast<std::uint64_t>(zone.minutes * 60000000));
+    }
+
     RtcTick source{leapDayTick};
     RtcTick result{};
     Require(sceRtcTickAddSeconds(&result, &source, 3600) == 0 && result.tick == leapDayTick + 3600000000ull);
@@ -431,12 +502,9 @@ int main() {
     Require(sceRtcGetTick(&endOfJanuary, &source) == 0);
     Require(sceRtcTickAddMonths(&result, &source, 1) == 0);
     Require(sceRtcSetTick(&converted, &result) == 0 && Equal(converted, RtcDateTime{2024, 2, 29, 8, 0, 0, 0}));
-    Require(sceRtcTickAddMonths(&result, &source, -12 * 2024) == invalidValue);
     source.tick = 5;
-    Require(sceRtcTickAddTicks(&result, &source, -6) == invalidValue);
     Require(sceRtcTickAddTicks(&result, &source, -5) == 0 && result.tick == 0);
     source.tick = maxTick;
-    Require(sceRtcTickAddTicks(&result, &source, 1) == invalidValue);
     Require(sceRtcTickAddTicks(nullptr, &source, 1) == invalidPointer);
     source.tick = leapDayTick;
     result.tick = 123;
@@ -446,33 +514,8 @@ int main() {
     Require(sceRtcTickAddWeeks(&result, &source, 1) == 0 && result.tick == leapDayTick + 604800000000ull);
     Require(sceRtcSetTick(&converted, &result) == 0 && converted.month == 3 && converted.day == 7);
     result.tick = 123;
-    Require(sceRtcTickAddMinutes(&result, &source, std::numeric_limits<std::int64_t>::max()) == invalidValue && result.tick == 123);
-    Require(sceRtcTickAddWeeks(&result, &source, std::numeric_limits<std::int32_t>::max()) == invalidValue && result.tick == 123);
     Require(sceRtcTickAddHours(nullptr, &source, 1) == invalidPointer);
     Require(sceRtcTickAddMicroseconds(&result, nullptr, 1) == invalidPointer);
-    source.tick = maxTick;
-    Require(sceRtcTickAddHours(&result, &source, 1) == invalidValue && result.tick == 123);
-    Require(sceRtcTickAddMicroseconds(&result, &source, 1) == invalidValue && result.tick == 123);
-    source.tick = 0;
-    Require(sceRtcTickAddMinutes(&result, &source, -1) == invalidValue && result.tick == 123);
-
-    const std::uint64_t invalidTicks[] = {maxTick + 1, std::numeric_limits<std::uint64_t>::max()};
-    for (std::uint64_t invalidTick : invalidTicks) {
-        source.tick = invalidTick;
-        result.tick = 123;
-        Require(sceRtcTickAddTicks(&result, &source, 0) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddTicks(&result, &source, 1) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddTicks(&result, &source, -1) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddSeconds(&result, &source, 0) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddDays(&result, &source, -1) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddMonths(&result, &source, 0) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddYears(&result, &source, -1) == invalidValue && result.tick == 123);
-        Require(sceRtcTickAddTicks(&source, &source, 0) == invalidValue && source.tick == invalidTick);
-        Require(sceRtcTickAddMonths(&source, &source, -1) == invalidValue && source.tick == invalidTick);
-        Require(sceRtcTickAddTicks(nullptr, &source, 0) == invalidPointer);
-        Require(sceRtcTickAddMonths(nullptr, &source, 0) == invalidPointer);
-    }
-
     source.tick = maxTick;
     Require(sceRtcTickAddTicks(&source, &source, 0) == 0 && source.tick == maxTick);
     Require(sceRtcTickAddTicks(&source, &source, -1) == 0 && source.tick == maxTick - 1);
@@ -480,13 +523,242 @@ int main() {
     Require(sceRtcTickAddMonths(&source, &source, 0) == 0 && source.tick == maxTick);
     Require(sceRtcTickAddYears(&result, &source, -1) == 0);
     Require(sceRtcSetTick(&converted, &result) == 0 && Equal(converted, RtcDateTime{9998, 12, 31, 23, 59, 59, 999999}));
-    result.tick = 123;
-    Require(sceRtcTickAddMonths(&result, &source, 1) == invalidValue && result.tick == 123);
-    Require(sceRtcTickAddTicks(&result, &source, std::numeric_limits<std::int64_t>::min()) == invalidValue && result.tick == 123);
-    Require(sceRtcTickAddSeconds(&result, &source, std::numeric_limits<std::int64_t>::max()) == invalidValue && result.tick == 123);
     source.tick = 0;
     Require(sceRtcTickAddMonths(&source, &source, 0) == 0 && source.tick == 0);
-    Require(sceRtcTickAddMonths(&result, &source, -1) == invalidValue && result.tick == 123);
+
+    constexpr std::int64_t min64 = std::numeric_limits<std::int64_t>::min();
+    constexpr std::int64_t max64 = std::numeric_limits<std::int64_t>::max();
+    constexpr std::uint64_t addSentinel = 0xA5A5A5A5A5A5A5A5ull;
+    const AddCase addCases[] = {
+        {Add::Ticks, 0, -1, true, 0xffffffffffffffffull},
+        {Add::Ticks, 1ull, -1, true, 0x0000000000000000ull},
+        {Add::Ticks, 5, -1, true, 0x0000000000000004ull},
+        {Add::Ticks, leapDayTick, 1, true, 0x00e2d2837bd62609ull},
+        {Add::Ticks, maxTick - 1ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Ticks, maxTick, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Ticks, maxTick + 1, 1, true, 0x0461040bcb9f2001ull},
+        {Add::Ticks, ~0ull, 1, true, 0x0000000000000000ull},
+        {Add::Ticks, 0, max64, true, 0x7fffffffffffffffull},
+        {Add::Ticks, 0, min64, true, 0x8000000000000000ull},
+        {Add::Ticks, maxTick, max64, true, 0x8461040bcb9f1ffeull},
+        {Add::Ticks, ~0ull, min64, true, 0x7fffffffffffffffull},
+        {Add::Microseconds, 0, -1, true, 0xffffffffffffffffull},
+        {Add::Microseconds, 1ull, -1, true, 0x0000000000000000ull},
+        {Add::Microseconds, 5, -1, true, 0x0000000000000004ull},
+        {Add::Microseconds, leapDayTick, 1, true, 0x00e2d2837bd62609ull},
+        {Add::Microseconds, maxTick - 1ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Microseconds, maxTick, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Microseconds, maxTick + 1, 1, true, 0x0461040bcb9f2001ull},
+        {Add::Microseconds, ~0ull, 1, true, 0x0000000000000000ull},
+        {Add::Microseconds, 0, max64, true, 0x7fffffffffffffffull},
+        {Add::Microseconds, 0, min64, true, 0x8000000000000000ull},
+        {Add::Microseconds, maxTick, max64, true, 0x8461040bcb9f1ffeull},
+        {Add::Microseconds, ~0ull, min64, true, 0x7fffffffffffffffull},
+        {Add::Seconds, 0, -1, true, 0xfffffffffff0bdc0ull},
+        {Add::Seconds, 1000000ull, -1, true, 0x0000000000000000ull},
+        {Add::Seconds, 999999ull, -1, true, 0xffffffffffffffffull},
+        {Add::Seconds, leapDayTick, 1, true, 0x00e2d2837be56848ull},
+        {Add::Seconds, maxTick - 1000000ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Seconds, maxTick + 1 - 1000000ull, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Seconds, maxTick + 1, 1, true, 0x0461040bcbae6240ull},
+        {Add::Seconds, 0ull - 1000000ull, 1, true, 0x0000000000000000ull},
+        {Add::Seconds, 0, max64, true, 0xfffffffffff0bdc0ull},
+        {Add::Seconds, 0, min64, true, 0x0000000000000000ull},
+        {Add::Seconds, maxTick, max64, true, 0x0461040bcb8fddbfull},
+        {Add::Seconds, ~0ull, min64, true, 0xffffffffffffffffull},
+        {Add::Minutes, 0, -1, true, 0xfffffffffc6c7900ull},
+        {Add::Minutes, 60000000ull, -1, true, 0x0000000000000000ull},
+        {Add::Minutes, 59999999ull, -1, true, 0xffffffffffffffffull},
+        {Add::Minutes, leapDayTick, 1, true, 0x00e2d2837f69ad08ull},
+        {Add::Minutes, maxTick - 60000000ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Minutes, maxTick + 1 - 60000000ull, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Minutes, maxTick + 1, 1, true, 0x0461040bcf32a700ull},
+        {Add::Minutes, 0ull - 60000000ull, 1, true, 0x0000000000000000ull},
+        {Add::Minutes, 0, max64, true, 0xfffffffffc6c7900ull},
+        {Add::Minutes, 0, min64, true, 0x0000000000000000ull},
+        {Add::Minutes, maxTick, max64, true, 0x0461040bc80b98ffull},
+        {Add::Minutes, ~0ull, min64, true, 0xffffffffffffffffull},
+        {Add::Hours, 0, -1, true, 0xffffffff296c5c00ull},
+        {Add::Hours, 3600000000ull, -1, true, 0x0000000000000000ull},
+        {Add::Hours, 3599999999ull, -1, true, 0xffffffffffffffffull},
+        {Add::Hours, leapDayTick, 1, true, 0x00e2d2845269ca08ull},
+        {Add::Hours, maxTick - 3600000000ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Hours, maxTick + 1 - 3600000000ull, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Hours, maxTick + 1, 1, true, 0x0461040ca232c400ull},
+        {Add::Hours, 0ull - 3600000000ull, 1, true, 0x0000000000000000ull},
+        {Add::Hours, 0, 2147483647, true, 0x6b49d1ff296c5c00ull},
+        {Add::Hours, 0, -2147483648, true, 0x94b62e0000000000ull},
+        {Add::Hours, maxTick, 2147483647, true, 0x6faad60af50b7bffull},
+        {Add::Hours, ~0ull, -2147483648, true, 0x94b62dffffffffffull},
+        {Add::Days, 0, -1, true, 0xffffffebe228a000ull},
+        {Add::Days, 86400000000ull, -1, true, 0x0000000000000000ull},
+        {Add::Days, 86399999999ull, -1, true, 0xffffffffffffffffull},
+        {Add::Days, leapDayTick, 1, true, 0x00e2d29799ad8608ull},
+        {Add::Days, maxTick - 86400000000ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Days, maxTick + 1 - 86400000000ull, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Days, maxTick + 1, 1, true, 0x0461041fe9768000ull},
+        {Add::Days, 0ull - 86400000000ull, 1, true, 0x0000000000000000ull},
+        {Add::Days, 0, 2147483647, true, 0x0eebafebe228a000ull},
+        {Add::Days, 0, -2147483648, true, 0xf114500000000000ull},
+        {Add::Days, maxTick, 2147483647, true, 0x134cb3f7adc7bfffull},
+        {Add::Days, ~0ull, -2147483648, true, 0xf1144fffffffffffull},
+        {Add::Weeks, 0, -1, true, 0xffffff732f1c6000ull},
+        {Add::Weeks, 604800000000ull, -1, true, 0x0000000000000000ull},
+        {Add::Weeks, 604799999999ull, -1, true, 0xffffffffffffffffull},
+        {Add::Weeks, leapDayTick, 1, true, 0x00e2d3104cb9c608ull},
+        {Add::Weeks, maxTick - 604800000000ull, 1, true, 0x0461040bcb9f1fffull},
+        {Add::Weeks, maxTick + 1 - 604800000000ull, 1, true, 0x0461040bcb9f2000ull},
+        {Add::Weeks, maxTick + 1, 1, true, 0x046104989c82c000ull},
+        {Add::Weeks, 0ull - 604800000000ull, 1, true, 0x0000000000000000ull},
+        {Add::Weeks, 0, 2147483647, true, 0x6871cf732f1c6000ull},
+        {Add::Weeks, 0, -2147483648, true, 0x978e300000000000ull},
+        {Add::Weeks, maxTick, 2147483647, true, 0x6cd2d37efabb7fffull},
+        {Add::Weeks, ~0ull, -2147483648, true, 0x978e2fffffffffffull},
+        {Add::Months, 0, -1, false, 0},
+        {Add::Months, 0, 0, true, 0x0000000000000000ull},
+        {Add::Months, 0, 1, true, 0x0000026f9d14a000ull},
+        {Add::Months, 0, -12, false, 0},
+        {Add::Months, 0, 12, true, 0x00001cae8c13e000ull},
+        {Add::Months, 0, 119988, false, 0},
+        {Add::Months, 0, 2147483647, false, 0},
+        {Add::Months, 0, -2147483648, false, 0},
+        {Add::Months, 0, -1239376452, true, 0x017942765fc16000ull},
+        {Add::Months, 0, -1239376451, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), -1, true, 0x0000000000000000ull},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), 0, true, 0x0000026f9d14a000ull},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), 1, true, 0x000004a2e0a32000ull},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), -12, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), 12, true, 0x00001f1e29288000ull},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), 119988, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), 2147483647, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), -2147483648, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), -1239376452, false, 0},
+        {Add::Months, at(1, 2, 1, 0, 0, 0), -1239376451, false, 0},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), -1, true, 0x00e2cdc8a612a000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), 0, true, 0x00e2d03843274000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), 1, true, 0x00e2d27fa48d2000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), -12, true, 0x00e2b389b7136000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), 12, true, 0x00e2ecfaed128000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), 119988, false, 0},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), 2147483647, false, 0},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), -2147483648, false, 0},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), -1239376452, true, 0x025c12c2c0c00000ull},
+        {Add::Months, at(2024, 1, 31, 8, 0, 0), -1239376451, false, 0},
+        {Add::Months, leapDayTick, -1, true, 0x00e2d013dec18608ull},
+        {Add::Months, leapDayTick, 0, true, 0x00e2d2837bd62608ull},
+        {Add::Months, leapDayTick, 1, true, 0x00e2d4cadd3c0608ull},
+        {Add::Months, leapDayTick, -12, true, 0x00e2b5c0d1eae608ull},
+        {Add::Months, leapDayTick, 12, true, 0x00e2ef3207ea0608ull},
+        {Add::Months, leapDayTick, 119988, false, 0},
+        {Add::Months, leapDayTick, 2147483647, false, 0},
+        {Add::Months, leapDayTick, -2147483648, false, 0},
+        {Add::Months, leapDayTick, -1239376452, false, 0},
+        {Add::Months, leapDayTick, -1239376451, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), -1, true, 0x0460e4eda276a000ull},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), 0, true, 0x0460e75d3f8b4000ull},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), 1, true, 0x0460e9ccdc9fe000ull},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), -12, true, 0x0460caaeb3776000ull},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), 12, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), 119988, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), 2147483647, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), -2147483648, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), -1239376452, false, 0},
+        {Add::Months, at(9999, 1, 1, 0, 0, 0), -1239376451, false, 0},
+        {Add::Months, maxTick, -1, true, 0x0461019c2e8a7fffull},
+        {Add::Months, maxTick, 0, true, 0x0461040bcb9f1fffull},
+        {Add::Months, maxTick, 1, false, 0},
+        {Add::Months, maxTick, -12, true, 0x0460e75d3f8b3fffull},
+        {Add::Months, maxTick, 12, false, 0},
+        {Add::Months, maxTick, 119988, false, 0},
+        {Add::Months, maxTick, 2147483647, false, 0},
+        {Add::Months, maxTick, -2147483648, false, 0},
+        {Add::Months, maxTick, -1239376452, false, 0},
+        {Add::Months, maxTick, -1239376451, false, 0},
+        {Add::Months, maxTick + 1, -1, true, 0x0461019c2e8a8000ull},
+        {Add::Months, maxTick + 1, 0, false, 0},
+        {Add::Months, maxTick + 1, 1, false, 0},
+        {Add::Months, maxTick + 1, -12, true, 0x0460e75d3f8b4000ull},
+        {Add::Months, maxTick + 1, 12, false, 0},
+        {Add::Months, maxTick + 1, 119988, false, 0},
+        {Add::Months, maxTick + 1, 2147483647, false, 0},
+        {Add::Months, maxTick + 1, -2147483648, false, 0},
+        {Add::Months, maxTick + 1, -1239376452, false, 0},
+        {Add::Months, maxTick + 1, -1239376451, false, 0},
+        {Add::Months, ~0ull, -1, false, 0},
+        {Add::Months, ~0ull, 0, false, 0},
+        {Add::Months, ~0ull, 1, false, 0},
+        {Add::Months, ~0ull, -12, false, 0},
+        {Add::Months, ~0ull, 12, false, 0},
+        {Add::Months, ~0ull, 119988, true, 0x02122fd805921fffull},
+        {Add::Months, ~0ull, 2147483647, false, 0},
+        {Add::Months, ~0ull, -2147483648, false, 0},
+        {Add::Months, ~0ull, -1239376452, false, 0},
+        {Add::Months, ~0ull, -1239376451, false, 0},
+        {Add::Years, 0, -1, false, 0},
+        {Add::Years, 0, 0, true, 0x0000000000000000ull},
+        {Add::Years, 0, 1, true, 0x00001cae8c13e000ull},
+        {Add::Years, 0, 9998, true, 0x0460e75d3f8b4000ull},
+        {Add::Years, 0, 32767, false, 0},
+        {Add::Years, 0, -32768, false, 0},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), -1, false, 0},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), 0, true, 0x0000026f9d14a000ull},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), 1, true, 0x00001f1e29288000ull},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), 9998, true, 0x0460e9ccdc9fe000ull},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), 32767, false, 0},
+        {Add::Years, at(1, 2, 1, 0, 0, 0), -32768, false, 0},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), -1, true, 0x00e2b389b7136000ull},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), 0, true, 0x00e2d03843274000ull},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), 1, true, 0x00e2ecfaed128000ull},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), 9998, false, 0},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), 32767, false, 0},
+        {Add::Years, at(2024, 1, 31, 8, 0, 0), -32768, false, 0},
+        {Add::Years, leapDayTick, -1, true, 0x00e2b5c0d1eae608ull},
+        {Add::Years, leapDayTick, 0, true, 0x00e2d2837bd62608ull},
+        {Add::Years, leapDayTick, 1, true, 0x00e2ef3207ea0608ull},
+        {Add::Years, leapDayTick, 9998, false, 0},
+        {Add::Years, leapDayTick, 32767, false, 0},
+        {Add::Years, leapDayTick, -32768, false, 0},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), -1, true, 0x0460caaeb3776000ull},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), 0, true, 0x0460e75d3f8b4000ull},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), 1, false, 0},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), 9998, false, 0},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), 32767, false, 0},
+        {Add::Years, at(9999, 1, 1, 0, 0, 0), -32768, false, 0},
+        {Add::Years, maxTick, -1, true, 0x0460e75d3f8b3fffull},
+        {Add::Years, maxTick, 0, true, 0x0461040bcb9f1fffull},
+        {Add::Years, maxTick, 1, false, 0},
+        {Add::Years, maxTick, 9998, false, 0},
+        {Add::Years, maxTick, 32767, false, 0},
+        {Add::Years, maxTick, -32768, false, 0},
+        {Add::Years, maxTick + 1, -1, true, 0x0460e75d3f8b4000ull},
+        {Add::Years, maxTick + 1, 0, false, 0},
+        {Add::Years, maxTick + 1, 1, false, 0},
+        {Add::Years, maxTick + 1, 9998, false, 0},
+        {Add::Years, maxTick + 1, 32767, false, 0},
+        {Add::Years, maxTick + 1, -32768, false, 0},
+        {Add::Years, ~0ull, -1, false, 0},
+        {Add::Years, ~0ull, 0, false, 0},
+        {Add::Years, ~0ull, 1, false, 0},
+        {Add::Years, ~0ull, 9998, true, 0x02121329797e3fffull},
+        {Add::Years, ~0ull, 32767, false, 0},
+        {Add::Years, ~0ull, -32768, false, 0},
+    };
+    for (const AddCase& entry : addCases) {
+        RtcTick destination{addSentinel};
+        const RtcTick origin{entry.source};
+        Require(CallAdd(entry.function, &destination, &origin, entry.amount) == 0);
+        Require(destination.tick == (entry.written ? entry.result : addSentinel));
+        RtcTick inPlace{entry.source};
+        Require(CallAdd(entry.function, &inPlace, &inPlace, entry.amount) == 0);
+        Require(inPlace.tick == (entry.written ? entry.result : entry.source));
+    }
+    for (Add function : {Add::Ticks, Add::Microseconds, Add::Seconds, Add::Minutes, Add::Hours, Add::Days, Add::Weeks, Add::Months, Add::Years}) {
+        RtcTick destination{addSentinel};
+        const RtcTick origin{5};
+        Require(CallAdd(function, nullptr, &origin, 1) == invalidPointer);
+        Require(CallAdd(function, &destination, nullptr, 1) == invalidPointer && destination.tick == addSentinel);
+        Require(CallAdd(function, nullptr, nullptr, 1) == invalidPointer);
+    }
 
     RtcTick now{};
     Require(sceRtcGetCurrentTick(&now) == 0 && now.tick > leapDayTick);
@@ -515,7 +787,19 @@ int main() {
     Require(sceRtcFormatRFC2822(rfc2822, &tick, -1) == invalidValue);
     tick.tick = maxTick;
     Require(sceRtcFormatRFC2822(rfc2822, &tick, 0) == 0 && std::strcmp(rfc2822, "Fri, 31 Dec 9999 23:59:59 +0000") == 0);
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, 1) == invalidYear);
+    tick.tick = maxTick + 1;
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, 0) == invalidYear);
+    tick.tick = std::numeric_limits<std::uint64_t>::max();
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, 0) == invalidValue);
     Require(sceRtcFormatRFC2822(rfc2822, &tick, 1) == invalidValue);
+    tick.tick = 0ull - 60000000ull;
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, 1) == invalidValue);
+    tick.tick = 1ull << 63;
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, 0) == invalidValue);
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, -1) == invalidYear);
+    tick.tick = maxTick + 1;
+    Require(sceRtcFormatRFC2822(rfc2822, &tick, -1) == 0 && std::strcmp(rfc2822, "Fri, 31 Dec 9999 23:59:00 -0001") == 0);
     tick.tick = leapDayTick;
     for (int offset : {1440, -1440, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
         std::memset(rfc2822, 'x', sizeof(rfc2822));
@@ -525,7 +809,15 @@ int main() {
         Require(std::memcmp(rfc2822, original, sizeof(rfc2822)) == 0);
     }
     Require(sceRtcFormatRFC2822(nullptr, &tick, 0) == invalidPointer);
-    Require(sceRtcFormatRFC2822(rfc2822, nullptr, 0) == invalidPointer);
+    {
+        RtcTick before{}, after{}, parsed{};
+        Require(sceRtcGetCurrentTick(&before) == 0);
+        Require(sceRtcFormatRFC2822(rfc2822, nullptr, 60) == 0);
+        Require(sceRtcGetCurrentTick(&after) == 0);
+        Require(std::strlen(rfc2822) == 31 && std::strcmp(rfc2822 + 26, "+0100") == 0);
+        Require(sceRtcParseDateTime(&parsed, rfc2822) == 0 && parsed.tick + 1000000 > before.tick && parsed.tick <= after.tick);
+        Require(sceRtcFormatRFC2822(rfc2822, nullptr, 1440) == invalidValue);
+    }
 
     SetTimeZone("XXX-5:30");
     Require(sceRtcFormatRFC2822LocalTime(rfc2822, &tick) == 0 && std::strcmp(rfc2822, "Thu, 29 Feb 2024 18:04:56 +0530") == 0);
@@ -537,9 +829,16 @@ int main() {
     Require(sceRtcFormatRFC2822LocalTime(rfc2822, &tick) == 0 && std::strcmp(rfc2822, "Thu, 29 Feb 2024 12:34:56 +0000") == 0);
     Require(sceRtcFormatRFC3339LocalTime(text, &tick) == 0 && std::strcmp(text, "2024-02-29T12:34:56.78Z") == 0);
     Require(sceRtcFormatRFC2822LocalTime(nullptr, &tick) == invalidPointer);
-    Require(sceRtcFormatRFC2822LocalTime(rfc2822, nullptr) == invalidPointer);
     Require(sceRtcFormatRFC3339LocalTime(nullptr, &tick) == invalidPointer);
-    Require(sceRtcFormatRFC3339LocalTime(text, nullptr) == invalidPointer);
+    {
+        RtcTick before{}, after{}, parsed{};
+        Require(sceRtcGetCurrentTick(&before) == 0);
+        Require(sceRtcFormatRFC2822LocalTime(rfc2822, nullptr) == 0);
+        Require(sceRtcFormatRFC3339LocalTime(text, nullptr) == 0);
+        Require(sceRtcGetCurrentTick(&after) == 0);
+        Require(sceRtcParseDateTime(&parsed, rfc2822) == 0 && parsed.tick + 1000000 > before.tick && parsed.tick <= after.tick);
+        Require(sceRtcParseRFC3339(&parsed, text) == 0 && parsed.tick + 10000 > before.tick && parsed.tick <= after.tick);
+    }
     for (const char* zone : {"UTC0", "XXX-5:30", "XXX+3"}) {
         SetTimeZone(zone);
         for (std::uint64_t invalidTick : {maxTick + 1, std::uint64_t{1} << 63u, std::numeric_limits<std::uint64_t>::max()}) {
@@ -613,5 +912,59 @@ int main() {
         Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
         RtcTick tooEarly{unixEpochTick - 1};
         Require(sceRtcSetCurrentTick(&tooEarly) == invalidValue && sceRtcSetCurrentTick(nullptr) == invalidPointer);
+        const RtcTick systemClock{leapDayTick};
+        const RtcTick networkClock{leapDayTick + 10000000};
+        const RtcTick adClock{leapDayTick + 20000000};
+        const RtcTick debugClock{leapDayTick + 30000000};
+        Require(sceRtcSetCurrentTick(&systemClock) == 0);
+        Require(sceRtcSetCurrentNetworkTick(&networkClock) == 0);
+        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
+        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
+        Require(sceRtcSetCurrentAdNetworkTick(&adClock) == 0);
+        Require(sceRtcSetCurrentDebugNetworkTick(&debugClock) == 0);
+        Require(sceRtcSetCurrentNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcSetCurrentAdNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentAdNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcSetCurrentDebugNetworkTick(&tooEarly) == invalidValue && sceRtcSetCurrentDebugNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentTick(&current) == 0 && current.tick >= systemClock.tick && current.tick < systemClock.tick + 1000000);
+        Require(sceRtcGetCurrentNetworkTick(&current) == 0 && current.tick >= networkClock.tick && current.tick < networkClock.tick + 1000000);
+        Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= adClock.tick && current.tick < adClock.tick + 1000000);
+        Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= debugClock.tick && current.tick < debugClock.tick + 1000000);
+        Require(sceRtcGetCurrentRawNetworkTick(&current) == 0 && current.tick > unixEpochTick);
     }
+    SetCompiledSdkVersion(process.data(), 0x02ffffff);
+    Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);
+    SetCompiledSdkVersion(process.data(), 0x03000000);
+    Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 1, 1) == invalidYear);
+    SetCompiledSdkVersion(process.data(), 0x05050001);
+    Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(10000, 13, 1) == invalidMonth && sceRtcGetDayOfWeek(2024, 0, 1) == invalidMonth);
+    Require(sceRtcGetDayOfWeek(0, 1, 0) == invalidYear && sceRtcGetDayOfWeek(10000, 2, 30) == invalidYear && sceRtcGetDayOfWeek(65536, 1, 1) == invalidYear);
+    Require(sceRtcGetDayOfWeek(2024, 2, 30) == invalidDay && sceRtcGetDayOfWeek(9999, 12, 31) == 5 && sceRtcGetDayOfWeek(1, 1, 1) == 1);
+    Require(sceRtcGetDaysInMonth(0, 13) == invalidYear && sceRtcGetDaysInMonth(10000, 1) == 31 && sceRtcIsLeapYear(10000) == 1);
+    RtcDateTime sentinel{0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaaaaaau};
+    RtcDateTime ranged = sentinel;
+    Require(sceRtcSetTime_t(&ranged, -1) == invalidValue && Equal(ranged, sentinel));
+    Require(sceRtcSetTime_t(&ranged, std::numeric_limits<std::int64_t>::min()) == invalidValue && Equal(ranged, sentinel));
+    Require(sceRtcSetTime_t(&ranged, 4294967296ll) == 0 && Equal(ranged, RtcDateTime{2106, 2, 7, 6, 28, 16, 0}));
+    Require(sceRtcSetTime_t(&ranged, 253402300800ll) == 0 && Equal(ranged, RtcDateTime{10000, 1, 1, 0, 0, 0, 0}));
+    Require(sceRtcSetTime_t(&ranged, 18446744073709ll) == 0 && Equal(ranged, RtcDateTime{1969, 12, 31, 23, 59, 59, 448384}));
+    Require(sceRtcSetTime_t(&ranged, std::numeric_limits<std::int64_t>::max()) == 0 && Equal(ranged, RtcDateTime{1969, 12, 31, 23, 59, 59, 0}));
+    char ranges[64];
+    RtcTick shifted{0};
+    Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == invalidValue);
+    shifted.tick = 59999999;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == invalidValue);
+    shifted.tick = 60000000;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == 0 && std::strcmp(ranges, "0001-01-01T00:00:00.00-00:01") == 0);
+    shifted.tick = std::numeric_limits<std::uint64_t>::max();
+    Require(sceRtcFormatRFC3339(ranges, &shifted, 1) == invalidValue && sceRtcFormatRFC3339(ranges, &shifted, 1439) == invalidValue);
+    shifted.tick = std::numeric_limits<std::uint64_t>::max() - 60000000 + 1;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, 1) == invalidValue);
+    shifted.tick = std::numeric_limits<std::uint64_t>::max() - 60000000;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, 1) == invalidYear);
+    shifted.tick = 1ull << 63;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, 0) == invalidYear && sceRtcFormatRFC3339(ranges, &shifted, -1) == invalidYear);
+    shifted.tick = maxTick + 1;
+    Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == 0 && std::strcmp(ranges, "9999-12-31T23:59:00.00-00:01") == 0);
+    Require(sceRtcInit() == 0);
+    Require(sceRtcEnd() == 0);
 }

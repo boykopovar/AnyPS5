@@ -1,16 +1,38 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <array>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include "prx/libSceUserService/UserService.hpp"
 
-static std::atomic<bool> initialized{false};
-static std::atomic<bool> loginReported{false};
+namespace {
 
-static int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
- if (user_id != USER_SERVICE_INITIAL_USER_ID) {
+std::atomic<bool> initialized{false};
+std::mutex userMutex;
+
+struct UserEvent {
+    std::uint32_t eventType;
+    int userId;
+};
+
+std::deque<UserEvent> eventQueue;
+std::array<bool, USER_SERVICE_MAX_USERS> userConnected{true, false, false, false};
+
+int UserIndex(int userId) {
+    if (userId >= USER_SERVICE_INITIAL_USER_ID && userId < USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS) {
+        return userId - USER_SERVICE_INITIAL_USER_ID;
+    }
+    return -1;
+}
+
+int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
+ const int index = UserIndex(user_id);
+ if (index < 0) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (setting == nullptr) {
@@ -20,13 +42,85 @@ static int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t val
  return USER_SERVICE_OK;
 }
 
+void PopulateInitialLoginEvents() {
+ std::lock_guard lock(userMutex);
+ eventQueue.clear();
+ constexpr std::uint32_t EventTypeLogin = 0;
+ eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
+  if (userConnected[i]) {
+   eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
+  }
+ }
+}
+
+
+// Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
+// the keyboard type of the configured system language and 0 for the input variants (see
+// docs/dev/debt/libSceUserService.md).
+static int32_t KeyboardTypeForSystemLanguage() {
+ constexpr int param_id_lang = 1;
+ constexpr int32_t fallback = 20;
+ constexpr int32_t keyboard_types[] = {37, 20, 26, 21, 17, 28, 29, 33, 34, 38, 39, 40, 23, 35, 16,
+                                       30, 31, 32, 19, 36, 22, 41, 25, 44, 48, 43, 47, 42, 46, 45};
+ int language = -1;
+ if (sceSystemServiceParamGetInt(param_id_lang, &language) != 0 || language < 0 ||
+     language >= static_cast<int>(sizeof(keyboard_types) / sizeof(keyboard_types[0]))) {
+  return fallback;
+ }
+ return keyboard_types[language];
+}
+
+static int32_t NoInputVariant() {
+ return 0;
+}
+
+static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)()) {
+ if (type == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (UserIndex(user_id) < 0) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
+ }
+ *type = value();
+ return USER_SERVICE_OK;
+}
+}
+
 extern "C" {
+
+void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
+    if (userIndex <= 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
+    std::lock_guard lock(userMutex);
+    if (userConnected[userIndex] != connected) {
+        userConnected[userIndex] = connected;
+        if (initialized.load()) {
+            constexpr std::uint32_t EventTypeLogin = 0;
+            constexpr std::uint32_t EventTypeLogout = 1;
+            const std::uint32_t eventType = connected ? EventTypeLogin : EventTypeLogout;
+            const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
+            bool collapsed = false;
+            for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
+                if (it->userId == userId) {
+                    if (it->eventType != eventType) {
+                        eventQueue.erase(it);
+                    }
+                    collapsed = true;
+                    break;
+                }
+            }
+            if (!collapsed) {
+                eventQueue.push_back({eventType, userId});
+            }
+        }
+    }
+}
 
 int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32_t* chat_transcription) {
  return ReportAccessibilitySetting(user_id, chat_transcription, 0);
 }
 
-int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable() {
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -43,7 +137,7 @@ int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibr
  return ReportAccessibilitySetting(user_id, vibration, 1);
 }
 
-int APS5_VABI sceUserServiceGetAccessibilityZoom() {
+int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -57,7 +151,8 @@ int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, int32_t
 }
 
 int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
- if (user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (index < 0) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (age_level == nullptr) {
@@ -76,12 +171,14 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
  if (event == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- if (loginReported.exchange(true)) {
+ std::lock_guard lock(userMutex);
+ if (eventQueue.empty()) {
   return USER_SERVICE_ERROR_NO_EVENT;
  }
- constexpr std::uint32_t EventTypeLogin = 0;
- event->event_type = EventTypeLogin;
- event->user_id = USER_SERVICE_INITIAL_USER_ID;
+ const auto item = eventQueue.front();
+ eventQueue.pop_front();
+ event->event_type = item.eventType;
+ event->user_id = item.userId;
  return USER_SERVICE_OK;
 }
 
@@ -89,7 +186,8 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
  // System-wide game presets (difficulty, view inversion, subtitles, audio language) of the user's
  // profile. A fresh console has none set: every field is 0, "not specified", and the title falls
  // back to its own defaults. this_size is the caller's.
- if (presets == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (presets == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  presets->difficulty = 0;
@@ -118,10 +216,14 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- user_id_list->user_id[0] = USER_SERVICE_INITIAL_USER_ID;
- user_id_list->user_id[1] = USER_SERVICE_USER_ID_INVALID;
- user_id_list->user_id[2] = USER_SERVICE_USER_ID_INVALID;
- user_id_list->user_id[3] = USER_SERVICE_USER_ID_INVALID;
+ std::lock_guard lock(userMutex);
+ for (int i = 0; i < 4; ++i) {
+  if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
+   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+  } else {
+   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+  }
+ }
  return USER_SERVICE_OK;
 }
 
@@ -129,45 +231,61 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
  if (name == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- if (user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (index < 0) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  if (size < USER_SERVICE_MAX_USER_NAME_LENGTH + 1) {
   std::memset(name, 0, size);
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_INITIAL_USER_NAME, size);
+ std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
  return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
- if (number == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (number == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *number = 1;
+ *number = index + 1;
  return USER_SERVICE_OK;
 }
 
-int APS5_VABI sceUserServiceInitialize(const void* params) {
- (void)params;
+static bool ValidThreadPriority(int priority) {
+ return priority >= USER_SERVICE_THREAD_PRIORITY_MIN && priority <= USER_SERVICE_THREAD_PRIORITY_MAX;
+}
+
+static int MarkInitialized() {
  if (initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
- loginReported.store(false);
+ PopulateInitialLoginEvents();
  return USER_SERVICE_OK;
 }
 
-int APS5_VABI sceUserServiceInitialize2(void) {
- if (!initialized.exchange(true)) {
-  loginReported.store(false);
+int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params) {
+ if (params != nullptr) {
+  if (!ValidThreadPriority(params->priority)) {
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
  }
- return USER_SERVICE_OK;
+ return MarkInitialized();
+}
+
+int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask) {
+ if (!ValidThreadPriority(priority)) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ return MarkInitialized();
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
  if (!initialized.exchange(false)) {
   return USER_SERVICE_ERROR_NOT_INITIALIZED;
  }
+ std::lock_guard lock(userMutex);
+ eventQueue.clear();
  return USER_SERVICE_OK;
 }
 
@@ -191,23 +309,41 @@ int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdL
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- user_id_list->user_id[0] = USER_SERVICE_INITIAL_USER_ID;
- for (int i = 1; i < 16; ++i) {
-  user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+ std::lock_guard lock(userMutex);
+ for (int i = 0; i < 16; ++i) {
+  if (i < USER_SERVICE_MAX_USERS && userConnected[i]) {
+   user_id_list->user_id[i] = USER_SERVICE_INITIAL_USER_ID + i;
+  } else {
+   user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+  }
  }
  return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
- if (color == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (color == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *color = 0;
+ *color = index;
  return USER_SERVICE_OK;
 }
 
+int APS5_VABI sceUserServiceGetKeyboardType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, KeyboardTypeForSystemLanguage);
+}
+
+int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, NoInputVariant);
+}
+
+int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t* type) {
+ return ReportKeyboardSetting(user_id, type, NoInputVariant);
+}
+
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- if (account_id == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+ const int index = UserIndex(user_id);
+ if (account_id == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  *account_id = 0;

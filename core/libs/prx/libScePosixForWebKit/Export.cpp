@@ -1,5 +1,11 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -160,8 +166,8 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
         const char* candidate = text;
         const char* match = needle;
         while (*candidate != '\0' && *match != '\0' &&
-               std::tolower(static_cast<unsigned char>(*candidate)) ==
-               std::tolower(static_cast<unsigned char>(*match))) {
+               FoldCase(static_cast<unsigned char>(*candidate), FnmCasefold) ==
+               FoldCase(static_cast<unsigned char>(*match), FnmCasefold)) {
             ++candidate;
             ++match;
         }
@@ -177,7 +183,99 @@ void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
 std::uint32_t APS5_VABI arc4random_nid_postfix() {
     std::uint32_t value;
     arc4random_buf_nid_postfix(&value, sizeof(value));
+
     return value;
+}
+
+int APS5_VABI __wrap_access(const char* path, int mode) {
+    return access_nid_postfix(path, mode);
+}
+
+int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_postfix(clockId, tp);
+}
+
+int APS5_VABI __wrap_fchown() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+char* APS5_VABI __wrap_getcwd(char* buffer, std::size_t size) {
+    return getcwd_nid_postfix(buffer, size);
+}
+
+char* APS5_VABI __wrap_getenv(const char* name) {
+    return getenv_nid_postfix(name);
+}
+
+int APS5_VABI __wrap_link() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI __wrap_lstat(const char* path, FileStat* sb) {
+    return lstat_nid_postfix(path, sb);
+}
+
+void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) {
+    return mmap_nid_postfix(address, length, protection, flags, descriptor, offset);
+}
+
+int APS5_VABI __wrap_readlink() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI __wrap_statvfs() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI __wrap_symlink() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI clock_gettime_np() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI getenv_np() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
+int APS5_VABI scePosixForWebKit_gethostbyname_r() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI mmap_np() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI msetname() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI pthread_setschedparam_np() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI setenv_np() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("9Vqxt-qBPB4", scePosixForWebKit_sysinfo);
+int APS5_VABI scePosixForWebKit_sysinfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

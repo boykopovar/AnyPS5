@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cctype>
 #include <cerrno>
@@ -11,43 +12,7 @@ extern "C" {
 extern const unsigned char _DefaultRuneLocale_nid_postfix[4224];
 extern const unsigned char* _CurrentRuneLocale_nid_postfix;
 extern int __mb_sb_limit_nid_postfix;
-int APS5_VABI isalpha_nid_postfix(int);
-int APS5_VABI iscntrl_nid_postfix(int);
-int APS5_VABI isdigit_nid_postfix(int);
-int APS5_VABI isgraph_nid_postfix(int);
-int APS5_VABI islower_nid_postfix(int);
-int APS5_VABI isprint_nid_postfix(int);
-int APS5_VABI ispunct_nid_postfix(int);
-int APS5_VABI isspace_nid_postfix(int);
-int APS5_VABI isupper_nid_postfix(int);
-int APS5_VABI isxdigit_nid_postfix(int);
-int APS5_VABI isblank_nid_postfix(int);
-int APS5_VABI tolower_nid_postfix(int);
-int APS5_VABI toupper_nid_postfix(int);
-int APS5_VABI iswalnum_nid_postfix(std::uint32_t);
-int APS5_VABI iswalpha_nid_postfix(std::uint32_t);
-int APS5_VABI iswblank_nid_postfix(std::uint32_t);
-int APS5_VABI iswcntrl_nid_postfix(std::uint32_t);
-int APS5_VABI iswdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswgraph_nid_postfix(std::uint32_t);
-int APS5_VABI iswlower_nid_postfix(std::uint32_t);
-int APS5_VABI iswprint_nid_postfix(std::uint32_t);
-int APS5_VABI iswpunct_nid_postfix(std::uint32_t);
-int APS5_VABI iswspace_nid_postfix(std::uint32_t);
-int APS5_VABI iswupper_nid_postfix(std::uint32_t);
-int APS5_VABI iswxdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswctype_nid_postfix(std::uint32_t, std::uint64_t);
-std::uint64_t APS5_VABI wctype_nid_postfix(const char*);
-std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t);
-std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t);
-std::uint64_t APS5_VABI wctrans_nid_postfix(const char*);
-std::uint32_t APS5_VABI towctrans_nid_postfix(std::uint32_t, std::uint64_t);
-std::uint32_t APS5_VABI _Towlower_nid_postfix(std::uint32_t, const void*);
-std::uint32_t APS5_VABI _Towupper_nid_postfix(std::uint32_t, const void*);
-int APS5_VABI _Tolower_nid_postfix(int, const void*);
-int APS5_VABI _Toupper_nid_postfix(int, const void*);
-std::uint32_t APS5_VABI btowc_nid_postfix(int);
-int APS5_VABI wctob_nid_postfix(std::uint32_t);
+
 }
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -130,9 +95,11 @@ int main() {
     }
     Require(towlower_nid_postfix(0xffffffff) == 0xffffffff && towupper_nid_postfix(0xffffffff) == 0xffffffff);
     Require(btowc_nid_postfix(-1) == 0xffffffff && btowc_nid_postfix(0) == 0);
-    Require(btowc_nid_postfix('A') == 'A' && btowc_nid_postfix(0xe9) == 0xe9 && btowc_nid_postfix(-23) == 0xe9);
-    Require(wctob_nid_postfix('A') == 'A' && wctob_nid_postfix(0xe9) == 0xe9 && wctob_nid_postfix(0) == 0);
-    Require(wctob_nid_postfix(0x100) == -1 && wctob_nid_postfix(0x20ac) == -1 && wctob_nid_postfix(0xffffffff) == -1);
+    Require(btowc_nid_postfix('A') == 'A' && btowc_nid_postfix(0x7f) == 0x7f && btowc_nid_postfix(0x80) == 0xffffffff);
+    Require(btowc_nid_postfix(0xe9) == 0xffffffff && btowc_nid_postfix(-23) == 0xffffffff && btowc_nid_postfix(0x141) == 'A');
+    Require(wctob_nid_postfix('A') == 'A' && wctob_nid_postfix(0x7f) == 0x7f && wctob_nid_postfix(0x80) == -1 && wctob_nid_postfix(0) == 0);
+    Require(wctob_nid_postfix(0xe9) == -1 && wctob_nid_postfix(0x20ac) == -1 && wctob_nid_postfix(0xffffffff) == -1);
+    Require(wctob_nid_postfix(0x10041) == 'A' && wctob_nid_postfix(0x80000000) == 0);
     Require(wctrans_nid_postfix("tolower") == 1 && wctrans_nid_postfix("toupper") == 2);
     Require(wctrans_nid_postfix("") == 0 && wctrans_nid_postfix("TOLOWER") == 0 && wctrans_nid_postfix("tolowe") == 0);
     for (std::int64_t c = -300; c < 70000; ++c) {
@@ -147,5 +114,15 @@ int main() {
     }
     errno = 0;
     Require(towctrans_nid_postfix('A', 0) == 'A' && towctrans_nid_postfix('a', 3) == 'a' && errno == 0);
+    for (int c = -300; c < 0x1200; ++c) {
+        const auto byte = static_cast<unsigned char>(c);
+        errno = 0;
+        const std::uint32_t wide = btowc_nid_postfix(c);
+        const bool invalidLead = c != -1 && ((byte >= 0x80 && byte < 0xc0) || byte >= 0xf0);
+        Require(wide == (c != -1 && byte < 0x80 ? byte : 0xffffffffu) && errno == (invalidLead ? 86 : 0));
+    }
+    errno = 7;
+    Require(btowc_nid_postfix(0xc3) == 0xffffffff && btowc_nid_postfix(0xef) == 0xffffffff && btowc_nid_postfix(-1) == 0xffffffff && errno == 7);
+    Require(btowc_nid_postfix(0x41) == 'A' && errno == 7);
     return 0;
 }

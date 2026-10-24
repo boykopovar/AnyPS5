@@ -82,6 +82,11 @@ int main() {
             Require(Contains(ranges, written, written + surfaceBytes), "a written image next to a null one is not a write range");
             Require(!Touches(ranges, 0, surfaceBytes), "a null storage image is a write range");
         }
+        bool bounded = false;
+        const auto dispatchRanges = AgcDriver::DriverDetail::DispatchWriteRanges(program, bounded);
+        Require(bounded, "a dispatch whose written images are a real one and a null one is not bounded");
+        Require(Contains(dispatchRanges, written, written + surfaceBytes), "a written image next to a null one is not a dispatch write range");
+        Require(!Touches(dispatchRanges, 0, surfaceBytes), "a null storage image is a dispatch write range");
         AgcDriver::Graphics::State targets{};
         targets.hasColorTarget = true;
         auto& color = targets.color;

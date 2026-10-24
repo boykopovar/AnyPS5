@@ -3,17 +3,26 @@
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include <array>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <mutex>
 #include <system_error>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
 #include <sys/utsname.h>
 #include <unistd.h>
+#endif
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#elif defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
 #endif
 
 #ifndef _WIN32
@@ -46,6 +55,9 @@ struct Session {
     double gpuBusyAtOpen = 0;
     std::optional<TraceClockSample> gpuClock;
     std::vector<Clock::time_point> presents;
+    bool bench = false;
+    TraceBenchIntervals benchIntervals;
+    std::uint64_t benchDropped = 0;
 };
 
 Session& session() {
@@ -60,6 +72,11 @@ std::unique_ptr<ProfileOutput>& writer() {
 
 std::unique_ptr<ProfileOutput>& summaryWriter() {
     static std::unique_ptr<ProfileOutput> output;
+    return output;
+}
+
+std::unique_ptr<TraceBenchWriter>& benchWriter() {
+    static std::unique_ptr<TraceBenchWriter> output;
     return output;
 }
 
@@ -91,6 +108,64 @@ std::string operatingSystem() {
 #endif
 }
 
+std::optional<std::string> processorName() {
+    std::array<std::uint32_t, 12> words{};
+#if defined(_MSC_VER) && !defined(__clang__)
+    int registers[4]{};
+    __cpuid(registers, static_cast<int>(0x80000000u));
+    if (static_cast<std::uint32_t>(registers[0]) < 0x80000004u) return std::nullopt;
+    for (unsigned leaf = 0; leaf < 3; ++leaf) {
+        __cpuid(registers, static_cast<int>(0x80000002u + leaf));
+        std::memcpy(words.data() + leaf * 4, registers, sizeof registers);
+    }
+#elif defined(__x86_64__) || defined(__i386__)
+    if (__get_cpuid_max(0x80000000u, nullptr) < 0x80000004u) return std::nullopt;
+    for (unsigned leaf = 0; leaf < 3; ++leaf) {
+        unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
+        if (__get_cpuid(0x80000002u + leaf, &eax, &ebx, &ecx, &edx) == 0) throw std::runtime_error("cpuid brand string leaf failed");
+        words[leaf * 4] = eax;
+        words[leaf * 4 + 1] = ebx;
+        words[leaf * 4 + 2] = ecx;
+        words[leaf * 4 + 3] = edx;
+    }
+#else
+    return std::nullopt;
+#endif
+    std::string name(reinterpret_cast<const char*>(words.data()), sizeof words);
+    name.resize(std::strlen(name.c_str()));
+    const auto first = name.find_first_not_of(' ');
+    if (first == std::string::npos) return std::nullopt;
+    return name.substr(first, name.find_last_not_of(' ') - first + 1);
+}
+
+std::uint64_t memoryMiB() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (::GlobalMemoryStatusEx(&status) == 0) throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "GlobalMemoryStatusEx");
+    return status.ullTotalPhys / (1024 * 1024);
+#else
+    const long pages = ::sysconf(_SC_PHYS_PAGES);
+    const long size = ::sysconf(_SC_PAGE_SIZE);
+    if (pages <= 0 || size <= 0) throw std::system_error(errno, std::generic_category(), "sysconf physical memory");
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(size) / (1024 * 1024);
+#endif
+}
+
+const std::optional<TraceHost>& host() {
+    static const auto value = []() -> std::optional<TraceHost> {
+        auto cpu = processorName();
+        if (!cpu) return std::nullopt;
+        return TraceHost{std::move(*cpu), std::thread::hardware_concurrency(), memoryMiB()};
+    }();
+    return value;
+}
+
+std::optional<TraceTitle> title() {
+    if (!HasAppParamJson_nid_no_patch()) return std::nullopt;
+    return TraceTitle{GetAppTitleId_nid_postfix().value, GetAppTitle_nid_postfix().value, GetAppContentVersion_nid_no_patch().value};
+}
+
 std::vector<std::pair<std::string, std::string>> environment() {
 #ifdef _WIN32
     char** entries = _environ;
@@ -120,6 +195,9 @@ TraceSummary identity(std::uint32_t width, std::uint32_t height, const VulkanDev
     summary.os = operatingSystem();
     summary.width = width;
     summary.height = height;
+    summary.host = host();
+    static const auto running = title();
+    summary.title = running;
     return summary;
 }
 
@@ -185,6 +263,23 @@ void PerformanceTrace::FlushInterval(Clock::time_point now, std::uint32_t width,
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.intervalGpuBusy;
     summary.interval = std::make_pair(seconds(state.intervalPresents.front() - state.first), seconds(now - state.first));
     summaryWriter()->Write(TraceFormat::Summary(summary, snapshots, state.intervalPresents));
+    if (!state.bench) return;
+    TraceBench::Keep(state.benchIntervals, std::make_shared<const TraceBenchInterval>(TraceBenchInterval{summary.interval->first, summary.interval->second, summary.firstPresent, width, height, summary.gpuBusyMs, TraceFormat::FrameMicroseconds(state.intervalPresents)}), state.benchDropped);
+    if (!benchWriter()) {
+        const auto name = "aps5-bench-" + summary.commit + "-" + std::to_string(processId()) + ".json.gz";
+        benchWriter() = std::make_unique<TraceBenchWriter>([directory = traceDirectory(), name](const TraceBenchSnapshot& snapshot) {
+            try {
+                std::filesystem::create_directories(directory);
+                TraceFile::ReplaceGzip(directory / name, TraceFormat::Bench(snapshot.summary, snapshot.intervals, snapshot.dropped));
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "[trace] writing %s failed: %s\n", name.c_str(), error.what());
+                std::fflush(stderr);
+                throw;
+            }
+        });
+        ProfilePrint_nid_no_patch("[trace] benchmark frames go to %s, rewritten every interval\n", name.c_str());
+    }
+    benchWriter()->Write(TraceBenchSnapshot{std::move(summary), state.benchIntervals, state.benchDropped});
 }
 
 void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const VulkanDevice* device) {
@@ -195,6 +290,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     if (!state.started) {
         state.window = TraceWindow::Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
         state.interval = TraceInterval::Parse(std::getenv("APS5_TRACE_SUMMARY_EVERY"));
+        state.bench = TraceBench::Parse(std::getenv("APS5_TRACE_BENCH"), state.interval.has_value());
         state.first = now;
         state.started = true;
     }
@@ -287,6 +383,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
 void PerformanceTrace::StopOutput() {
     if (writer()) writer()->Stop();
     if (summaryWriter()) summaryWriter()->Stop();
+    if (benchWriter()) benchWriter()->Stop();
 }
 
 }

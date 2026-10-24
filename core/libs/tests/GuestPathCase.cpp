@@ -1,3 +1,5 @@
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -7,21 +9,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-int APS5_VABI sceKernelStat(const char*, FileStat*);
-int APS5_VABI chdir_nid_postfix(const char*);
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI rename_nid_postfix(const char*, const char*);
-int APS5_VABI remove_nid_postfix(const char*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

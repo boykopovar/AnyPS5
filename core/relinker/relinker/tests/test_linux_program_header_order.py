@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from signal_run import run_without_core_dump
 from test_guest_intel_trampolines import main_fixture
 from test_guest_module_directories import module_with_symbol
 from test_linux_load_alignment import fixture as single_load_fixture
@@ -20,6 +21,7 @@ PT_OS_PROCPARAM = 0x61000001
 PT_GNU_STACK = 0x6474E551
 PT_SCE_VERSION = 0x6FFFFF01
 PAGE = 0x1000
+DEFAULT_BASE = 0x400000
 
 TEXT = (PT_LOAD, 5, 0x4000, 0x0000, 0x1000, 0x1000, 0x1000)
 RODATA = (PT_LOAD, 4, 0x5000, 0x1000, 0x0800, 0x0800, 0x1000)
@@ -78,7 +80,7 @@ def run_expecting_trap(name, output):
     if not (sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")):
         return
     output.chmod(0o755)
-    executed = subprocess.run([str(output)], capture_output=True, timeout=20)
+    executed = run_without_core_dump([str(output)], capture_output=True, timeout=20)
     assert executed.returncode == -signal.SIGTRAP, (name, executed.returncode, executed.stderr)
 
 
@@ -101,13 +103,13 @@ def main():
 
         ordered = convert("ordered-loads", multi_load_fixture([TEXT, RODATA, PROCPARAM, DATA]))
         headers = check_order("ordered-loads", ordered.read_bytes())
-        assert (PT_OS_PROCPARAM, PROCPARAM[3]) in [(h[0], h[3]) for h in headers], headers
-        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [TEXT[3], RODATA[3], DATA[3]], headers
+        assert (PT_OS_PROCPARAM, DEFAULT_BASE + PROCPARAM[3]) in [(h[0], h[3]) for h in headers], headers
+        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [DEFAULT_BASE + h[3] for h in (TEXT, RODATA, DATA)], headers
         run_expecting_trap("ordered-loads", ordered)
 
         unordered = convert("unordered-loads", multi_load_fixture([DATA, PROCPARAM, TEXT, RODATA]))
         headers = check_order("unordered-loads", unordered.read_bytes())
-        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [TEXT[3], RODATA[3], DATA[3]], headers
+        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [DEFAULT_BASE + h[3] for h in (TEXT, RODATA, DATA)], headers
         assert kinds_between_loads(headers) == [PT_OS_PROCPARAM, PT_GNU_STACK], headers
         run_expecting_trap("unordered-loads", unordered)
 

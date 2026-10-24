@@ -70,14 +70,8 @@ PresentationPass::PresentationPass(const Graphics::Context& context, std::size_t
             tableWrites[i].pBufferInfo = &tableInfo;
         }
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(tableWrites.size()), tableWrites.data(), 0, nullptr);
-        const auto createModule = context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(PRESENTATION_PASS_VERT_SPV);
-        moduleInfo.pCode = PRESENTATION_PASS_VERT_SPV;
-        Graphics::Check(createModule(context.device, &moduleInfo, nullptr, &vertex), "vkCreateShaderModule presentation vertex");
-        moduleInfo.codeSize = sizeof(PRESENTATION_PASS_FRAG_SPV);
-        moduleInfo.pCode = PRESENTATION_PASS_FRAG_SPV;
-        Graphics::Check(createModule(context.device, &moduleInfo, nullptr, &fragment), "vkCreateShaderModule presentation fragment");
+        vertex = Graphics::CreateShaderModule(context, PRESENTATION_PASS_VERT_SPV, sizeof(PRESENTATION_PASS_VERT_SPV), "vkCreateShaderModule presentation vertex");
+        fragment = Graphics::CreateShaderModule(context, PRESENTATION_PASS_FRAG_SPV, sizeof(PRESENTATION_PASS_FRAG_SPV), "vkCreateShaderModule presentation fragment");
     } catch (...) {
         release();
         throw;

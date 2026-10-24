@@ -16,7 +16,7 @@ struct RelativeJumpTable {
     VirtualAddress End;
 };
 
-std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code);
+std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, VirtualAddress codeAddress = 0, std::size_t* tableEnd = nullptr, std::size_t unwindEnd = 0);
 std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<std::pair<VirtualAddress, VirtualAddress>>& functions);
 
 }

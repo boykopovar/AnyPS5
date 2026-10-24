@@ -24,15 +24,15 @@ bool IsNop(std::span<const std::uint8_t> code, std::size_t at, std::size_t lengt
     return code[position] == 0x0f && position + 1 < end && code[position + 1] == 0x1f;
 }
 
-bool OnlyPadding(std::span<const std::uint8_t> code, std::size_t from, const Codegen::X64InstructionDecoder& decoder) {
-    for (auto position = from; position < code.size();) {
+bool OnlyPadding(std::span<const std::uint8_t> code, std::size_t from, std::size_t to, const Codegen::X64InstructionDecoder& decoder) {
+    for (auto position = from; position < to;) {
         if (code[position] == 0x00 || code[position] == 0xcc || code[position] == 0x90) {
             ++position;
             continue;
         }
         try {
-            const auto length = decoder.DecodeInstruction(code.data() + position, code.size() - position).Length;
-            if (length == 0 || length > code.size() - position || !IsNop(code, position, length)) return false;
+            const auto length = decoder.DecodeInstruction(code.data() + position, to - position).Length;
+            if (length == 0 || length > to - position || !IsNop(code, position, length)) return false;
             position += length;
         } catch (const Codegen::CodegenException&) {
             return false;
@@ -69,7 +69,7 @@ std::size_t TablesEnd(std::span<const std::uint8_t> code, std::size_t firstTable
 
 }
 
-std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code) {
+std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t* tableEnd, std::size_t unwindEnd) {
     const Codegen::X64InstructionDecoder decoder;
     std::vector<TableLoad> loads;
     std::vector<bool> instructionStarts(code.size() + 1, false);
@@ -82,7 +82,13 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code) {
             for (const auto& load : loads) {
                 if (load.Target != position || load.At >= lastIndirectJump) continue;
                 const auto end = TablesEnd(code, position, loads, instructionStarts);
-                if (end != 0 && OnlyPadding(code, end, decoder)) return position;
+                if (end == 0) continue;
+                const auto aligned = std::min<std::size_t>(code.size(), static_cast<std::size_t>(((codeAddress + end + 15) & ~VirtualAddress{15}) - codeAddress));
+                const auto checkedTo = std::max(aligned, std::min(code.size(), unwindEnd));
+                const bool toRangeEnd = OnlyPadding(code, end, code.size(), decoder);
+                if (!toRangeEnd && !OnlyPadding(code, end, checkedTo, decoder)) continue;
+                if (tableEnd) *tableEnd = toRangeEnd ? code.size() : checkedTo;
+                return position;
             }
         }
         Codegen::DecodedInstructionInfo info;
@@ -122,8 +128,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
         if (index + 1 < functions.size() && functions[index + 1].first > inspectEnd && functions[index + 1].first - inspectEnd <= MaxTableGapAfterFunction)
             inspectEnd = std::min(functions[index + 1].first, segmentEnd);
         const auto code = segment.subspan(begin - segmentVAddr, inspectEnd - begin);
-        if (const auto tail = FindTrailingRelativeJumpTable(code); tail != 0 && tail < code.size())
-            tables.push_back({begin, begin + tail, inspectEnd});
+        std::size_t tableEnd = code.size();
+        if (const auto tail = FindTrailingRelativeJumpTable(code, begin, &tableEnd, std::min(end, segmentEnd) - begin); tail != 0 && tail < code.size())
+            tables.push_back({begin, begin + tail, begin + tableEnd});
     }
     return tables;
 }
