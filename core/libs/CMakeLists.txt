@@ -470,6 +470,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMove>")
     endif()
 
+    add_test_executable(guest_pthread_create_suspended_tests tests/GuestPthreadCreateSuspended.cpp)
+    target_include_directories(guest_pthread_create_suspended_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_pthread_create_suspended_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_pthread_create_suspended_tests)
+    add_test(NAME guest_pthread_create_suspended COMMAND guest_pthread_create_suspended_tests)
+    set_tests_properties(guest_pthread_create_suspended PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_create_suspended PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_np_party_tests tests/GuestNpParty.cpp)
     target_include_directories(guest_np_party_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_np_party_tests PRIVATE libSceNpParty libc)
