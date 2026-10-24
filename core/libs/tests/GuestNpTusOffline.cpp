@@ -80,6 +80,15 @@ int APS5_VABI sceNpTusSetDataAVUser(int reqId, const NpOnlineId* targetVirtualUs
 int APS5_VABI sceNpTusSetDataAVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, const void* info, std::uint64_t infoStructSize, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* option);
 int APS5_VABI sceNpTusSetDataAsync(int reqId, const void* targetNpId, std::int32_t slotId, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, const void* info, std::uint64_t infoStructSize, const void* isLastChangedAuthor, const void* isLastChangedDate, void* option);
 int APS5_VABI sceNpTusSetDataVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, const void* info, std::uint64_t infoStructSize, const void* isLastChangedAuthor, const void* isLastChangedDate, void* option);
+int APS5_VABI sceNpTusGetData(int reqId, const void* targetNpId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);
+int APS5_VABI sceNpTusGetDataVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);
+int APS5_VABI sceNpTusGetMultiSlotVariable(int reqId, const void* targetNpId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
+int APS5_VABI sceNpTusGetMultiSlotVariableVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
+int APS5_VABI sceNpTusGetMultiUserVariableForCrossSave(int reqId, const std::uint64_t* targetAccountIdArray, std::int32_t slotId, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
+int APS5_VABI sceNpTusSetData(int reqId, const void* targetNpId, std::int32_t slotId, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, const void* info, std::uint64_t infoStructSize, const void* isLastChangedAuthor, const void* isLastChangedDate, void* option);
+int APS5_VABI sceNpTusSetDataVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, const void* info, std::uint64_t infoStructSize, const void* isLastChangedAuthor, const void* isLastChangedDate, void* option);
+int APS5_VABI sceNpTusSetMultiSlotVariable(int reqId, const void* targetNpId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
+int APS5_VABI sceNpTusSetMultiSlotVariableVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
 int APS5_VABI sceNpTusTryAndSetVariable(int reqId, const void* targetNpId, std::int32_t slotId, std::int32_t opeType, std::int64_t variable, const std::int64_t* compareValue, const void* isLastChangedAuthor, const void* isLastChangedDate, void* resultVariable, std::uint64_t resultVariableSize, void* option);
 int APS5_VABI sceNpTusTryAndSetVariableA(int reqId, std::uint64_t targetAccountId, std::int32_t slotId, std::int32_t opeType, std::int64_t variable, const std::int64_t* compareValue, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* resultVariable, std::uint64_t resultVariableSize, void* option);
 int APS5_VABI sceNpTusTryAndSetVariableAAsync(int reqId, std::uint64_t targetAccountId, std::int32_t slotId, std::int32_t opeType, std::int64_t variable, const std::int64_t* compareValue, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* resultVariable, std::uint64_t resultVariableSize, void* option);
@@ -112,6 +121,7 @@ NpOnlineId emptyUser{};
 unsigned char npIds[2][64];
 std::uint64_t accounts[2] = {1, 2};
 std::int32_t slots[2] = {1, 2};
+std::int64_t variables[2] = {5, 6};
 std::int32_t manySlots[65] = {};
 std::uint64_t length = 0;
 int failures = 0;
@@ -213,9 +223,11 @@ int main() {
     CheckSync("sceNpTusAddAndGetVariableVUser", [&](int req) { return sceNpTusAddAndGetVariableVUser(req, &virtualUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusDeleteMultiSlotData", [&](int req) { return sceNpTusDeleteMultiSlotData(req, &npId, slots, 2, nullptr); });
     CheckSync("sceNpTusDeleteMultiSlotDataA", [&](int req) { return sceNpTusDeleteMultiSlotDataA(req, 1, slots, 2, nullptr); });
+    CheckSync("sceNpTusGetData", [&](int req) { return sceNpTusGetData(req, &npId, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
     CheckSync("sceNpTusGetDataA", [&](int req) { return sceNpTusGetDataA(req, 1, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
     CheckSync("sceNpTusGetDataAVUser", [&](int req) { return sceNpTusGetDataAVUser(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
     CheckSync("sceNpTusGetDataForCrossSave", [&](int req) { return sceNpTusGetDataForCrossSave(req, 1, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
+    CheckSync("sceNpTusGetDataVUser", [&](int req) { return sceNpTusGetDataVUser(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
     CheckSync("sceNpTusGetFriendsDataStatus", [&](int req) { return sceNpTusGetFriendsDataStatus(req, 1, 0, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetFriendsVariable", [&](int req) { return sceNpTusGetFriendsVariable(req, 1, 0, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiSlotDataStatus", [&](int req) { return sceNpTusGetMultiSlotDataStatus(req, &npId, slots, buffer, sizeof(buffer), 2, nullptr); });
@@ -224,6 +236,8 @@ int main() {
     CheckSync("sceNpTusGetMultiSlotDataStatusForCrossSave", [&](int req) { return sceNpTusGetMultiSlotDataStatusForCrossSave(req, 1, slots, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiSlotDataStatusForCrossSaveVUser", [&](int req) { return sceNpTusGetMultiSlotDataStatusForCrossSaveVUser(req, &virtualUser, slots, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiSlotDataStatusVUser", [&](int req) { return sceNpTusGetMultiSlotDataStatusVUser(req, &virtualUser, slots, buffer, sizeof(buffer), 2, nullptr); });
+    CheckSync("sceNpTusGetMultiSlotVariable", [&](int req) { return sceNpTusGetMultiSlotVariable(req, &npId, slots, buffer, sizeof(buffer), 2, nullptr); });
+    CheckSync("sceNpTusGetMultiSlotVariableVUser", [&](int req) { return sceNpTusGetMultiSlotVariableVUser(req, &virtualUser, slots, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserDataStatus", [&](int req) { return sceNpTusGetMultiUserDataStatus(req, npIds, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserDataStatusA", [&](int req) { return sceNpTusGetMultiUserDataStatusA(req, accounts, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserDataStatusAVUser", [&](int req) { return sceNpTusGetMultiUserDataStatusAVUser(req, virtualUsers, 1, buffer, sizeof(buffer), 2, nullptr); });
@@ -233,16 +247,27 @@ int main() {
     CheckSync("sceNpTusGetMultiUserVariable", [&](int req) { return sceNpTusGetMultiUserVariable(req, npIds, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserVariableA", [&](int req) { return sceNpTusGetMultiUserVariableA(req, accounts, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserVariableAVUser", [&](int req) { return sceNpTusGetMultiUserVariableAVUser(req, virtualUsers, 1, buffer, sizeof(buffer), 2, nullptr); });
+    CheckSync("sceNpTusGetMultiUserVariableForCrossSave", [&](int req) { return sceNpTusGetMultiUserVariableForCrossSave(req, accounts, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserVariableForCrossSaveVUser", [&](int req) { return sceNpTusGetMultiUserVariableForCrossSaveVUser(req, virtualUsers, 1, buffer, sizeof(buffer), 2, nullptr); });
     CheckSync("sceNpTusGetMultiUserVariableVUser", [&](int req) { return sceNpTusGetMultiUserVariableVUser(req, virtualUsers, 1, buffer, sizeof(buffer), 2, nullptr); });
+    CheckSync("sceNpTusSetData", [&](int req) { return sceNpTusSetData(req, &npId, 1, 16, 8, buffer, buffer, sizeof(buffer), nullptr, nullptr, nullptr); });
     CheckSync("sceNpTusSetDataA", [&](int req) { return sceNpTusSetDataA(req, 1, 1, 16, 8, buffer, buffer, sizeof(buffer), nullptr, nullptr, nullptr); });
     CheckSync("sceNpTusSetDataAVUser", [&](int req) { return sceNpTusSetDataAVUser(req, &virtualUser, 1, 16, 8, buffer, buffer, sizeof(buffer), nullptr, nullptr, nullptr); });
+    CheckSync("sceNpTusSetDataVUser", [&](int req) { return sceNpTusSetDataVUser(req, &virtualUser, 1, 16, 8, buffer, buffer, sizeof(buffer), nullptr, nullptr, nullptr); });
+    CheckSync("sceNpTusSetMultiSlotVariable", [&](int req) { return sceNpTusSetMultiSlotVariable(req, &npId, slots, variables, 2, nullptr); });
+    CheckSync("sceNpTusSetMultiSlotVariableVUser", [&](int req) { return sceNpTusSetMultiSlotVariableVUser(req, &virtualUser, slots, variables, 2, nullptr); });
     CheckSync("sceNpTusTryAndSetVariable", [&](int req) { return sceNpTusTryAndSetVariable(req, &npId, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusTryAndSetVariableA", [&](int req) { return sceNpTusTryAndSetVariableA(req, 1, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusTryAndSetVariableAVUser", [&](int req) { return sceNpTusTryAndSetVariableAVUser(req, &virtualUser, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusTryAndSetVariableForCrossSave", [&](int req) { return sceNpTusTryAndSetVariableForCrossSave(req, 1, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusTryAndSetVariableForCrossSaveVUser", [&](int req) { return sceNpTusTryAndSetVariableForCrossSaveVUser(req, &virtualUser, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
     CheckSync("sceNpTusTryAndSetVariableVUser", [&](int req) { return sceNpTusTryAndSetVariableVUser(req, &virtualUser, 1, 1, 5, nullptr, nullptr, nullptr, buffer, sizeof(buffer), nullptr); });
+    {
+        const int req = NewRequest();
+        Require(sceNpTusGetData(req, &npId, 1, buffer, sizeof(buffer), buffer, 16, &buffer) == InvalidArgument, "sceNpTusGetData", "an option was not refused before waiting");
+        Require(sceNpTusSetMultiSlotVariable(req, &npId, manySlots, reinterpret_cast<const std::int64_t*>(buffer), 65, nullptr) == TooManySlotId, "sceNpTusSetMultiSlotVariable", "65 slots were not refused before waiting");
+        sceNpTusDeleteRequest(req);
+    }
     {
         int req = NewRequest();
         Require(sceNpTusAddAndGetVariableVUserAsync(req, &emptyUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidArgument, "sceNpTusAddAndGetVariableVUserAsync", "an empty virtual user was taken");
