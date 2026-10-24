@@ -119,7 +119,9 @@ int main() {
                 Write<std::uint64_t>(bytes, 96, 0xc0);
                 Write<std::uint64_t>(bytes, 104, 0xc0);
                 const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-                Require(headers.size() == 1 && headers[0].Offset + headers[0].FileSize == 0x300);
+                const bool isUncoveredRelro = type == 0x61000010u;
+                Require(headers.size() == (isUncoveredRelro ? 2u : 1u) && headers[0].Offset + headers[0].FileSize == 0x300);
+                if (isUncoveredRelro) Require(headers[1].Type == 0x6474e552 && headers[1].Flags == 4);
             }
         }},
         {"uncovered SCE RELRO file size exceeds memory size", [] {
@@ -146,7 +148,7 @@ int main() {
             auto bytes = TlsFixture(0x1008, 8, 16, 8);
             Write<std::uint32_t>(bytes, 0x260, 0x61000010);
             const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-            Require(headers.size() == 2 && headers[0].Type == 1 && headers[1].Type == 7 && headers[1].MappedAddress == 0x1008);
+            Require(headers.size() == 3 && headers[0].Type == 1 && headers[1].Type == 7 && headers[1].MappedAddress == 0x1008 && headers[2].Type == 0x6474e552);
         }},
         {"TLS image ending at end of file", [] {
             auto bytes = TlsFixture(0x1008, 8, 16, 8);
