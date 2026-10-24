@@ -84,6 +84,7 @@ int main(int argc, char** argv) {
     const int base = open(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     const int file = open(path.c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(base >= 0 && file >= 0);
+    bool skipped = false;
     if (test == "statfs") {
         const auto query = LoadFunction<int (APS5_VABI*)(const char*, KernelStatfs*)>(sys, "statfs", patched);
         const auto fquery = LoadFunction<int (APS5_VABI*)(int, KernelStatfs*)>(kernel, "_fstatfs", patched);
@@ -164,7 +165,8 @@ int main(int argc, char** argv) {
         const int result = link("data", base, "link");
 #ifdef _WIN32
         if (result == -1 && *error() == 1) {
-            std::fputs("Windows symbolic-link privileges unavailable\n", stderr);
+            std::fputs("SKIP: Windows symbolic-link privileges unavailable\n", stderr);
+            skipped = true;
         } else
 #endif
         {
@@ -178,6 +180,8 @@ int main(int argc, char** argv) {
             Require(link("data", -100, (root / "cwd").string().c_str()) == 0);
             Require(link("data", -1, ("/" + (root / "absolute").string()).c_str()) == 0);
         }
+    } else if (test == "symlinkat_errors") {
+        const auto link = LoadFunction<int (APS5_VABI*)(const char*, int, const char*)>(sys, "symlinkat", patched);
         Require(link("data", -1, "missing") == -1 && *error() == 9);
         Require(link("data", file, "missing") == -1 && *error() == 20);
         Require(link(nullptr, base, "missing") == -1 && *error() == 14);
@@ -185,13 +189,20 @@ int main(int argc, char** argv) {
         Require(link("", base, "missing") == -1 && *error() == 2);
         Require(link(std::string(1024, 'x').c_str(), -1, "missing") == -1 && *error() == 63);
         Require(link("data", base, std::string(256, 'x').c_str()) == -1 && *error() == 63);
+#ifndef _WIN32
         bool refused = false;
         try { link("../data", base, "refused"); } catch (const std::runtime_error&) { refused = true; }
         Require(refused && !std::filesystem::exists(root / "refused"));
+#endif
+#ifdef _WIN32
+    } else if (test == "symlinkat_refused") {
+        const auto link = LoadFunction<int (APS5_VABI*)(const char*, int, const char*)>(sys, "symlinkat", patched);
+        link("../data", base, "refused");
+#endif
     } else {
         Require(false);
     }
     Require(close(file) == 0 && close(base) == 0);
     std::filesystem::remove_all(root);
-    return 0;
+    return skipped ? 77 : 0;
 }
