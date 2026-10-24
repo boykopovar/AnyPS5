@@ -26,6 +26,9 @@ int APS5_VABI scePlayGoSetToDoList(int, const PlayGoToDo*, std::uint32_t);
 int APS5_VABI scePlayGoGetToDoList(int, PlayGoToDo*, std::uint32_t, std::uint32_t*);
 int APS5_VABI scePlayGoGetLocus(int, const std::uint16_t*, std::uint32_t, std::int8_t*);
 int APS5_VABI scePlayGoGetChunkId(int, std::uint16_t*, std::uint32_t, std::uint32_t*);
+int APS5_VABI scePlayGoGetEta(int, const std::uint16_t*, std::uint32_t, std::int64_t*);
+int APS5_VABI scePlayGoGetInstallSpeed(int, std::int32_t*);
+int APS5_VABI scePlayGoPrefetch(int, const std::uint16_t*, std::uint32_t, std::int8_t);
 }
 
 static void Require(bool value, const std::source_location location = std::source_location::current()) {
@@ -271,6 +274,14 @@ int main(int argc, char** argv) {
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
     RunLayout(argv[0], "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
+    std::int64_t eta = -1;
+    std::int32_t speed = -1;
+    Require(scePlayGoGetEta(-1, nullptr, 0, &eta) == static_cast<int>(0x80CF0002));
+    Require(scePlayGoGetEta(0x506C476F, nullptr, 0, nullptr) == static_cast<int>(0x80CF0004));
+    Require(scePlayGoGetInstallSpeed(-1, &speed) == static_cast<int>(0x80CF0002));
+    Require(scePlayGoGetInstallSpeed(0x506C476F, nullptr) == static_cast<int>(0x80CF0004));
+    Require(scePlayGoGetInstallSpeed(0x506C476F, &speed) == 0 && speed == 2);
+    Require(scePlayGoPrefetch(-1, nullptr, 0, 0) == static_cast<int>(0x80CF0002));
     RunLayout(argv[0], "--scenario-only", {{"playgo-scenario.json", "{}"}});
     RunLayout(argv[0], "--ficm-only", {{"playgo-ficm.dat", "x"}});
     RunLayout(argv[0], "--hash-table-only", {{"playgo-hash-table.dat", "x"}});
