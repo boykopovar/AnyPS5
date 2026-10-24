@@ -259,6 +259,33 @@ int main() {
         return b.eliminate() == 0u && flushed.HasUses();
     });
 
+    passed &= run("a rounded to integral value, a square root or a reciprocal square root needs no flush", [] {
+        Builder b;
+        auto& unknown = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&b.unknown()});
+        std::uint32_t kept = 0u;
+        for (const auto opcode : {IrOpcode::FPFloor32, IrOpcode::FPCeil32, IrOpcode::FPTrunc32, IrOpcode::FPRoundEven32, IrOpcode::FPSqrt, IrOpcode::FPRecipSqrt32}) {
+            b.keep(b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(opcode, IrType::F32, {&unknown})})));
+            ++kept;
+        }
+        auto& fraction = b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPFract32, IrType::F32, {&unknown})}));
+        auto& reciprocal = b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPRecip32, IrType::F32, {&unknown})}));
+        b.keep(fraction);
+        b.keep(reciprocal);
+        return b.eliminate() == kept && fraction.HasUses() && reciprocal.HasUses();
+    });
+
+    passed &= run("a sign bit alone or a value with an exponent bit set needs no flush, other masks do", [] {
+        Builder b;
+        auto& sign = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x80000000u)}));
+        auto& infinity = b.flush(b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&b.constant(0x7f800000u), &b.unknown()}));
+        auto& lowExponent = b.flush(b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&b.unknown(), &b.constant(0x00800000u)}));
+        auto& quiet = b.flush(b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&b.flush(b.unknown()), &b.constant(0x00400000u)}));
+        auto& unknownOr = b.flush(b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&b.unknown(), &b.unknown()}));
+        auto& mantissa = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x807fffffu)}));
+        for (auto* value : {&sign, &infinity, &lowExponent, &quiet, &unknownOr, &mantissa}) b.keep(*value);
+        return b.eliminate() == 3u && !sign.HasUses() && !infinity.HasUses() && !lowExponent.HasUses() && quiet.HasUses() && unknownOr.HasUses() && mantissa.HasUses();
+    });
+
     passed &= run("a phi of flushed values needs no flush", [] {
         Builder b;
         IrBlock& head = *b.block;
