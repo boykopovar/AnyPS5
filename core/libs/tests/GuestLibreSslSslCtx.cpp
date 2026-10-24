@@ -32,6 +32,7 @@ static_assert(sizeof(TestCtx) == 120 && offsetof(TestCtx, verifyMode) == 48 && o
 extern "C" {
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(TestCtx*);
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(TestCtx*);
+void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(TestCtx*, int);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -67,8 +68,25 @@ static void TestGetCertStore() {
     Require(SSL_CTX_get_cert_store_nid_postfix(&ctx) == &store);
 }
 
+static void TestSetQuietShutdown() {
+    TestCtxInternal internal {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_set_quiet_shutdown_nid_postfix(nullptr, 1); });
+    RequireThrows([&] { SSL_CTX_set_quiet_shutdown_nid_postfix(&ctx, 1); });
+    ctx.internal = &internal;
+    SSL_CTX_set_quiet_shutdown_nid_postfix(&ctx, 1);
+    Require(internal.quietShutdown == 1);
+    SSL_CTX_set_quiet_shutdown_nid_postfix(&ctx, INT_MIN);
+    Require(internal.quietShutdown == INT_MIN);
+    SSL_CTX_set_quiet_shutdown_nid_postfix(&ctx, 0);
+    Require(internal.quietShutdown == 0);
+    for (unsigned char byte : internal.beforeQuietShutdown) Require(byte == 0);
+    for (unsigned char byte : internal.rest) Require(byte == 0);
+}
+
 int main() {
     TestGetVerifyMode();
     TestGetCertStore();
+    TestSetQuietShutdown();
     return 0;
 }
