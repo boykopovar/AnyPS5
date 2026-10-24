@@ -15,6 +15,7 @@ using namespace FreeType;
 extern "C" {
 std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t, std::int64_t);
 std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector*);
+void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector*, std::int64_t);
 }
 
 static void Check(bool value, int line) {
@@ -42,7 +43,24 @@ static void TestLength() {
     Require(FT_Vector_Length_nid_postfix(nullptr) == FT_Vector_Length(nullptr));
 }
 
+static void TestRotate() {
+    const std::int64_t angles[] = {0, 1, -1, 0x10000, -0x10000, 45 << 16, 90 << 16, 180 << 16, 270 << 16, 360 << 16, 725 << 16, -90 << 16, 0x7fffffff};
+    for (const std::int64_t x : {0, 1, -1, 64, -64, 0x10000, -0x10000, 12345, -54321, 0x7fffffff, -0x7fffffff}) {
+        for (const std::int64_t y : {0, 64, -640, 0x10000, 777777}) {
+            for (const std::int64_t angle : angles) {
+                GuestVector guest{x, y};
+                FT_Vector native{static_cast<FT_Pos>(x), static_cast<FT_Pos>(y)};
+                FT_Vector_Rotate_nid_postfix(&guest, angle);
+                FT_Vector_Rotate(&native, static_cast<FT_Angle>(angle));
+                Require(guest.x == native.x && guest.y == native.y);
+            }
+        }
+    }
+    FT_Vector_Rotate_nid_postfix(nullptr, 90 << 16);
+}
+
 int main() {
     TestAtan2();
     TestLength();
+    TestRotate();
 }
