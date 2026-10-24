@@ -251,9 +251,9 @@ public:
     // mutex (the same wait under it is only the fallback when the answer changes in between).
     bool PresentWaitsForSlots(const DisplayBuffer* buffer) const;
     bool AcquireImage();
-    bool PresentClear(std::uint32_t width, std::uint32_t height, bool opaque);
+    bool PresentClear(std::uint32_t width, std::uint32_t height, bool opaque, const DisplayBuffer* plane = nullptr);
     void PresentPixels(std::uint32_t width, std::uint32_t height, std::span<const std::byte> pixels);
-    bool PresentDisplayBuffer(const DisplayBuffer& buffer);
+    bool PresentDisplayBuffer(const DisplayBuffer& buffer, const DisplayBuffer* plane = nullptr);
     double FinishPresent();
     void QueuePresent();
     // At the flip packet (under the mutex): the recorder's submissions so far and, under
@@ -266,7 +266,7 @@ public:
     // blit-submit times after the flip packet; noted in-place reads checked
     // (APS5_FLIP_READ_CHECK=1) and found overwritten before the blit's fence.
     struct PresentStatistics {
-        std::uint64_t presents, gpuUnread, batchesAheadOfBlit, batchesAfterFlip, readsChecked, readsOverwritten, acquireDrops;
+        std::uint64_t presents, gpuUnread, batchesAheadOfBlit, batchesAfterFlip, readsChecked, readsOverwritten, acquireDrops, planes;
         double gpuBusyMs, gpuGapMs, lastSubmitAfterFlipMs, blitSubmitAfterFlipMs;
     };
     static PresentStatistics PresentCounts();
@@ -383,7 +383,7 @@ private:
     // The tail of a dispatch's device call from the open batch's command buffer to the completion
     // registration: keeps, the template data refresh, barriers, bind, push, dispatch, marks.
     void recordDispatch(RecordedDispatch& record);
-    bool present(std::uint32_t width, std::uint32_t height, bool opaque, std::span<const std::byte> pixels, const DisplayBuffer* display = nullptr, const std::shared_ptr<Graphics::StorageTexture>& resident = nullptr, VkFilter residentFilter = VK_FILTER_LINEAR, bool dumpFrame = false, bool residentConvert = false, const VkClearColorValue* uniform = nullptr, std::uint32_t residentLayer = 0, bool passthrough = false);
+    bool present(std::uint32_t width, std::uint32_t height, bool opaque, std::span<const std::byte> pixels, const DisplayBuffer* display = nullptr, const std::shared_ptr<Graphics::StorageTexture>& resident = nullptr, VkFilter residentFilter = VK_FILTER_LINEAR, bool dumpFrame = false, bool residentConvert = false, const VkClearColorValue* uniform = nullptr, std::uint32_t residentLayer = 0, bool passthrough = false, const DisplayBuffer* plane = nullptr);
     bool takeScreenshot(bool dumpFrame);
     void recreateSwapchain(std::uint32_t width, std::uint32_t height, bool force);
     void refreshSurfaceFormats();

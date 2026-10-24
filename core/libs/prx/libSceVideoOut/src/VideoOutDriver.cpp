@@ -583,11 +583,12 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
             request.gpuComplete = true;
             request.cfg->vblankCond.notify_all();
         };
+        const auto plane = overlayPlane();
         if (req.index >= 0 && !req.unregistered) {
             const auto display = DescribeVideoOutBuffer(req.buffer, req.group);
-            AgcDriverPresentBuffer_nid_postfix(target, display, gpuReady, &req);
+            AgcDriverPresentBuffer_nid_postfix(target, display, plane ? &*plane : nullptr, gpuReady, &req);
         } else {
-            AgcDriverPresentClear_nid_postfix(target, req.unregistered || req.index == VIDEO_OUT_BUFFER_INDEX_BLACK, gpuReady, &req);
+            AgcDriverPresentClear_nid_postfix(target, req.unregistered || req.index == VIDEO_OUT_BUFFER_INDEX_BLACK, plane ? &*plane : nullptr, gpuReady, &req);
         }
         timing.Mark("present");
         window.UpdateTitle();
@@ -626,6 +627,20 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     req.cfg->vblankCond.notify_all();
     KernelWakeSleepers_nid_no_patch();
     timing.Mark("notify_game");
+}
+
+std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
+    std::shared_ptr<VideoOutConfig> overlay;
+    {
+        std::lock_guard lock(mutex);
+        overlay = contexts[VIDEO_OUT_BUS_TYPE_OVERLAY + 1];
+    }
+    if (!overlay) return std::nullopt;
+    std::lock_guard lock(overlay->mutex);
+    const auto index = overlay->flipStatus.currentBuffer;
+    if (overlay->Closed() || index < 0 || index >= VIDEO_OUT_BUFFER_NUM_MAX || !overlay->buffers[index].Occupied()) return std::nullopt;
+    const auto& buffer = overlay->buffers[index];
+    return DescribeVideoOutBuffer(buffer, overlay->groups[buffer.groupIndex]);
 }
 
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {

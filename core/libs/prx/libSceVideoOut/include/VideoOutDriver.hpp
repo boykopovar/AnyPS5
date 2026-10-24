@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -238,6 +239,7 @@ private:
     void vblankEnd(std::uint64_t tick);
     void updateDisplayRefreshRate();
     void processFlip(FlipRequest& req);
+    std::optional<AgcDriver::DisplayBuffer> overlayPlane();
     void triggerEvents(VideoOutConfig& cfg, int eventKind, void* triggerData);
     void pollHostHdr();
 

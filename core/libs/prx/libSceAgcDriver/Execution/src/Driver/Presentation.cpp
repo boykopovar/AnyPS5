@@ -70,7 +70,7 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     device = std::make_shared<VulkanDevice>(&window);
 }
 
-void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context) {
+void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context) {
     if (PerformanceTrace::Configured()) PerformanceTrace::Present(window.width, window.height, device.Load().get());
     PerformanceContext timingContext(window.timing.get());
     PerformanceTimer timing("Driver.Present");
@@ -129,10 +129,10 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
                     presenting->WaitIdle();
                     timing.Mark("device_idle_wait");
                 }
-                submitted = presenting->PresentDisplayBuffer(*buffer);
+                submitted = presenting->PresentDisplayBuffer(*buffer, plane);
                 timing.Mark("present_display_buffer");
             } else {
-                submitted = presenting->PresentClear(window.width, window.height, opaque);
+                submitted = presenting->PresentClear(window.width, window.height, opaque, plane);
                 timing.Mark("present_clear");
             }
             if (submitted && syncFlip) {

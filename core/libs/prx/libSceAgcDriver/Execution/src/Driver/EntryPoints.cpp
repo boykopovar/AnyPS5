@@ -59,13 +59,13 @@ void AttachWindow(const PresentationWindow& window) {
     DriverDetail::Driver::Get().AttachWindow(window);
 }
 
-void PresentClear(const PresentationWindow& window, bool opaque, void (*gpuReady)(void*), void* context) {
-    DriverDetail::Driver::Get().Present(window, nullptr, opaque, gpuReady, context);
+void PresentClear(const PresentationWindow& window, bool opaque, const DisplayBuffer* plane, void (*gpuReady)(void*), void* context) {
+    DriverDetail::Driver::Get().Present(window, nullptr, plane, opaque, gpuReady, context);
 }
 
-void PresentBuffer(const PresentationWindow& window, const DisplayBuffer& buffer, void (*gpuReady)(void*), void* context) {
+void PresentBuffer(const PresentationWindow& window, const DisplayBuffer& buffer, const DisplayBuffer* plane, void (*gpuReady)(void*), void* context) {
     if (auto* const recorder = FrameRecorder::Active()) recorder->PresentBuffer(buffer);
-    DriverDetail::Driver::Get().Present(window, &buffer, true, gpuReady, context);
+    DriverDetail::Driver::Get().Present(window, &buffer, plane, true, gpuReady, context);
 }
 
 void ReleaseWindow(void* window) {
@@ -169,12 +169,12 @@ extern "C" void AgcDriverAttachWindow_nid_postfix(const AgcDriver::PresentationW
     AgcDriver::AttachWindow(window);
 }
 
-extern "C" void AgcDriverPresentClear_nid_postfix(const AgcDriver::PresentationWindow& window, bool opaque, void (*gpuReady)(void*), void* context) {
-    AgcDriver::PresentClear(window, opaque, gpuReady, context);
+extern "C" void AgcDriverPresentClear_nid_postfix(const AgcDriver::PresentationWindow& window, bool opaque, const AgcDriver::DisplayBuffer* plane, void (*gpuReady)(void*), void* context) {
+    AgcDriver::PresentClear(window, opaque, plane, gpuReady, context);
 }
 
-extern "C" void AgcDriverPresentBuffer_nid_postfix(const AgcDriver::PresentationWindow& window, const AgcDriver::DisplayBuffer& buffer, void (*gpuReady)(void*), void* context) {
-    AgcDriver::PresentBuffer(window, buffer, gpuReady, context);
+extern "C" void AgcDriverPresentBuffer_nid_postfix(const AgcDriver::PresentationWindow& window, const AgcDriver::DisplayBuffer& buffer, const AgcDriver::DisplayBuffer* plane, void (*gpuReady)(void*), void* context) {
+    AgcDriver::PresentBuffer(window, buffer, plane, gpuReady, context);
 }
 
 extern "C" void AgcDriverReleaseWindow_nid_postfix(void* window) {
