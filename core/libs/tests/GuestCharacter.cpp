@@ -27,7 +27,37 @@ const short* APS5_VABI _Getptoupper_nid_postfix();
 const char* APS5_VABI setlocale_nid_postfix(int, const char*);
 }
 static void Require(bool value) { if (!value) std::abort(); }
+static int ConsoleClass(int c) {
+    if (c < 0 || c > 255) return 0;
+    int bits = 0;
+    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) bits |= 0x01;
+    if (c >= 'A' && c <= 'Z') bits |= 0x02;
+    if (c == ' ') bits |= 0x04;
+    if (c >= 33 && c <= 126 && !(c >= '0' && c <= '9') && !(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z')) bits |= 0x08;
+    if (c >= 'a' && c <= 'z') bits |= 0x10;
+    if (c >= '0' && c <= '9') bits |= 0x20;
+    if (c >= '\t' && c <= '\r') bits |= 0x40;
+    if (c < 32 || c == 127) bits |= 0x80;
+    if (c == '\t') bits |= 0x400;
+    return bits;
+}
+static void CheckConsoleClassValues() {
+    Require(isspace_nid_postfix(' ') == 0x04 && isspace_nid_postfix('\t') == 0x40 && isspace_nid_postfix('\n') == 0x40);
+    Require(isblank_nid_postfix(' ') == 0x04 && isblank_nid_postfix('\t') == 0x400 && iscntrl_nid_postfix('\t') == 0x80);
+    Require(isdigit_nid_postfix('0') == 0x20 && isalnum_nid_postfix('0') == 0x20 && isxdigit_nid_postfix('0') == 0x01);
+    Require(isupper_nid_postfix('A') == 0x02 && isalpha_nid_postfix('A') == 0x02 && isxdigit_nid_postfix('F') == 0x01 && isxdigit_nid_postfix('G') == 0);
+    Require(islower_nid_postfix('a') == 0x10 && isalpha_nid_postfix('a') == 0x10 && isprint_nid_postfix(' ') == 0x04 && isgraph_nid_postfix(' ') == 0);
+    Require(ispunct_nid_postfix('_') == 0x08 && isgraph_nid_postfix('_') == 0x08 && isprint_nid_postfix('_') == 0x08 && iscntrl_nid_postfix(127) == 0x80);
+    for (int c = EOF; c <= 255; ++c) {
+        const int bits = ConsoleClass(c);
+        Require(isupper_nid_postfix(c) == (bits & 0x02) && islower_nid_postfix(c) == (bits & 0x10) && isalpha_nid_postfix(c) == (bits & 0x12));
+        Require(isdigit_nid_postfix(c) == (bits & 0x20) && isalnum_nid_postfix(c) == (bits & 0x32) && isxdigit_nid_postfix(c) == (bits & 0x01));
+        Require(isspace_nid_postfix(c) == (bits & 0x44) && isblank_nid_postfix(c) == (bits & 0x404) && iscntrl_nid_postfix(c) == (bits & 0x80));
+        Require(isprint_nid_postfix(c) == (bits & 0x3e) && isgraph_nid_postfix(c) == (bits & 0x3a) && ispunct_nid_postfix(c) == (bits & 0x08));
+    }
+}
 int main() {
+    CheckConsoleClassValues();
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     for (int category = 0; category <= 6; ++category) {
         const char* result = setlocale_nid_postfix(category, "C");

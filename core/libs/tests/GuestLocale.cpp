@@ -131,7 +131,7 @@ static void CheckCharacterTables() {
     Require(classification[-1] == 0 && lower[-1] == -1 && upper[-1] == -1);
     Require(classification['A'] == 0x03 && classification['a'] == 0x11);
     Require(classification['G'] == 0x02 && classification['0'] == 0x21);
-    Require(classification[' '] == 0x04 && classification['\t'] == 0xc0);
+    Require(classification[' '] == 0x04 && classification['\t'] == 0x4c0);
     Require(classification['\n'] == 0xc0 && classification['!'] == 0x08);
     for (int value = 0; value < 256; ++value) {
         Require(lower[value] == (value >= 'A' && value <= 'Z' ? value + 32 : value));
