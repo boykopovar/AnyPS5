@@ -20,6 +20,11 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
+#else
+#include <sys/wait.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -435,10 +440,58 @@ int APS5_VABI system_nid_postfix(const char* command) {
 }
 
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
-    (void)pid;
-    (void)status;
-    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
-    return -1;
+    if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+#ifdef _WIN32
+    int encoded = 0;
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded);
+    if (reaped == -2) {
+        *__error_nid_postfix() = errnoNoChild;
+        return -1;
+    }
+    if (reaped == -1) return -1;
+    if (reaped == 0) return 0;
+    if (status != nullptr) *status = encoded;
+    return static_cast<int>(reaped);
+#else
+    unsigned hostOptions = static_cast<unsigned>(options) & 3u;
+    if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
+    int encoded = 0;
+    const int result = ::waitpid(pid, &encoded, static_cast<int>(hostOptions));
+    if (result < 0) {
+        *__error_nid_postfix() = errno;
+        return -1;
+    }
+    if (result == 0) return 0;
+    if (WIFCONTINUED(encoded)) {
+        encoded = 0x13;
+    } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+        const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        int guestSignal = hostSignal;
+        switch (hostSignal) {
+        case 7: guestSignal = 10; break;
+        case 10: guestSignal = 30; break;
+        case 12: guestSignal = 31; break;
+        case 17: guestSignal = 20; break;
+        case 18: guestSignal = 19; break;
+        case 19: guestSignal = 17; break;
+        case 20: guestSignal = 18; break;
+        case 23: guestSignal = 16; break;
+        case 29: guestSignal = 23; break;
+        case 31: guestSignal = 12; break;
+        case 16:
+        case 30:
+            NotImplemented_nid_no_patch("waitpid: a child stopped or died with a signal without a guest equivalent");
+            return -1;
+        default: break;
+        }
+        encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
+    }
+    if (status != nullptr) *status = encoded;
+    return result;
+#endif
 }
 
 int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);

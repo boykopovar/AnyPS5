@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
+#include <algorithm>
 #include <condition_variable>
 #include <exception>
 #include <future>
@@ -279,5 +280,86 @@ int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
     NotImplemented_nid_no_patch("daemon: forking into the background");
     return -1;
 }
+
+#ifdef _WIN32
+namespace {
+struct ChildProcess {
+    std::int32_t processId;
+    std::int64_t processHandle;
+};
+
+std::mutex childProcessMutex;
+std::vector<ChildProcess> childProcesses;
+
+int ChildProcessWaitStatus(DWORD code) {
+    switch (code) {
+    case 0xC0000005u:
+    case 0xC00000FDu: return 11;
+    case 0xC000001Du:
+    case 0xC0000096u: return 4;
+    case 0x80000003u: return 5;
+    case 0xC0000094u:
+    case 0xC0000095u: return 8;
+    case 0xC0000409u:
+    case 0xC0000374u: return 6;
+    default: return static_cast<int>(code & 0xffu) << 8;
+    }
+}
+}
+
+extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::int64_t processHandle) {
+    std::lock_guard lock(childProcessMutex);
+    childProcesses.push_back({processId, processHandle});
+}
+
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status) {
+    const bool noWait = (options & 1u) != 0;
+    const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
+    {
+        std::lock_guard lock(childProcessMutex);
+        if (std::none_of(childProcesses.begin(), childProcesses.end(), matches)) return -2;
+    }
+    int encoded = 0;
+    while (true) {
+        std::int32_t reaped = 0;
+        {
+            std::lock_guard lock(childProcessMutex);
+            for (std::size_t index = 0; index < childProcesses.size(); ++index) {
+                auto& child = childProcesses[index];
+                if (!matches(child)) continue;
+                const HANDLE handle = reinterpret_cast<HANDLE>(child.processHandle);
+                if (WaitForSingleObject(handle, 0) != WAIT_OBJECT_0) continue;
+                DWORD code = 0;
+                if (!GetExitCodeProcess(handle, &code)) {
+                    *__error_nid_postfix() = 14;
+                    return -1;
+                }
+                encoded = ChildProcessWaitStatus(code);
+                CloseHandle(handle);
+                reaped = child.processId;
+                childProcesses.erase(childProcesses.begin() + static_cast<std::ptrdiff_t>(index));
+                break;
+            }
+        }
+        if (reaped != 0) {
+            if (status != nullptr) *status = encoded;
+            return reaped;
+        }
+        if (noWait) return 0;
+        std::vector<HANDLE> handles;
+        {
+            const std::lock_guard lock(childProcessMutex);
+            if (childProcesses.empty()) continue;
+            for (const auto& child : childProcesses) handles.push_back(reinterpret_cast<HANDLE>(child.processHandle));
+        }
+        constexpr std::size_t groupSize = MAXIMUM_WAIT_OBJECTS;
+        bool timedOut = true;
+        for (std::size_t start = 0; start < handles.size() && timedOut; start += groupSize) {
+            const std::size_t count = std::min(handles.size() - start, groupSize);
+            timedOut = WaitForMultipleObjects(static_cast<DWORD>(count), handles.data() + start, FALSE, 250) == WAIT_TIMEOUT;
+        }
+    }
+}
+#endif
 
 }
