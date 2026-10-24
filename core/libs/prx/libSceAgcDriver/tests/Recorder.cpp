@@ -2561,7 +2561,7 @@ void remappedImportTests(const Device& device) {
 
 void hostImportRetirementTests(const Device& device) {
     const auto& context = device.GetContext();
-    constexpr std::size_t UnitBytes = 65536;
+    constexpr std::size_t UnitBytes = 2 * 65536;
     constexpr std::size_t AllocationBytes = 4 * UnitBytes;
     constexpr std::size_t CopyBytes = 256;
 #ifdef _WIN32

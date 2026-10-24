@@ -313,16 +313,6 @@ bool Listening(const Socket& socket) {
     bool listening = false;
     return GuestSockets::NativeListening(static_cast<std::uintptr_t>(socket.value), listening) && listening;
 }
-bool ZeroPortConnect(const Socket& socket, const void* address, std::uint32_t length) {
-    if (!address || (socket.type != 1 && socket.type != 2) || (socket.family != 2 && socket.family != 28)) return false;
-    const auto* bytes = static_cast<const unsigned char*>(address);
-    if (length < (socket.family == 2 ? 16u : 28u) || bytes[1] != socket.family || (bytes[2] | bytes[3]) != 0) return false;
-    sockaddr_storage peer{};
-    socklen_t peerSize = sizeof(peer);
-    if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) == 0) return false;
-    Fail(49);
-    return true;
-}
 constexpr std::int64_t NotAnswered = -2;
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
     if (socket.type != 2 || socket.family != 2 || destination.ss_family != AF_INET) return NotAnswered;
@@ -363,6 +353,20 @@ int Disconnect(const Socket& socket) {
     PortOf(wildcard) = PortOf(local);
     if (::bind(socket.value, reinterpret_cast<sockaddr*>(&wildcard), localSize) != 0) return Fail(NativeError());
     return 0;
+}
+bool ZeroPortConnect(const Socket& socket, const void* address, std::uint32_t length) {
+    if (!address || (socket.type != 1 && socket.type != 2) || (socket.family != 2 && socket.family != 28)) return false;
+    const auto* bytes = static_cast<const unsigned char*>(address);
+    if (length < (socket.family == 2 ? 16u : 28u) || bytes[1] != socket.family || (bytes[2] | bytes[3]) != 0) return false;
+    if (socket.type == 2) {
+        if (Disconnect(socket) != 0) return true;
+    } else {
+        sockaddr_storage peer{};
+        socklen_t peerSize = sizeof(peer);
+        if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) == 0) return false;
+    }
+    Fail(49);
+    return true;
 }
 void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* length) {
     unsigned char bytes[28]{};

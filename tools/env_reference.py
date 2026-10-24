@@ -163,6 +163,9 @@ def check(found, doc, prefixes, out):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="list the environment names the code reads, or check them against a reference document")
     parser.add_argument("--check", action="store_true",

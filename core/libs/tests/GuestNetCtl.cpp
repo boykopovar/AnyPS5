@@ -290,24 +290,15 @@ int main() {
     Require(sceNetCtlGetStateV6(&stateV6) == 0);
     Require(stateV6 == 0 || stateV6 == kStateIpObtained);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
-    int errorCode = -1;
-    bool resultUnsupported = false;
-    try {
-        sceNetCtlGetResult(0, &errorCode);
-    } catch (const std::logic_error&) {
-        resultUnsupported = true;
+    Require(sceNetCtlGetResult(kEventDisconnected, nullptr) == kErrInvalidAddr);
+    for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
+        int errorCode = -1;
+        Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
-    Require(resultUnsupported && errorCode == -1);
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
-    }
-    for (const int eventType : {0, 4, -1}) {
-        int errorCodeV6 = -1;
-        bool threw = false;
-        try { sceNetCtlGetResultV6(eventType, &errorCodeV6); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw && errorCodeV6 == -1);
     }
     NetCtlInfo info{};
     Require(sceNetCtlGetInfo(0, &info) == kErrInvalidCode);

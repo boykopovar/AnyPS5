@@ -824,7 +824,7 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with PS_ITER_SAMPLE, a sample index or coverage input, or a sample-mask export";
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
     for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
         queue = drawC();
         queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
@@ -832,6 +832,10 @@ void msaaEnableClearOneSampleTargetTests() {
     }
     queue = drawC();
     queue.context[0x293] = 0x10000u;
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
+    requireOneSample(queue, "draw C with PS_ITER_SAMPLE and a sample-interpolated input");
+    Require(!DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample color target without MSAA_ENABLE asked for sample shading");
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     expectFailure([&] { DecodeState(queue); }, refused);
     queue = drawC();
     queue.context[0x1c4] = 9;
@@ -6919,8 +6923,37 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 5 * GiB + 128 * MiB, "a 15 GiB budget with 4 GiB used outside the texture caches does not leave 5 GiB 128 MiB after the 4 GiB storage cache and 1 GiB 896 MiB of headroom");
     reported.heapUsage[2] = 3 * GiB;
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 9 * GiB + 128 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    reported.heapUsage[2] = 9 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 4 * GiB + 512 * MiB) == 4 * GiB + 640 * MiB, "a storage image cache larger than TextureCacheBudget was not reserved in full");
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 1 * GiB) == 5 * GiB + 128 * MiB, "a storage image cache smaller than TextureCacheBudget did not keep the TextureCacheBudget reservation");
     reported.heapUsage[2] = 12 * GiB;
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
+        auto small = memory;
+        small.memoryHeaps[2].size = 8 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        example.heapBudget[2] = 7373 * MiB;
+        example.heapUsage[2] = 2 * GiB + 3686 * MiB;
+        Require(SampledTextureBudget(small, &example, 3686 * MiB, 3686 * MiB) == 2 * GiB, "3686 MiB of storage images on an 8 GiB heap with a 7373 MiB budget and 2 GiB of other use left the sampled cache above its floor");
+        for (const auto heapGiB : {8u, 16u}) {
+            small.memoryHeaps[2].size = heapGiB * GiB;
+            for (std::uint64_t budget = 4 * GiB; budget <= heapGiB * GiB; budget += GiB) {
+                example.heapBudget[2] = budget;
+                for (std::uint64_t other = 0; other <= budget; other += GiB) {
+                    for (std::uint64_t sampled = 0; sampled <= 4 * GiB; sampled += 512 * MiB) {
+                        for (std::uint64_t storage = 0; storage <= heapGiB * GiB / 2u; storage += 512 * MiB) {
+                            example.heapUsage[2] = other + sampled + storage;
+                            const auto sampledLimit = SampledTextureBudget(small, &example, sampled + storage, storage);
+                            const auto storageLimit = StorageTextureBudget(small, &example, sampled, storage);
+                            if (sampledLimit > 2 * GiB) Require(other + storage + sampledLimit + budget / 8u <= budget, "the sampled cache budget and the storage images held exceed the reported budget less its eighth");
+                            if (storageLimit > 512 * MiB) Require(other + sampled + storageLimit + budget / 8u <= budget, "the storage cache budget and the sampled textures held exceed the reported budget less its eighth");
+                        }
+                    }
+                }
+            }
+        }
+    }
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
@@ -6941,29 +6974,29 @@ void storageTextureBudgetTests() {
     reported.heapBudget[1] = 100 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a zero budget for the largest device-local heap did not fall back to a quarter of the heap");
     reported.heapBudget[2] = 10 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 2560 * MiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 5 * GiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapUsage[2] = 5 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its quarter");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its half");
     reported.heapUsage[2] = 8 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2304 * MiB, "a 10 GiB budget with 5632 MiB used outside the texture caches does not leave 2304 MiB after 1 GiB of sampled textures and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB;
     Require(StorageTextureBudget(memory, &reported, 3 * GiB, 2 * GiB) == 1792 * MiB, "3 GiB of sampled textures were not reserved in full");
     reported.heapUsage[2] = 1 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "usage below the cached bytes is not read as no other device memory in use");
     Require(StorageTextureBudget(memory, &reported, 7 * GiB, 1 * GiB) == 1792 * MiB, "7 GiB of sampled textures with the usage below the cached bytes do not leave 1792 MiB after their reservation and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 512 * MiB) == 512 * MiB, "a heap whose other users leave no room does not keep the 512 MiB floor");
     reported.heapUsage[2] = 0;
     reported.heapBudget[2] = 6 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 1536 * MiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 3 * GiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapBudget[2] = 1 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 512 * MiB, "a 1 GiB budget does not keep the 512 MiB floor");
     reported.heapBudget[2] = 40 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a budget above the heap size raised the storage image cache past a quarter of the heap");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 8 * GiB, "a budget above the heap size raised the storage image cache past half of the heap");
     memory.memoryHeaps[2].size = 8 * GiB;
     reported.heapBudget[2] = 7189 * MiB;
     reported.heapUsage[2] = 4491 * MiB;
-    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB / 4u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches held the storage image cache below a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB - 3936 * MiB - 49 * MiB - 7189 * MiB / 8u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not leave the storage image cache what the budget has left after them and its eighth");
     reported.heapUsage[2] = 6490 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 506 * MiB) == 512 * MiB, "2 GiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not take the storage image cache back to its 512 MiB floor");
     memory.memoryHeaps[2].size = 10 * GiB;
@@ -6980,8 +7013,8 @@ void storageTextureBudgetTests() {
                     reported.heapUsage[2] = outside + sampled + 512 * MiB;
                     const auto limit = StorageTextureBudget(memory, &reported, sampled, 512 * MiB);
                     Require(limit >= 512 * MiB, "pressure sweep lost the storage cache floor");
-                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 4u), "pressure sweep exceeded a quarter of the reported budget above the floor");
-                    Require(limit <= std::max<std::uint64_t>(2 * GiB, heapGiB * GiB / 4u), "pressure sweep exceeded the heap storage cache cap");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 2u), "pressure sweep exceeded half of the reported budget above the floor");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, heapGiB * GiB / 2u), "pressure sweep exceeded half of the heap");
                     if (outside != 0) Require(limit <= previous, "additional non-cache memory usage grew the storage cache budget");
                     if (limit > 512 * MiB) Require(outside + sampled + budget / 8u + limit <= budget, "storage cache budget consumed live sampled memory or pressure headroom");
                     previous = limit;

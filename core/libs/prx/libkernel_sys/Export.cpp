@@ -600,6 +600,7 @@ int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) 
         if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) return static_cast<int>(Fail(GuestEexist));
         if (code == ERROR_ACCESS_DENIED) return static_cast<int>(Fail(GuestEperm));
         if (code == ERROR_FILENAME_EXCED_RANGE) return static_cast<int>(Fail(GuestEnametoolong));
+        if (code == ERROR_CANT_RESOLVE_FILENAME) return static_cast<int>(Fail(GuestEloop));
         if (code == ERROR_PATH_NOT_FOUND) {
             if (HasNonDirectoryPrefix(native)) return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));

@@ -643,6 +643,7 @@ if(BUILD_TESTING)
         add_asan_test_options(guest_module_args verify_asan_link_order=0)
         add_asan_test_options(guest_deferred_dependencies verify_asan_link_order=0)
         add_asan_test_options(guest_module_fini verify_asan_link_order=0)
+        add_asan_test_options(guest_unused_import_dependencies verify_asan_link_order=0)
         add_test(NAME guest_needed_nested_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_nested_modules.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_zero_initializer COMMAND ${Python3_EXECUTABLE}
@@ -650,6 +651,10 @@ if(BUILD_TESTING)
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
         set_tests_properties(guest_zero_initializer PROPERTIES TIMEOUT 30)
         add_asan_test_options(guest_zero_initializer verify_asan_link_order=0)
+        add_test(NAME linux_guest_named_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_named_imports.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        add_asan_test_options(linux_guest_named_imports verify_asan_link_order=0)
         set(windows_stdio_host_arguments)
         if(WIN32)
             if(MINGW)

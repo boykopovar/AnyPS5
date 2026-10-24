@@ -817,6 +817,19 @@ int main() {
     const std::string longName(256, 'a');
     Require(mkdirat_nid_postfix(base, longName.c_str(), 0700) == -1 && Error() == 63);
     Require(mkdirat_nid_postfix(base, "dir/../dotdot_dir", 0700) == 0 && std::filesystem::is_directory(root / "dotdot_dir"));
+#ifdef _WIN32
+    for (const DWORD linkFlags : {DWORD(0), DWORD(SYMBOLIC_LINK_FLAG_DIRECTORY)}) {
+        const auto loopLink = root / "mkdirat_loop";
+        if (CreateSymbolicLinkW(loopLink.c_str(), L"mkdirat_loop", linkFlags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
+            Require(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+            std::fprintf(stderr, "symbolic links unavailable: the mkdirat loop case not tested\n");
+            break;
+        }
+        Require(mkdirat_nid_postfix(base, "mkdirat_loop/child", 0700) == -1 && Error() == 62);
+        Require(mkdirat_nid_postfix(base, "mkdirat_loop", 0700) == -1 && Error() == 17);
+        Require((linkFlags != 0 ? RemoveDirectoryW(loopLink.c_str()) : DeleteFileW(loopLink.c_str())) != 0);
+    }
+#endif
     Require(unlinkat_nid_postfix(plain, "file.txt", 0) == -1 && Error() == 20);
     Require(unlinkat_nid_postfix(-1, "file.txt", 0) == -1 && Error() == 9);
     Require(sceKernelClose(plain) == 0);
