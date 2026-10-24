@@ -60,4 +60,8 @@ void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode
     context.internal->quietShutdown = mode;
 }
 
+void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(LibreSslCtx* ctx, void* callback) {
+    Context(ctx, __func__).defaultPasswdCallback = callback;
+}
+
 }
