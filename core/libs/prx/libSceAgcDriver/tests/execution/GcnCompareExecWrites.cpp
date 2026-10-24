@@ -204,6 +204,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < 32u) {
+            std::printf("skipped, the device's subgroups are narrower than the 32 lanes a wave64 run needs (%u lanes)\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         ShaderRecompiler::SetGcnGuestShaders(true);
         const auto code = Program();
         const auto output = LowOutput();
