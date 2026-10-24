@@ -533,6 +533,18 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    if(WIN32)
+        add_test_executable(agc_private_collect_tests EXCLUDE_FROM_ALL tests/PrivateCollect.cpp)
+        target_include_directories(agc_private_collect_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(agc_private_collect_tests PRIVATE libc)
+        target_compile_definitions(agc_private_collect_tests PRIVATE APS5_COUNT_MAPPING_QUERIES=1)
+        set_target_properties(agc_private_collect_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(agc_private_collect_tests)
+        add_test(NAME agc_private_collect COMMAND agc_private_collect_tests)
+        set_tests_properties(agc_private_collect PROPERTIES TIMEOUT 60 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(agc_profile_output_tests tests/ProfileOutput.cpp)
     target_include_directories(agc_profile_output_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_profile_output_tests PRIVATE libc)
