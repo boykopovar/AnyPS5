@@ -8,6 +8,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -34,9 +37,9 @@ constexpr std::uint32_t OutputBase = 0x8000;
 
 alignas(256) std::array<std::array<std::uint32_t, 64>, 4> Programs{};
 
-std::span<const std::uint32_t> Code(bool coherent, bool barrier) {
+std::span<const std::uint32_t> Code(bool coherent, bool barrier, std::uint32_t loadBase = LoadBase) {
     auto& program = Programs[(coherent ? 2u : 0u) + (barrier ? 1u : 0u)];
-    std::vector<std::uint32_t> code{0x34040084, 0x4a0404ff, LoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8 | (coherent ? 0x10000u : 0u), 0x04000002, 0xbf8c3f70};
+    std::vector<std::uint32_t> code{0x34040084, 0x4a0404ff, loadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff, OutputBase, 0xdc388ff8 | (coherent ? 0x10000u : 0u), 0x04000002, 0xbf8c3f70};
     if (barrier) code.push_back(0xbf8a0000);
     code.insert(code.end(), {0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000});
     std::copy(code.begin(), code.end(), program.begin());
@@ -118,6 +121,86 @@ ShaderRecompiler::RecompileResult Recompile(std::span<const std::uint32_t> code,
     return ShaderRecompiler::Recompile(request);
 }
 
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "BDA span reads: cannot capture the fault report");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        std::array<char, 4096> buffer{};
+        for (std::size_t read = 0; (read = std::fread(buffer.data(), 1, buffer.size(), file)) != 0;) text.append(buffer.data(), read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
+
+bool RunFault(AgcDriver::VulkanDevice& device, GuestBlock& guest, bool coherent, bool barrier, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name, bool mixed = false) {
+    const auto loadBase = static_cast<std::uint32_t>(mixed ? BlockBytes - 512u : BlockBytes + LoadBase);
+    const auto code = Code(coherent, barrier, loadBase);
+    auto memory = Initial();
+    if (mixed) {
+        for (std::size_t dword = memory.size() - 128u; dword < memory.size(); ++dword) memory[dword] = 0x51000000u + static_cast<std::uint32_t>(dword) * 0x00010203u;
+    }
+    std::memcpy(guest.Data(), memory.data(), BlockBytes);
+    auto expected = memory;
+    if (mixed) {
+        for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
+            const auto load = loadBase + tid * 16u + (tid & 1u) * 2u - 8u;
+            if (load + 16u > BlockBytes) continue;
+            expected[OutputBase / 4u + tid * 2u] = Bytes(memory, load + 4u);
+            expected[OutputBase / 4u + tid * 2u + 1u] = Bytes(memory, load + 12u);
+        }
+        Require(expected != memory, "BDA span reads: the mixed control has no distinguishable valid lane writes");
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
+    Require(!GuestAllocations::Mutation().Overlaps(reinterpret_cast<const void*>(address + BlockBytes), Threads * 16u + LoadBase + 16u), "BDA span reads: the fault input overlaps a registered allocation");
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto result = Recompile(code, waveSize, userData, target);
+    Require(std::ranges::any_of(result.bindings, [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; }), "BDA span reads: the fault control has no BDA table");
+    std::string failure;
+    StderrCapture log;
+    try {
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    const auto deferred = log.Finish();
+    if (failure.empty()) failure = deferred;
+    Require(failure.find("BDA access failed:") != std::string::npos && failure.find("reason=1") != std::string::npos, "BDA span reads: no unmapped fault report: " + failure);
+    std::uint32_t changed = 0u;
+    for (std::size_t dword = 0; dword < memory.size(); ++dword) {
+        std::uint32_t actual = 0u;
+        std::memcpy(&actual, guest.Data() + dword * 4u, sizeof(actual));
+        if (actual != expected[dword]) ++changed;
+    }
+    std::printf("BDA fault span %s%s coherent=%u barrier=%u changed=%u refused=1\n", name.c_str(), mixed ? "-mixed" : "", coherent ? 1u : 0u, barrier ? 1u : 0u, changed);
+    return changed != 0u;
+}
+
 void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, bool coherent, bool barrier, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
     const auto code = Code(coherent, barrier);
     auto memory = Initial();
@@ -143,13 +226,24 @@ int main() {
         GuestBlock guest;
         const auto native = device->Target();
         const auto split = device->ComputeTarget(32);
+        std::uint32_t faultingWrites = 0u;
         for (const bool coherent : {false, true}) {
             for (const bool barrier : {false, true}) {
                 Run(*device, guest, coherent, barrier, 32, native, "wave32");
                 Run(*device, guest, coherent, barrier, 64, native, "wave64");
                 if (split.subgroupSize != native.subgroupSize) Run(*device, guest, coherent, barrier, 64, split, "wave64 split");
+                faultingWrites += RunFault(*device, guest, coherent, barrier, 32, native, "wave32") ? 1u : 0u;
+                faultingWrites += RunFault(*device, guest, coherent, barrier, 64, native, "wave64") ? 1u : 0u;
+                if (split.subgroupSize != native.subgroupSize) faultingWrites += RunFault(*device, guest, coherent, barrier, 64, split, "wave64-split") ? 1u : 0u;
+                if (barrier && native.subgroupSize == 32u) {
+                    faultingWrites += RunFault(*device, guest, coherent, barrier, 32, native, "wave32", true) ? 1u : 0u;
+                    faultingWrites += RunFault(*device, guest, coherent, barrier, 64, native, "wave64", true) ? 1u : 0u;
+                    if (split.subgroupSize != native.subgroupSize) faultingWrites += RunFault(*device, guest, coherent, barrier, 64, split, "wave64-split", true) ? 1u : 0u;
+                }
             }
         }
+        if (native.subgroupSize != 32u) std::printf("skipped, mixed-lane barrier BDA fault controls need subgroup size 32, device reports %u\n", native.subgroupSize);
+        Require(faultingWrites == 0u, "BDA span reads: " + std::to_string(faultingWrites) + " faulting programs still wrote guest memory");
         std::puts("BDA span read tests passed");
         return 0;
     } catch (const std::exception& error) {
