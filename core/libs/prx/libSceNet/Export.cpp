@@ -44,6 +44,7 @@
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "src/ResolverTestHooks.hpp"
 
 // Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
@@ -97,7 +98,12 @@ struct NetDataTraffic;
 struct NetEmulationParameter;
 
 struct NetResolverConnection;
-struct NetThreadParameter;
+struct NetThreadParameter {
+    void (APS5_VABI *entry)(void*);
+    void* arg;
+    std::uint64_t reserved;
+    std::uint32_t flags;
+};
 struct NetIpv4InterfaceAddress;
 struct NetStatisticsInfoInternal;
 struct NetInitializeParameter;
@@ -499,6 +505,15 @@ void set_errno(int err) {
 int fail(int err) {
     set_errno(err);
     return NET_ERROR_BASE | err;
+}
+
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+
+void* APS5_VABI RunNetThread(void* param) {
+    const auto* thread = static_cast<const NetThreadParameter*>(param);
+    thread->entry(thread->arg);
+    return nullptr;
 }
 
 int set_native_timeout(NativeSocket native, int optname, std::int64_t microseconds) {
@@ -2600,18 +2615,20 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 }
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!parameter) return fail(NET_EINVAL);
+    Pthread created = nullptr;
+    const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (result != 0) return result;
+    if (thread) *thread = created;
     return 0;
 }
 
-int APS5_VABI sceNetThreadExit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNetThreadExit() {
+    scePthreadExit(nullptr);
 }
 
 int APS5_VABI sceNetThreadJoin(void* thread) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePthreadJoin(static_cast<Pthread>(thread), nullptr);
 }
 
 int APS5_VABI sceNetUsleep(int microseconds) {
@@ -3167,14 +3184,12 @@ int APS5_VABI sceNetEmulationDebugSettingsGet(NetEmulationParameter* parameter, 
     return 0;
 }
 
-int APS5_VABI sceNetEmulationSet(const NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetEmulationSet(const NetEmulationParameter*, std::uint32_t) {
+    return fail(NET_EOPNOTSUPP);
 }
 
-int APS5_VABI sceNetEmulationGet(NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetEmulationGet(NetEmulationParameter*, std::uint32_t) {
+    return fail(NET_EOPNOTSUPP);
 }
 
 }
