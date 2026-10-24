@@ -872,9 +872,6 @@ static void TestMasteringGain() {
     Control(toQuad, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
     Patch(toQuad, quad);
     Event(toQuad, SCE_NGS2_VOICE_EVENT_PLAY);
-    bool rejected = false;
-    try { Control(stereo, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, NAN, 1.0f}); } catch (const std::exception&) { rejected = true; }
-    Require(rejected);
 
     std::vector<float> outStereo(Grain * 2, -1.0f);
     std::vector<float> outSurround(Grain * 6, -1.0f);
@@ -906,6 +903,90 @@ static void TestMasteringGain() {
     auto reset = RenderI16(loudSystem);
     for (std::int16_t sample : reset) Require(sample == 24576);
     Require(sceNgs2SystemDestroy(loudSystem, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestMasteringGainClampedLikePs5() {
+    const auto chain = [](std::uint32_t channels, std::uint32_t grains, uintptr_t& master) {
+        const auto system = CreateSystem();
+        master = Mastering(system, channels);
+        const std::vector<std::int16_t> pcm(Grain * grains, 16384);
+        const auto source = Sampler(system, pcm, 0);
+        const std::vector<float> levels(channels, 1.0f);
+        Control(source, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, channels, levels.data()});
+        Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+        Patch(source, master);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        return system;
+    };
+    const auto render = [](uintptr_t system, std::uint32_t channels) {
+        std::vector<float> out(Grain * channels, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        return out;
+    };
+    const auto expect = [](const std::vector<float>& out, std::uint32_t channels, float fbwOut, float lfeOut) {
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                const float level = channel == 3 && channels >= 6 ? lfeOut : fbwOut;
+                const float sample = out[i * channels + channel];
+                Require(std::isnan(level) ? std::isnan(sample) : sample == 0.5f * level);
+            }
+        }
+    };
+    const auto gain = [&](std::uint32_t channels, float fbw, float lfe, float fbwOut, float lfeOut) {
+        uintptr_t master = 0;
+        const auto system = chain(channels, 1, master);
+        Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, lfe});
+        expect(render(system, channels), channels, fbwOut, lfeOut);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    };
+    const float inf = INFINITY;
+    for (const std::uint32_t channels : {6u, 8u}) {
+        gain(channels, 32.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 33.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 64.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 1e30f, 1.0f, 32.0f, 1.0f);
+        gain(channels, inf, 1.0f, 32.0f, 1.0f);
+        gain(channels, -32.0f, 1.0f, -32.0f, 1.0f);
+        gain(channels, -33.0f, 1.0f, -32.0f, 1.0f);
+        gain(channels, -inf, 1.0f, -32.0f, 1.0f);
+        gain(channels, NAN, 1.0f, NAN, 1.0f);
+        gain(channels, 1.0f, 32.0f, 1.0f, 32.0f);
+        gain(channels, 1.0f, 33.0f, 1.0f, 32.0f);
+        gain(channels, 1.0f, 1e30f, 1.0f, 32.0f);
+        gain(channels, 1.0f, inf, 1.0f, 32.0f);
+        gain(channels, 1.0f, -33.0f, 1.0f, -32.0f);
+        gain(channels, 1.0f, -inf, 1.0f, -32.0f);
+        gain(channels, 1.0f, NAN, 1.0f, NAN);
+    }
+    gain(1, 0.5f, 2.0f, 0.5f, 0.5f);
+    gain(1, inf, NAN, 32.0f, 32.0f);
+    gain(2, -inf, 1e30f, -32.0f, -32.0f);
+    gain(2, 2.0f, 0.5f, 2.0f, 2.0f);
+
+    uintptr_t master = 0;
+    const auto system = chain(6, 4, master);
+    expect(render(system, 6), 6, 1.0f, 1.0f);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 0.5f, 0.25f});
+    expect(render(system, 6), 6, 0.5f, 0.25f);
+    Event(master, SCE_NGS2_VOICE_EVENT_STOP_IMM);
+    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+    expect(render(system, 6), 6, 0.5f, 0.25f);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 6, 0});
+    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+    expect(render(system, 6), 6, 1.0f, 1.0f);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+
+    const auto nanSystem = chain(1, 1, master);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, NAN, 1.0f});
+    bool threw = false;
+    try {
+        RenderI16(nanSystem);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNgs2SystemDestroy(nanSystem, nullptr) == SCE_NGS2_OK);
 }
 
 static uintptr_t RackVoice(uintptr_t rack, std::uint32_t index) {
@@ -1590,6 +1671,9 @@ int main() {
     TestReverb();
     TestReverbSetup();
     TestSampleRate();
+
+    TestMasteringGainClampedLikePs5();
+
     TestSystemOptionFlags();
     TestUserData();
     TestPcmCallbackReset();
