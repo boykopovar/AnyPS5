@@ -295,8 +295,10 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
 
 std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource) {
     const bool multisampled = resource.dimension == TextureDimension::k2DMsaa;
-    Require((resource.dimension == TextureDimension::k2D && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D and multisampled 2D surfaces have a texture descriptor encoding");
-    Require(resource.mipCount == 1u && resource.allocatedMipCount <= 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u, "only single-level, single-layer surfaces without metadata have a texture descriptor encoding");
+    const bool array = resource.dimension == TextureDimension::k2DArray;
+    Require(((resource.dimension == TextureDimension::k2D || array) && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D, 2D array and multisampled 2D surfaces have a texture descriptor encoding");
+    Require(resource.mipCount >= 1u && resource.mipCount <= 16u && (resource.allocatedMipCount == 0u || resource.allocatedMipCount == resource.mipCount) && resource.baseLevel <= resource.lastLevel && resource.lastLevel < resource.mipCount && (array ? resource.baseArray <= resource.depthOrLastArray && resource.depthOrLastArray <= 0x1fffu : resource.depthOrLastArray == 0u && resource.baseArray == 0u), "the surface's mip levels or array slices have no texture descriptor encoding");
+    Require((!multisampled || resource.mipCount == 1u) && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u, "only single-level multisampled surfaces and surfaces without metadata have a texture descriptor encoding");
     Require(resource.width >= 1u && resource.width <= 0x4000u && resource.height >= 1u && resource.height <= 0x4000u && resource.format < 0x200u, "the surface's extent or format has no texture descriptor encoding");
     const auto xorMask = resource.tileMode == TextureTileMode::kS4KBX || resource.tileMode == TextureTileMode::kD4KBX ? 0xfffull : 0xffffull;
     Require(XorSwizzleMode(resource.tileMode) != 0 ? (resource.baseAddress & xorMask) == 0 && (resource.pipeBankXor & ~xorMask) == 0 : resource.pipeBankXor == 0, "the surface's pipe and bank XOR has no texture descriptor encoding");
@@ -325,8 +327,10 @@ std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& r
     words[0] = static_cast<std::uint32_t>(base);
     words[1] = static_cast<std::uint32_t>(base >> 32u) | (resource.format << 20u) | (((resource.width - 1u) & 3u) << 30u);
     words[2] = ((resource.width - 1u) >> 2u) | ((resource.height - 1u) << 14u);
-    words[3] = resource.dstSelX | (resource.dstSelY << 3u) | (resource.dstSelZ << 6u) | (resource.dstSelW << 9u) | (sampleLevel << 16u) | (tileMode << 20u) | ((multisampled ? 14u : 9u) << 28u);
-    words[5] = sampleLevel << 4u;
+    const auto lastLevel = multisampled ? sampleLevel : resource.lastLevel;
+    words[3] = resource.dstSelX | (resource.dstSelY << 3u) | (resource.dstSelZ << 6u) | (resource.dstSelW << 9u) | (resource.baseLevel << 12u) | (lastLevel << 16u) | (tileMode << 20u) | ((multisampled ? 14u : array ? 13u : 9u) << 28u);
+    words[4] = resource.depthOrLastArray | (resource.baseArray << 16u);
+    words[5] = (multisampled ? sampleLevel : resource.mipCount - 1u) << 4u;
     return words;
 }
 
