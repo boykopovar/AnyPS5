@@ -194,29 +194,35 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
                 }
             }
             const unsigned long wanted = width != 0 ? width : (kind == 'c' ? 1 : ULONG_MAX);
-            const unsigned long taken = std::min(wanted, limit);
             std::u16string text;
+            unsigned long characters = 0;
+            bool overflowed = false;
             const auto accepts = [&](char32_t point) {
                 if (kind == 's') return point >= 0x80 || !std::isspace(static_cast<int>(point));
                 if (kind == '[') return LibcDetail::InWideScanset(specifier, point);
                 return true;
             };
-            while (text.size() < taken && *field != '\0') {
+            while (characters < wanted && *field != '\0') {
                 char32_t point = 0;
                 const std::size_t size = LibcDetail::ReadWideScanCharacter(field, &point);
                 if (!accepts(point)) break;
-                text.push_back(static_cast<char16_t>(point));
+                char16_t units[2] = {};
+                const std::size_t count = LibcDetail::EncodeWideScanCharacter(point, units);
+                if (kind == 'c' && !secure && count != 1)
+                    NotImplemented_nid_no_patch("scanf 16-bit wide conversion of a character outside the BMP in an unsized %lc field");
+                if (text.size() + count > limit) {
+                    overflowed = true;
+                    break;
+                }
+                text.append(units, count);
+                ++characters;
                 field += size;
             }
-            if (text.empty()) return finish(assigned);
-            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && *field != '\0') {
-                char32_t point = 0;
-                LibcDetail::ReadWideScanCharacter(field, &point);
-                if (accepts(point)) {
-                    target[0] = u'\0';
-                    return finish(assigned);
-                }
+            if (overflowed) {
+                if (target != nullptr) target[0] = u'\0';
+                return finish(assigned);
             }
+            if (text.empty()) return finish(assigned);
             if (target != nullptr) {
                 std::memcpy(target, text.data(), text.size() * sizeof(char16_t));
                 if (kind != 'c') target[text.size()] = u'\0';
