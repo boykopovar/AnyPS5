@@ -4,6 +4,8 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
+        src/OutlineBitmap.cpp
+        src/SfntTable.cpp
         src/GuestObjects.cpp
         src/Names.cpp
 )
@@ -65,6 +67,16 @@ if(BUILD_TESTING)
     target_link_libraries(guest_freetype_face_info_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_face_info_tests)
     add_test(NAME guest_freetype_face_info COMMAND guest_freetype_face_info_tests)
+    add_test_executable(guest_freetype_sfnt_table_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSfntTable.cpp)
+    target_include_directories(guest_freetype_sfnt_table_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_sfnt_table_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_sfnt_table_tests)
+    add_test(NAME guest_freetype_sfnt_table COMMAND guest_freetype_sfnt_table_tests)
+    add_test_executable(guest_freetype_outline_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBitmap.cpp)
+    target_include_directories(guest_freetype_outline_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_bitmap_tests)
+    add_test(NAME guest_freetype_outline_bitmap COMMAND guest_freetype_outline_bitmap_tests)
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
