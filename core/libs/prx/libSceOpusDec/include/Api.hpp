@@ -12,7 +12,7 @@ int APS5_VABI sceOpusDecDecode(void* state, const std::uint8_t* data, int bytes,
 int APS5_VABI sceOpusDecDestroy(void* state);
 int APS5_VABI sceOpusDecCancel();
 int APS5_VABI sceOpusDecCreate();
-int APS5_VABI sceOpusDecCtl();
+int APS5_VABI sceOpusDecCtl(void* state, int request, ...);
 int APS5_VABI sceOpusDecDecodeFloat();
 int APS5_VABI sceOpusDecDecodeFloatWithPriority();
 int APS5_VABI sceOpusDecDecodeFloatWithPriorityAndTimeout();

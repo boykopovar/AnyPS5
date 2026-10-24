@@ -11,7 +11,7 @@ int APS5_VABI sceOpusCeltDecCreateEx(const std::uint32_t* context, void* state, 
 int APS5_VABI sceOpusCeltDecDecode(void* state, const std::uint8_t* data, int bytes, std::int16_t* pcm, int capacity);
 int APS5_VABI sceOpusCeltDecDestroy(void* state);
 int APS5_VABI sceOpusCeltDecCreate();
-int APS5_VABI sceOpusCeltDecCtl();
+int APS5_VABI sceOpusCeltDecCtl(void* state, int request, ...);
 int APS5_VABI sceOpusCeltDecDecodeFloat();
 int APS5_VABI sceOpusCeltDecDecodeFloatWithPriority();
 int APS5_VABI sceOpusCeltDecDecodeWithPriority();
