@@ -1657,9 +1657,9 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     const auto u32 = TypeU32(state);
     const auto ext = [&](std::uint32_t type, std::uint32_t op, std::initializer_list<std::uint32_t> args) {
         const auto value = state.module.AllocateId();
-        std::vector<std::uint32_t> words{spv::OpExtInst, type, value, GlslStd450(state), op};
-        words.insert(words.end(), args.begin(), args.end());
-        state.module.AddFunction(std::span<const std::uint32_t>(words));
+        std::array<std::uint32_t, 8> words{spv::OpExtInst, type, value, GlslStd450(state), op};
+        std::copy(args.begin(), args.end(), words.begin() + 5);
+        state.module.AddFunction(std::span<const std::uint32_t>(words.data(), 5u + args.size()));
         return value;
     };
     const auto extract = [&](std::uint32_t type, std::uint32_t composite, std::uint32_t index) {
