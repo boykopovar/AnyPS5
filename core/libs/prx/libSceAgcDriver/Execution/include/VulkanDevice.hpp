@@ -340,6 +340,7 @@ public:
     bool DrawInputsInPlace() const;
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
+    void DepthExpandPass(const Graphics::DepthExpandPass& pass);
     void DepthCopyPass(const Graphics::DepthCopyPass& pass);
     // A draw-cache hit recorded from its recipe (Graphics::DrawWithRecipe), under the mutex after
     // the packet's labels; Rebuild when the recipe's device is not this one or DrawWithRecipe
