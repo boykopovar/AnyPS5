@@ -1023,6 +1023,34 @@ void importRefusedWholeRangeTests(const Context& context) {
     Require(kept != nullptr && kept->buffer == buffer, "the range's window was imported again after a refused whole-range import");
 }
 
+void importPiecesOverAllocationLimitTests(const Context& context) {
+    WindowedRange range(context, 2 * WindowedRange::piece, 5);
+    const auto first = range.First();
+    const auto limit = 3 * range.window;
+    SetHostImportMaxBytes(limit);
+    {
+        GuestBufferMemory leased(range.importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        std::uint64_t covered = first;
+        for (const auto& entry : leased.AddressRanges()) {
+            if (entry.end <= first || entry.begin >= first + range.bytes) continue;
+            Require(entry.begin == covered, "the pieces of a range over the allocation limit leave a gap or overlap in the BDA table");
+            Require(entry.end - entry.begin <= limit, "a BDA table entry of a range over the allocation limit is larger than the limit");
+            const auto* piece = ExistingHostImportFor(range.importing, entry.begin, static_cast<std::size_t>(entry.end - entry.begin));
+            Require(piece != nullptr && piece->bytes <= limit && entry.deviceAddress == piece->address + (entry.begin - piece->base), "a BDA table entry of a range over the allocation limit is not served in place by an import within the limit");
+            covered = entry.end;
+        }
+        Require(covered == first + range.bytes, "the pieces of a range over the allocation limit do not cover it");
+        for (std::uint64_t at = first; at < first + range.bytes; at += range.window) {
+            const auto* piece = ExistingHostImportFor(range.importing, at, 16);
+            Require(piece != nullptr && piece->bytes <= limit, "a range over the allocation limit has an import larger than the limit");
+        }
+        leased.WriteBack();
+    }
+    SetHostImportMaxBytes(0);
+}
+
 // Two uses across neighbouring cell edges of one range, each in a build of its own, share one import: the second grows
 // the first's window to their union, and later rounds of both keep it. Before, each replaced the other's window at
 // every use.
@@ -1223,7 +1251,7 @@ public:
     static constexpr std::size_t Window = std::size_t{8} << 20u;
 
     explicit PieceWindow(const Context& context, bool views = false) : importing(context) {
-#ifndef _WIN32
+#ifdef __linux__
         if (views) {
             reserved = mmap(nullptr, 2 * Window, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             Require(reserved != MAP_FAILED, "cannot reserve the block of 16 KiB views");
@@ -3645,12 +3673,13 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
     importRefusedWholeRangeTests(context);
+    importPiecesOverAllocationLimitTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
     importRequesterTests(context, access);
     hostImportReportTests();
     importBlockMapTests(context, false);
-#ifndef _WIN32
+#ifdef __linux__
     importBlockMapTests(context, true);
 #endif
     importBlockBuildTests(context);

@@ -55,6 +55,7 @@ void APS5_VABI _ZN3sce4Json5Array5clearEv(Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const Iterator*);
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
@@ -292,6 +293,32 @@ static void NestingDepth() {
         }
     }
     _ZN3sce4Json5ValueD1Ev(&root);
+}
+
+static void ArrayAssignment() {
+    Array source{}, target{};
+    _ZN3sce4Json5ArrayC1Ev(&source);
+    _ZN3sce4Json5ArrayC1Ev(&target);
+    Value flag{}, real{};
+    _ZN3sce4Json5ValueC1Eb(&flag, true);
+    _ZN3sce4Json5ValueC1Ed(&real, 1.5);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &flag);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &real);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &flag);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&target, &real);
+    Require(_ZN3sce4Json5ArrayaSERKS1_(&target, &source) == &target);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    Require(_ZNK3sce4Json5Array4sizeEv(&source) == 3);
+    _ZN3sce4Json5Array5clearEv(&source);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&target)));
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array4backEv(&target)));
+    Require(_ZN3sce4Json5ArrayaSERKS1_(&target, &target) == &target);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    _ZN3sce4Json5ValueD1Ev(&flag);
+    _ZN3sce4Json5ValueD1Ev(&real);
+    _ZN3sce4Json5ArrayD1Ev(&source);
+    _ZN3sce4Json5ArrayD1Ev(&target);
 }
 
 static void ObjectsAndArrays() {
@@ -1466,6 +1493,7 @@ int main(int argc, char** argv) {
     ParseAndRoundTrip();
     NestingDepth();
     ObjectsAndArrays();
+    ArrayAssignment();
     ObjectFind();
     ObjectPair();
     ObjectInsert();

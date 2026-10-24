@@ -218,6 +218,11 @@ private:
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
+        append(key, value.targetMerge.target);
+        append(key, value.targetMerge.mask);
+        append(key, value.targetMerge.samples);
+        append(key, value.targetMerge.depthStencilWrites);
+        append(key, value.targetMerge.depthStencilTests);
         append(key, value.sampleOrder);
     }
 
@@ -298,6 +303,9 @@ private:
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
         append(key, value.fusedExactArithmetic);
+        append(key, value.largePixelFunctionLdsBuffer);
+        append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
     }
 };
 

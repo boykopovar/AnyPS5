@@ -294,7 +294,7 @@ HostImports& Imports() {
 
 #ifdef _WIN32
 void waitSettleBatch(const ImportSettle& settle, VkDevice device, const SettleBatch& batch) {
-    if (batch.busy && settle.waitForFences != nullptr) static_cast<void>(settle.waitForFences(device, 1, &batch.fence, VK_TRUE, 10'000'000'000ull));
+    if (batch.busy && settle.waitForFences != nullptr) Check(settle.waitForFences(device, 1, &batch.fence, VK_TRUE, 60'000'000'000ull), "vkWaitForFences (settle batch)");
 }
 
 bool settleBatchRunning(const ImportSettle& settle, VkDevice device, const SettleBatch& batch) {
@@ -988,7 +988,7 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
     }
     if (batch.commands == VK_NULL_HANDLE) {
         VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocate.commandPool = context.settlePool;
+        allocate.commandPool = context.pool;
         allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocate.commandBufferCount = 1;
         if ((result = context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocate, &batch.commands)) != VK_SUCCESS) {
@@ -1038,9 +1038,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(batch.commands, &begin)) != VK_SUCCESS) return fail("vkBeginCommandBuffer (settle batch)");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
-    const bool otherFamily = context.settleFamily != context.queueFamily;
-    const auto createBuffer = otherFamily ? context.Function<PFN_vkCreateBuffer>("vkCreateBuffer") : nullptr;
-    const auto bindBufferMemory = otherFamily ? context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory") : nullptr;
+    RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     std::size_t consumed = 0;
     for (; consumed < state.settleWanted.size() && batch.bases.size() < settleBatchCopies; ++consumed) {
         const auto base = state.settleWanted[consumed];
@@ -1051,38 +1049,19 @@ void submitSettleBatch(const Context& context, HostImports& state) {
             state.pendingSettles.erase(settle);
             continue;
         }
-        VkBuffer source = import->second.buffer;
-        if (otherFamily) {
-            VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
-            external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-            VkBufferCreateInfo aliasInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
-            aliasInfo.size = std::min<VkDeviceSize>(import->second.bytes, 65536);
-            aliasInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-            VkBuffer alias = VK_NULL_HANDLE;
-            if (createBuffer(context.device, &aliasInfo, nullptr, &alias) != VK_SUCCESS) {
-                state.pendingSettles.erase(settle);
-                continue;
-            }
-            if (bindBufferMemory(context.device, alias, import->second.memory, 0) != VK_SUCCESS) {
-                destroyBuffer(context.device, alias, nullptr);
-                state.pendingSettles.erase(settle);
-                continue;
-            }
-            batch.aliases.push_back(alias);
-            source = alias;
-        }
         const VkBufferCopy region{0, (VkDeviceSize{index} * settleBatchCopies + batch.bases.size()) * 4u, 4};
-        copy(batch.commands, source, deviceSettle.batchTarget, 1, &region);
+        copy(batch.commands, import->second.buffer, deviceSettle.batchTarget, 1, &region);
         settle->second = PendingSettle{SettlePhase::Submitted, index, context.device};
         batch.bases.push_back(base);
     }
     state.settleWanted.erase(state.settleWanted.begin(), state.settleWanted.begin() + static_cast<std::ptrdiff_t>(consumed));
+    RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_WRITE_BIT);
     if ((result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch.commands)) != VK_SUCCESS) return fail("vkEndCommandBuffer (settle batch)");
     if (batch.bases.empty()) return;
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &batch.commands;
-    if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.settleQueue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
+    if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
     batch.busy = true;
     state.settlesSubmitted += batch.bases.size();
 }
@@ -1547,6 +1526,7 @@ std::string budgetSource(const Context& context, const HostImports& state, std::
 }
 
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
+std::atomic<std::uint64_t> importMaxBytes{0};
 
 // The import of an access to a registered range larger than the range window: the cells the access touches, grown to
 // the union of the range's imports it overlaps, so accesses across neighbouring cell edges share one import instead of
@@ -1654,6 +1634,32 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict, requester);
 }
 
+struct ImportPiece {
+    std::uint64_t begin;
+    std::uint64_t end;
+    const HostImport* entry;
+};
+
+std::vector<ImportPiece> importPieces(const Context& context, HostImports& state, const GuestAllocations::Range& range, const GuestAllocations::Lease& lease) {
+    const auto limit = importMaxBytes.load(std::memory_order_relaxed);
+    const auto window = rangeImportWindow.load(std::memory_order_relaxed);
+    const auto alignment = context.hostImportAlignment;
+    if (limit < 2 * window || window == 0 || alignment == 0 || window % alignment != 0 || range.address % alignment != 0) return {};
+    const auto step = (limit / window - 1) * window;
+    const auto end = range.address + range.bytes;
+    std::vector<ImportPiece> pieces;
+    for (auto cursor = range.address; cursor < end;) {
+        const auto wanted = end - cursor < step + window ? end : cursor + step;
+        const auto* entry = importAllocation(context, state, cursor, lease, ImportRequester::Build, wanted, false);
+        if (entry == nullptr || entry->base > cursor || entry->bytes > limit) return {};
+        const auto to = std::min(end, entry->base + entry->bytes);
+        if (to <= cursor) return {};
+        pieces.push_back({cursor, to, entry});
+        cursor = to;
+    }
+    return pieces;
+}
+
 const HostImport* importJoined(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
     if (const auto* low = peekImport(state, begin, begin + 1); low != nullptr && low->joined) begin = low->base;
     if (const auto* high = peekImport(state, end - 1, end); high != nullptr && high->joined) end = high->base + high->bytes;
@@ -1683,6 +1689,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return &found->second;
     }
     if (alignment == 0 || base % alignment != 0 || bytes % alignment != 0) return nullptr;
+    if (const auto limit = importMaxBytes.load(std::memory_order_relaxed); limit != 0 && bytes > limit) return nullptr;
     if (const auto failed = failures.find(base); !stepDown && failed != failures.end()) {
         if (sameRun(failed->second, run)) return nullptr;
         failures.erase(failed);
@@ -3501,6 +3508,10 @@ void SetHostImportRangeWindow(std::uint64_t bytes) {
     rangeImportWindow.store(bytes, std::memory_order_relaxed);
 }
 
+void SetHostImportMaxBytes(std::uint64_t bytes) {
+    importMaxBytes.store(bytes, std::memory_order_relaxed);
+}
+
 void SetHostImportBudget(std::uint64_t bytes) {
     budgetOverride.store(bytes, std::memory_order_relaxed);
     auto& state = Imports();
@@ -3864,8 +3875,14 @@ void GuestBufferMemory::AcquireRegistered() {
             validate(range->address, range->bytes);
             Region region{range->address, range->address + range->bytes, range->writable, {}, nullptr};
             const HostImport* entry = nullptr;
+            std::vector<ImportPiece> pieces;
+            const auto limit = importMaxBytes.load(std::memory_order_relaxed);
             if (importable && covering != nullptr && range->address >= coveredBegin && range->address + range->bytes <= coveredEnd) {
                 entry = covering;
+            } else if (importable && limit != 0 && range->bytes > limit) {
+                auto& state = Imports();
+                std::lock_guard lock(state.mutex);
+                pieces = importPieces(context, state, *range, lease);
             } else if (importable) {
                 auto& state = Imports();
                 std::lock_guard lock(state.mutex);
@@ -3877,6 +3894,16 @@ void GuestBufferMemory::AcquireRegistered() {
                 }
             }
             lap(timing.importsUs, at);
+            if (!pieces.empty()) {
+                for (const auto& piece : pieces) {
+                    Region part{piece.begin, piece.end, range->writable, {}, nullptr};
+                    part.hostBacked = true;
+                    part.direct = piece.entry;
+                    regions.push_back(std::move(part));
+                }
+                imported.push_back(range->address);
+                continue;
+            }
             if (entry != nullptr) {
                 region.hostBacked = true;
                 // Reused by Upload while no import was dropped since (see importsEpoch).
@@ -4713,7 +4740,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
 
 void GuestBufferMemory::completeSpaceWrites() const {
     auto* recorder = Recorder::Active();
-    if (recorder == nullptr || Recorder::InCompletion()) return;
+    if (recorder == nullptr || Recorder::InCompletion() || !AnyPendingCpuWrites(context)) return;
     const auto& base = space->base;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
     std::vector<std::size_t> candidates;
@@ -5492,7 +5519,10 @@ void GuestBufferMemory::MarkDirectWrites() const {
         const auto* found = owner(begin, end);
         if (found == nullptr) continue;
         const auto& region = *found;
-        if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
+        if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) {
+            const auto generation = GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
+            if (generation != 0) directWritesGeneration = std::max(directWritesGeneration, generation);
+        }
     }
 }
 
@@ -5584,7 +5614,7 @@ void GuestBufferMemory::WriteBack() {
         if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
-            GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
+            StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
             continue;
         }
         if (region.mirror != nullptr) {
@@ -5628,7 +5658,7 @@ void GuestBufferMemory::WriteBack() {
             if (region.copiedBack) {
                 // The GPU copied the written sub-range back into the import; page write watching
                 // did not see it.
-                GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
+                StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
                 continue;
             }
             static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

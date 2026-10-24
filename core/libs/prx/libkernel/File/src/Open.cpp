@@ -294,7 +294,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 }
 
 int APS5_VABI sceKernelClose(int d) {
-    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EBADF;
+    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);

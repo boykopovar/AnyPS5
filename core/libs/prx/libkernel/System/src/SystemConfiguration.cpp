@@ -467,7 +467,8 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {6, 12};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 
 int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* version) {
@@ -529,6 +530,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     for (const auto& entry : SystemIntegers) {
         if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, 2);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 }

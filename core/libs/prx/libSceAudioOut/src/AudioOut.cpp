@@ -714,4 +714,13 @@ int APS5_VABI sceAudioOutExOpen(int userId, std::uint32_t mode) {
     return allocatePort(PORT_TYPE_EX, highRate ? 1024 : 256, highRate ? 192000 : 48000, Format::S16Stereo);
 }
 
+int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
+    if (state == nullptr) {
+        return -2144993276;
+    }
+    *state = {};
+    state->loudness = 0.0f;
+    return 0;
+}
+
 }

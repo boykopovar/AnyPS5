@@ -4,6 +4,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_GASP_H
 #include FT_OUTLINE_H
 
 #include <algorithm>
@@ -47,6 +48,79 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+extern "C" int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec*, std::uint32_t);
+
+static void CheckGaspTable(const std::vector<unsigned char>* table, const std::vector<std::pair<unsigned, int>>& ranges,
+                           bool versionZero, bool render) {
+    const auto font = SquareGlyphFont('A', 700, false, table);
+    void* library = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face native = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &native) == 0);
+    auto* slot = face->glyph;
+    const auto glyphIndex = slot->glyph_index;
+    const auto bitmap = slot->bitmap.buffer;
+    const auto points = slot->outline.points;
+    for (std::uint32_t ppem = 0; ppem <= 65536; ++ppem) {
+        int expected = FT_GASP_NO_TABLE;
+        for (const auto& [maximum, flags] : ranges) {
+            if (ppem > maximum) continue;
+            expected = versionZero ? flags & 3 : flags;
+            break;
+        }
+        Require(FT_Get_Gasp_nid_postfix(face, ppem) == expected);
+        Require(FT_Get_Gasp(native, ppem) == expected);
+    }
+    Require(FT_Get_Gasp_nid_postfix(face, UINT32_MAX) == FT_GASP_NO_TABLE);
+    Require(face->glyph == slot && slot->glyph_index == glyphIndex && slot->bitmap.buffer == bitmap && slot->outline.points == points);
+    if (render) {
+        for (const unsigned ppem : {7u, 8u, 15u, 16u, 31u, 32u, 64u}) {
+            const int flags = FT_Get_Gasp_nid_postfix(face, ppem);
+            const int load = flags & FT_GASP_DO_GRIDFIT ? FT_LOAD_DEFAULT : FT_LOAD_NO_HINTING;
+            const auto mode = flags & FT_GASP_DO_GRAY ? FT_RENDER_MODE_NORMAL : FT_RENDER_MODE_MONO;
+            Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, ppem) == 0 && FT_Set_Pixel_Sizes(native, 0, ppem) == 0);
+            Require(FT_Load_Char_nid_postfix(face, 'A', load) == 0 && FT_Load_Char(native, 'A', load) == 0);
+            Require(FT_Render_Glyph_nid_postfix(face->glyph, mode) == 0 && FT_Render_Glyph(native->glyph, mode) == 0);
+            const auto& actual = face->glyph->bitmap;
+            const auto& expected = native->glyph->bitmap;
+            Require(actual.width > 0 && actual.rows > 0);
+            Require(actual.width == expected.width && actual.rows == expected.rows && actual.pitch == expected.pitch);
+            Require(actual.pixel_mode == expected.pixel_mode && actual.num_grays == expected.num_grays);
+            Require(face->glyph->bitmap_left == native->glyph->bitmap_left && face->glyph->bitmap_top == native->glyph->bitmap_top);
+            Require(std::memcmp(actual.buffer, expected.buffer, static_cast<std::size_t>(actual.rows) * std::abs(actual.pitch)) == 0);
+        }
+    }
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+}
+
+static void CheckGasp() {
+    Require(FT_Get_Gasp_nid_postfix(nullptr, 0) == FT_GASP_NO_TABLE);
+    Require(FT_Get_Gasp_nid_postfix(nullptr, UINT32_MAX) == FT_GASP_NO_TABLE);
+    CheckGaspTable(nullptr, {}, false, false);
+    const std::vector<std::pair<unsigned, int>> ranges{{0, 0x8003}, {7, 2}, {15, 1}, {31, 0}, {65535, 0xFFFF}};
+    for (const unsigned version : {0u, 1u}) {
+        std::vector<unsigned char> table;
+        Put16(table, version);
+        Put16(table, ranges.size());
+        for (const auto& [maximum, flags] : ranges) {
+            Put16(table, maximum);
+            Put16(table, flags);
+        }
+        CheckGaspTable(&table, ranges, version == 0, true);
+    }
+    std::vector<unsigned char> shortRange;
+    PutAll16(shortRange, {1, 1, 48, FT_GASP_DO_GRAY});
+    CheckGaspTable(&shortRange, {{48, FT_GASP_DO_GRAY}}, false, false);
+    for (const std::vector<unsigned char>& table : {std::vector<unsigned char>{}, {0, 1}, {0, 1, 0, 0}, {0, 2, 0, 1, 0, 10, 0, 3}}) {
+        CheckGaspTable(&table, {}, false, false);
+    }
+    std::puts("FreeType gasp: 8 fonts, 524304 queries, null faces and 14 rendered glyphs passed");
+}
 
 template <typename TCall> static bool ThrowsWith(TCall call, const std::string& prefix) {
     try {
@@ -362,6 +436,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
 int main() {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_guest_freetype-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root / "app0");
+    CheckGasp();
     const std::vector<unsigned char> font = SquareGlyphFont('A', 700);
     {
         std::ofstream file(root / "app0" / "font.ttf", std::ios::binary);

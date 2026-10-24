@@ -722,11 +722,13 @@ int APS5_VABI scePadGetLotusIrCodeSetResult(std::int32_t handle, std::int32_t* r
 }
 
 int APS5_VABI scePadSetLotusEnableIrKey(std::int32_t handle) {
+    (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI scePadSetLotusDisableIrKey(std::int32_t handle) {
+    (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1077,6 +1079,8 @@ int APS5_VABI scePadVirtualDeviceInsertTriggerInternalState(std::int32_t deviceI
 }
 
 int APS5_VABI scePadVirtualDeviceGetRemoteSetting(std::int32_t deviceId, PadRemoteSetting* setting) {
+    (void)deviceId;
+    (void)setting;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1087,6 +1091,7 @@ int APS5_VABI scePadVirtualDeviceSetTriggerEffectSetting(std::int32_t handle, co
 }
 
 int APS5_VABI scePadVirtualDeviceDisableButtonRemapping(bool disabled) {
+    (void)disabled;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -926,9 +926,24 @@ static void CheckInetPtonWhitespace() {
     for (const char* text : {" 1.2.3.4", "1.2.3.4x", "1.2.3.4.", "1.2.3.4\x01", "1.2.3.4\xa0", "1.2. 3.4", "1.2.3", "1.2.3 ", "01.2.3.4", "256.0.0.1"}) {
         CheckInetPtonRejects(2, text);
     }
-    for (const char* text : {"::1 ", "::1\t", " ::1", "::1x"}) {
+    for (const char* text : {"::1 ", "::1\t", " ::1", "::1x", "::ffff:1.2.3.4x", "::ffff:1.2.3.4\x01", "::ffff:01.2.3.4", "::ffff:1.2.3",
+                             "::ffff:0x1.2.3.4", "::ffff ", "::ffff:1.2 .3.4"}) {
         CheckInetPtonRejects(28, text);
     }
+    for (const char* text : {"::ffff:1.2.3.4 x", "::ffff:1.2.3.4\t", "::ffff:1.2.3.4\nzz", "::ffff:1.2.3.4 "}) {
+        std::array<std::uint8_t, 16> address{};
+        *sceNetErrnoLoc() = 123;
+        Require(sceNetInetPton(28, text, address.data()) == 1 && *sceNetErrnoLoc() == 123);
+        Require(address[10] == 0xff && address[11] == 0xff && address[12] == 1 && address[15] == 4);
+    }
+    std::array<std::uint8_t, 16> full{};
+    Require(sceNetInetPton(28, "1:2:3:4:5:6:1.2.3.4 z", full.data()) == 1 && full[1] == 1 && full[11] == 6 && full[12] == 1 && full[15] == 4);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(2, "1.2.3.4", nullptr) == 1 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPton(2, "abc", nullptr) == 0 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPton(28, "::1", nullptr) < 0 && *sceNetErrnoLoc() == 22);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(28, nullptr, full.data()) < 0 && *sceNetErrnoLoc() == 22);
 }
 
 struct AtonCase {
@@ -984,7 +999,9 @@ static void CheckInetPtonEx() {
     Require(sceNetInetPtonEx(2, "not an address", address.data(), 0) == 0);
     Require(Failed(sceNetInetPtonEx(99, "127.0.0.1", address.data(), 0), 47));
     Require(Failed(sceNetInetPtonEx(2, nullptr, address.data(), 0), 22));
-    Require(Failed(sceNetInetPtonEx(2, "127.0.0.1", nullptr, 0), 22));
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPtonEx(2, "127.0.0.1", nullptr, 0) == 1 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPtonEx(2, "abc", nullptr, 0) == 0 && *sceNetErrnoLoc() == 123);
     for (const int flags : {1, 0x100, -1}) {
         address.fill(0);
         Require(sceNetInetPtonEx(2, "1.2.3", address.data(), flags) == 1);

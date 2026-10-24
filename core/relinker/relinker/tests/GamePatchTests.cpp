@@ -282,6 +282,54 @@ void applyAndMismatch() {
     require(PatchTarget(bytes, "other", entries).Applied.empty() && bytes == original, "entry hit another target");
 }
 
+void programmaticWidths() {
+    auto bytes = twoSegmentFixture();
+    const auto original = bytes;
+    const ElfReader reader(original);
+    const std::vector<PatchEntry> invalid{
+        entry("t", 0x1000, {0}, {9, 8}),
+        entry("t", 0x1000, {0, 1}, {9}),
+        entry("t", 0x1000, {}, {}),
+        entry("t", 0x1000, {}, {9}),
+        entry("t", 0x1000, {0}, {}),
+    };
+    for (const auto& patch : invalid) {
+        const std::vector<PatchEntry> entries{entry("t", 0x1100, {0x80}, {1}), patch};
+        rejects([&] { ResolveRanges(reader, entries); }, "same nonzero width");
+        rejects([&] { PatchTarget(bytes, "t", entries); }, "same nonzero width");
+        require(bytes == original, "an invalid patch width wrote bytes");
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0x2000, 1, 0x1100}, {0x1000, patch.Expected.size(), 0x1000}}); }, "same nonzero width");
+        require(bytes == original, "direct application of an invalid patch width wrote bytes");
+        for (const bool outputMode : {false, true}) {
+            PatchFile file;
+            file.MainTarget = "t";
+            file.Entries = entries;
+            rejects([&] { VerifyPatches(file, {{"t", original}}, {}, outputMode); }, "same nonzero width");
+        }
+    }
+}
+
+void applicationRangeWidths() {
+    const std::vector<std::uint8_t> original{0, 1, 2, 3};
+    auto bytes = original;
+    const std::vector<PatchEntry> entries{entry("t", 0x1000, {0}, {9}), entry("t", 0x1002, {2, 3}, {8, 7})};
+    for (const std::uint64_t length : {0u, 1u, 3u}) {
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, length, 0x1002}}); }, "range length does not match");
+        require(bytes == original, "a mismatched range length wrote bytes");
+    }
+    rejects([&] { ApplyPatches(bytes, "t", {entry("t", 0x1003, {3, 4}, {8, 7})}, {{3, 1, 0x1003}}); }, "range length does not match");
+    require(bytes == original, "a truncated comparison range wrote bytes");
+    for (const std::uint64_t offset : std::array<std::uint64_t, 4>{3, 4, 5, UINT64_MAX}) {
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {offset, 2, 0x1002}}); }, "range exceeds the image");
+        require(bytes == original, "an out-of-bounds patch wrote bytes");
+    }
+    rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}}); }, "ranges do not match");
+    require(bytes == original, "a missing range wrote bytes");
+    const auto applied = ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, 2, 0x1002}});
+    require(bytes == std::vector<std::uint8_t>({9, 1, 8, 7}) && applied.size() == 2, "valid boundary patches failed");
+    require(ApplyPatches(bytes, "t", {}, {}).empty(), "empty patch list was rejected");
+}
+
 void overlapWithWriters() {
     const std::vector<PatchedRange> patched{{0x1010, 2, 0x401010}};
     const auto reject = [&](const WriterSites& sites, const std::string& writer) { rejects([&] { CheckOverlaps("t", patched, sites); }, writer); };
@@ -340,6 +388,13 @@ void conversion() {
     rejects([&] { converter.Convert(conversionInput(executable), failing); }, "expected 07 found 00");
     failing.Patches = {entry("custom-name.bin", 0x1000, {0xc3, 0}, {0, 0}), entry("custom-name.bin", 0x1001, {0}, {1})};
     rejects([&] { converter.Convert(conversionInput(executable), failing); }, "overlaps");
+    for (const auto target : {TargetSystem::Linux, TargetSystem::Windows, TargetSystem::MacOs}) {
+        failing.Target = target;
+        for (const char* name : {"custom-name.bin", "sce_module/plugin.prx"}) {
+            failing.Patches = {entry(name, 0x1001, {0}, {9, 8})};
+            rejects([&] { converter.Convert(conversionInput(executable), failing); }, "same nonzero width");
+        }
+    }
 
     const auto repeated = converter.Convert(conversionInput(executable), plain);
     require(repeated.Executable == baseline.Executable && repeated.Modules.front().Bytes == baseline.Modules.front().Bytes, "no entries changed the output");
@@ -529,6 +584,8 @@ int main() {
         ranges();
         headerRange();
         applyAndMismatch();
+        programmaticWidths();
+        applicationRangeWidths();
         overlapWithWriters();
         conversion();
         targets();

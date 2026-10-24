@@ -146,11 +146,14 @@ def relative(path, root):
 def chunks(names):
     batch, size = [], 0
     for name in names:
-        if batch and size + len(name) + 1 > BATCH:
+        length = len(name) + 1
+        if sys.platform == "win32":
+            length = len(subprocess.list2cmdline([name]).encode("utf-16-le", "surrogatepass")) // 2 + 1
+        if batch and size + length > BATCH:
             yield batch
             batch, size = [], 0
         batch.append(name)
-        size += len(name) + 1
+        size += length
     if batch:
         yield batch
 
@@ -263,7 +266,7 @@ def escape(name):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Select the tests whose build inputs a change touches")
     sub = parser.add_subparsers(dest="command", required=True)
     d = sub.add_parser("dump", help="write the test graph of a built tree")

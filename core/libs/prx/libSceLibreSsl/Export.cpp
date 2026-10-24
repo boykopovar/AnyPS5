@@ -283,16 +283,6 @@ int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CRYPTO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI CRYPTO_malloc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -304,11 +294,6 @@ int APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void) {
 }
 
 int APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1013,31 +998,6 @@ int APS5_VABI PKCS12_free_nid_postfix(void) {
 }
 
 int APS5_VABI PKCS12_parse_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_add_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_bytes_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_file_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_load_file_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_status_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

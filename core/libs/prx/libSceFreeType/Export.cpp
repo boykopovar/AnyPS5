@@ -3,6 +3,8 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include FT_GASP_H
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -197,6 +199,11 @@ int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec* face, std::uint32_t glyph_
     const FT_Error error = FT_Load_Glyph(owner ? owner->host : nullptr, glyph_index, load_flags);
     if (owner) SyncSlot(*owner);
     return error;
+}
+
+int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec* face, std::uint32_t ppem) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Get_Gasp(owner ? owner->host : nullptr, ppem);
 }
 
 int APS5_VABI FT_Load_Char_nid_postfix(GuestFaceRec* face, std::uint64_t charCode, std::int32_t loadFlags) {

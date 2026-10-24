@@ -595,8 +595,8 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     const int result = ::pipe(native);
 #endif
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
-    File::RememberDescriptor(native[0], 0);
-    File::RememberDescriptor(native[1], 0);
+    File::RememberPipe(native[0]);
+    File::RememberPipe(native[1]);
     std::memcpy(descriptors, native, sizeof(native));
     return 0;
 }
@@ -706,7 +706,7 @@ int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
 }
 
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {
-    if (GuestSockets::IsOpen(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchflags");
     if (!File::IsVnode(d)) {
         if (!DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
@@ -726,7 +726,7 @@ int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int 
 }
 
 int APS5_VABI close_nid_postfix(int d) {
-    if (File::IsHostStream(d)) return PosixFailure(GUEST_EBADF);
+    if (File::IsHostStream(d)) return PosixFailure(GUEST_EPERM);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) {
         if (socketError == 0) return 0;

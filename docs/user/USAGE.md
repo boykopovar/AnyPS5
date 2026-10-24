@@ -299,6 +299,8 @@ Besides the recompiled shaders, the shader cache directory holds `pipelines.jour
 
 ### Texture cache budget
 
+Image and buffer memory allocations retry after releasing unused pooled buffers and reclaimable texture cache entries. Recovery preserves storage images with pending GPU results and resources retained by recorded work. `[bufferpool]` recovery and failure lines report the requested allocation, memory released and retry count. An allocation still fails if recovery cannot free enough memory.
+
 Sampled textures and storage images stay in device memory in two caches that evict their least recently used entries when they grow past their budgets. The storage image budget is what the `VK_EXT_memory_budget` budget of the largest device-local heap leaves after the heap's use other than the cached storage images themselves and an eighth of the budget; it is capped at a quarter of that budget, at most a quarter of the heap's size or 2 GiB, whichever is larger, and never below 512 MiB. The sampled texture budget is what the reported budget leaves after the heap's use other than cached textures, a quarter of the heap's size (at least 2 GiB) and an eighth of the budget, and never below 2 GiB. As the heap's other use grows the sampled budget falls first, to that floor, then the storage budget; the storage budget also gives back what the sampled textures alive take as they grow. Each cache trims at its next insert. Both budgets are read again every second; `[gpu] sampled texture cache budget` lines report them at start-up and when either moves by more than a tenth, at most every 10 s. `APS5_TEXTURE_CACHE_MIB=<n>` fixes both budgets at `n` MiB, and the lines are then not printed.
 
 A fixed budget above the automatic one can exceed what the card holds next to the rest of the frame. Allocations then go to host memory (`[gpu] ... placed in host memory` lines), where the GPU reads them over PCIe. PPSA16064 on an RTX 4060 8 GB, whose automatic storage image budget was 1797 MiB under the earlier rule, placed 868 and 878 MiB in host memory with `APS5_TEXTURE_CACHE_MIB=3072` and walked through its first level at 4.46 and 4.83 FPS; with the variable unset it placed none and ran the same walk at 6.48 and 6.07 FPS. Leave it unset unless a measurement on the card shows otherwise.
@@ -386,6 +388,8 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
 | `absent` | No built library exports the NID: the loader fails. |
 | `module` | The import names a file found in `--modules` (the title's own library), which is trusted to provide it. |
+
+An import that names a library requires the literal export name. If its implementation is found only by hashing the import name, it still counts as `implemented` or `stub`, but the report lists the name mismatch, sets `symbol_mismatch` on the JSON import record and counts it in the summary, and exits with code 1. A strong import with a name mismatch is a current stop. Imports without a library retain the audit's name-to-NID fallback.
 
 Module registries mark ELF weak imports with `"weak": true`, allowing the audit's current-stop selection to skip them. Strong imports omit the field. Older module registries do not preserve weak bindings; regenerate them to distinguish optional imports.
 

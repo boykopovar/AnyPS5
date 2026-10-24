@@ -39,6 +39,7 @@ int APS5_VABI fchmod_nid_postfix(int, int);
 int APS5_VABI chmod_nid_postfix(const char*, int);
 int APS5_VABI chflags_nid_postfix(const char*, std::uint64_t);
 int APS5_VABI fchflags_nid_postfix(int, std::uint64_t);
+int APS5_VABI kqueue_nid_postfix();
 int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
 int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
 int APS5_VABI socket_nid_postfix(int, int, int);
@@ -716,6 +717,10 @@ int main() {
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(-1, 0) == -1 && *__error_nid_postfix() == 9);
+    const int flaggedKqueue = kqueue_nid_postfix();
+    Require(flaggedKqueue >= 0);
+    Require(fchflags_nid_postfix(flaggedKqueue, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(close_nid_postfix(flaggedKqueue) == 0);
     const int flaggedRoot = sceKernelOpen(root.string().c_str(), 0x20000, 0);
     Require(flaggedRoot >= 0 && fchflags_nid_postfix(flaggedRoot, 0) == 0 && sceKernelClose(flaggedRoot) == 0);
     int flaggedPipe[2];

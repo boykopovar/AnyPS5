@@ -4231,6 +4231,24 @@ void multisampleDccStateTests() {
         changed.context[0x3b0] |= 1u << 28u;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "multisampled color mips");
     }
+    for (const auto samples : {2u, 4u, 8u}) {
+        AgcDriver::Graphics::ColorTarget target{};
+        target.extent = {64, 64};
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+        target.samples = samples;
+        target.dccAddress = 0x200000u;
+        target.dccPipeAligned = true;
+        target.cmaskAddress = 0x300000u;
+        target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(64, 64);
+        const std::vector<std::byte> dcc(AgcDriver::Graphics::MultisampledDccBytes(target), std::byte{0x00});
+        std::vector<std::byte> cmask(target.cmaskBytes);
+        for (std::size_t index = 0; index < cmask.size(); ++index) cmask[index] = std::byte{static_cast<std::uint8_t>(index * 37u)};
+        const auto clear = AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask);
+        Require(clear.float32[0] == 0.0f && clear.float32[1] == 0.0f && clear.float32[2] == 0.0f && clear.float32[3] == 0.0f, "a uniform 0000 DCC clear of a multisampled target without CMASK fast clears did not import as 0000");
+        target.cmaskFastClear = true;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask)); }, "multisampled DCC CMASK compression or register clear");
+    }
 }
 
 void multisampledDepthTests() {
@@ -8691,6 +8709,24 @@ std::string interlockShape(std::span<const std::uint32_t> words) {
     return shape;
 }
 
+bool coherentImageRead(std::span<const std::uint32_t> words) {
+    std::map<std::uint32_t, std::uint32_t> sources;
+    std::set<std::uint32_t> coherent;
+    std::uint32_t image = 0;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        if (op == spv::OpDecorate && words[at + 2] == spv::DecorationCoherent) coherent.insert(words[at + 1]);
+        if (op == spv::OpLoad || op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain) sources[words[at + 2]] = words[at + 3];
+        if (op == spv::OpImageRead) image = words[at + 3];
+    }
+    for (std::size_t step = 0; image != 0 && step < 8u; ++step) {
+        if (coherent.contains(image)) return true;
+        const auto source = sources.find(image);
+        image = source == sources.end() ? 0u : source->second;
+    }
+    return false;
+}
+
 std::string interlockExits(std::span<const std::uint32_t> words, std::size_t& kills, std::size_t& terminates) {
     struct Block {
         std::vector<spv::Op> ops;
@@ -9354,7 +9390,7 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(unsupported, first);
     auto last = first;
     last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
-    expectFailure([&] { ValidateProvokingVertex(unsupported, last); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    ValidateProvokingVertex(unsupported, last);
     auto supported = unsupported;
     supported.provokingVertexLast = true;
     ValidateProvokingVertex(supported, last);
@@ -9475,6 +9511,105 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(supported, rectangle, flatShaders);
     last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_MAX_ENUM_EXT;
     expectFailure([&] { ValidateProvokingVertex(supported, last); }, "invalid provoking vertex mode");
+}
+
+void UnobservedProvokingVertexTests() {
+    using namespace AgcDriver::Graphics;
+    auto last = DecodeState(makeState());
+    last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    const Context unsupported{};
+    const auto module = [](std::initializer_list<std::uint32_t> instructions) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300u, 0u, 4u, 0u};
+        words.insert(words.end(), instructions);
+        return words;
+    };
+    ShaderRecompiler::RecompileResult fragment{};
+    const std::array<CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    const ShaderRecompiler::FragmentParameter smooth{0, 0, false, false};
+    const auto refused = [&](const State& state) {
+        expectFailure([&] { ValidateProvokingVertex(unsupported, state, shaders); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    };
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN}) {
+        auto state = last;
+        state.topology = topology;
+        ValidateProvokingVertex(unsupported, state);
+        fragment.fragmentParameters.clear();
+        fragment.spirv = module({});
+        ValidateProvokingVertex(unsupported, state, shaders);
+        fragment.fragmentParameters = {smooth};
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationLocation, 0u});
+        ValidateProvokingVertex(unsupported, state, shaders);
+        for (std::uint32_t read = 0; read < 4; ++read) {
+            const ShaderRecompiler::FragmentParameter observed{1, 1, read == 0, read == 1, read == 2, read == 3, false};
+            fragment.fragmentParameters = {smooth, observed};
+            refused(state);
+        }
+        fragment.fragmentParameters = {smooth};
+        for (const std::uint32_t decoration : {static_cast<std::uint32_t>(spv::DecorationFlat), static_cast<std::uint32_t>(spv::DecorationPerVertexKHR)}) {
+            fragment.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, decoration});
+            refused(state);
+            fragment.spirv = module({(4u << 16u) | spv::OpMemberDecorate, 1u, 0u, decoration});
+            refused(state);
+        }
+        fragment.spirv = module({(5u << 16u) | spv::OpDecorate, 1u, spv::DecorationLocation});
+        refused(state);
+        fragment.spirv = std::vector<std::uint32_t>{};
+        refused(state);
+    }
+    fragment.fragmentParameters = {smooth};
+    for (const std::uint32_t generated : {static_cast<std::uint32_t>(spv::BuiltInSampleId), static_cast<std::uint32_t>(spv::BuiltInFrontFacing), static_cast<std::uint32_t>(spv::BuiltInSubgroupLocalInvocationId)}) {
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat, (4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, generated, (4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationFlat});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated, (3u << 16u) | spv::OpDecorate, 2u, spv::DecorationFlat});
+        refused(last);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, generated, (4u << 16u) | spv::OpMemberDecorate, 1u, 1u, spv::DecorationFlat});
+        refused(last);
+    }
+    for (const std::uint32_t passed : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex), static_cast<std::uint32_t>(spv::BuiltInPrimitiveId)}) {
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, passed, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+        refused(last);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, passed, (4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationFlat});
+        refused(last);
+    }
+    ShaderRecompiler::RecompileResult vertex{};
+    vertex.fragmentParameters = {{0, 0, true, true, true, true, true}};
+    vertex.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+    fragment.fragmentParameters = {smooth};
+    fragment.spirv = module({});
+    const std::array<CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    ValidateProvokingVertex(unsupported, last, stages);
+    Context supported{};
+    supported.provokingVertexLast = true;
+    for (const auto stage : {ShaderRecompiler::ShaderStage::Vertex, ShaderRecompiler::ShaderStage::TessellationEvaluation, ShaderRecompiler::ShaderStage::Geometry, ShaderRecompiler::ShaderStage::Mesh}) {
+        ShaderRecompiler::RecompileResult writer{};
+        const std::array<CompiledShader, 2> written{{{stage, &writer, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        const auto refusedWrite = [&] {
+            expectFailure([&] { ValidateProvokingVertex(unsupported, last, written); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+            ValidateProvokingVertex(supported, last, written);
+        };
+        for (const std::uint32_t selected : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex)}) {
+            writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, selected});
+            refusedWrite();
+            writer.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected});
+            refusedWrite();
+            writer.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected, (4u << 16u) | spv::OpMemberDecorate, 1u, 1u, spv::DecorationPerPrimitiveEXT});
+            refusedWrite();
+            writer.spirv = module({(4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationPerPrimitiveEXT, (5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected});
+            ValidateProvokingVertex(unsupported, last, written);
+            writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, selected, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationPerPrimitiveEXT});
+            ValidateProvokingVertex(unsupported, last, written);
+        }
+        writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, spv::BuiltInPosition, (5u << 16u) | spv::OpMemberDecorate, 2u, 0u, spv::DecorationBuiltIn, spv::BuiltInPointSize});
+        ValidateProvokingVertex(unsupported, last, written);
+        writer.spirv = std::vector<std::uint32_t>{};
+        refusedWrite();
+    }
+    const std::array<CompiledShader, 1> missing{{{ShaderRecompiler::ShaderStage::Fragment, nullptr, 0}}};
+    expectFailure([&] { ValidateProvokingVertex(unsupported, last, missing); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
 }
 
 void ProvokingVertexRenderPassTests() {
@@ -9743,6 +9878,332 @@ void unorm10_11_11TargetTests() {
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(uintExport)); }, "fragment output 0 has no color export packing path");
 }
 
+void unorm4_4_4_4TargetTests() {
+    using ShaderRecompiler::ColorExportPacking;
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context.at(0x31c) & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (19u << 2u) | (2u << 11u);
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.color.format == VK_FORMAT_R16_UINT && state.color.elementBytes == 2 && state.color.componentMapping == 0x1bu && state.color.packing == ColorExportPacking::Unorm4_4_4_4, "a 4_4_4_4 unorm target did not decode to an R16_UINT attachment with reversed exports");
+    const auto packings = AgcDriver::Graphics::ExportPackings(state);
+    Require(packings[0] == ColorExportPacking::Unorm4_4_4_4 && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the 4_4_4_4 unorm packing");
+    Require(state.color.partialWriteMask == 0u && state.blends[0].colorWriteMask == 0xfu && AgcDriver::Graphics::ExportTargetMerge(state).mask == 0u, "a full write of a 4_4_4_4 unorm target merged into the target");
+    auto changed = queue;
+    for (const auto& [targetMask, wordMask] : {std::pair{1u, 0xf000u}, std::pair{7u, 0xfff0u}, std::pair{8u, 0x000fu}, std::pair{0xau, 0x0f0fu}}) {
+        changed.context[0x8e] = targetMask;
+        Require(AgcDriver::Graphics::DrawRejection(changed, false).empty(), "the draw precheck refused CB_TARGET_MASK " + std::to_string(targetMask) + " of a 4_4_4_4 unorm target");
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        Require(partial.color.partialWriteMask == wordMask && partial.colors.front().partialWriteMask == wordMask && partial.blends[0].colorWriteMask == 0u && partial.blend.colorWriteMask == 0u, "CB_TARGET_MASK " + std::to_string(targetMask) + " of a 4_4_4_4 unorm target did not merge its nibbles behind a closed write mask");
+        const auto merge = AgcDriver::Graphics::ExportTargetMerge(partial);
+        const auto expected = AgcDriver::Graphics::SurfaceForTarget(partial.color);
+        const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
+        Require(merge.target == 0u && merge.mask == wordMask && merge.samples == 1u && !merge.depthStencilWrites && surface.baseAddress == expected.baseAddress && surface.pipeBankXor == expected.pipeBankXor && surface.width == expected.width && surface.height == expected.height && surface.format == expected.format && surface.tileMode == expected.tileMode && surface.dimension == AgcDriver::Graphics::TextureDimension::k2D && surface.mipCount == 1u && surface.samples == 1u, "the merge descriptor of CB_TARGET_MASK " + std::to_string(targetMask) + " does not decode to the target's surface");
+    }
+    {
+        auto depthQueue = queue;
+        depthQueue.context[0x8e] = 1;
+        depthQueue.context[0x000] = 0;
+        depthQueue.context[0x002] = 0;
+        depthQueue.context[0x007] = (1u << 16u) | 3u;
+        depthQueue.context[0x00a] = 7;
+        depthQueue.context[0x00b] = 0;
+        depthQueue.context[0x010] = 0x22900983;
+        depthQueue.context[0x011] = 0x20000181;
+        for (const auto offset : {0x012u, 0x014u}) depthQueue.context[offset] = 0x100;
+        for (const auto offset : {0x013u, 0x015u}) depthQueue.context[offset] = 0x200;
+        depthQueue.context[0x005] = 0x300;
+        depthQueue.context[0x01e] = 0x1;
+        depthQueue.context[0x008] = std::bit_cast<std::uint32_t>(0.25f);
+        depthQueue.context[0x009] = std::bit_cast<std::uint32_t>(0.75f);
+        struct DepthStencilCase {
+            std::uint32_t control;
+            std::uint32_t ops;
+            std::uint32_t masks;
+            bool writes;
+        };
+        for (const auto& [control, ops, masks, writes] : {DepthStencilCase{0x00700710u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700712u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700714u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700716u, 0x00050050u, 0x01ffff01u, true}, DepthStencilCase{0x00700711u, 0x00050050u, 0x01ffff01u, true}, DepthStencilCase{0x00700711u, 0u, 0x01ffff01u, false}, DepthStencilCase{0x00700711u, 0x00050050u, 0x0100ff01u, false}, DepthStencilCase{0x00700713u, 0u, 0x01ffff01u, false}, DepthStencilCase{0x00700718u, 0x00050050u, 0x01ffff01u, false}}) {
+            depthQueue.context[0x200] = control;
+            depthQueue.context[0x10b] = ops;
+            depthQueue.context[0x10c] = depthQueue.context[0x10d] = masks;
+            const auto what = "DB_DEPTH_CONTROL " + std::to_string(control) + " with stencil operations " + std::to_string(ops) + " and masks " + std::to_string(masks);
+            Require(AgcDriver::Graphics::DrawRejection(depthQueue, false).empty(), "the draw precheck refused a partial 4_4_4_4 write under " + what);
+            const auto partial = AgcDriver::Graphics::DecodeState(depthQueue);
+            const auto merge = AgcDriver::Graphics::ExportTargetMerge(partial);
+            Require(partial.depth.has_value() == ((control & 0xbu) != 0u) && partial.depthBoundsTest == ((control & 8u) != 0u) && merge.mask == 0xf000u && AgcDriver::Graphics::DepthStencilWrites(partial) == writes && merge.depthStencilWrites == writes && merge.depthStencilTests == ((control & 0xbu) != 0u), "a partial 4_4_4_4 write under " + what + (writes ? " did not report" : " reported") + " depth or stencil writes");
+        }
+        auto truncated = depthQueue;
+        truncated.context[0x200] = 0x00700712u;
+        truncated.context[0x010] = 0x22900987u;
+        truncated.context[0x2f8] = 0x00100001u;
+        truncated.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) truncated.context[0x2fe + pixel * 4u] = 0xcc44;
+        truncated.context[0x31d] = truncated.context.at(0x31d) & ~0x3f000u;
+        truncated.context[0x8e] = 0xf;
+        const auto full = AgcDriver::Graphics::DecodeState(truncated);
+        Require(full.samples == 2 && full.truncatedCoverage && !full.mergedCoverage && full.color.samples == 1 && full.color.partialWriteMask == 0u, "a full write of a one-sample 4_4_4_4 unorm target beside a 2x depth target did not decode as truncated coverage");
+        truncated.context[0x8e] = 1;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(truncated); }, "under merged or truncated coverage");
+    }
+    {
+        auto smoothed = queue;
+        smoothed.context[0x2f8] = 0x0020c002u;
+        smoothed.context[0x292] = 3;
+        smoothed.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) smoothed.context[0x2fe + pixel * 4u] = 0xcc44;
+        smoothed.context[0x31d] = smoothed.context.at(0x31d) & ~0x3f000u;
+        smoothed.context[0x201] = 0x02130000u;
+        const auto merged = AgcDriver::Graphics::DecodeState(smoothed);
+        Require(merged.samples == 4 && merged.mergedCoverage && merged.color.samples == 1 && merged.color.partialWriteMask == 0u, "a full write of a one-sample 4_4_4_4 unorm target under OVERRASTERIZATION_AMOUNT 2 did not decode as merged coverage");
+        smoothed.context[0x8e] = 1;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(smoothed); }, "under merged or truncated coverage");
+    }
+    {
+        changed.context[0x8e] = 1;
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        auto killQueue = changed;
+        killQueue.context[0x203] = 0x40u;
+        const auto killState = AgcDriver::Graphics::DecodeState(killQueue);
+        killQueue.context[0x203] = 0x10u;
+        const auto earlyState = AgcDriver::Graphics::DecodeState(killQueue);
+        Require(killState.pixelKill && !killState.pixelEarlyZ && !earlyState.pixelKill && earlyState.pixelEarlyZ, "DB_SHADER_CONTROL.KILL_ENABLE of a 4_4_4_4 merge did not decode as a kill under late tests");
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, partial, mergeCode);
+        merging.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(partial);
+        const std::array<std::uint32_t, 3> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat};
+        merging.target.supportedCapabilities = capabilities;
+        merging.target.registrationWordLimit = 1u << 20u;
+        const ShaderRecompiler::RequestSerializer mergeSerializer;
+        Require(mergeSerializer.Deserialize(mergeSerializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "the 4_4_4_4 target merge was lost in serialization");
+        auto unmerged = merging;
+        unmerged.context.pixel->targetMerge = {};
+        auto moved = merging;
+        moved.context.pixel->targetMerge.descriptor[0] += 0x100u;
+        std::vector<std::uint64_t> mergedKey, unmergedKey, movedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(merging, mergedKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(unmerged, unmergedKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(moved, movedKey);
+        Require(mergedKey != unmergedKey && mergedKey == movedKey, "the static shader key does not separate merging from plain writes, or depends on the merged target's address");
+        for (const bool registration : {false, true}) {
+            merging.target.registrationModules = registration;
+            const auto merged = ShaderRecompiler::Recompile(merging);
+            const auto words = merged.spirv.Copy();
+            std::size_t reads = 0, writes = 0;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                reads += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageRead ? 1u : 0u;
+                writes += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageWrite ? 1u : 0u;
+            }
+            const auto what = std::string(registration ? "a registration" : "a specialized") + " 4_4_4_4 merge module";
+            Require(merged.registrationModule == registration && reads == 1u && writes == 1u && interlockShape(words) == "capability extension ordered begin end " && declaresEarlyFragmentTests(merging), what + " did not read and write the target once inside a pixel interlock after early tests: " + interlockShape(words));
+            Require(coherentImageRead(words), what + " does not read the target through a Coherent image variable");
+            const auto bound = std::ranges::any_of(merged.bindings, [&](const ShaderRecompiler::DescriptorBinding& binding) {
+                if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) return false;
+                for (std::size_t offset = 0; offset + 8u <= binding.guestDescriptor.size(); offset += 8u) {
+                    if (std::equal(merging.context.pixel->targetMerge.descriptor.begin(), merging.context.pixel->targetMerge.descriptor.end(), binding.guestDescriptor.begin() + static_cast<std::ptrdiff_t>(offset))) return true;
+                }
+                return false;
+            });
+            Require(bound, what + " does not bind the merged target as a storage image");
+            ShaderRecompiler::RecompileResult vertex;
+            vertex.spirv = makeModule({});
+            const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+            const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &merged, 0}}};
+            Require(AgcDriver::Graphics::ValidateShaders(shaders, partial, subgroup, false) == std::set<std::uint32_t>{0u}, what + " lost its export to attachment 0");
+        }
+        auto lacking = merging;
+        const std::array<std::uint32_t, 2> noInterlock{spv::CapabilityShader, spv::CapabilityStorageImageReadWithoutFormat};
+        lacking.target.supportedCapabilities = noInterlock;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(lacking)); }, "fragmentShaderPixelInterlock");
+        auto unformatted = merging;
+        const std::array<std::uint32_t, 2> noFormatlessReads{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT};
+        unformatted.target.supportedCapabilities = noFormatlessReads;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(unformatted)); }, "storage image reads without a format");
+        auto killing = merging;
+        killing.context.pixel->pixelKillEnable = true;
+        killing.context.pixel->earlyZ = false;
+        for (const bool registration : {false, true}) {
+            killing.target.registrationModules = registration;
+            const auto words = ShaderRecompiler::Recompile(killing).spirv.Copy();
+            std::size_t reads = 0, writes = 0;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                reads += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageRead ? 1u : 0u;
+                writes += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageWrite ? 1u : 0u;
+            }
+            Require(reads == 1u && writes == 1u && interlockShape(words) == "capability extension ordered begin end " && declaresEarlyFragmentTests(killing), "a killing 4_4_4_4 merge module under late tests of a draw without depth or stencil writes did not merge inside a pixel interlock after early tests");
+        }
+        killing.context.pixel->targetMerge.depthStencilWrites = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(killing)); }, "kills pixels under late tests of a draw writing depth or stencil");
+        auto earlyKilling = killing;
+        earlyKilling.context.pixel->earlyZ = true;
+        static_cast<void>(ShaderRecompiler::Recompile(earlyKilling));
+        auto exporting = merging;
+        exporting.context.pixel->depthExportEnable = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(exporting)); }, "exports depth");
+        alignas(16) static std::array<std::uint32_t, 4> counted{};
+        static const std::array<std::uint32_t, 4> counter{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data())), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data()) >> 32u) & 0xffffu, 16u, 0x31016facu};
+        constexpr std::array<std::uint32_t, 6> countingCode{0x7e000281u, 0xe0c80000u, 0x80000000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto counting = packedExportRequest(changed, partial, countingCode);
+        counting.context.userData = counter;
+        counting.context.pixel->targetMerge = merging.context.pixel->targetMerge;
+        counting.target = merging.target;
+        counting.target.registrationModules = false;
+        counting.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+        static const std::array<std::uint32_t, 4> atomicCapabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityInt64};
+        counting.target.supportedCapabilities = atomicCapabilities;
+        counting.context.pixel->earlyZ = false;
+        static_cast<void>(ShaderRecompiler::Recompile(counting));
+        counting.context.pixel->targetMerge.depthStencilTests = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(counting)); }, "writes guest memory (stores, atomics or GDS) under late tests");
+        counting.context.pixel->earlyZ = true;
+        const auto earlyWords = ShaderRecompiler::Recompile(counting).spirv.Copy();
+        std::size_t atomics = 0;
+        for (std::size_t at = 5; at < earlyWords.size() && (earlyWords[at] >> 16u) != 0; at += earlyWords[at] >> 16u) atomics += static_cast<spv::Op>(earlyWords[at] & 0xffffu) == spv::OpAtomicIAdd ? 1u : 0u;
+        Require(atomics == 1u && interlockShape(earlyWords) == "capability extension ordered begin end " && declaresEarlyFragmentTests(counting), "a 4_4_4_4 merge whose shader adds to a counter under early tests did not keep its one atomic add beside the merge");
+        constexpr std::array<std::uint32_t, 9> gdsReadCode{0xbefc03ffu, 0x00000100u, 0x7e000280u, 0xd8da0000u, 0x04000000u, 0xbf8c0000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto gdsReading = packedExportRequest(changed, partial, gdsReadCode);
+        gdsReading.context.pixel->targetMerge = counting.context.pixel->targetMerge;
+        gdsReading.context.pixel->earlyZ = false;
+        gdsReading.target = counting.target;
+        static_cast<void>(ShaderRecompiler::Recompile(gdsReading));
+        constexpr std::array<std::uint32_t, 9> gdsAddCode{0xbefc03ffu, 0x00000100u, 0x7e000280u, 0xd8020000u, 0x00000000u, 0xbf8c0000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto gdsAdding = gdsReading;
+        gdsAdding.shader.code = gdsAddCode;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(gdsAdding)); }, "writes guest memory (stores, atomics or GDS) under late tests");
+        auto lateMerge = counting;
+        lateMerge.context.pixel->earlyZ = false;
+        lateMerge.context.pixel->targetMerge = {};
+        static_cast<void>(ShaderRecompiler::Recompile(lateMerge));
+    }
+    changed = queue;
+    changed.context[0x8e] = 1u;
+    changed.context[0x31d] = (changed.context.at(0x31d) & ~0x3f000u) | (1u << 12u) | (1u << 15u);
+    {
+        const auto multisampled = AgcDriver::Graphics::DecodeState(changed);
+        Require(multisampled.samples == 2u && multisampled.color.samples == 2u && multisampled.color.partialWriteMask == 0xf000u && multisampled.blends[0].colorWriteMask == 0u && multisampled.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target did not merge per sample behind a closed write mask");
+        auto coverage = changed;
+        coverage.context[0x1b3] = 0x4002u;
+        coverage.context[0x1b4] = 0x4002u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(coverage); }, "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample");
+        coverage.context[0x8e] = 0xfu;
+        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
+        struct InputCase {
+            std::uint32_t inputs;
+            std::uint32_t position;
+            const char* what;
+        };
+        auto rasterized = changed;
+        rasterized.context[0x2f8] = 0x00100001u;
+        rasterized.context[0x292] = 3;
+        rasterized.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) rasterized.context[0x2fe + pixel * 4u] = 0xcc44;
+        const auto inputState = [](AgcDriver::QueueState queue, std::uint32_t inputs, std::uint32_t position) {
+            queue.context[0x1b3] = inputs;
+            queue.context[0x1b4] = inputs;
+            queue.context[0x1b8] = position;
+            return queue;
+        };
+        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}}) {
+            auto moved = inputState(rasterized, inputs, position);
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(moved); }, "cannot read the ancillary word or, unless every sample sits at the pixel centre");
+            moved.context[0x293] = moved.context.at(0x293) | 0x10000u;
+            Require(AgcDriver::Graphics::DecodeState(moved).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose shader the guest runs per sample was refused for reading ") + what);
+            if (inputs == 0x2002u) {
+                expectFailure([&] { AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)); }, "cannot read the ancillary word");
+                continue;
+            }
+            Require(AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target raised from a one-sample rasterizer, every sample at the pixel centre, was refused for reading ") + what);
+        }
+        for (const auto& [inputs, position, what] : {InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x0302u, 0x100000u, "POS_X_FLOAT and POS_Y_FLOAT at the upper-left corner"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
+            Require(AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose pixel-rate shader reads ") + what + " was refused");
+        }
+        const auto merge = AgcDriver::Graphics::ExportTargetMerge(multisampled);
+        const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
+        Require(merge.samples == 2u && merge.mask == 0xf000u && surface.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && surface.samples == 2u && surface.baseAddress == multisampled.color.surfaceAddress && surface.width == multisampled.color.extent.width && surface.height == multisampled.color.extent.height && surface.format == AgcDriver::Graphics::TargetMergeSurface(multisampled.color).format, "the merge descriptor of a 2-sample 4_4_4_4 unorm target does not decode to its multisampled surface");
+        auto unshaded = multisampled;
+        unshaded.perSampleShading = false;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::ExportTargetMerge(unshaded)); }, "needs per-sample shading");
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, multisampled, mergeCode);
+        merging.context.pixel->targetMerge = merge;
+        const std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageMultisample, spv::CapabilityInterpolationFunction};
+        merging.target.supportedCapabilities = capabilities;
+        merging.target.fragmentShaderBarycentricEnabled = true;
+        const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
+        std::size_t sampled = 0;
+        bool sampleRate = false;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpCapability && words[at + 1] == spv::CapabilitySampleRateShading) sampleRate = true;
+            if (op == spv::OpImageRead && (words[at] >> 16u) == 7u && words[at + 5] == spv::ImageOperandsSampleMask) ++sampled;
+            if (op == spv::OpImageWrite && (words[at] >> 16u) == 6u && words[at + 4] == spv::ImageOperandsSampleMask) ++sampled;
+        }
+        Require(sampleRate && sampled == 2u && interlockShape(words) == "capability extension ordered begin end ", "a 2-sample 4_4_4_4 merge module does not read and write the shaded sample inside a pixel interlock");
+        auto single = merging;
+        const std::array<std::uint32_t, 4> noMultisampleStorage{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityInterpolationFunction};
+        single.target.supportedCapabilities = noMultisampleStorage;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(single)); }, "storage image multisampling");
+        auto centred = merging;
+        centred.target.fragmentShaderBarycentricEnabled = false;
+        centred.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(multisampled, *centred.context.pixel);
+        Require(std::ranges::all_of(centred.context.pixel->sampleLocations, [](std::uint8_t location) { return location == 0u; }), "a merge raised from a one-sample rasterizer did not keep every sample at the pixel centre");
+        static_cast<void>(ShaderRecompiler::Recompile(centred));
+        const auto rasterizedState = AgcDriver::Graphics::DecodeState(rasterized);
+        auto offCentre = packedExportRequest(rasterized, rasterizedState, mergeCode);
+        offCentre.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(rasterizedState);
+        offCentre.context.pixel->iteratesSamples = rasterizedState.perSampleShading;
+        offCentre.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(rasterizedState, *offCentre.context.pixel);
+        Require(std::ranges::any_of(offCentre.context.pixel->sampleLocations, [](std::uint8_t location) { return location != 0u; }), "a 2-sample rasterizer's merge did not pass its off-centre sample locations");
+        offCentre.target.supportedCapabilities = capabilities;
+        offCentre.target.fragmentShaderBarycentricEnabled = false;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(offCentre)); }, "its centre-located barycentrics would follow the sample");
+        offCentre.target.fragmentShaderBarycentricEnabled = true;
+        static_cast<void>(ShaderRecompiler::Recompile(offCentre));
+        alignas(16) static std::array<std::uint32_t, 4> counted{};
+        static const std::array<std::uint32_t, 4> counter{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data())), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data()) >> 32u) & 0xffffu, 16u, 0x31016facu};
+        constexpr std::array<std::uint32_t, 6> countingCode{0x7e000281u, 0xe0c80000u, 0x80000000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto counting = packedExportRequest(changed, multisampled, countingCode);
+        counting.context.userData = counter;
+        counting.context.pixel->targetMerge = merge;
+        counting.context.pixel->iteratesSamples = true;
+        counting.context.pixel->earlyZ = true;
+        counting.target = merging.target;
+        counting.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+        static const std::array<std::uint32_t, 6> atomicCapabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageMultisample, spv::CapabilityInterpolationFunction, spv::CapabilityInt64};
+        counting.target.supportedCapabilities = atomicCapabilities;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(counting)); }, "each covered sample would repeat its writes");
+        auto unmergedCounting = counting;
+        unmergedCounting.context.pixel->targetMerge = {};
+        static_cast<void>(ShaderRecompiler::Recompile(unmergedCounting));
+    }
+    for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 2u}, std::pair{0u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
+        changed = queue;
+        changed.context[0x31c] = (changed.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    }
+    changed = queue;
+    changed.context[0x31c] |= 0x10000000u;
+    changed.context[0x325] = 0x1234;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "DCC-compressed 4_4_4_4 unorm color targets");
+    changed = queue;
+    changed.context[0x31c] |= 0x40000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets");
+
+    constexpr std::array<std::uint32_t, 3> code{0xf800180fu, 0x07060504u, 0xbf810000u};
+    const auto request = packedExportRequest(queue, state, code);
+    auto plain = request;
+    plain.context.pixel->targetExportPacking.fill(ColorExportPacking::None);
+    const ShaderRecompiler::RequestSerializer serializer;
+    Require(serializer.Deserialize(serializer.Serialize(request)).request.context.pixel->targetExportPacking == request.context.pixel->targetExportPacking, "the 4_4_4_4 unorm packing was lost in serialization");
+    const auto packed = ShaderRecompiler::Recompile(request);
+    const auto unpacked = ShaderRecompiler::Recompile(plain);
+    Require(packed.PipelineVariantId() != unpacked.PipelineVariantId() && !(packed.spirv == unpacked.spirv), "the 4_4_4_4 export packing did not specialize the module");
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = makeModule({});
+    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
+    Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the 4_4_4_4 packed export did not reach attachment 0");
+}
+
 void float11_11_10TargetTests() {
     using ShaderRecompiler::ColorExportPacking;
     auto queue = makeState();
@@ -9809,7 +10270,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(3);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(4);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -11038,6 +11499,15 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(mergedKey, context, mergedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(mergedReplayed, context, mergedDecoded.state, mergedDecoded.vertexInput, layouts.View(), shaders, mergedDecoded.attachmentLayout);
         Require(mergedKey != fourSamples && mergedKey == mergedReplayed, "the decoded merged coverage state keys another pipeline");
+        auto partialState = state;
+        partialState.colors[0].partialWriteMask = 0xf000u;
+        GraphicsPipelineRecipe partialDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), partialDecoded), "the partial write recipe does not decode");
+        Require(partialDecoded.state.colors.size() == partialState.colors.size() && partialDecoded.state.colors[0].partialWriteMask == 0xf000u, "the recipe dropped the merged target's partial write mask");
+        std::vector<std::byte> partialKey, partialReplayed;
+        BuildPipelineStoreKey(partialKey, context, partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(partialReplayed, context, partialDecoded.state, partialDecoded.vertexInput, layouts.View(), shaders, partialDecoded.attachmentLayout);
+        Require(partialKey != original && partialKey == partialReplayed, "the decoded partial write state keys another pipeline");
         auto movedState = state;
         movedState.viewport.x = 5;
         movedState.colors[0].address = 0x9000;
@@ -11397,6 +11867,12 @@ int main(int argc, char** argv) {
             std::cerr << "descriptor pool reset failure did not terminate\n";
             return 1;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--unobserved-provoking-vertex") {
+            UnobservedProvokingVertexTests();
+            ProvokingVertexTests();
+            std::cout << "Unobserved provoking vertex checks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--covered-centroid-state") {
             multisampleTests();
             std::cout << "Covered-centroid and multisample state checks passed\n";
@@ -11465,6 +11941,7 @@ int main(int argc, char** argv) {
         ZExportTests();
         unorm10_11_11TargetTests();
         float11_11_10TargetTests();
+        unorm4_4_4_4TargetTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
         earlyFragmentTestsTests();
@@ -11599,6 +12076,7 @@ int main(int argc, char** argv) {
         RunGuestTextureResourceTests();
         RunDepthSurfaceReuseTests();
         RunGuestSamplerResourceTests();
+        RunLastRecordIndicesTests();
         mock = MockVulkan{};
         auto textureDetilerContext = mockContext();
         textureDetilerContext.limits.minStorageBufferOffsetAlignment = 16;
