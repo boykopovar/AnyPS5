@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -73,6 +74,16 @@ int main() {
         char name[32] = {};
         Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, name, sizeof(name)) == 13);
         Require(std::strcmp(name, "FixtureType1") == 0);
+        if constexpr (sizeof(FT_Long) == 8) {
+            std::array<unsigned char, 64> actual;
+            std::array<unsigned char, 64> expected;
+            actual.fill(0xA5);
+            expected.fill(0xA5);
+            const auto hugeLength = std::numeric_limits<std::int64_t>::max();
+            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), hugeLength) ==
+                    FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), static_cast<FT_Long>(hugeLength)));
+            Require(actual == expected);
+        }
     }
     {
         FacePair pair(FontFixture::BuildFont(3, {}));
@@ -82,6 +93,14 @@ int main() {
                 FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), 16));
     }
     Require(FT_Get_PS_Font_Value_nid_postfix(nullptr, PS_DICT_FONT_NAME, 0, nullptr, 0) == FT_Get_PS_Font_Value(nullptr, PS_DICT_FONT_NAME, 0, nullptr, 0));
+    std::array<unsigned char, 1> untouched{0xA5};
+    const auto hugeLength = std::numeric_limits<std::int64_t>::max();
+    Require(FT_Get_PS_Font_Value_nid_postfix(nullptr, PS_DICT_FONT_NAME, 0, untouched.data(), hugeLength) ==
+            FT_Get_PS_Font_Value(nullptr, PS_DICT_FONT_NAME, 0, untouched.data(), static_cast<FT_Long>(hugeLength)));
+    Require(untouched[0] == 0xA5);
     GuestFaceRec empty{};
     Require(FT_Get_PS_Font_Value_nid_postfix(&empty, PS_DICT_FONT_NAME, 0, nullptr, 0) == FT_Get_PS_Font_Value(nullptr, PS_DICT_FONT_NAME, 0, nullptr, 0));
+    Require(FT_Get_PS_Font_Value_nid_postfix(&empty, PS_DICT_FONT_NAME, 0, untouched.data(), hugeLength) ==
+            FT_Get_PS_Font_Value(nullptr, PS_DICT_FONT_NAME, 0, untouched.data(), static_cast<FT_Long>(hugeLength)));
+    Require(untouched[0] == 0xA5);
 }
