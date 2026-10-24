@@ -79,4 +79,8 @@ void* APS5_VABI SSL_get_rbio_nid_postfix(const LibreSsl* ssl) {
     return Connection(ssl, __func__).rbio;
 }
 
+void* APS5_VABI SSL_get_wbio_nid_postfix(const LibreSsl* ssl) {
+    return Connection(ssl, __func__).wbio;
+}
+
 }
