@@ -9,6 +9,7 @@
 
 extern "C" {
 int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name);
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
 int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
 int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
@@ -147,6 +148,29 @@ static void MutexBasics() {
     RequireThrows<std::invalid_argument>([] { _Mtx_init_nid_postfix(nullptr, tryable); });
     RequireThrows<std::invalid_argument>([] { _Mtx_lock_nid_postfix(nullptr); });
     RequireThrows<std::invalid_argument>([] { _Mtx_unlock_nid_postfix(nullptr); });
+}
+
+static void DefaultNameOverrideMutex() {
+    void* mutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&mutex, tryable, "guest mutex") == success && mutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success && _Mtx_lock_nid_postfix(&mutex) == busy);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    _Mtx_destroy_nid_postfix(&mutex);
+    Require(mutex == nullptr);
+
+    void* unnamedMutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&unnamedMutex, 0, nullptr) == success && unnamedMutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&unnamedMutex) == success);
+    Require(_Mtx_unlock_nid_postfix(&unnamedMutex) == success);
+    _Mtx_destroy_nid_postfix(&unnamedMutex);
+
+    void* recursiveMutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&recursiveMutex, recursive, "recursive") == success && recursiveMutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&recursiveMutex) == success && _Mtx_lock_nid_postfix(&recursiveMutex) == success);
+    Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success && _Mtx_unlock_nid_postfix(&recursiveMutex) == success);
+    _Mtx_destroy_nid_postfix(&recursiveMutex);
+
+    RequireThrows<std::invalid_argument>([] { _Mtx_init_with_default_name_override_nid_postfix(nullptr, tryable, "null"); });
 }
 
 static void RecursiveMutex() {
@@ -479,6 +503,7 @@ int main() {
     VersionedSync();
     ForwardedCalls();
     MutexBasics();
+    DefaultNameOverrideMutex();
     RecursiveMutex();
     MutualExclusion();
     ConditionBroadcast();
