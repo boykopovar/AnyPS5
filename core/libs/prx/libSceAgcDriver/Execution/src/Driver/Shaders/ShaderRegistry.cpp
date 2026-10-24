@@ -1887,6 +1887,10 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     for (const auto reg : primitive) state.userConfig.insert_or_assign(reg.offset, reg.value);
     const auto localDevice = device.Load();
     require(localDevice != nullptr, "graphics ABI device is missing");
+    if (LazyShaderPreparation()) {
+        transaction.Commit();
+        return;
+    }
     for (const auto& selected : selectedStages) {
         if (!DeferFailedRegistration(*selected) && owner == nullptr) owner = selected;
     }
@@ -2136,6 +2140,10 @@ void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::
     require(front != fragment, "rectangle stages refer to the same shader");
     const auto localDevice = device.Load();
     require(localDevice != nullptr, "shader registration device is missing");
+    if (LazyShaderPreparation()) {
+        transaction.Commit();
+        return;
+    }
     ResolvePreparedGraphics(*front, fragment, primitiveType, localDevice->Target(), true);
     transaction.Commit();
 }

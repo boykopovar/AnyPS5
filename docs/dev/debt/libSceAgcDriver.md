@@ -2,6 +2,8 @@
 
 ### Silent stubs
 
+- [Lazy pipeline ABI preparation](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp) extends `APS5_LAZY_SHADER_PREPARE` to explicit pipeline ABI calls after registered-header validation. Draw and dispatch preparation, including unsupported-code failures, remains at first use; first-use latency is expected. Default eager behavior is unchanged. Console pipeline-cache scheduling is not measured.
+
 - [sceAgcDriverRegisterDefaultOwner](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) (libSceAgcDriver) - takes one uint32 owner by value (OpenAGC `include/agcdriver.h`, SharpEmu `AgcExports.DriverResources.cs`) and returns 0 without recording it. PPSA21480 treats the code 0x8A6C9018 it returned before as fatal. Console behaviour is unverified: OpenAGC describes the function as a firmware 5.50 stub that returns 0x8A6C9018, SharpEmu returns 0
 - [sceAgcDriverSetResourceRegistrationInfo](../../../core/libs/prx/libSceAgcDriver/Resource/src/Registration.cpp) (libSceAgcDriver) - returns 0 without storing the info, as the retail `libSceAgcDriver.sprx` body does; registration is unavailable, so nothing reads it back.
 
