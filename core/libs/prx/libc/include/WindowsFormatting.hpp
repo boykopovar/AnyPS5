@@ -378,7 +378,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
                 char32_t code = *value++;
-                if (code >= 0xd800 && code < 0xdc00 && *value >= 0xdc00 && *value < 0xe000) code = 0x10000 + ((code - 0xd800) << 10) + (*value++ - 0xdc00);
                 const auto previousSize = utf8.size();
                 AppendUtf8(utf8, code);
                 if (utf8.size() > precisionLimit) {

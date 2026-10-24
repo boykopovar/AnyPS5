@@ -123,8 +123,8 @@ static void CheckSizeLimits() {
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
     const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80", "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80Z"};
+        "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd",
+        "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd", "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd"};
     bool correct = true;
     for (int precision = 0; precision < 12; ++precision) {
         char output[32];
@@ -139,7 +139,9 @@ static bool CheckWidePrecision() {
     char output[32];
     Require(snprintf_nid_postfix(output, sizeof(output), "[%5.1ls]", u"\u00e9") == 7 && std::strcmp(output, "[     ]") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "[%-5.2ls]", u"\u00e9") == 7 && std::strcmp(output, "[\xc3\xa9   ]") == 0);
-    Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 0 && output[0] == 0);
+    Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 3 && std::strcmp(output, "\xed\xa0\xbd") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%ls]", u"\U0001f600") == 8 && std::strcmp(output, "[\xed\xa0\xbd\xed\xb8\x80]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%-9S]", u"\U0001f600") == 11 && std::strcmp(output, "[\xed\xa0\xbd\xed\xb8\x80   ]") == 0);
     Require(FormatList(output, sizeof(output), "%ls[% u][% 4u][%+ lu][%- 3hhu][% x][%+o]", u"", 5u, 5u, 5ULL, 5u, 255u, 8u) == 25
         && std::strcmp(output, "[5][   5][5][5  ][ff][10]") == 0);
     Require(FormatList(output, sizeof(output), "%.*ls:%d", -1, u"\u00e9", 7) == 4 && std::strcmp(output, "\xc3\xa9:7") == 0);
