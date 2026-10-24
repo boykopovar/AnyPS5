@@ -37,19 +37,16 @@
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+extern "C" int APS5_VABI getpid_nid_postfix(void);
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
 static bool IsCpuClock(int clockId) {
-    const auto bits = static_cast<std::uint32_t>(clockId);
-    if ((bits & CPU_CLOCK_BIT) == 0)
-        return false;
-    if ((bits & CPU_CLOCK_PROCESS_BIT) != 0)
-        throw std::runtime_error("clock: unsupported process CPU clock_id " + std::to_string(clockId));
-    return true;
+    return (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_BIT) != 0;
 }
 
 static std::uint64_t RawMonotonicNanos() {
@@ -397,8 +394,11 @@ static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
 
 static int ReadClock(int clockId, KernelTimespec* tp) {
     if (IsCpuClock(clockId)) {
+        const int id = static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK);
+        const bool process = (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_PROCESS_BIT) != 0;
+        if (process && id == getpid_nid_postfix()) return ReadClock(GUEST_CLOCK_PROCESS_CPUTIME_ID, tp);
         std::uint64_t nanos = 0;
-        if (!GuestThreadCpuNanos(static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK), &nanos)) {
+        if (process || !GuestThreadCpuNanos(id, &nanos)) {
             *__error_nid_postfix() = GUEST_EINVAL;
             return -1;
         }
