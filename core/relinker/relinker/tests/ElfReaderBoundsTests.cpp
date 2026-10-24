@@ -136,6 +136,29 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"load and uncovered SCE RELRO alignment is not a power of two", [] {
+            constexpr std::uint64_t alignments[] = {3, 0x7fffffff, 0xfffffffffffffffb};
+            for (const std::uint32_t type : {1u, 0x61000010u}) {
+                for (const std::uint64_t alignment : alignments) {
+                    auto bytes = Fixture();
+                    Write<std::uint32_t>(bytes, 64, type);
+                    Write<std::uint64_t>(bytes, 112, alignment);
+                    RejectProgramHeaders(std::move(bytes));
+                }
+            }
+        }},
+        {"load and uncovered SCE RELRO alignment of zero, one or a power of two", [] {
+            constexpr std::uint64_t alignments[] = {0, 1, 2, 8, 0x4000};
+            for (const std::uint32_t type : {1u, 0x61000010u}) {
+                for (const std::uint64_t alignment : alignments) {
+                    auto bytes = Fixture();
+                    Write<std::uint32_t>(bytes, 64, type);
+                    Write<std::uint64_t>(bytes, 112, alignment);
+                    const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+                    Require(headers.size() == 1 && headers[0].Type == 1 && headers[0].Alignment == alignment);
+                }
+            }
+        }},
         {"TLS image inside load memory and empty TLS placeholders", [] {
             for (const auto& [address, fileSize, memorySize, alignment] : {std::tuple<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>{0x1008, 8, 16, 8}, {0x1030, 16, 16, 16}, {0x9000, 0, 0, 0}, {0x9000, 0, 16, 16}}) {
                 const auto headers = Relinker::ElfReader(TlsFixture(address, fileSize, memorySize, alignment)).ReadProgramHeaders();
