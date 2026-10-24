@@ -634,6 +634,11 @@ bool IsCharacterDevice(int fd) {
 #endif
 }
 
+bool GrantsAccess(int fd, bool write) {
+    const int access = AccessMode(fd, write ? "pwrite" : "pread");
+    return access == ReadWrite || access == (write ? WriteOnly : ReadOnly);
+}
+
 bool IsVnode(int fd) {
     if (fd < 0 || File::IsRandomDevice(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
