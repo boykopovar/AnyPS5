@@ -21,14 +21,21 @@ void AddHttpContext(int contextId) {
 }
 
 void RemoveHttpContext(int contextId) {
-    std::lock_guard lock(g_optionsMutex);
+    std::unique_lock lock(g_optionsMutex);
     g_contextAcceptEncodingGzip.erase(contextId);
     if (g_contextAcceptEncodingGzip.empty()) g_objectOptions.clear();
+    lock.unlock();
+    RemoveHttpCookieJar(contextId);
 }
 
 bool HttpInitialised() {
     std::lock_guard lock(g_optionsMutex);
     return !g_contextAcceptEncodingGzip.empty();
+}
+
+bool IsHttpContext(int contextId) {
+    std::lock_guard lock(g_optionsMutex);
+    return g_contextAcceptEncodingGzip.contains(contextId);
 }
 
 void AddHttpTemplate(int templateId, int contextId) {
