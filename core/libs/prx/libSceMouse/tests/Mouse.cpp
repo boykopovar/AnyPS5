@@ -4,7 +4,9 @@
 #include "SDL_events.h"
 #include "SDL_mouse.h"
 
+#include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 
 extern "C" {
 bool MouseIsOpen_nid_no_patch();
@@ -100,13 +102,87 @@ int main() {
     input.HandleEvent(event, 7);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].connected);
 
-    for (int i = 0; i < 70; ++i) {
+    for (int i = 0; i < 300; ++i) {
         MouseInputEvent motion{};
-        motion.x = i;
+        motion.x = -1;
+        motion.y = i % 2;
         MousePublishInput_nid_no_patch(motion);
     }
+    Require(sceMouseRead(MOUSE_HANDLE, data, 8) == 1);
+    Require(data[0].x_axis == -300 && data[0].y_axis == 150 && data[0].buttons == 0);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+
+    MouseInputEvent still{};
+    MousePublishInput_nid_no_patch(still);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+    for (int i = 0; i < 300; ++i) {
+        MouseInputEvent alternating{};
+        alternating.x = i % 2;
+        MousePublishInput_nid_no_patch(alternating);
+    }
+    Require(sceMouseRead(MOUSE_HANDLE, data, 8) == 1);
+    Require(data[0].x_axis == 150 && data[0].y_axis == 0);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
+
+    MouseInputEvent zero{};
+    MouseInputEvent two{};
+    two.x = 2;
+    MouseInputEvent three{};
+    three.x = 3;
+    MouseInputEvent down{};
+    down.button = 1;
+    down.pressed = true;
+    MouseInputEvent up{};
+    up.button = 1;
+    for (const MouseInputEvent& report : {two, zero, down, zero, three, zero, up, zero}) MousePublishInput_nid_no_patch(report);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 64) == 4);
+    Require(data[0].x_axis == 2 && data[0].buttons == 0);
+    Require(data[1].x_axis == 0 && data[1].buttons == 1);
+    Require(data[2].x_axis == 3 && data[2].buttons == 1);
+    Require(data[3].x_axis == 0 && data[3].buttons == 0);
+
+    MouseInputEvent step{};
+    step.x = 3;
+    MousePublishInput_nid_no_patch(step);
+    MousePublishInput_nid_no_patch(step);
+    MouseInputEvent press{};
+    press.button = 1;
+    press.pressed = true;
+    MousePublishInput_nid_no_patch(press);
+    MousePublishInput_nid_no_patch(step);
+    MousePublishInput_nid_no_patch(step);
+    MouseInputEvent wheel{};
+    wheel.wheel = 1;
+    MousePublishInput_nid_no_patch(wheel);
+    MousePublishInput_nid_no_patch(step);
+    MouseInputEvent release{};
+    release.button = 1;
+    MousePublishInput_nid_no_patch(release);
+    MousePublishInput_nid_no_patch(step);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 64) == 7);
+    Require(data[0].x_axis == 6 && data[0].buttons == 0);
+    Require(data[1].x_axis == 0 && data[1].buttons == 1);
+    Require(data[2].x_axis == 6 && data[2].buttons == 1);
+    Require(data[3].wheel == 1 && data[3].x_axis == 0 && data[3].buttons == 1);
+    Require(data[4].x_axis == 3 && data[4].wheel == 0 && data[4].buttons == 1);
+    Require(data[5].x_axis == 0 && data[5].buttons == 0);
+    Require(data[6].x_axis == 3 && data[6].buttons == 0);
+    Require(data[2].timestamp >= data[1].timestamp && data[6].timestamp >= data[5].timestamp);
+
+    MouseInputEvent large{};
+    large.x = INT32_MAX;
+    MousePublishInput_nid_no_patch(large);
+    MousePublishInput_nid_no_patch(large);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 8) == 1 && data[0].x_axis == INT32_MAX);
+
+    for (int i = 0; i < 70; ++i) {
+        MouseInputEvent click{};
+        click.button = 1;
+        click.pressed = (i % 2) == 0;
+        MousePublishInput_nid_no_patch(click);
+    }
     Require(sceMouseRead(MOUSE_HANDLE, data, 64) == 64);
-    Require(data[0].x_axis == 6 && data[63].x_axis == 69);
+    Require(data[0].buttons == 1 && data[63].buttons == 0 && data[62].buttons == 1);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
     Require(!MouseIsOpen_nid_no_patch());

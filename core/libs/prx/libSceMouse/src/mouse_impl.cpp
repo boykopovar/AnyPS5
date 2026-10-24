@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <mutex>
 
 namespace {
@@ -22,6 +23,24 @@ void enqueue(const MouseData& data) {
     }
     history[(head + count) % MOUSE_MAX_DATA_NUM] = data;
     ++count;
+}
+
+bool motionOnly(const MouseData& data) {
+    return data.wheel == 0 && data.tilt == 0 && (data.x_axis != 0 || data.y_axis != 0);
+}
+
+std::int32_t saturatedSum(std::int32_t a, std::int32_t b) {
+    return static_cast<std::int32_t>(std::clamp<std::int64_t>(static_cast<std::int64_t>(a) + b, INT32_MIN, INT32_MAX));
+}
+
+bool mergeMotion(const MouseData& data) {
+    if (count == 0 || !motionOnly(data)) return false;
+    MouseData& tail = history[(head + count - 1) % MOUSE_MAX_DATA_NUM];
+    if (!motionOnly(tail) || tail.buttons != data.buttons || tail.connected != data.connected) return false;
+    tail.timestamp = data.timestamp;
+    tail.x_axis = saturatedSum(tail.x_axis, data.x_axis);
+    tail.y_axis = saturatedSum(tail.y_axis, data.y_axis);
+    return true;
 }
 }
 
@@ -100,6 +119,7 @@ void Publish(const MouseInputEvent& event) {
         return;
     }
     if (!opened) return;
+    if (event.button == 0 && !event.resetButtons && !event.connectionChange && event.x == 0 && event.y == 0 && event.wheel == 0 && event.tilt == 0) return;
     if (event.resetButtons) buttons = 0;
     if (event.button != 0) {
         if (event.pressed) buttons |= event.button;
@@ -113,6 +133,7 @@ void Publish(const MouseInputEvent& event) {
     data.y_axis = event.y;
     data.wheel = event.wheel;
     data.tilt = event.tilt;
+    if (event.button == 0 && !event.resetButtons && mergeMotion(data)) return;
     enqueue(data);
 }
 
