@@ -10,6 +10,7 @@
 extern "C" {
 int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void*);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void*, int);
+int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -24,6 +25,7 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
 }
 
 constexpr std::size_t ContextSize = 240;
+constexpr std::size_t ErrorDepthOffset = 180;
 constexpr std::size_t ErrorOffset = 184;
 
 struct alignas(8) TestContext {
@@ -71,8 +73,22 @@ static void TestSetError() {
     RequireThrows([] { X509_STORE_CTX_set_error_nid_postfix(nullptr, 1); });
 }
 
+static void TestGetErrorDepth() {
+    TestContext context;
+    context.Write<std::int32_t>(ErrorDepthOffset, 0);
+    Require(X509_STORE_CTX_get_error_depth_nid_postfix(&context) == 0);
+    context.Write<std::int32_t>(ErrorDepthOffset, 3);
+    Require(X509_STORE_CTX_get_error_depth_nid_postfix(&context) == 3);
+    context.Write<std::int32_t>(ErrorOffset, 9);
+    Require(X509_STORE_CTX_get_error_depth_nid_postfix(&context) == 3);
+    X509_STORE_CTX_set_error_nid_postfix(&context, 11);
+    Require(X509_STORE_CTX_get_error_depth_nid_postfix(&context) == 3);
+    RequireThrows([] { X509_STORE_CTX_get_error_depth_nid_postfix(nullptr); });
+}
+
 int main() {
     TestGetError();
     TestSetError();
+    TestGetErrorDepth();
     std::puts("libSceLibreSsl X509_STORE_CTX tests passed");
 }
