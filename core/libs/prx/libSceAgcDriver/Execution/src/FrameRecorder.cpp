@@ -23,6 +23,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 
 extern "C" int APS5_VABI sceAgcDriverGetTFRing(uintptr_t* base, uint32_t* size);
