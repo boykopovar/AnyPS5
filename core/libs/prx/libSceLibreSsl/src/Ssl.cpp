@@ -91,4 +91,8 @@ std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const LibreSsl* ssl) {
     return Connection(ssl, __func__).verifyResult;
 }
 
+int APS5_VABI SSL_get_shutdown_nid_postfix(const LibreSsl* ssl) {
+    return Internal(ssl, __func__).shutdown;
+}
+
 }
