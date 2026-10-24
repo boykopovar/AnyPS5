@@ -94,15 +94,6 @@ int Error() {
     return *__error_nid_postfix();
 }
 
-bool PathconfThrows(const char* path, int name) {
-    try {
-        pathconf_nid_postfix(path, name);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 bool ChrootThrows(const std::string& path) {
     try {
         chroot_nid_postfix(path.c_str());
@@ -274,11 +265,13 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
         Require(pathconf_nid_postfix(path.c_str(), 18) == 1024);
         Require(pathconf_nid_postfix(path.c_str(), 54) == 0);
         Require(pathconf_nid_postfix(path.c_str(), 55) == 0);
+        for (const int name : {10, 14, 16, 21}) Require(pathconf_nid_postfix(path.c_str(), name) == 65536);
+        Require(pathconf_nid_postfix(path.c_str(), 17) == 16384);
+        Require(pathconf_nid_postfix(path.c_str(), 60) == 3);
+        for (const int name : {59, 63, 64}) Require(pathconf_nid_postfix(path.c_str(), name) == 0);
     }
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {0, 2, 3, 9, 11, 53, 61, 62, 65, -1})
         Require(pathconf_nid_postfix(file.c_str(), name) == -1 && Error() == 22);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 53, 59, 60, 63, 64})
-        Require(PathconfThrows(file.c_str(), name));
     const auto missing = (root / "missing").string();
     Require(pathconf_nid_postfix(missing.c_str(), 4) == -1 && Error() == 2);
     Require(pathconf_nid_postfix(missing.c_str(), 0) == -1 && Error() == 2);
@@ -395,16 +388,6 @@ static void CheckProcessQueries() {
 }
 
 template <typename F>
-bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
-    try {
-        fn(descriptor, name);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
-template <typename F>
 void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 1) == 32767);
     Require(fn(descriptor, 4) == 255);
@@ -418,11 +401,13 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 18) == 1024);
     Require(fn(descriptor, 54) == 0);
     Require(fn(descriptor, 55) == 0);
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {10, 14, 16, 21}) Require(fn(descriptor, name) == 65536);
+    Require(fn(descriptor, 17) == 16384);
+    Require(fn(descriptor, 60) == 3);
+    for (const int name : {59, 63, 64}) Require(fn(descriptor, name) == 0);
+    for (const int name : {0, 2, 3, 9, 11, 61, 62, 65, -1})
         Require(fn(descriptor, name) == -1 && Error() == 22);
     Require(fn(descriptor, 53) == 200112);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
-        Require(DescriptorPathconfThrows(fn, descriptor, name));
     Require(fn(-1, 4) == -1 && Error() == 9);
     Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
 }
