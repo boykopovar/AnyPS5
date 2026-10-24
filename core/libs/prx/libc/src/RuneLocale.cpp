@@ -109,6 +109,7 @@ int APS5_VABI iswpunct_nid_postfix(std::uint32_t c) { return GuestRune::Is(c, Gu
 int APS5_VABI iswspace_nid_postfix(std::uint32_t c) { return GuestRune::Is(c, GuestRune::Space); }
 int APS5_VABI iswupper_nid_postfix(std::uint32_t c) { return GuestRune::Is(c, GuestRune::Upper); }
 int APS5_VABI iswxdigit_nid_postfix(std::uint32_t c) { return GuestRune::Is(c, GuestRune::Hex); }
+int APS5_VABI iswascii_nid_postfix(std::uint32_t c) { return (c & ~0x7Fu) == 0; }
 int APS5_VABI iswctype_nid_postfix(std::uint32_t c, std::uint64_t mask) { return GuestRune::Is(c, mask); }
 
 int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type) {
