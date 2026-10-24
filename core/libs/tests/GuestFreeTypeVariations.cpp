@@ -17,6 +17,7 @@ using namespace FreeType;
 extern "C" {
 int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec*, void**);
 int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary*, void*);
+int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
 }
 
 static void Check(bool value, int line) {
@@ -104,7 +105,27 @@ static void TestDoneMMVar() {
     Require(FT_Done_MM_Var_nid_postfix(nullptr, nullptr) == FT_Done_MM_Var(nullptr, nullptr));
 }
 
+static void TestSetDesign() {
+    for (const std::int64_t value : {0LL, 100LL << 16, 400LL << 16, 500LL << 16, 900LL << 16, 2000LL << 16, -(5LL << 16)}) {
+        for (const std::uint32_t count : {0u, 1u, 2u}) {
+            FacePair pair(VariableFont());
+            const std::int64_t guestCoordinates[2] = {value, value};
+            FT_Fixed nativeCoordinates[2] = {static_cast<FT_Fixed>(value), static_cast<FT_Fixed>(value)};
+            Require(FT_Set_Var_Design_Coordinates_nid_postfix(&pair.guest.rec, count, guestCoordinates) == FT_Set_Var_Design_Coordinates(pair.oracle, count, nativeCoordinates));
+            Require(pair.guest.rec.face_flags == pair.oracle->face_flags);
+        }
+    }
+    FacePair plain(FontFixture::BuildFont(3, {}));
+    const std::int64_t one[1] = {0};
+    FT_Fixed nativeOne[1] = {0};
+    Require(FT_Set_Var_Design_Coordinates_nid_postfix(&plain.guest.rec, 1, one) == FT_Set_Var_Design_Coordinates(plain.oracle, 1, nativeOne));
+    FacePair pair(VariableFont());
+    Require(FT_Set_Var_Design_Coordinates_nid_postfix(&pair.guest.rec, 1, nullptr) == FT_Set_Var_Design_Coordinates(pair.oracle, 1, nullptr));
+    Require(FT_Set_Var_Design_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_Var_Design_Coordinates(nullptr, 0, nullptr));
+}
+
 int main() {
     TestGetMMVar();
     TestDoneMMVar();
+    TestSetDesign();
 }
