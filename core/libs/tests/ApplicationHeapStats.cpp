@@ -62,6 +62,14 @@ void write(std::array<std::byte, TSize>& data, std::size_t offset, TValue value)
     std::memcpy(data.data() + offset, &value, sizeof(value));
 }
 
+template<typename TValue, std::size_t TSize>
+TValue read(const std::array<std::byte, TSize>& data, std::size_t offset) {
+    TValue value{};
+    require(offset <= data.size() && sizeof(value) <= data.size() - offset);
+    std::memcpy(&value, data.data() + offset, sizeof(value));
+    return value;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -90,13 +98,31 @@ int main(int argc, char** argv) {
         std::memset(replacement.data() + 0x20, 0, 10 * sizeof(void*));
         ApplicationHeapInitialize_nid_no_patch(process.data());
         require(ApplicationHeapAllocate_nid_no_patch(16) != nullptr);
-        reject([&] { malloc_stats_fast_nid_postfix(stats.data()); });
+        const auto measure = [&] {
+            stats.fill(std::byte{0x5a});
+            write(stats, 0, std::uint16_t{0x28});
+            write(stats, 2, std::uint16_t{1});
+            require(malloc_stats_fast_nid_postfix(stats.data()) == 0);
+            const auto maxSystem = read<std::uint64_t>(stats, 0x08), system = read<std::uint64_t>(stats, 0x10);
+            const auto maxInUse = read<std::uint64_t>(stats, 0x18), inUse = read<std::uint64_t>(stats, 0x20);
+            require(maxSystem >= system && system >= inUse && maxInUse >= inUse && read<std::uint64_t>(stats, 0x28) == 0x5a5a5a5a5a5a5a5aull);
+            return std::array<std::uint64_t, 4>{maxSystem, system, maxInUse, inUse};
+        };
+        const auto initial = measure();
+        require(initial[3] >= 16);
         auto* small = ApplicationHeapAllocate_nid_no_patch(16);
         auto* large = ApplicationHeapAllocate_nid_no_patch(100000);
+        const auto holding = measure();
+        require(holding[3] >= initial[3] + 100016 && holding[1] >= initial[1]);
         require(malloc_usable_size_nid_postfix(small) == 16 && malloc_usable_size_nid_postfix(large) == 100000);
         require(malloc_usable_size_nid_postfix(nullptr) == 0 && usableCalls == 0);
         ApplicationHeapFree_nid_no_patch(small);
         ApplicationHeapFree_nid_no_patch(large);
+        const auto released = measure();
+        require(released[3] == initial[3] && released[2] == holding[2]);
+        write(stats, 0, std::uint16_t{0x27});
+        require(malloc_stats_fast_nid_postfix(stats.data()) == 22);
+        require(malloc_stats_fast_nid_postfix(nullptr) == 22 && statsCalls == 0);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "missing") == 0) {

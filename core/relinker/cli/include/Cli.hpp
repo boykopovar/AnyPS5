@@ -26,10 +26,15 @@ struct Args {
     std::optional<std::uint64_t> windowsFixedBase;
     bool traceImports = false;
     std::optional<std::uint64_t> linuxFixedBase;
+    std::optional<std::uint64_t> macosFixedBase;
     std::uint32_t unusedFilterLevel = 0;
     std::string inputPath;
     std::string outputPath;
     std::string sceModulePath;
+    std::string patchesPath;
+    bool noPatches = false;
+    std::string verifyPatchesPath;
+    bool verifyOutput = false;
     std::string runPath = "$ORIGIN/libs";
     std::set<std::string> excludedSceModules;
     std::vector<std::string> moduleDirectories;

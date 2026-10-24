@@ -1,12 +1,32 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 
+#include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+
+using LogSinkFn = int (*)(std::FILE* stream, const char* text, std::size_t length);
+
+inline std::atomic<LogSinkFn>& LogSink() {
+    static std::atomic<LogSinkFn> sink{nullptr};
+    return sink;
+}
+
+inline long long LogTimestampMicros() {
+    static const bool timestamps = std::getenv("APS5_LOG_TIMESTAMPS") != nullptr;
+    if (!timestamps) return -1;
+    using Clock = std::chrono::steady_clock;
+    static const auto started = Clock::now();
+    return static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count());
+}
+
+inline int FormatLogTimestamp(char* out, std::size_t capacity, long long micros) {
+    return std::snprintf(out, capacity, "[+%llu.%06llu s] ", static_cast<unsigned long long>(micros / 1000000), static_cast<unsigned long long>(micros % 1000000));
+}
 
 #ifdef __MINGW_PRINTF_FORMAT
 [[gnu::format(__MINGW_PRINTF_FORMAT, 2, 3)]]
@@ -16,14 +36,9 @@
 inline int WriteLogLine(std::FILE* stream, const char* format, ...) {
     char small[1024];
     std::size_t prefixLength = 0;
-    static const bool timestamps = std::getenv("APS5_LOG_TIMESTAMPS") != nullptr;
-    if (timestamps) {
-        using Clock = std::chrono::steady_clock;
-        static const auto started = Clock::now();
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
-        const auto seconds = static_cast<unsigned long long>(elapsed / 1000000);
-        const auto microseconds = static_cast<unsigned long long>(elapsed % 1000000);
-        const int written = std::snprintf(small, sizeof(small), "[+%llu.%06llu s] ", seconds, microseconds);
+    const long long micros = LogTimestampMicros();
+    if (micros >= 0) {
+        const int written = FormatLogTimestamp(small, sizeof(small), micros);
         if (written < 0 || written >= static_cast<int>(sizeof(small))) return -1;
         prefixLength = static_cast<std::size_t>(written);
     }
@@ -43,7 +58,9 @@ inline int WriteLogLine(std::FILE* stream, const char* format, ...) {
     va_end(again);
     if (length < 0) return length;
     const auto totalLength = prefixLength + static_cast<std::size_t>(length);
-    std::fwrite(large.empty() ? small : large.data(), 1, totalLength, stream);
+    const char* text = large.empty() ? small : large.data();
+    if (const auto sink = LogSink().load(std::memory_order_acquire)) return sink(stream, text, totalLength);
+    std::fwrite(text, 1, totalLength, stream);
     return std::fflush(stream);
 }
 

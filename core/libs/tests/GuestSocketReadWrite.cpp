@@ -148,11 +148,9 @@ int main() {
     Require(close_nid_postfix(client) == 0);
     Require(Readable(server, In | Hup) && read_nid_postfix(server, received, sizeof(received)) == 0);
     Require(sceKernelRead(server, received, sizeof(received)) == 0);
-#ifndef _WIN32
     std::int64_t written = 0;
     for (int i = 0; i < 100 && written >= 0; ++i) written = write_nid_postfix(server, request, sizeof(request));
     Require(written == -1 && *__error_nid_postfix() == 32);
-#endif
     Require(close_nid_postfix(server) == 0);
     *__error_nid_postfix() = 0;
     Require(read_nid_postfix(server, received, sizeof(received)) == -1 && *__error_nid_postfix() == 9);

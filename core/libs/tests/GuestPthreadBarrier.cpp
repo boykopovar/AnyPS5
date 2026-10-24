@@ -73,12 +73,13 @@ int main() {
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 2) == GUEST_EINVAL);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, -1) == GUEST_EINVAL);
-    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED) == 0);
-    Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_SHARED);
-    Context shared;
-    Require(pthread_barrier_init_nid_postfix(&shared.barrier, &attr, WAITERS) == 0);
-    RunWaiters(shared);
-    Require(pthread_barrier_destroy_nid_postfix(&shared.barrier) == 0);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED) == GUEST_EINVAL);
+    pshared = -1;
+    Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Context afterRejectedShared;
+    Require(pthread_barrier_init_nid_postfix(&afterRejectedShared.barrier, &attr, WAITERS) == 0);
+    RunWaiters(afterRejectedShared);
+    Require(pthread_barrier_destroy_nid_postfix(&afterRejectedShared.barrier) == 0);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
     pshared = -1;
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
@@ -90,6 +91,8 @@ int main() {
     GuestBarrier* invalid = nullptr;
     Require(pthread_barrier_init_nid_postfix(nullptr, &attr, 1) == GUEST_EINVAL);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0) == GUEST_EINVAL && invalid == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0x80000000u) == GUEST_EINVAL && invalid == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0xffffffffu) == GUEST_EINVAL && invalid == nullptr);
 
     Context withAttr;
     Require(pthread_barrier_init_nid_postfix(&withAttr.barrier, &attr, WAITERS) == 0 && withAttr.barrier != nullptr);

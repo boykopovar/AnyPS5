@@ -43,7 +43,10 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
         std::int32_t disp = 0;
         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
+        if (disp < 0 && nextVaddr < static_cast<VirtualAddress>(-static_cast<std::int64_t>(disp))) continue;
+        if (disp > 0 && std::numeric_limits<VirtualAddress>::max() - nextVaddr < static_cast<VirtualAddress>(disp)) continue;
         VirtualAddress target = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         accessed.insert(target);
     }
 

@@ -3,12 +3,21 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
+
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
 
 extern "C" {
 int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
@@ -18,6 +27,7 @@ int APS5_VABI libc_printf_nid_postfix(const char*, ...);
 int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
 int APS5_VABI vsnprintf_nid_postfix(char*, size_t, const char*, VaList*);
 int APS5_VABI vsnprintf_s_nid_postfix(char*, size_t, const char*, VaList*);
+int APS5_VABI snprintf_s_nid_postfix(char*, size_t, const char*, ...);
 int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, VaList*);
 int APS5_VABI vsscanf_nid_postfix(const char*, const char*, VaList*);
 int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
@@ -82,6 +92,34 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
+static void CheckSizeLimits() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+    for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
+        char output[8];
+        for (const std::size_t oversized : {static_cast<std::size_t>(INT_MAX) + 2, static_cast<std::size_t>(SIZE_MAX)}) {
+            for (const bool wide : {false, true}) {
+                std::memset(output, 'Z', sizeof(output));
+                int consumed = -1;
+                *__error_nid_postfix() = 0;
+                const int result = wide ? format(output, oversized, "%ls%n", u"x", &consumed)
+                                        : format(output, oversized, "x%n", &consumed);
+                Require(result == -1 && *__error_nid_postfix() == 84 && output[0] == 0 && consumed == -1);
+                Require(std::all_of(output + 1, output + sizeof(output), [](char value) { return value == 'Z'; }));
+            }
+        }
+        for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, static_cast<std::size_t>(INT_MAX), static_cast<std::size_t>(INT_MAX) + 1}) {
+            std::memset(output, 'Z', sizeof(output));
+            *__error_nid_postfix() = 35;
+            Require(format(output, capacity, "x") == 1 && *__error_nid_postfix() == 35);
+            Require(output[0] == (capacity == 0 ? 'Z' : capacity == 1 ? '\0' : 'x'));
+            const std::size_t written = capacity < 2 ? capacity : 2;
+            if (capacity > 1) Require(output[1] == 0);
+            Require(std::all_of(output + written, output + sizeof(output), [](char value) { return value == 'Z'; }));
+        }
+        Require(format(nullptr, 0, "x") == 1);
+    }
+}
+
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
     const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
@@ -102,6 +140,8 @@ static bool CheckWidePrecision() {
     Require(snprintf_nid_postfix(output, sizeof(output), "[%5.1ls]", u"\u00e9") == 7 && std::strcmp(output, "[     ]") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "[%-5.2ls]", u"\u00e9") == 7 && std::strcmp(output, "[\xc3\xa9   ]") == 0);
     Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 0 && output[0] == 0);
+    Require(FormatList(output, sizeof(output), "%ls[% u][% 4u][%+ lu][%- 3hhu][% x][%+o]", u"", 5u, 5u, 5ULL, 5u, 255u, 8u) == 25
+        && std::strcmp(output, "[5][   5][5][5  ][ff][10]") == 0);
     Require(FormatList(output, sizeof(output), "%.*ls:%d", -1, u"\u00e9", 7) == 4 && std::strcmp(output, "\xc3\xa9:7") == 0);
     const char16_t bounded[] = {u'A', u'B'};
     Require(snprintf_nid_postfix(output, sizeof(output), "%.2ls", bounded) == 2 && std::strcmp(output, "AB") == 0);
@@ -125,6 +165,40 @@ static bool CheckWidePrecision() {
         if (capacity) Require(output[copied] == 0);
     }
     return correct;
+}
+
+static void CheckSecureFormat() {
+    constexpr size_t rsizeMax = SIZE_MAX >> 1;
+    char buffer[16];
+    std::memset(buffer, '!', sizeof(buffer));
+    Require(FormatListS(buffer, 5, "%s", "abcdef") == 6 && std::strcmp(buffer, "abcd") == 0 && buffer[5] == '!');
+    Require(snprintf_s_nid_postfix(buffer, 5, "%d-%ls", 42, u"abcd") == 7 && std::strcmp(buffer, "42-a") == 0);
+    Require(FormatListS(buffer, 1, "%x", 0xabcu) == 3 && buffer[0] == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "") == 0 && buffer[0] == 0);
+    buffer[0] = 'x';
+    Require(FormatListS(buffer, sizeof(buffer), nullptr) < 0 && buffer[0] == 0);
+    Require(FormatListS(nullptr, sizeof(buffer), "a") < 0 && snprintf_s_nid_postfix(nullptr, sizeof(buffer), "a") < 0);
+    buffer[0] = 'x';
+    Require(FormatListS(buffer, 0, "a") < 0 && snprintf_s_nid_postfix(buffer, 0, "a") < 0 && buffer[0] == 'x');
+    Require(FormatListS(buffer, rsizeMax + 1, "a") < 0 && snprintf_s_nid_postfix(buffer, rsizeMax + 1, "a") < 0 && buffer[0] == 'x');
+    int written = -7;
+    Require(FormatListS(buffer, sizeof(buffer), "ab%n", &written) < 0 && buffer[0] == 0 && written == -7);
+    buffer[0] = 'x';
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "ab%hhn", &written) < 0 && buffer[0] == 0 && written == -7);
+    buffer[0] = 'x';
+    Require(FormatListS(buffer, sizeof(buffer), "a%s", static_cast<const char*>(nullptr)) < 0 && buffer[0] == 0);
+    buffer[0] = 'x';
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "a%ls", static_cast<const char16_t*>(nullptr)) < 0 && buffer[0] == 0);
+    buffer[0] = 'x';
+    Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
+    bool threw = false;
+    try {
+        FormatListS(buffer, sizeof(buffer), "%y", 1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 __attribute__((noinline)) static void APS5_VABI RunChecks() {
@@ -175,23 +249,28 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(threw);
     }
     char expected[1024];
-    std::snprintf(expected, sizeof(expected), "%#08x %.3e %a %g 0x%llx", 42u, 1.25, 1.25, 1.25,
+    std::snprintf(expected, sizeof(expected), "%#08x %.3e %a %g %llx", 42u, 1.25, 1.25, 1.25,
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(buffer)));
     snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
     Require(std::strcmp(buffer, expected) == 0);
-#ifdef _WIN32
     char pointers[128];
     const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
-    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 23 &&
-        std::strcmp(pointers, "0x0|0x1234|0xdeadbeef12") == 0);
-    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%8p][%-8p][%08p][%.6p][%10.4p][%.0p]",
-        address(0x1a), address(0x1a), address(0x1a), address(0x1a), address(0x1a), address(0)) == 56 &&
-        std::strcmp(pointers, "[    0x1a][0x1a    ][0x00001a][0x00001a][    0x001a][0x]") == 0);
-    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%+p][% p][%#p][%*p][%-*p]", address(0x1a), address(0x1a),
-        address(0x1a), 6, address(0xf), -6, address(0xf)) == 34 &&
-        std::strcmp(pointers, "[0x1a][0x1a][0x1a][   0xf][0xf   ]") == 0);
-    Require(snprintf_nid_postfix(pointers, 6, "%p", address(0xabcdef)) == 8 && std::strcmp(pointers, "0xabc") == 0);
-#endif
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 17 &&
+        std::strcmp(pointers, "0|1234|deadbeef12") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%p][%5p][%-5p][%05p][%.8p][%10.6p][%.0p]",
+        address(0x1234), address(0x1234), address(0x1234), address(0x1234), address(0x1234), address(0x1234), address(0)) == 51 &&
+        std::strcmp(pointers, "[1234][ 1234][1234 ][01234][00001234][    001234][]") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%#p][%+p][% p][%lp][%20p][%-20p]",
+        address(0x1234), address(0x1234), address(0x1234), address(0x1234), address(0x1234), address(0x1234)) == 68 &&
+        std::strcmp(pointers, "[1234][1234][1234][1234][                1234][1234                ]") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%08p][%.6p][%8p]", address(0x1a), address(0x1a), address(0xf)) == 28 &&
+        std::strcmp(pointers, "[0000001a][00001a][       f]") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "[%*p][%-*p]", 6, address(0x1a), -6, address(0x1a)) == 16 &&
+        std::strcmp(pointers, "[    1a][1a    ]") == 0);
+    Require(FormatList(pointers, sizeof(pointers), "%2$p:%1$d", 7, address(0)) == 3 && std::strcmp(pointers, "0:7") == 0);
+    Require(snprintf_nid_postfix(pointers, 6, "%p", address(0xabcdef)) == 6 && std::strcmp(pointers, "abcde") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p", address(0xffffffffffffffffull)) == 16 &&
+        std::strcmp(pointers, "ffffffffffffffff") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
     Require(std::strcmp(buffer, "unlimited") == 0);
     buffer[5] = '!';
@@ -239,17 +318,50 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(sscanf_nid_postfix("  ", "%*d%d", &scanned) == EOF);
     Require(sscanf_nid_postfix("", "%d", &scanned) == EOF);
 #else
-    char16_t wide[4] = {u'!', u'!', u'!', u'!'};
-    const auto rejects = [&](const char* format) {
-        try { sscanf_nid_postfix("ab cd", format, wide); } catch (const std::runtime_error&) { return wide[0] == u'!'; }
-        return false;
-    };
-    Require(rejects("%ls") && rejects("%*s %3lc") && rejects("%l[a-z]") && rejects("%S") && rejects("%2$C") && rejects("%'ls"));
-    const auto secureRejects = [&](const char* format) {
-        try { ScanListS("ab cd", format, wide, 4u); } catch (const std::runtime_error&) { return wide[0] == u'!'; }
-        return false;
-    };
-    Require(secureRejects("%ls") && secureRejects("%lc"));
+    {
+        char16_t first[8] = {};
+        char16_t letter = u'!';
+        Require(sscanf_nid_postfix("ab cd", "%ls %lc", first, &letter) == 2);
+        Require(std::u16string(first) == u"ab" && letter == u'c');
+        Require(sscanf_nid_postfix("  xy z", "%S %C", first, &letter) == 2 && std::u16string(first) == u"xy" && letter == u'z');
+        char16_t three[5] = {u'!', u'!', u'!', u'!', u'!'};
+        Require(sscanf_nid_postfix("abcdef", "%3lc", three) == 1);
+        Require(three[0] == u'a' && three[1] == u'b' && three[2] == u'c' && three[3] == u'!');
+        Require(sscanf_nid_postfix("abcz", "%l[a-c]", first) == 1 && std::u16string(first) == u"abc");
+        Require(sscanf_nid_postfix("ab cd", "%l[^ ]", first) == 1 && std::u16string(first) == u"ab");
+        Require(sscanf_nid_postfix("]x", "%l[]x]", first) == 1 && std::u16string(first) == u"]x");
+        char16_t second[8] = {};
+        Require(sscanf_nid_postfix("\xc5\xbelu\xc5\xa5 k\xc5\xaf\xc5\x88", "%ls %ls", first, second) == 2);
+        Require(std::u16string(first) == u"\u017elu\u0165" && std::u16string(second) == u"k\u016f\u0148");
+        int number = 0;
+        Require(sscanf_nid_postfix("\xc5\xbelu\xc5\xa5 7", "%2ls%*ls %d", first, &number) == 2);
+        Require(std::u16string(first) == u"\u017el" && number == 7);
+        char narrowWord[8] = {};
+        Require(sscanf_nid_postfix("12 ab cd", "%d %ls %7s", &number, first, narrowWord) == 3);
+        Require(number == 12 && std::u16string(first) == u"ab" && std::strcmp(narrowWord, "cd") == 0);
+        int consumed = -1;
+        Require(sscanf_nid_postfix("ab cd", "%ls%n", first, &consumed) == 1 && consumed == 2);
+        Require(sscanf_nid_postfix("", "%ls", first) == EOF && sscanf_nid_postfix("   ", "%ls", first) == EOF);
+        Require(sscanf_nid_postfix("xyz", "%l[a-c]", first) == 0);
+        Require(sscanf_nid_postfix("1 xyz", "%d %l[a-c]", &number, first) == 1);
+        Require(ScanList("hi there", "%ls %lc", first, &letter) == 2 && std::u16string(first) == u"hi" && letter == u't');
+        char16_t fits[6] = {};
+        Require(ScanListS("hello world", "%ls", fits, 6u) == 1 && std::u16string(fits) == u"hello");
+        char16_t small[5] = {u'!', u'!', u'!', u'!', u'!'};
+        Require(ScanListS("hello", "%ls", small, 5u) == 0 && small[0] == 0);
+        Require(ScanListS("hello", "%4ls", small, 5u) == 1 && std::u16string(small) == u"hell");
+        Require(ScanListS("xy", "%lc", &letter, 1u) == 1 && letter == u'x');
+        small[0] = u'!';
+        Require(ScanListS("xyz", "%3lc", small, 2u) == 0 && small[0] == 0);
+        Require(ScanListS("ab cd", "%*ls %l[a-z]", fits, 6u) == 1 && std::u16string(fits) == u"cd");
+        char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
+        const auto rejects = [&](const char* input, const char* format) {
+            try { sscanf_nid_postfix(input, format, untouched); } catch (const std::runtime_error&) { return untouched[0] == u'!'; }
+            return false;
+        };
+        Require(rejects("\xff", "%ls") && rejects("a b", "%2$ls") && rejects("\xc5\xbe", "%l[\xc5\xbe]"));
+        Require(rejects("\xf0\x9f\x98\x80", "%ls"));
+    }
     char narrow[8] = {};
     Require(sscanf_nid_postfix("ab%", "%7[^%ls]", narrow) == 1 && std::strcmp(narrow, "ab") == 0);
 #endif
@@ -270,6 +382,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(libc_printf_nid_postfix("%d %d %d %d %d %d %d\n", 1, 22, 333, 4444, 55555, 666666, 7777777) == 35);
     Require(PrintList("vprintf: %d\n", 42) == 12);
     Require(FormatListS(buffer, sizeof(buffer), "%d-%s", 42, "x") == 4 && std::strcmp(buffer, "42-x") == 0);
+    CheckSecureFormat();
     int scanNum = 0;
     char scanWord[8] = {};
     Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, 8u) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
@@ -291,4 +404,4 @@ static void CheckAllocatingFormat() {
     free_nid_postfix(allocated);
 }
 
-int main() { RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckSizeLimits(); RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

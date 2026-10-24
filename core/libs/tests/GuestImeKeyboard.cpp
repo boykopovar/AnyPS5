@@ -12,6 +12,7 @@ int APS5_VABI sceImeKeyboardSetMode(int32_t user_id, uint32_t mode);
 
 static_assert(sizeof(KeyboardInfo) == 36);
 
+constexpr int AlreadyOpened = static_cast<int>(0x80bc0001u);
 constexpr int NotOpened = static_cast<int>(0x80bc0002u);
 constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
 constexpr int NoResourceId = static_cast<int>(0x80bc0023u);
@@ -35,6 +36,7 @@ static void CheckClosed() {
     Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info");
     Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info without an open keyboard");
     RequireUntouched(info);
+    Require(sceImeKeyboardClose(1) == NotOpened, "close without an open keyboard");
     Require(sceImeKeyboardSetMode(-1, 0) == InvalidUserId, "set mode invalid user");
     Require(sceImeKeyboardSetMode(1, 0) == NotOpened, "set mode without an open keyboard");
     Require(sceImeKeyboardSetMode(1, 0x80) == NotOpened, "set mode checks the mode before the keyboard");
@@ -43,6 +45,7 @@ static void CheckClosed() {
 static void CheckOpened() {
     KeyboardParam param{};
     Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
+    Require(sceImeKeyboardOpen(1, &param) == AlreadyOpened, "duplicate open accepted");
     KeyboardInfo info;
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info with an open keyboard");
@@ -57,6 +60,7 @@ static void CheckOpened() {
     Require(sceImeKeyboardSetMode(1, 0x80) == InvalidMode, "mode bit 7 accepted");
     Require(sceImeKeyboardSetMode(1, 0x80000001u) == InvalidMode, "mode bit 31 accepted");
     Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");
+    Require(sceImeKeyboardClose(1) == NotOpened, "second close accepted");
     Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info after close");
     Require(sceImeKeyboardSetMode(1, 0) == NotOpened, "set mode after close");
 }

@@ -125,6 +125,17 @@ def check_imports(data):
     check(bytes.fromhex("4883ec08") in code, "import: the guest code is missing from the image")
 
 
+def check_runtime_dependencies(relinker, directory):
+    for needed, expected in (
+            (b"libc.prx", ["@rpath/libc.prx", "@rpath/libkernel.prx"]),
+            (b"libkernel.prx", ["@rpath/libkernel.prx", "@rpath/libc.prx"]),
+            (b"libSceLibcInternal.prx", ["@rpath/libSceLibcInternal.prx", "@rpath/libkernel.prx", "@rpath/libc.prx"]),
+            (b"libSceVideoOut.prx", ["@rpath/libSceVideoOut.prx", "@rpath/libkernel.prx", "@rpath/libc.prx"])):
+        name = needed.decode().removesuffix(".prx")
+        dylibs = [dylib for dylib in check_structure(name, relink(relinker, directory, name, import_fixture(library=needed))).dylibs if dylib.startswith("@rpath/")]
+        check(dylibs == expected, f"{name}: dependencies {dylibs}, expected {expected}")
+
+
 def check_tls(data):
     check(FS_LOAD in bytes(tls_fixture()), "tls: the fixture no longer loads through %fs")
     macho = check_structure("tls", data)
@@ -180,6 +191,7 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-macos-output-") as directory:
         check_imports(relink(relinker, directory, "import", import_fixture()))
+        check_runtime_dependencies(relinker, directory)
         check_tls(relink(relinker, directory, "tls", tls_fixture()))
         check_options(relinker, directory)
         check_runpath_lists(relinker, directory)

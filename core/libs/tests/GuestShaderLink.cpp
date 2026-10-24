@@ -36,14 +36,16 @@ int main() {
     using namespace ShaderRegs;
     auto* defaults = static_cast<unsigned char*>(sceAgcGetRegisterDefaults());
     Require(defaults && defaults == sceAgcGetRegisterDefaults());
-    Require(defaults == sceAgcGetRegisterDefaults2(0));
+    auto* versionedDefaults = static_cast<unsigned char*>(sceAgcGetRegisterDefaults2(13));
+    Require(versionedDefaults != nullptr);
+    Require(std::memcmp(defaults + 0x20, versionedDefaults + 0x20, 4 * sizeof(std::uint32_t)) == 0);
     // These are the byte offsets used by native callers, independent of the
     // private C++ structure used to construct the defaults object.
     ShaderRegister** contextBlocks = nullptr;
     std::uint32_t contextCount = 0;
     std::memcpy(&contextBlocks, defaults, sizeof(contextBlocks));
     std::memcpy(&contextCount, defaults + 0x20, sizeof(contextCount));
-    Require(contextBlocks && contextBlocks[0] && contextCount == 523);
+    Require(contextBlocks && contextBlocks[0] && contextCount == 488);
     bool hasRenderTarget = false;
     bool hasRasterizer = false;
     for (std::uint32_t i = 0; i < contextCount; ++i) {

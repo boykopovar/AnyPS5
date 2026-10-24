@@ -375,6 +375,15 @@ struct FontWritingLetterStep {
     } Components;
 };
 
+union FontTextCodes {
+    struct {
+        void* order;
+        std::uint32_t code;
+        std::uint32_t reserved;
+    } text;
+    void* systemUse[8];
+};
+
 struct FontWritingExtent {
     float top;
     float bottom;
@@ -441,6 +450,7 @@ static_assert(sizeof(FontWriting) == 0x100);
 static_assert(sizeof(FontWritingProfile) == sizeof(std::uint32_t));
 static_assert(sizeof(FontWritingStep) == 0x48);
 static_assert(sizeof(FontWritingLetterStep) == 0x40);
+static_assert(sizeof(FontTextCodes) == 0x40);
 static_assert(sizeof(FontWritingMetrics) == 0x18);
 static_assert(sizeof(FontWritingLineStep) == 0x40);
 static_assert(offsetof(FontWritingLineStep, writingOrderer) == 0x18);

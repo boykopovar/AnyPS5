@@ -9,6 +9,7 @@ int APS5_VABI sceProprietaryVoiceChatHelperInitialize();
 int APS5_VABI sceProprietaryVoiceChatHelperTerminate();
 int APS5_VABI sceProprietaryVoiceChatHelperSetVoiceChatState();
 int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChatUsageState();
+int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChat();
 }
 
 static void Require(bool value, const char* what) {
@@ -32,6 +33,8 @@ int main() {
             "setting the state before initialization did not throw");
     Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChatUsageState(); }),
             "reading the usage state before initialization did not throw");
+    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); }),
+            "getting voice chat before initialization did not throw");
     Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperTerminate(); }),
             "terminating before initialization did not throw");
 
@@ -41,10 +44,14 @@ int main() {
     Require(sceProprietaryVoiceChatHelperSetVoiceChatState() == 0, "setting the state failed");
     Require(Throws<std::runtime_error>([] { sceProprietaryVoiceChatHelperGetVoiceChatUsageState(); }),
             "reading the unknown usage state did not throw");
+    Require(Throws<std::runtime_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); }),
+            "calling unknown voice chat export did not throw");
     Require(sceProprietaryVoiceChatHelperTerminate() == 0, "termination failed");
 
     Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperSetVoiceChatState(); }),
             "setting the state after termination did not throw");
+    Require(Throws<std::logic_error>([] { sceProprietaryVoiceChatHelperGetVoiceChat(); }),
+            "getting voice chat after termination did not throw");
     Require(sceProprietaryVoiceChatHelperInitialize() == 0, "initialization after termination failed");
     Require(sceProprietaryVoiceChatHelperTerminate() == 0, "termination after reinitialization failed");
 

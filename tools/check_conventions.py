@@ -1,32 +1,38 @@
 import argparse
+import io
 import json
 import os
 import posixpath
 import re
 import subprocess
 import sys
+import tokenize
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from nid_names import CPP_TOKEN
+from nid_names import CPP_TOKEN, NID_POSTFIX, compute_nid, source_aliases
+import env_reference
 
 RULES = {
     "comment": ("error", "docs/dev/CONVENTIONS.md", "Comments are only for technical debt, so they need a change to docs/dev/TechnicalDebt.md or docs/dev/debt/ in the same pull request; #endif and namespace ends are always allowed"),
     "silent-stub": ("error", "CONTRIBUTING.md#code", "Unimplemented exports call NotImplemented_nid_no_patch(__func__); silent stubs are listed under Silent stubs in docs/dev/debt/<library>.md, by their file or by name with a path in their library"),
-    "debt-file": ("error", "CONTRIBUTING.md#documentation", "Technical debt about one library or component goes in docs/dev/debt/<name>.md, named after the first core/ path it links: <library> for core/libs/prx/<library>, otherwise <component> for core/<component>"),
+    "debt-file": ("error", "CONTRIBUTING.md#documentation", "Technical debt about one library or component goes in docs/dev/debt/<name>.md, named after the first core/ path it links: <library> for core/libs/prx/<library>, otherwise <component> for core/<component>; entries that link neither stay in docs/dev/TechnicalDebt.md"),
     "duplicate-export": ("error", "CONTRIBUTING.md#code", "Already exported by another library: remove the copy, or use APS5_DUMMY_FUN if nothing is left"),
+    "unknown-nid": ("error", "CONTRIBUTING.md#code", "An Unknown export has the NID of a symbol in core/libs/prx, so the NID is not unknown: name the export after that symbol, or give an AnyPS5 helper the _nid_no_patch suffix"),
     "system-dependency": ("error", "CONTRIBUTING.md#code", "Third-party code is a submodule under 3rdparty/ built from source, not found on the system"),
     "title-specific": ("error", "CONTRIBUTING.md#code", "Implement the general behaviour, not what one title needs; title-specific code belongs in its sce_module"),
     "extension": ("error", "CONTRIBUTING.md#code", "Avoid non-standard extensions where standard C++ is enough"),
-    "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository"),
+    "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
     "doc-link": ("error", "CONTRIBUTING.md#documentation", "Relative link to a file that does not exist"),
     "commit-subject": ("error", "docs/dev/CONVENTIONS.md", "Commit subject is not Conventional Commits"),
     "pr-title": ("error", "docs/dev/CONVENTIONS.md", "Pull request title is not Conventional Commits"),
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
+    "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
+    "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
@@ -39,31 +45,55 @@ AGENT_FILES = {
 DEBT = "docs/dev/TechnicalDebt.md"
 DEBT_DIR = "docs/dev/debt/"
 DEBT_TARGET = re.compile(r"\]\((?:\.\./)+(core/[^)#\s]+)")
+DEBT_ENTRY_LIMIT = 1000
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 ALLOWED_COMMENT = re.compile(r"^\s*(#\s*endif\b|}\s*;?\s*//\s*(end\s+)?namespace\b)")
+CMAKE_TOKEN = re.compile(r'\[(=*)\[.*?\]\1\]|"(?:\\.|[^"\\])*"|(?P<comment>#\[(?P<level>=*)\[.*?\](?P=level)\]|#[^\n]*)|\\.', re.S)
 EXPORT = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+NID_SOURCES = r"APS5_EXPORT|APS5_VABI|_nid_postfix|ASM_FUNCTION"
 STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s*;)*"
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
 SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
 LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
-FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
+FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
 
 
+
 def git(*args, text=True):
-    output = subprocess.run(["git", "-c", "core.quotePath=false", *args], capture_output=True, check=True).stdout
+    try:
+        result = subprocess.run(
+            ["git", "-c", "core.quotePath=false", *args],
+            capture_output=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        message = error.stderr.decode("utf-8", errors="replace").strip()
+        print(
+            f"Git command failed: {message or 'unknown Git error'}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
+    except FileNotFoundError:
+        print("Git executable not found. Please install Git.", file=sys.stderr)
+        raise SystemExit(2) from None
+
+    output = result.stdout
     return output.decode("utf-8", errors="replace") if text else output
+
 
 
 class Check:
     def __init__(self, base, head):
         self.head = head
+        self.target = base
         self.base = git("merge-base", base, head).strip()
         self.findings = []
         self.added = defaultdict(list)
@@ -136,10 +166,12 @@ class Check:
     def code(self):
         debt = [entry for path in sorted(self.tree) if is_debt(path) for entry in silent_stub_debt(self.show(path), path)]
         exports = {}
+        unknowns, symbols = [], []
         for path, lines in self.files(lambda p: p.suffix in CPP):
             core = path.startswith("core/") and "tests" not in PurePosixPath(path).parts
             source = self.show(path).split("\n")
             masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
+            assembly = asm_exports("\n".join(source)) if core and path.startswith("core/libs/prx/") else {}
             for number, text in lines:
                 bare = masked[number - 1]
                 if ("//" in bare or "/*" in bare) and not ALLOWED_COMMENT.match(bare):
@@ -148,6 +180,10 @@ class Check:
                     self.report("extension", path, number, EXTENSION.search(bare).group(0))
                 if core and TITLE.search(text):
                     self.report("title-specific", path, number, TITLE.search(text).group(0))
+                if core and path.startswith("core/libs/prx/"):
+                    unknowns.extend((nid, name, path, number) for nid, name in source_aliases(text) if "unknown" in name.lower())
+                    symbols.extend((symbol, path, number) for symbol in nid_symbols(text))
+                exports.update((name, (path, number)) for name in assembly.get(number, ()) if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")))
                 match = EXPORT.search(bare)
                 if match and core and path.startswith("core/libs/prx/") and not match.group(1).endswith(("_nid_no_patch", "_nid_no_patch_cut")):
                     source = source or self.show(path).splitlines()
@@ -158,10 +194,14 @@ class Check:
                     if match.group(1).startswith("sce") and STUB_BODY.match(body) and not listed(debt, match.group(1), path):
                         self.report("silent-stub", path, number, match.group(1))
         self.duplicates(exports)
+        self.unknown_nids(unknowns, symbols)
         for path, lines in self.files(lambda p: p.suffix in (".py", ".cmake") or p.name == "CMakeLists.txt"):
+            source = self.show(path)
+            comments = python_comments(source) if path.endswith(".py") else cmake_comments(source)
             for number, text in lines:
                 shebang = text.startswith("#!") or (number == 1 and text.startswith("\ufeff#!"))
-                if "#" in STRINGS.sub('""', text) and not shebang:
+                comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
+                if comment and not shebang:
                     self.report("comment", path, number)
         if any(is_debt(path) for path in self.status):
             self.findings = [finding for finding in self.findings if finding[0] != "comment"]
@@ -169,15 +209,44 @@ class Check:
     def duplicates(self, exports):
         if not exports:
             return
-        pattern = r"(^|[^[:alnum:]_])APS5_VABI[[:space:]]+(" + "|".join(exports) + r")[[:space:]]*\("
-        result = subprocess.run(["git", "grep", "-nE", "--full-name", pattern, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
-        hits = [line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))]
-        self.read(path for path, _, _ in hits)
-        for path, number, text in hits:
-            name = EXPORT.search(text).group(1)
-            own, own_number = exports[name]
-            if library(path) != library(own) and "tests" not in PurePosixPath(path).parts and function_body(self.show(path).splitlines(), int(number) - 1) is not None:
-                self.report("duplicate-export", own, own_number, f"{name} is also in {library(path)}")
+        paths = sorted(path for path in self.objects if path.startswith("core/libs/prx/") and
+                       "tests" not in PurePosixPath(path).parts)
+        self.read(paths)
+        for path in paths:
+            text = self.show(path)
+            if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
+                continue
+            source = cpp_text(text).split("\n")
+            assembly = asm_exports(text)
+            for number, line in enumerate(source):
+                names = [match.group(1) for match in EXPORT.finditer(line)
+                         if match.group(1) in exports and library(path) != library(exports[match.group(1)][0])
+                         and function_body(source, number) is not None]
+                names += [name for name in assembly.get(number + 1, ()) if name in exports and library(path) != library(exports[name][0])]
+                for name in names:
+                    own, own_number = exports[name]
+                    self.report("duplicate-export", own, own_number, f"{name} is also in {library(path)}")
+
+    def unknown_nids(self, unknowns, symbols):
+        if not unknowns and not symbols:
+            return
+        result = subprocess.run(["git", "grep", "-nE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
+        tree_unknowns, tree_symbols = defaultdict(list), defaultdict(list)
+        for path, number, text in (line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))):
+            if "tests" in PurePosixPath(path).parts or PurePosixPath(path).suffix not in CPP:
+                continue
+            for nid, name in source_aliases(text):
+                if "unknown" in name.lower():
+                    tree_unknowns[nid].append(f"{name} at {path}:{number}")
+            for symbol in nid_symbols(text):
+                tree_symbols[symbol_nid(symbol)].append(f"{symbol} at {path}:{number}")
+        for nid, name, path, number in unknowns:
+            if tree_symbols[nid]:
+                self.report("unknown-nid", path, number, f"{nid} ({name}) is {tree_symbols[nid][0]}")
+        for symbol, path, number in symbols:
+            nid = symbol_nid(symbol)
+            if tree_unknowns[nid]:
+                self.report("unknown-nid", path, number, f"{symbol} has the NID {nid} of {tree_unknowns[nid][0]}")
 
     def build(self):
         for path, lines in self.files(lambda p: p.name == "CMakeLists.txt" or p.suffix == ".cmake"):
@@ -233,14 +302,22 @@ class Check:
         for path, lines in files.items():
             fenced = fenced_lines(self.show(path))
             for number, text in lines:
-                name = debt_name(text) if is_debt(path) and text.startswith("- ") else None
-                if name and path != f"{DEBT_DIR}{name}.md":
-                    self.report("debt-file", path, number, f"{DEBT_DIR}{name}.md")
+                if is_debt(path) and text.startswith("- "):
+                    name = debt_name(text)
+                    expected = f"{DEBT_DIR}{name}.md" if name else DEBT
+                    if path != expected:
+                        self.report("debt-file", path, number, expected)
                 if number in fenced:
                     continue
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
+
+    def debt_entries(self):
+        for path, lines in self.files(lambda p: is_debt(p.as_posix())):
+            for number, text in lines:
+                if long_debt_entry(text):
+                    self.report("debt-length", path, number, f"{len(text)} characters")
 
     def workflows(self):
         for path in sorted(self.status):
@@ -261,6 +338,46 @@ class Check:
             sha, subject = line.split(" ", 1)
             if not CONVENTIONAL.match(subject):
                 self.report("commit-subject", "", 0, f"{sha} {subject}")
+
+    def env_reference(self):
+        doc = "docs/dev/ENVIRONMENT.md"
+        added, removed, dropped = {}, set(), set()
+        path, number, in_hunk = "", 0, False
+        for line in git("diff", "-U0", self.base, self.head, "--", ":(top)core", f":(top){doc}").splitlines():
+            if line.startswith("diff --git"):
+                path, in_hunk = "", False
+            elif line.startswith("@@"):
+                number = int(re.search(r"\+(\d+)", line).group(1)) - 1
+                in_hunk = True
+            elif in_hunk:
+                if path == doc:
+                    if line.startswith("-"):
+                        dropped.update(env_reference.documented_pattern(env_reference.PREFIXES).findall(line[1:]))
+                elif line.startswith("+"):
+                    number += 1
+                    for _, match in env_reference.line_reads(line[1:]):
+                        added.setdefault(match.group("name"), (path, number))
+                elif line.startswith("-"):
+                    removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
+            elif line.startswith("+++ b/"):
+                path = line[6:]
+        result = subprocess.run(["git", "grep", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
+                                capture_output=True, encoding="utf-8", errors="replace")
+        reads = set()
+        for line in result.stdout.splitlines():
+            reads.update(match.group("name") for _, match in env_reference.line_reads(line))
+        pattern = env_reference.documented_pattern(env_reference.PREFIXES)
+        documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
+        if git("ls-tree", "--full-tree", "--name-only", self.target, "--", doc).strip() == doc:
+            documented |= set(pattern.findall(git("show", f"{self.target}:{doc}"))) - dropped
+        for name, (source, line) in sorted(added.items()):
+            if name not in documented:
+                self.report("env-reference", source, line, f"{name} is read here but has no row in {doc}")
+        for name in sorted(removed - reads):
+            if name in documented:
+                self.report("env-reference", doc, 0, f"{name} has a row but the code no longer reads it")
+        for name in sorted(dropped & reads - documented):
+            self.report("env-reference", doc, 0, f"{name} is still read by the code but this pull request removes its row")
 
     def pull_request(self, title, body):
         if not CONVENTIONAL.match(title):
@@ -297,7 +414,7 @@ def fenced_lines(text):
 
 def links(path, text):
     result = []
-    text = INLINE.sub("", FENCE.sub("", text))
+    text = INLINE.sub("code", FENCE.sub("", text))
     for target in LINK.findall(text):
         if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
@@ -309,6 +426,10 @@ def links(path, text):
 
 def is_debt(path):
     return path == DEBT or (path.startswith(DEBT_DIR) and path.endswith(".md") and "/" not in path[len(DEBT_DIR):])
+
+
+def long_debt_entry(text):
+    return text.startswith("- ") and len(text) > DEBT_ENTRY_LIMIT
 
 
 def debt_name(text):
@@ -372,7 +493,9 @@ def jobs(lines, source):
     for index, (number, indent, name, _) in enumerate(entries):
         if indent != entries[0][1]:
             continue
-        fields = {entry[2]: field(source, entry) for entry in block(entries, index) if entry[1] == indent + 2}
+        children = block(entries, index)
+        child = min((entry[1] for entry in children), default=indent + 2)
+        fields = {entry[2]: field(source, entry) for entry in children if entry[1] == child}
         result.append((number, name, re.findall(r"[A-Za-z0-9_-]+", fields.get("needs", "")), fields.get("if", "")))
     return result
 
@@ -390,13 +513,61 @@ def library(path):
     return PurePosixPath(path).parts[3]
 
 
+def symbol_nid(name):
+    if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name.startswith("SDL_"):
+        return None
+    base = re.sub(r"_nid_disambig\d+$", "", name.removesuffix(NID_POSTFIX))
+    return compute_nid(base) if base else None
+
+
+def asm_exports(text):
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
+    exports = defaultdict(list)
+    for index, match in enumerate(tokens[:-2]):
+        name = tokens[index + 2].group()[1:-1]
+        if match.group() in ("APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION") and tokens[index + 1].group() == "(" and tokens[index + 2].group("string") is not None and IDENTIFIER.fullmatch(name):
+            exports[text.count("\n", 0, tokens[index + 2].start()) + 1].append(name)
+    return exports
+
+
+def nid_symbols(text):
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
+    names = []
+    for index, match in enumerate(tokens):
+        token, following = match.group(), tokens[index + 1:index + 3]
+        if token == "APS5_VABI" and following and IDENTIFIER.fullmatch(following[0].group()):
+            names.append(following[0].group())
+        elif match.group("code") is not None and token.endswith(NID_POSTFIX):
+            names.append(token)
+        elif token in ("APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION") and len(following) == 2 and following[0].group() == "(" and following[1].group("string") is not None:
+            names.append(following[1].group()[1:-1])
+    return [name for name in dict.fromkeys(names) if symbol_nid(name)]
+
+
 def allowed_notes(path):
     p = PurePosixPath(path)
     if p.name.lower() in AGENT_FILES:
-        return False
+        return path == "AGENTS.md"
     if p.suffix.lower() not in NOTES:
         return None
     return path in ("README.md", "CONTRIBUTING.md") or p.parts[0] == ".github" or p.parts[:2] in (("docs", "dev"), ("docs", "user"))
+
+
+def python_comments(text):
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text.removeprefix("\ufeff")).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return {token.start[0] for token in tokens if token.type == tokenize.COMMENT}
+
+
+def cmake_comments(text):
+    lines = set()
+    for match in CMAKE_TOKEN.finditer(text):
+        if match.group("comment") is not None:
+            first = text.count("\n", 0, match.start()) + 1
+            lines.update(range(first, first + match.group().count("\n") + 1))
+    return lines
 
 
 def cpp_text(text, preserve_comments=False):
@@ -469,8 +640,10 @@ if __name__ == "__main__":
     check.shaders()
     check.repository()
     check.docs()
+    check.debt_entries()
     check.workflows()
     check.commits()
+    check.env_reference()
     pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
     if pr:
         check.pull_request(pr["title"], pr["body"])

@@ -11,6 +11,7 @@ extern "C" {
 int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaList* args);
 
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
+    if (!source) { errno = 22; return nullptr; }
     std::size_t length = 0;
     while (length < limit && source[length] != '\0') ++length;
     try {

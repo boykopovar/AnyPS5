@@ -44,6 +44,7 @@ static constexpr int VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE = -2144796642;
 static constexpr int VIDEO_OUT_BUS_TYPE_MAIN = 0;
 static constexpr int VIDEO_OUT_BUS_TYPE_OVERLAY = 1;
 static constexpr int VIDEO_OUT_BUS_TYPE_SUB = 2;
+static constexpr int VIDEO_OUT_BUS_TYPE_HMD2_MAIN = 0x20;
 
 static constexpr uint32_t VIDEO_OUT_DEFAULT_WIDTH = 1920;
 static constexpr uint32_t VIDEO_OUT_DEFAULT_HEIGHT = 1080;
@@ -107,6 +108,7 @@ struct BufferAttributeGroup {
     VideoOutBufferAttribute2 attribute{};
     int category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED;
     bool occupied = false;
+    bool ps4 = false;
 };
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group);
@@ -132,6 +134,7 @@ struct VideoOutConfig {
     int busType = VIDEO_OUT_BUS_TYPE_MAIN;
     bool opened = false;
     bool closing = false;
+    bool ps4 = false;
     std::exception_ptr failure;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();
     int flipRate = 0;

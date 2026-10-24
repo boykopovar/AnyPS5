@@ -30,15 +30,26 @@ inline constexpr std::uint32_t RasterPrimitive = 8233u;
 inline constexpr std::uint32_t LayerExported = 8234u;
 inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
+inline constexpr std::uint32_t DepthRemapBase = 8240u;
+inline constexpr std::uint32_t DepthRemapWords = 1u;
+inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
+inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
+inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
+inline constexpr std::uint32_t StoreQuantizeWords = 4u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+inline constexpr std::uint32_t FmaskFormatBase = 57472u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
+}
+
+inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {
+    return id >= WorkgroupOffsetBase && id < WorkgroupOffsetBase + WorkgroupOffsetWords;
 }
 
 }

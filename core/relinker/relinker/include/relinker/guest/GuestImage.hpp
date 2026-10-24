@@ -4,6 +4,7 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <relinker/domain/ISyscallScanner.hpp>
+#include <relinker/patching/GamePatch.hpp>
 #include <filesystem>
 #include <domain/IProgress.hpp>
 #include <set>
@@ -43,6 +44,7 @@ struct GuestImage {
     std::vector<std::string> ModuleNames;
     std::vector<std::uint8_t> Bytes;
     std::vector<Codegen::TrampolineSite> Trampolines;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
@@ -50,14 +52,16 @@ struct GuestImage {
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
     std::uint64_t Init = 0;
+    bool HasInit = false;
     std::uint64_t Fini = 0;
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
+    bool Symbolic = false;
+    std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {
 public:
-    std::vector<std::string> ReadModuleNames(const std::vector<std::uint8_t>& bytes) const;
     GuestImage Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, bool windows = false) const;
 };
 
@@ -72,6 +76,7 @@ struct GuestArtifact {
 struct GuestModuleInput {
     std::filesystem::path Path;
     std::vector<std::uint8_t> Bytes;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
 
 class GuestModuleBuilder {

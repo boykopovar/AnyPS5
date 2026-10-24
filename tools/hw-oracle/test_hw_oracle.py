@@ -10,12 +10,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import unittest.mock
 from unittest.mock import patch
 
 import hw_oracle
 
 
 MODES = dict(ieee=0, denorm32=0, denorm16=3, dx10_clamp=1, round32=0, round16=0, fp16_overflow=0)
+
+
+def setUpModule():
+    os.environ["HW_ORACLE_RUNTIME"] = "hsa"
 
 
 class OracleCacheTests(unittest.TestCase):
@@ -79,6 +84,59 @@ class OracleCacheTests(unittest.TestCase):
 
 
 class InputRowsTests(unittest.TestCase):
+    def test_cli_reports_invalid_input_before_tool_lookup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body, rows = Path(tmp) / "body.s", Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0", encoding="utf-8")
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [part for name, value in MODES.items()
+                     for part in ["--" + name.replace("_", "-"), str(value)]]
+            for contents in (None, b"not a number\n", b"1 2 3\n", b"-1 0 0 0\n", b"4294967296 0 0 0\n", b"\xff"):
+                with self.subTest(contents=contents):
+                    rows.unlink(missing_ok=True)
+                    if contents is not None:
+                        rows.write_bytes(contents)
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "assemble") as assemble, \
+                            patch.object(hw_oracle, "oracle") as oracle, \
+                            contextlib.redirect_stdout(io.StringIO()) as output, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, \
+                            self.assertRaises(SystemExit) as exited:
+                        hw_oracle.main()
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn("error:", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    assemble.assert_not_called()
+                    oracle.assert_not_called()
+
+    def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Path(directory) / "runner.py"
+            runner.write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "output = Path(sys.argv[3])\n"
+                "marker = output.with_suffix('.seen')\n"
+                "if not marker.exists():\n"
+                "    output.write_bytes(bytes(int(sys.argv[1]) * 64))\n"
+                "    marker.touch()\n", encoding="utf-8")
+            for wave64 in (False, True):
+                with self.subTest(wave64=wave64), patch.object(hw_oracle, "assemble", return_value=runner), \
+                        patch.object(hw_oracle, "oracle", return_value=sys.executable):
+                    with self.assertRaises(FileNotFoundError):
+                        hw_oracle.run("s_nop 0", [(0, 0, 0, 0)] * 1025, wave64=wave64, **MODES)
+
+
+    def test_oracle_output_must_match_the_padded_dispatch_size(self):
+        for delta in (-1, 1, 64):
+            def dispatch(command, **kwargs):
+                Path(command[4]).write_bytes(bytes(int(command[2]) * 64 + delta))
+
+            with self.subTest(delta=delta), patch.object(hw_oracle, "assemble", return_value="kernel.co"), \
+                    patch.object(hw_oracle, "oracle", return_value="oracle"), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+                with self.assertRaisesRegex(ValueError, "Oracle output size"):
+                    hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], **MODES)
+
+
     def test_invalid_rows_fail_before_assembler_or_gpu_lookup(self):
         for row in ((1, 2, 3), (1, 2, 3, 4, 5), (-1, 0, 0, 0),
                     (0x100000000, 0, 0, 0), (1.5, 0, 0, 0), ("1", 0, 0, 0)):
@@ -86,6 +144,28 @@ class InputRowsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "row 1"):
                     hw_oracle.run("s_nop 0", [row], **MODES)
                 assemble.assert_not_called()
+
+    def test_cli_rejects_empty_rows_before_running_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body, rows = Path(tmp) / "body.s", Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0", encoding="utf-8")
+            argv = ["hw_oracle.py", str(body), str(rows), "--json"]
+            argv += [part for name, value in MODES.items()
+                     for part in ["--" + name.replace("_", "-"), str(value)]]
+            for contents in ("", "\n \t\n"):
+                with self.subTest(contents=contents):
+                    rows.write_text(contents, encoding="utf-8")
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run, \
+                            patch.object(hw_oracle, "target", return_value="gfx1030") as target, \
+                            contextlib.redirect_stdout(io.StringIO()) as output, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, \
+                            self.assertRaises(SystemExit) as exited:
+                        hw_oracle.main()
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn("at least one input row", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    run.assert_not_called()
+                    target.assert_not_called()
 
     def test_unsigned_bits_and_indexable_values_are_preserved(self):
         class Indexable:
@@ -115,6 +195,40 @@ class InputRowsTests(unittest.TestCase):
             with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
                 hw_oracle.main()
             self.assertEqual(run.call_args.args[1], [(1, 8, 0xffffffff, 2)])
+
+    def test_validation_only_reports_dispatch_shape_without_running_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows, extra = (Path(directory) / name for name in ("body.s", "rows.txt", "extra.bin"))
+            body.write_text("v_mov_b32 v10, v4", encoding="utf-8")
+            extra.write_bytes(b"abc")
+            options = [part for name, value in MODES.items() for part in ["--" + name.replace("_", "-"), str(value)]]
+            for count in (1, 33, 513, 1025):
+                rows.write_text("1 2 3 4\n" * count, encoding="utf-8")
+                for wave64 in (False, True):
+                    argv = ["hw_oracle.py", str(body), str(rows), *options, "--validate-only", "--json", "--extra", str(extra)]
+                    if wave64:
+                        argv.append("--wave64")
+                    with self.subTest(count=count, wave64=wave64), patch("sys.argv", argv), \
+                            patch.object(hw_oracle, "run", side_effect=AssertionError("GPU run")), \
+                            patch.object(hw_oracle, "target", side_effect=AssertionError("target lookup")), \
+                            contextlib.redirect_stdout(io.StringIO()) as output:
+                        self.assertEqual(hw_oracle.main(), 0)
+                    report = json.loads(output.getvalue())
+                    wave = 64 if wave64 else 32
+                    padded = (count + wave - 1) // wave * wave
+                    dispatch = 512 if wave64 else 1024
+                    self.assertTrue(report["validation_only"])
+                    self.assertEqual((report["rows"], report["padded_rows"], report["dispatches"]),
+                                     (count, padded, (padded + dispatch - 1) // dispatch))
+                    self.assertEqual(report["extra_bytes"], 3)
+                    self.assertEqual(report["floating_point_modes"], MODES)
+                    self.assertNotIn("assembly_target", report)
+            for lds in (-1, 65537):
+                with self.subTest(lds=lds), patch("sys.argv", [*argv, "--lds", str(lds)]), \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+                    hw_oracle.main()
+                self.assertEqual(exited.exception.code, 2)
+
 
 
 class JsonReportTests(unittest.TestCase):
@@ -206,8 +320,9 @@ class JsonReportTests(unittest.TestCase):
         self.rows.write_text("0x100000000 0 0 0\n", encoding="utf-8")
         output = io.StringIO()
         with patch.object(hw_oracle, "target", side_effect=AssertionError("target lookup")) as target:
-            with self.assertRaisesRegex(ValueError, "row 1"):
+            with self.assertRaises(SystemExit) as exited:
                 self.cli("--json", output=output)
+            self.assertEqual(exited.exception.code, 2)
             target.assert_not_called()
         self.assertEqual(output.getvalue(), "")
 
@@ -279,6 +394,39 @@ class TargetOverrideTests(unittest.TestCase):
             with patch.dict(os.environ, {"HW_ORACLE_TARGET": "gfx1100"}):
                 self.assertEqual(hw_oracle.target(), "gfx1100")
 
+    def test_device_selection_uses_its_own_cached_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = root / "probe.py"
+            runner.write_text(
+                "import os\nfrom pathlib import Path\n"
+                "visible = os.environ.get('ROCR_VISIBLE_DEVICES', 'unset')\n"
+                "with Path(__file__).with_name('probes.txt').open('a', encoding='utf-8') as log:\n"
+                "    log.write(visible + '\\n')\n"
+                "print({'0': 'gfx1030', '1': 'gfx1100', 'unset': 'gfx900'}[visible])\n",
+                encoding="utf-8")
+            binary = root / ("oracle.cmd" if os.name == "nt" else "oracle")
+            if os.name == "nt":
+                binary.write_text('@"%HW_ORACLE_TEST_PYTHON%" "%~dp0probe.py" %*\n', encoding="ascii")
+            else:
+                binary.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(runner))} "$@"\n',
+                                  encoding="utf-8")
+                binary.chmod(0o755)
+            with patch.object(hw_oracle, "oracle", return_value=binary), \
+                    patch.dict(os.environ, {"HW_ORACLE_TARGET": "", "HW_ORACLE_TEST_PYTHON": sys.executable}):
+                os.environ["ROCR_VISIBLE_DEVICES"] = "0"
+                self.assertEqual(hw_oracle.detected_target(binary, "1"), "gfx1100")
+                for visible, expected in (("0", "gfx1030"), ("0", "gfx1030"),
+                                          ("1", "gfx1100"), ("1", "gfx1100"),
+                                          ("0", "gfx1030"), (None, "gfx900"), (None, "gfx900")):
+                    if visible is None:
+                        os.environ.pop("ROCR_VISIBLE_DEVICES", None)
+                    else:
+                        os.environ["ROCR_VISIBLE_DEVICES"] = visible
+                    self.assertEqual(hw_oracle.target(), expected)
+            self.assertEqual((root / "probes.txt").read_text(encoding="utf-8").splitlines(),
+                             ["1", "0", "unset"])
+
     def test_removing_override_restores_cached_detection_for_that_binary(self):
         reply = subprocess.CompletedProcess([], 0, "gfx1030\n", "")
         with patch.object(hw_oracle, "oracle", return_value=Path("oracle-a")), \
@@ -299,6 +447,30 @@ class TargetOverrideTests(unittest.TestCase):
 
 
 class OracleConfigurationTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX executable compiler fixture")
+    def test_path_selecting_another_compiler_invalidates_the_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("first", "second"):
+                compiler = root / name / "fixture-cc"
+                compiler.parent.mkdir()
+                compiler.write_text(
+                    "#!" + sys.executable + "\nimport sys\nfrom pathlib import Path\n"
+                    "Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(" + repr(name.encode()) + ")\n",
+                    encoding="utf-8")
+                compiler.chmod(0o755)
+            with patch.object(hw_oracle, "CACHE", root / "cache"), \
+                    patch.object(hw_oracle, "rocm_root", return_value=None):
+                with patch.dict(os.environ, {"CC": "fixture-cc", "PATH": str(root / "first")}):
+                    first = hw_oracle.oracle()
+                    self.assertEqual(first.read_bytes(), b"first")
+                    self.assertEqual(hw_oracle.oracle(), first)
+                with patch.dict(os.environ, {"CC": "fixture-cc", "PATH": str(root / "second")}):
+                    second = hw_oracle.oracle()
+                    self.assertEqual(second.read_bytes(), b"second")
+                    self.assertNotEqual(first, second)
+
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux compiler and shared-library fixture")
     def test_cache_and_compiler_command_with_host_toolchain(self):
         compiler = shutil.which("cc")
@@ -473,6 +645,137 @@ class AssemblyTests(unittest.TestCase):
                 with patch.object(hw_oracle, "target", return_value="gfx1036"):
                     code = hw_oracle.assemble(body, Path(tmp), wave64, **MODES)
                 self.assertTrue(code.is_file())
+
+
+class HipRuntimeTests(unittest.TestCase):
+    def test_runtime_defaults_to_hip_on_windows_only(self):
+        environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_RUNTIME"}
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(hw_oracle.runtime(), "hip" if os.name == "nt" else "hsa")
+        for selected in hw_oracle.RUNTIMES:
+            with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": selected}):
+                self.assertEqual(hw_oracle.runtime(), selected)
+        with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": "rocm"}), self.assertRaises(ValueError):
+            hw_oracle.runtime()
+
+    def test_hip_run_assembles_and_dispatches_in_process(self):
+        calls = []
+
+        class Runtime:
+            @staticmethod
+            def target():
+                calls.append(("target",))
+                return "gfx1010"
+
+            @staticmethod
+            def assemble(source, isa_target, wave64):
+                calls.append(("assemble", isa_target, wave64, b"v_mov_b32 v10, v4" in source))
+                return b"code"
+
+            @staticmethod
+            def dispatch(code, threads, payload, out_dwords, coarse):
+                calls.append(("dispatch", code, threads, len(payload), out_dwords, coarse))
+                return bytes(threads * out_dwords * 4)
+
+        environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_TARGET"}
+        for wave64, coarse in ((False, False), (True, True)):
+            calls.clear()
+            with self.subTest(wave64=wave64), patch.dict(os.environ, {**environment, "HW_ORACLE_RUNTIME": "hip"}, clear=True),                     patch.object(hw_oracle, "hip_runtime", return_value=Runtime),                     patch.object(hw_oracle.subprocess, "run", side_effect=AssertionError("subprocess called")),                     patch.object(hw_oracle, "oracle", side_effect=AssertionError("oracle built")):
+                results = hw_oracle.run("  v_mov_b32 v10, v4", [(1, 2, 3, 4)], b"xy", wave64, coarse, **MODES)
+            wave = 64 if wave64 else 32
+            self.assertEqual(results, [(0,) * 16])
+            self.assertIn(("target",), calls)
+            self.assertEqual([call for call in calls if call != ("target",)],
+                             [("assemble", "gfx1010", wave64, True), ("dispatch", b"code", wave, wave * 16 + 2, 16, coarse)])
+
+    def test_hip_output_must_match_the_padded_dispatch_size(self):
+        class Runtime:
+            @staticmethod
+            def assemble(source, isa_target, wave64):
+                return b"code"
+
+            @staticmethod
+            def dispatch(code, threads, payload, out_dwords, coarse):
+                return bytes(threads * out_dwords * 4 - 4)
+
+        with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": "hip", "HW_ORACLE_TARGET": "gfx1010"}),                 patch.object(hw_oracle, "hip_runtime", return_value=Runtime), self.assertRaises(ValueError):
+            hw_oracle.run("  s_nop 0", [(0, 0, 0, 0)], **MODES)
+
+    def test_hip_runtime_loads_the_script_next_to_the_tool(self):
+        self.assertEqual(Path(hw_oracle.hip_runtime().__file__), hw_oracle.HERE / "oracle_hip.py")
+
+
+class HipOracleTests(unittest.TestCase):
+    def setUp(self):
+        import oracle_hip
+        self.oracle_hip = oracle_hip
+
+    def test_cli_rejects_mixed_or_incomplete_requests(self):
+        for argv in ([], ["--target", "code", "32", "in", "out", "16"], ["--wave64", "code", "32", "in", "out", "16"],
+                     ["code", "32", "in", "out"], ["code", "0", "in", "out", "16"], ["code", "1025", "in", "out", "16"],
+                     ["code", "32", "in", "out", "17"]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit:
+                self.oracle_hip.main(argv)
+            self.assertEqual(exit.exception.code, 2)
+
+    def test_comgr_step_tries_each_action_until_one_produces_output(self):
+        library = unittest.mock.MagicMock()
+        for name in ("amd_comgr_create_action_info", "amd_comgr_create_data_set", "amd_comgr_action_info_set_isa_name",
+                     "amd_comgr_action_info_set_logging", "amd_comgr_action_info_set_option_list"):
+            getattr(library, name).return_value = 0
+        outputs = {0x8: [], 0xA: [b"object"]}
+        actions = []
+        library.amd_comgr_do_action.side_effect = lambda action, *args: actions.append(action) or (0 if action == 0xA else 1)
+
+        def data_bytes(data_set, kind):
+            return [b"log"] if kind == self.oracle_hip.DATA_LOG else outputs[actions[-1]]
+
+        isa = "amdgcn-amd-amdhsa--gfx1010"
+        with patch.object(self.oracle_hip, "comgr", return_value=library), patch.object(self.oracle_hip, "data_bytes", side_effect=data_bytes):
+            self.assertEqual(self.oracle_hip.comgr_step((0x8, 0xA), isa, [b"-mwavefrontsize64"], self.oracle_hip.Handle(),
+                                                        self.oracle_hip.DATA_RELOCATABLE), b"object")
+            self.assertEqual(actions, [0x8, 0xA])
+            outputs[0xA] = []
+            with self.assertRaises(self.oracle_hip.OracleError) as error:
+                self.oracle_hip.comgr_step((0x8, 0xA), isa, [], self.oracle_hip.Handle(), self.oracle_hip.DATA_RELOCATABLE)
+        self.assertIn("action 0x8 status 1: log", str(error.exception))
+        self.assertIn("action 0xa status 0: log", str(error.exception))
+
+    def test_device_selection_follows_rocr_visible_devices(self):
+        library = unittest.mock.MagicMock()
+        library.hipInit.return_value = 0
+
+        def count(pointer):
+            pointer._obj.value = 1
+            return 0
+
+        library.hipGetDeviceCount.side_effect = count
+        base = {key: value for key, value in os.environ.items() if key not in ("ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES")}
+        for environment, expected in (({"ROCR_VISIBLE_DEVICES": "1"}, "1"), ({"ROCR_VISIBLE_DEVICES": "1", "HIP_VISIBLE_DEVICES": "0"}, "0")):
+            self.oracle_hip.hip.cache_clear()
+            with self.subTest(environment=environment), patch.dict(os.environ, {**base, **environment}, clear=True), \
+                    patch.object(self.oracle_hip, "load", return_value=library):
+                self.oracle_hip.hip()
+                self.assertEqual(os.environ["HIP_VISIBLE_DEVICES"], expected)
+        self.oracle_hip.hip.cache_clear()
+
+    def test_assembles_both_wave_sizes_with_the_driver_comgr(self):
+        if os.name != "nt":
+            self.skipTest("comgr from AMD's Windows driver")
+        try:
+            self.oracle_hip.comgr()
+        except self.oracle_hip.OracleError as error:
+            self.skipTest(str(error))
+        template = (hw_oracle.HERE / "template.s").read_text()
+        for wave64, mask in ((False, "s8"), (True, "s[8:9]")):
+            text = template
+            for key, value in (("@TARGET@", "gfx1010"), ("@WAVE32@", "0" if wave64 else "1"), ("@WAVESIZE@", "64" if wave64 else "32"),
+                               ("@DENORM@", "0"), ("@DENORM16@", "3"), ("@IEEE@", "0"), ("@DX10_CLAMP@", "1"), ("@ROUND32@", "0"),
+                               ("@ROUND16@", "0"), ("@FP16_OVERFLOW@", "0"), ("@LDS@", "4096"),
+                               ("@BODY@", f"  v_cmp_lt_f32 {mask}, v4, v5\n  v_cndmask_b32 v10, v6, v7, {mask}\n")):
+                text = text.replace(key, value)
+            with self.subTest(wave64=wave64):
+                self.assertEqual(self.oracle_hip.assemble(text.encode(), "gfx1010", wave64)[:4], b"\x7fELF")
 
 
 if __name__ == "__main__":

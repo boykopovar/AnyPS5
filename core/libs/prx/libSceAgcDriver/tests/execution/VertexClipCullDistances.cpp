@@ -129,9 +129,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const Row& ro
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    const std::vector<std::uint32_t> pixelUserData(4, 0u);
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
-        {waveSize, 0, std::vector<std::uint32_t>(4, 0u), std::nullopt, pixel, std::nullopt, pixelMemory},
+        {waveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         device.Target(),
         PixelPushLayout(vertexPush, device.Target())
     };

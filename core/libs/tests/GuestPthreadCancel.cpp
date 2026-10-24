@@ -8,6 +8,7 @@
 extern "C" {
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+Pthread APS5_VABI scePthreadSelf();
 void APS5_VABI scePthreadExit(void* retval);
 int APS5_VABI scePthreadCancel(Pthread thread);
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
@@ -29,8 +30,12 @@ int APS5_VABI pthread_setcanceltype_nid_postfix(int type, int* old_type);
 int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value);
 int APS5_VABI sem_destroy_nid_postfix(void* sem);
 int APS5_VABI sem_wait_nid_postfix(void* sem);
+int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime);
+int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
 void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
 void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute);
+void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*), void* argument);
+void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute);
 }
 
 static constexpr int SCE_OK = 0;
@@ -57,7 +62,7 @@ struct Shared {
     std::atomic<bool> returned{false};
     std::atomic<bool> survived{false};
     std::atomic<int> cleanups{0};
-    int order[2] = {0, 0};
+    int order[3] = {0, 0, 0};
 };
 
 static Shared shared;
@@ -91,6 +96,44 @@ static void* APS5_VABI PosixSemWaiter(void*) {
     sem_wait_nid_postfix(&shared.posixSem);
     shared.returned.store(true);
     return nullptr;
+}
+
+struct AvailableTimedSemaphore {
+    void* semaphore = nullptr;
+    bool pending;
+    bool disabled;
+    bool expired;
+    bool returned = false;
+    int result = -2;
+};
+
+static void* APS5_VABI AvailableTimedSemaphoreWaiter(void* argument) {
+    auto& value = *static_cast<AvailableTimedSemaphore*>(argument);
+    if (value.disabled) Require(scePthreadSetcancelstate(CANCEL_DISABLE, nullptr) == SCE_OK);
+    if (value.pending) Require(pthread_cancel_nid_postfix(scePthreadSelf()) == 0);
+    KernelTimespec deadline{};
+    if (!value.expired)
+        deadline.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count() + 60;
+    value.result = sem_timedwait_nid_postfix(&value.semaphore, &deadline);
+    value.returned = true;
+    return reinterpret_cast<void*>(std::intptr_t{7});
+}
+
+static void CheckAvailableTimedSemaphore(bool pending, bool disabled, bool expired) {
+    AvailableTimedSemaphore value{nullptr, pending, disabled, expired};
+    Require(sem_init_nid_postfix(&value.semaphore, 0, 1) == 0);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, AvailableTimedSemaphoreWaiter, &value, nullptr) == SCE_OK);
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    const bool canceled = pending && !disabled;
+    Require(result == (canceled ? CANCELED : reinterpret_cast<void*>(std::intptr_t{7})));
+    Require(value.returned != canceled);
+    if (!canceled) Require(value.result == 0);
+    int permits = -1;
+    Require(sem_getvalue_nid_postfix(&value.semaphore, &permits) == 0);
+    Require(permits == (canceled ? 1 : 0));
+    Require(sem_destroy_nid_postfix(&value.semaphore) == 0);
 }
 
 static void* APS5_VABI Idler(void*) {
@@ -148,6 +191,18 @@ static void* APS5_VABI Handlers(void*) {
     return nullptr;
 }
 
+static void* APS5_VABI HeapHandlers(void*) {
+    std::uintptr_t first[8];
+    __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{1}), first);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{2}));
+    pthread_cleanup_pop_nid_postfix(0);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{3}));
+    __pthread_cleanup_pop_imp_nid_postfix(1);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{4}));
+    scePthreadExit(reinterpret_cast<void*>(std::intptr_t{8}));
+    return nullptr;
+}
+
 static Pthread Start(PthreadEntry entry) {
     shared.ready.store(false);
     shared.release.store(false);
@@ -197,6 +252,11 @@ int main() {
     Require(pthread_cancel_nid_postfix(thread) == 0);
     JoinCanceled(thread);
 
+    CheckAvailableTimedSemaphore(true, false, false);
+    CheckAvailableTimedSemaphore(true, false, true);
+    CheckAvailableTimedSemaphore(true, true, false);
+    CheckAvailableTimedSemaphore(false, false, true);
+
     Require(scePthreadCreate(&shared.target, nullptr, Idler, nullptr, nullptr) == SCE_OK);
     thread = Start(Joiner);
     Require(scePthreadCancel(thread) == SCE_OK);
@@ -228,6 +288,12 @@ int main() {
     Require(scePthreadJoin(thread, &result) == SCE_OK);
     Require(reinterpret_cast<std::intptr_t>(result) == 7);
     Require(shared.cleanups.load() == 2 && shared.order[0] == 3 && shared.order[1] == 1);
+
+    shared.cleanups.store(0);
+    Require(scePthreadCreate(&thread, nullptr, HeapHandlers, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    Require(reinterpret_cast<std::intptr_t>(result) == 8);
+    Require(shared.cleanups.load() == 3 && shared.order[0] == 3 && shared.order[1] == 4 && shared.order[2] == 1);
 
     Require(sem_destroy_nid_postfix(&shared.posixSem) == 0);
     Require(scePthreadSemDestroy(&shared.sem) == SCE_OK);

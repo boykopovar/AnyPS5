@@ -14,6 +14,14 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr list -R "$GITHUB_REPOSITORY" --label stale -L 1000 --json number,labels \
+            --jq '.[] | select(all(.labels[]; .name != "needs rebase")) | .number' |
+            while read -r number; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$number/labels/stale" --silent
+            done
       - uses: actions/stale@v11
         with:
           only-pr-labels: needs rebase

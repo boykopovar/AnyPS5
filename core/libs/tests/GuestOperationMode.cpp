@@ -3,6 +3,7 @@
 #include <stdexcept>
 extern "C" {
 void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode);
+int APS5_VABI sceKernelIsTrinityMode(void);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 static bool Throws(int* mode, int* submode) {
@@ -15,6 +16,7 @@ int main() {
     Require(out[0] == 2 && out[1] == -1);
     Require(out[2] == 0 && out[3] == -1);
     int value = -1;
-    Require(Throws(nullptr, &value) && Throws(&value, nullptr));
+    Require(Throws(nullptr, &value) && Throws(&value, nullptr) && Throws(nullptr, nullptr));
     Require(value == -1);
+    Require(sceKernelIsTrinityMode() == 0);
 }

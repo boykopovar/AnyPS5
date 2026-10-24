@@ -4,6 +4,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include <vector>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -12,6 +14,7 @@
 #include <mutex>
 #include <stdexcept>
 #ifdef _WIN32
+#include <string_view>
 #include <windows.h>
 #else
 #include <cerrno>
@@ -123,9 +126,63 @@ void SetFpWord(GuestMcontext& m, std::size_t offset, std::uint32_t value) {
     std::memcpy(reinterpret_cast<unsigned char*>(m.fpstate) + offset, &value, sizeof(value));
 }
 
+char* AppendText(char* output, const char* text) {
+    while (*text != '\0') *output++ = *text++;
+    return output;
+}
+
+char* AppendHex(char* output, std::uint64_t value, std::size_t digits) {
+    static constexpr char hexDigits[] = "0123456789abcdef";
+    while (digits != 0) {
+        --digits;
+        *output++ = hexDigits[(value >> (digits * 4)) & 0xf];
+    }
+    return output;
+}
+
+char* AppendHexField(char* output, const char* name, std::uint64_t value, std::size_t digits) {
+    return AppendHex(AppendText(output, name), value, digits);
+}
+
+void LogGuestExceptionContext(int signum, const GuestMcontext& context) {
+    char buffer[768];
+    char* output = AppendText(buffer, "[exception] guest context");
+    output = AppendHexField(output, " signal=0x", static_cast<std::uint32_t>(signum), 2);
+    output = AppendHexField(output, " rip=0x", context.rip, 16);
+    output = AppendHexField(output, " rsp=0x", context.rsp, 16);
+    output = AppendHexField(output, " rflags=0x", context.rflags, 16);
+    output = AppendHexField(output, " trap=0x", context.trapno, 8);
+    output = AppendHexField(output, " error=0x", context.err, 16);
+    output = AppendHexField(output, " fault=0x", context.addr, 16);
+    output = AppendHexField(output, " rax=0x", context.rax, 16);
+    output = AppendHexField(output, " rbx=0x", context.rbx, 16);
+    output = AppendHexField(output, " rcx=0x", context.rcx, 16);
+    output = AppendHexField(output, " rdx=0x", context.rdx, 16);
+    output = AppendHexField(output, " rsi=0x", context.rsi, 16);
+    output = AppendHexField(output, " rdi=0x", context.rdi, 16);
+    output = AppendHexField(output, " rbp=0x", context.rbp, 16);
+    output = AppendHexField(output, " r8=0x", context.r8, 16);
+    output = AppendHexField(output, " r9=0x", context.r9, 16);
+    output = AppendHexField(output, " r10=0x", context.r10, 16);
+    output = AppendHexField(output, " r11=0x", context.r11, 16);
+    output = AppendHexField(output, " r12=0x", context.r12, 16);
+    output = AppendHexField(output, " r13=0x", context.r13, 16);
+    output = AppendHexField(output, " r14=0x", context.r14, 16);
+    output = AppendHexField(output, " r15=0x", context.r15, 16);
+    *output++ = '\n';
+#ifdef _WIN32
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(output - buffer), &written, nullptr);
+#else
+    const auto written = write(STDERR_FILENO, buffer, static_cast<std::size_t>(output - buffer));
+    (void)written;
+#endif
+}
+
 void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext) {
     auto& m = ucontext.mcontext;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
+    LogGuestExceptionContext(signum, m);
     handler(signum, &ucontext);
     SetFpWord(m, MxcsrOffset, FpWord(m, MxcsrOffset) & (mxcsrMask != 0 ? mxcsrMask : DefaultMxcsrMask));
     SetFpWord(m, MxcsrMaskOffset, mxcsrMask);
@@ -135,6 +192,8 @@ void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucont
 constexpr std::size_t RedZone = 128;
 constexpr std::size_t HomeArea = 32;
 constexpr auto RetryLimit = std::chrono::seconds(1);
+constexpr auto HostCodeLimit = std::chrono::milliseconds(50);
+constexpr auto HostCodeResample = std::chrono::microseconds(20);
 constexpr std::size_t VectorBytes = 16 * 32;
 
 struct Delivery {
@@ -249,6 +308,94 @@ bool InWinpthread(DWORD64 rip) {
     return winpthread != nullptr && VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) == sizeof(info) && info.AllocationBase == winpthread;
 }
 
+enum class CodeKind : std::uint8_t { Unknown, Guest, Host };
+
+struct ImageKinds {
+    static constexpr std::size_t Capacity = 256;
+    std::array<std::atomic<DWORD64>, Capacity> bases{};
+    std::array<std::atomic<std::uint8_t>, Capacity> kinds{};
+    std::atomic<std::size_t> count{0};
+};
+
+ImageKinds& Images() {
+    static ImageKinds images;
+    return images;
+}
+
+DWORD64 ImageBase(DWORD64 rip) {
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) != sizeof(info) || info.Type != MEM_IMAGE) return 0;
+    return reinterpret_cast<DWORD64>(info.AllocationBase);
+}
+
+CodeKind CachedKind(DWORD64 base) {
+    if (base == 0) return CodeKind::Guest;
+    auto& images = Images();
+    const auto count = std::min(images.count.load(std::memory_order_acquire), ImageKinds::Capacity);
+    for (std::size_t index = 0; index < count; ++index) {
+        if (images.bases[index].load(std::memory_order_acquire) == base) return static_cast<CodeKind>(images.kinds[index].load(std::memory_order_acquire));
+    }
+    return CodeKind::Unknown;
+}
+
+DWORD64 ExecutableBase() {
+    static const auto executable = reinterpret_cast<DWORD64>(GetModuleHandleW(nullptr));
+    return executable;
+}
+
+CodeKind ClassifyImage(DWORD64 base) {
+    if (const auto known = CachedKind(base); known != CodeKind::Unknown) return known;
+    auto kind = CodeKind::Host;
+    if (base == ExecutableBase()) {
+        kind = CodeKind::Guest;
+    } else {
+        wchar_t path[MAX_PATH]{};
+        const auto length = GetModuleFileNameW(reinterpret_cast<HMODULE>(base), path, MAX_PATH);
+        const std::wstring_view name(path, length);
+        constexpr std::wstring_view guestSuffix = L".guest.prx";
+        if (name.size() >= guestSuffix.size() && name.substr(name.size() - guestSuffix.size()) == guestSuffix) kind = CodeKind::Guest;
+    }
+    auto& images = Images();
+    if (const auto slot = images.count.fetch_add(1, std::memory_order_acq_rel); slot < ImageKinds::Capacity) {
+        images.kinds[slot].store(static_cast<std::uint8_t>(kind), std::memory_order_release);
+        images.bases[slot].store(base, std::memory_order_release);
+    }
+    return kind;
+}
+
+bool BlockedInWait(DWORD64 rip) {
+    static const std::vector<DWORD64> waits = [] {
+        std::vector<DWORD64> stubs;
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        for (const char* name : {"NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtWaitForAlertByThreadId", "NtDelayExecution", "NtRemoveIoCompletion", "NtRemoveIoCompletionEx", "NtWaitForKeyedEvent", "NtSignalAndWaitForSingleObject", "NtWaitForWorkViaWorkerFactory"}) {
+            if (const auto address = reinterpret_cast<DWORD64>(GetProcAddress(ntdll, name)); address != 0) stubs.push_back(address);
+        }
+        if (const HMODULE win32u = GetModuleHandleW(L"win32u.dll"); win32u != nullptr) {
+            if (const auto address = reinterpret_cast<DWORD64>(GetProcAddress(win32u, "NtUserMsgWaitForMultipleObjectsEx")); address != 0) stubs.push_back(address);
+        }
+        return stubs;
+    }();
+    return std::any_of(waits.begin(), waits.end(), [rip](DWORD64 stub) { return rip - stub < 0x20; });
+}
+
+DWORD64 NtdllBase() {
+    static const auto ntdll = reinterpret_cast<DWORD64>(GetModuleHandleW(L"ntdll.dll"));
+    return ntdll;
+}
+
+bool InSystemCall(DWORD64 rip, DWORD64 base) {
+    if (base == 0 || base != NtdllBase() || rip < base + 2) return false;
+    const auto* code = reinterpret_cast<const unsigned char*>(rip - 2);
+    return code[0] == 0x0f && code[1] == 0x05;
+}
+
+CodeKind RunningCode(DWORD64 rip, DWORD64& base) {
+    base = ImageBase(rip);
+    auto kind = CachedKind(base);
+    if (kind == CodeKind::Unknown && Images().count.load(std::memory_order_acquire) >= ImageKinds::Capacity) kind = CodeKind::Host;
+    return kind == CodeKind::Host && BlockedInWait(rip) ? CodeKind::Guest : kind;
+}
+
 bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     if (thread == scePthreadSelf()) {
         CONTEXT context{};
@@ -259,7 +406,15 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     const auto native = static_cast<HANDLE>(thread->nativeHandle);
     auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0});
     alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
-    const auto retryDeadline = std::chrono::steady_clock::now() + RetryLimit;
+    const auto start = std::chrono::steady_clock::now();
+    const auto retryDeadline = start + RetryLimit;
+    auto hostDeadline = start + HostCodeLimit;
+    static_cast<void>(RestoringContext(0));
+    static_cast<void>(InWinpthread(0));
+    static_cast<void>(BlockedInWait(0));
+    static_cast<void>(ExecutableBase());
+    static_cast<void>(Images());
+    static_cast<void>(NtdllBase());
     for (;;) {
         if (SuspendThread(native) == static_cast<DWORD>(-1)) {
             if (Exited(native)) return false;
@@ -272,7 +427,9 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         delivery.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
         if (!GetThreadContext(native, &delivery.context)) {
             ResumeThread(native);
-            throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
+            if (std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
+            SwitchToThread();
+            continue;
         }
         if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
             const bool accepted = QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued.get())) != 0;
@@ -281,10 +438,24 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             queued.release();
             return true;
         }
-        if (!RestoringContext(delivery.context.Rip) && !InWinpthread(delivery.context.Rip)) break;
+        const bool restoring = RestoringContext(delivery.context.Rip) || InWinpthread(delivery.context.Rip);
+        DWORD64 image = 0;
+        const auto running = restoring ? CodeKind::Guest : RunningCode(delivery.context.Rip, image);
+        const auto now = std::chrono::steady_clock::now();
+        if (running == CodeKind::Host && InSystemCall(delivery.context.Rip, image) && now < retryDeadline) hostDeadline = std::max(hostDeadline, std::min(retryDeadline, now + HostCodeLimit));
+        if (!restoring && (running == CodeKind::Guest || (running == CodeKind::Host && now >= hostDeadline))) break;
         ResumeThread(native);
-        if (std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue or winpthreads for 1 s");
-        SwitchToThread();
+        if (running == CodeKind::Unknown) {
+            static_cast<void>(ClassifyImage(image));
+            continue;
+        }
+        if (restoring && std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue or winpthreads for 1 s");
+        if (running == CodeKind::Host) {
+            const auto resample = std::chrono::steady_clock::now() + HostCodeResample;
+            while (std::chrono::steady_clock::now() < resample) YieldProcessor();
+        } else {
+            SwitchToThread();
+        }
     }
     const DWORD64 slot = (delivery.context.Rsp - RedZone - sizeof(Delivery)) & ~static_cast<DWORD64>(15);
     if (!StackWritable(slot - HomeArea - 8, delivery.context.Rsp - RedZone)) {
@@ -515,11 +686,11 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
 }
 
 void APS5_VABI sceKernelDebugRaiseException(int c1, int c2) {
-  APS5_LOG_OUT("sceKernelDebugRaiseException c1=%d c2=%d", c1, c2);
+    APS5_LOG_OUT("sceKernelDebugRaiseException c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
 }
 
 void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
-  APS5_LOG_OUT("sceKernelDebugRaiseExceptionOnReleaseMode c1=%d c2=%d", c1, c2);
+    APS5_LOG_OUT("sceKernelDebugRaiseExceptionOnReleaseMode c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
 }
 
 }

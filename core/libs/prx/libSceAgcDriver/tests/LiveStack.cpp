@@ -75,6 +75,7 @@ void RunLiveStackAccessTests() {
     pthread_join(thread, nullptr);
     pthread_attr_destroy(&attributes);
     Require(GuestMemory::Accessible(block + page, 64, true) && !GuestMemory::Accessible(block, 16) && !GuestMemory::Accessible(block + stackBytes, 16), "the released test stack is misreported");
+    Require(GuestMemory::Accessible(block + page, 64) && !GuestMemory::Accessible(block + page - 8, 16) && !GuestMemory::Accessible(block + stackBytes - 8, 16), "a read of the released test stack is misreported");
     munmap(block, stackBytes + page);
     Require(arguments.failure.empty(), arguments.failure.c_str());
 #endif

@@ -787,6 +787,33 @@ inline constexpr DecoderBranchCase kDecoderBranchCases[] = {
     {"ff28", 2, Codegen::ControlFlowKind::IndirectJump, false, 0},
     {"ffd0", 2, Codegen::ControlFlowKind::IndirectCall, false, 0},
     {"ffe0", 2, Codegen::ControlFlowKind::IndirectJump, false, 0},
+    {"66480f84c0111111", 8, Codegen::ControlFlowKind::ConditionalBranch, true, 286331328},
+    {"6648e8c0111111", 7, Codegen::ControlFlowKind::Call, true, 286331328},
+    {"6648e9c0111111", 7, Codegen::ControlFlowKind::UnconditionalJump, true, 286331328},
+    {"6648ebc0", 4, Codegen::ControlFlowKind::UnconditionalJump, true, -64},
+    {"664875c0", 4, Codegen::ControlFlowKind::ConditionalBranch, true, -64},
+};
+
+struct DecoderTruncatedBranchCase {
+    const char* Bytes;
+    std::size_t Length;
+    Codegen::ControlFlowKind FlowKind;
+};
+
+inline constexpr DecoderTruncatedBranchCase kDecoderTruncatedBranchCases[] = {
+    {"660f80c011", 5, Codegen::ControlFlowKind::ConditionalBranch},
+    {"660f8fc011", 5, Codegen::ControlFlowKind::ConditionalBranch},
+    {"6670c0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"6675c0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"667fc0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"66e0c0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"66e2c0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"66e3c0", 3, Codegen::ControlFlowKind::ConditionalBranch},
+    {"66e8c011", 4, Codegen::ControlFlowKind::Call},
+    {"66e9c011", 4, Codegen::ControlFlowKind::UnconditionalJump},
+    {"66ebc0", 3, Codegen::ControlFlowKind::UnconditionalJump},
+    {"6667e8c011", 5, Codegen::ControlFlowKind::Call},
+    {"6640e8c011", 5, Codegen::ControlFlowKind::Call},
 };
 
 #endif

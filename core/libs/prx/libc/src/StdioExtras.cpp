@@ -38,6 +38,24 @@ void* Allocate(std::size_t size) {
     }
 }
 
+void* AllocateAligned(std::size_t size, std::size_t alignment) {
+    for (;;) {
+        GuestNewHandler handler = nullptr;
+        try {
+            return ApplicationHeapAlign_nid_no_patch(alignment, size == 0 ? 1 : size);
+        } catch (const std::bad_alloc&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw;
+        } catch (const std::length_error&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw std::bad_alloc();
+        } catch (const std::invalid_argument&) {
+            throw std::bad_alloc();
+        }
+        handler();
+    }
+}
+
 }
 
 extern "C" {
@@ -65,9 +83,8 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* forma
 }
 
 // Only the "C" locale exists.
-const char* APS5_VABI setlocale_nid_postfix(int category, const char* locale) {
-    if (category < 0 || category > 6) return nullptr;
-    if (locale == nullptr || locale[0] == 0 || std::strcmp(locale, "C") == 0 || std::strcmp(locale, "POSIX") == 0) return "C";
+const char* APS5_VABI setlocale_nid_postfix(int, const char* locale) {
+    if (locale == nullptr || locale[0] == 0 || std::strcmp(locale, "C") == 0) return "C";
     return nullptr;
 }
 
@@ -89,6 +106,10 @@ void* APS5_VABI _Znam_nid_postfix(std::size_t size) {
     return Allocate(size);
 }
 
+void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t size, std::size_t alignment) {
+    return AllocateAligned(size, alignment);
+}
+
 void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
     try {
         return Allocate(size);
@@ -107,6 +128,10 @@ void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) n
 
 void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
+    _ZdlPv_nid_postfix(pointer);
 }
 
 void APS5_VABI _ZdaPv_nid_postfix(void* pointer) {

@@ -43,6 +43,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaOpcode.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaProgram.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaInstructionDecoder.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/GcnInstructionDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaScalarOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaVectorOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaMemoryOpDecoder.cpp
@@ -100,6 +101,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SsaBuilder/SsaRegisterStateCleanup.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ConstantFolder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DeadCodeEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/UnobservedPhiEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/HostInterpolationChecker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
@@ -112,6 +114,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SharedMemoryBarrierInserter.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtAddressArithmetic.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp
@@ -121,12 +124,14 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtInstructionPredicates.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtPlanBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtRuntimeValidator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtTape.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtWalker.cpp
 
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvModule.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAnalysis.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterMath.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterFloat64.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterReciprocal.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterRegisters.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvFlowEmitter.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvImageEmitter.cpp
@@ -167,17 +172,28 @@ function(add_shader_recompiler target runtimeTarget)
     )
 
     target_compile_features(${target} PUBLIC cxx_std_20)
+    if(WIN32)
+        target_compile_options(${target} PRIVATE "SHELL:-include ${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostStandardStreams.hpp")
+    endif()
+
+    if(ANYPS5_ENABLE_SPIRV_TOOLS)
+        target_sources(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvOptimizer.cpp)
+    endif()
 
     set(shaderCacheGeneratedDir "${CMAKE_CURRENT_BINARY_DIR}/${target}_generated")
     set(shaderCacheVersionSource "${shaderCacheGeneratedDir}/ShaderCacheVersion.cpp")
     file(GLOB_RECURSE shaderCacheRecompilerSources CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.cpp"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.hpp"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.h"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.cmake"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CMakeLists.txt"
     )
-    set(shaderCacheKeySources "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp")
+    get_target_property(shaderCacheCompiledSources ${target} SOURCES)
+    list(APPEND shaderCacheRecompilerSources ${shaderCacheCompiledSources})
+    list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
+    set(shaderCacheKeySources
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)
         if(NOT EXISTS "${source}")
             message(FATAL_ERROR "Shader disk cache key source does not exist: ${source}")
@@ -220,16 +236,26 @@ function(add_shader_recompiler target runtimeTarget)
         string(APPEND shaderCacheExtra " system-deps=${ANYPS5_SYSTEM_DEPS_STAMP}")
     endif()
     set(shaderCacheReviewedNames
+            BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
+            BuildBarycentricTessellationShaders
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth
             HashBytes
+            LayoutBarycentricEmulation
+            MeshBarycentricLayoutOf
+            NativeCachePath_nid_no_patch
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
             ImageTableAbi::TableHeader
+            FmaskLayoutOf
+            IsFmaskTextureFormat
+            PipelineSpecialization::IsWorkgroupOffset
+            PipelineSpecialization::WorkgroupOffsetBase
+            PipelineSpecialization::WorkgroupOffsetWords
             PixelInput
             PixelInputBit
             RayTracingStrict
@@ -248,13 +274,26 @@ function(add_shader_recompiler target runtimeTarget)
             ResolveSource
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::MaterializeNanoseconds
+            ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
             RuntimeAbi::RequireVersion
+            GcnGuestShaders
+            SetGcnGuestShaders
+            GcnImageTilingIndex
+            GcnImagePitch
+            GcnImagePow2Pad
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive
             ShaderCacheDirectory
+            ShaderDiskCache::Shutdown
             ShaderStage
+            HashSpirvWords
+            ShaderDiskCache::DecodeResult
+            ShaderDiskCache::Enabled
+            ShaderDiskCache::EncodeResult
+            ShaderDiskCache::EntryDirectory
+            ShaderDiskCache::SourceVersion
             SrgbDecodeBit
             SrgbUnormFormat
             FindUserDataTail
@@ -268,6 +307,7 @@ function(add_shader_recompiler target runtimeTarget)
             LinkUserDataCalls
             FindTableCalls
             LinkCalls
+            LoadStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)
@@ -317,8 +357,20 @@ function(add_shader_recompiler target runtimeTarget)
     )
 
     if(ANYPS5_ENABLE_SPIRV_TOOLS)
-        target_sources(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvOptimizer.cpp)
         target_link_libraries(${target} PRIVATE SPIRV-Tools-opt SPIRV-Tools-static)
     endif()
     target_compile_definitions(${target} PUBLIC ANYPS5_ENABLE_SPIRV_TOOLS=$<BOOL:${ANYPS5_ENABLE_SPIRV_TOOLS}>)
+    if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS AND NOT ANYPS5_USE_SYSTEM_DEPS AND NOT TARGET spirv_validator_exit_tests)
+        add_test_executable(spirv_validator_exit_tests "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/SpirvValidatorExit.cpp")
+        target_link_libraries(spirv_validator_exit_tests PRIVATE SPIRV-Tools-static)
+        set_target_properties(spirv_validator_exit_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(spirv_validator_exit_tests)
+        add_test(NAME spirv_validator_exit COMMAND spirv_validator_exit_tests)
+        set_tests_properties(spirv_validator_exit PROPERTIES TIMEOUT 30)
+        if(MINGW)
+            target_link_libraries(spirv_validator_exit_tests PRIVATE libc)
+            set_tests_properties(spirv_validator_exit PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
 endfunction()

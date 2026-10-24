@@ -21,4 +21,12 @@ int APS5_VABI sceNpEAAccessTerminate(void) {
     return 0;
 }
 
+int APS5_VABI sceNpHasEAAccessSubscription(int userId, bool* result) {
+    (void)userId;
+    if (!g_initialized.load()) throw std::logic_error(std::string(__func__) + ": not initialized");
+    if (result == nullptr) throw std::logic_error(std::string(__func__) + ": null result");
+    *result = false;
+    return 0;
+}
+
 }

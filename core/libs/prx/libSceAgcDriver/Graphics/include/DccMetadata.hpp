@@ -36,9 +36,11 @@ bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys fille
 // The keys covering a surface of `surfaceBytes`, when they all agree.
 DccKeys ReadDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 bool IsDccClear(DccKeys keys);
+std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std::size_t bytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
+std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes);
 // Stores "uncompressed" keys over the surface's metadata on the CPU (a guest memory write: it waits
 // for recorded GPU work that writes the keys first).
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
@@ -79,6 +81,16 @@ struct DccKeyProof {
 // APS5_NO_KEY_FAST_PATH=1 scans on every call and stores nothing.
 DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
 bool KeyFastPath();
+bool SingleKeysReadable(const GuestTextureResource& resource);
+bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element);
+struct DccSingleProof {
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t format = 0;
+    bool uniform = false;
+};
+bool ProvedSingleUniform(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof);
 // Cumulative outcomes of ProvedClearKeys: calls answered by a proof, scans made, and scans not kept.
 struct DccKeyProofCounts {
     std::uint64_t proved;
@@ -99,6 +111,16 @@ DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceByt
 void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std::span<std::byte> bytes);
 void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys);
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes);
+bool DccKeyWritersPending(std::uint64_t metaAddress, std::size_t count);
+bool DccKeyWriterNeedsSync(std::uint64_t metaAddress, std::size_t count);
+struct DccKeyWaitCounts {
+    std::uint64_t calls;
+    std::uint64_t noPending;
+    std::uint64_t known;
+    std::uint64_t fillsUncompressed;
+    std::uint64_t synced;
+};
+DccKeyWaitCounts KeyWaitCounts();
 
 }
 

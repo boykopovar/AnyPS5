@@ -13,7 +13,11 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 }
 
 static constexpr int SCE_OK = 0;
+#ifdef ANYPS5_ENABLE_ASAN
+static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000010FC00000000ull;
+#else
 static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000000FC00000000ull;
+#endif
 static constexpr int SCE_KERNEL_ERROR_EACCES = static_cast<int>(0x8002000d);
 static int global = 0;
 

@@ -18,6 +18,7 @@ JUMP_SLOT = 7
 
 def libc_module():
     image = guest_module([("AAAAAAAAAAA#A#A", True), ("BBBBBBBBBBB#B#B", False), ("CCCCCCCCCCC#C#C", False), ("EEEEEEEEEEE", True)])
+    image[0x880 + 3 * 24 + 4] = 0x22
     relocations = [(0x2380, 2, GLOB_DAT), (0x2388, 3, GLOB_DAT)]
     for index, (target, symbol, kind) in enumerate(relocations):
         struct.pack_into("<QQq", image, RELA + index * 24, target, (symbol << 32) | kind, 0)
@@ -47,7 +48,10 @@ def read(path):
 
 
 def entry(nid, offset):
-    return {"nid": nid, "library": "", "targetOffset": offset}
+    result = {"nid": nid, "library": "", "targetOffset": offset}
+    if nid == "CCCCCCCCCCC":
+        result["weak"] = True
+    return result
 
 
 def declared_imports(relinker, case, options, guest_owner):

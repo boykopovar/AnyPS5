@@ -40,6 +40,8 @@ struct Surface {
     bool htileStencil;
     VkFormat format;
     std::uint32_t slice = 0;
+    std::uint8_t clearStencil = 0;
+    std::uint32_t swizzle = 0;
 };
 
 struct DrawOptions {
@@ -48,6 +50,8 @@ struct DrawOptions {
     VkCompareOp depthCompare = VK_COMPARE_OP_LESS;
     bool stencilTest = false;
     VkStencilOpState stencil{};
+    float minDepth = 0.0f;
+    float maxDepth = 1.0f;
 };
 
 inline std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -68,11 +72,11 @@ struct Shaders {
     std::uint32_t vertexPush = 0;
 };
 
-inline Shaders Compile(AgcDriver::VulkanDevice& device) {
+inline Shaders Compile(AgcDriver::VulkanDevice& device, const void* vertices = Triangles().data()) {
     const auto target = device.Target();
     Shaders shaders;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
-    const auto vertexBuffer = BufferDescriptor(Triangles().data(), 16u, static_cast<std::uint32_t>(Triangles().size()));
+    const auto vertexBuffer = BufferDescriptor(vertices, 16u, static_cast<std::uint32_t>(Triangles().size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
     ShaderRecompiler::RecompileRequest vertex{
@@ -105,30 +109,31 @@ inline Shaders Compile(AgcDriver::VulkanDevice& device) {
     return shaders;
 }
 
-inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options) {
-    Pixels.fill(std::byte{0});
+inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options, VkExtent2D extent = {Width, Height}, std::span<std::byte> pixels = Pixels) {
+    std::fill(pixels.begin(), pixels.end(), std::byte{0});
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &compiled.vertex, 0},
         {ShaderStage::Fragment, &compiled.pixel, PixelPushOffset(compiled.vertexPush, device.Target())}
     }};
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, {Width, Height}, surface.format, 1.0f, 0, surface.htile, surface.htileStencil};
+    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, extent, surface.format, 1.0f, surface.clearStencil, surface.htile, surface.htileStencil};
     state.depth->firstSlice = surface.slice;
+    state.depth->depthSwizzle = surface.swizzle;
     state.depthTest = options.depthTest;
     state.depthWrite = options.depthWrite;
     state.depthCompare = options.depthCompare;
     state.stencilTest = options.stencilTest;
     state.stencilFront = options.stencil;
     state.stencilBack = options.stencil;
-    state.renderExtent = {Width, Height};
+    state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(extent.height), static_cast<float>(extent.width), -static_cast<float>(extent.height), options.minDepth, options.maxDepth};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, extent};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
@@ -138,8 +143,8 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     device.Draw(state, draw, shaders);
     device.WaitIdle();
     std::uint32_t covered = 0;
-    for (std::size_t pixel = 0; pixel < Pixels.size() / 4u; ++pixel) {
-        if (std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) == 255u) ++covered;
+    for (std::size_t pixel = 0; pixel < pixels.size() / 4u; ++pixel) {
+        if (std::to_integer<std::uint8_t>(pixels[pixel * 4u]) == 255u) ++covered;
     }
     return covered;
 }

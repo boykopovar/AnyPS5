@@ -114,10 +114,13 @@ static void CheckPositional() {
 static void CheckPointer() {
     char16_t buffer[64];
     const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
-    Require(Format(buffer, 64, u"%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 23 &&
-        buffer == std::u16string(u"0x0|0x1234|0xdeadbeef12"), "vswprintf %p uses the 0x form");
-    Require(Format(buffer, 64, u"[%8p][%-8p][%08p][%.6p]", address(0x1a), address(0x1a), address(0x1a), address(0x1a)) == 40 &&
-        buffer == std::u16string(u"[    0x1a][0x1a    ][0x00001a][0x00001a]"), "vswprintf %p width and precision");
+    Require(Format(buffer, 64, u"%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 17 &&
+        buffer == std::u16string(u"0|1234|deadbeef12"), "vswprintf %p uses the console form");
+    Require(Format(buffer, 64, u"[%10p][%-10p][%.8p][%08p]", address(0x1234), address(0x1234), address(0x1234), address(0x1a)) == 44 &&
+        buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
+    Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
+        buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
+    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == -1, "vswprintf %lp is refused");
 }
 
 static void CheckCount() {
@@ -264,8 +267,10 @@ static void CheckWcsftime() {
     Require(wcsftime_nid_postfix(buffer, 0, u"%Y", &time) == 0 && error == 5 && buffer[0] == u'x', "wcsftime zero size");
     Require(wcsftime_nid_postfix(buffer, 32, u"", &time) == 0 && error == 5 && buffer[0] == u'x', "wcsftime empty format");
     Require(wcsftime_nid_postfix(nullptr, 32, u"%Y", &time) == 0 && error == 5, "wcsftime null buffer");
-    Require(wcsftime_nid_postfix(buffer, 32, u"%Y \u20ac", &time) == 0 && error == 86 && buffer[0] == u'x',
-        "wcsftime unconvertible format");
+    Require(wcsftime_nid_postfix(buffer, 32, u"%Y \u20ac", &time) == 6 && buffer == std::u16string(u"2024 \u20ac"),
+        "wcsftime passes a character above 0xff through UTF-8");
+    Require(wcsftime_nid_postfix(buffer, 7, u"%Y \u20ac", &time) == 6, "wcsftime sizes the narrow buffer for three-byte characters");
+    for (auto& unit : buffer) unit = u'x';
     error = 5;
     Require(wcsftime_nid_postfix(buffer, SIZE_MAX, u"%Y", &time) == 0 && error == 22 && buffer[0] == u'x',
         "wcsftime oversized buffer");
@@ -273,7 +278,33 @@ static void CheckWcsftime() {
     Require(WcsftimeThrows(buffer, u"%Y", nullptr), "wcsftime null time");
 }
 
+static void CheckAlternateOctalZero() {
+    struct Case { const char16_t* format; const char16_t* expected; unsigned value; };
+    for (const auto& test : {
+        Case{u"%#.0o", u"0", 0}, Case{u"%#.o", u"0", 0}, Case{u"%#.00o", u"0", 0},
+        Case{u"[%#5.0o]", u"[    0]", 0}, Case{u"[%-#5.0o]", u"[0    ]", 0},
+        Case{u"[%#05.0o]", u"[    0]", 0}, Case{u"%.0o", u"", 0}, Case{u"%#.0x", u"", 0},
+        Case{u"%#.0o", u"01", 1}, Case{u"%#.1o", u"0", 0}, Case{u"%#.3o", u"000", 0},
+        Case{u"%#.0hho", u"0", 256}, Case{u"%#.0ho", u"0", 65536}
+    }) {
+        char16_t buffer[32];
+        const auto expected = std::u16string(test.expected);
+        Require(swprintf_nid_postfix(buffer, 32, test.format, test.value) == static_cast<int>(expected.size()) && buffer == expected, "swprintf alternate octal zero");
+        Require(Format(buffer, 32, test.format, test.value) == static_cast<int>(expected.size()) && buffer == expected, "vswprintf alternate octal zero");
+        Require(snwprintf_s_nid_postfix(buffer, 32, test.format, test.value) == static_cast<int>(expected.size()) && buffer == expected, "snwprintf_s alternate octal zero");
+    }
+    char16_t buffer[16];
+    Require(swprintf_nid_postfix(buffer, 16, u"%#.*o", 0, 0u) == 1 && buffer == std::u16string(u"0"), "octal zero dynamic precision");
+    Require(swprintf_nid_postfix(buffer, 16, u"%#.*o", -1, 0u) == 1 && buffer == std::u16string(u"0"), "octal zero omitted precision");
+    Require(swprintf_nid_postfix(buffer, 16, u"%2$#.*1$o", 0, 0u) == 1 && buffer == std::u16string(u"0"), "octal zero positional precision");
+    Require(swprintf_nid_postfix(buffer, 16, u"%#.0llo", 0ull) == 1 && buffer == std::u16string(u"0"), "octal zero long long");
+    buffer[0] = u'x';
+    buffer[1] = u'y';
+    Require(snwprintf_s_nid_postfix(buffer, 1, u"%#.0o", 0u) == 1 && buffer[0] == 0 && buffer[1] == u'y', "octal zero bounded output");
+}
+
 int main() {
+    CheckAlternateOctalZero();
     CheckBounded();
     CheckPositional();
     CheckPointer();

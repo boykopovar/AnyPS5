@@ -2,7 +2,7 @@
 
 ## Relinker only
 
-The relinker can be built without initializing submodules or configuring SDL, Vulkan, FFmpeg, FreeType or the shader recompiler. It requires CMake, a C++20 compiler and a build tool. Python 3 enables the Python regression tests.
+The relinker can be built without initializing submodules or configuring SDL, Vulkan, FFmpeg, FreeType or the shader recompiler. It requires CMake, a C++20 compiler and a build tool. Python 3.9 or newer enables the Python regression tests.
 
 ```sh
 cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
@@ -12,9 +12,9 @@ ctest --test-dir build-relinker --output-on-failure
 
 Python must be found during CMake configuration for Python tests to be registered. List registered tests with `ctest --test-dir build-relinker -N` and look for `input_magic`, a Python-backed relinker test. If automatic discovery fails, add `-DPython3_EXECUTABLE="C:/path/to/python.exe"` to the configure command, using the path to your Python interpreter, then list the tests again.
 
-This mode builds the conversion tool and its tests on Linux, Windows and macOS, including Apple Silicon. macOS uses AppleClang from the Xcode command-line tools; Windows uses the MinGW-w64 toolchain below. The executable is `build-relinker/core/relinker/relinker` (`relinker.exe` on Windows with Ninja).
+This mode builds the conversion tool and its tests on Linux, Windows and macOS, including Apple Silicon. macOS uses AppleClang from the Xcode command-line tools. Windows uses MinGW-w64 GCC with C++20 support and accepts distributions with static or shared runtimes; the full build also requires the exception support described below. The executable is `build-relinker/core/relinker/relinker` (`relinker.exe` on Windows with Ninja).
 
-The output remains x86-64 Linux ELF or Windows PE. Converted games need system libraries built for the target OS and a compatible x86-64 host. This mode does not build those libraries or provide macOS game execution. Tests inspect both output formats; execution checks run only on their compatible hosts.
+The output is x86-64: Linux ELF by default, Windows PE with `--windows` or Mach-O with `--macos` ([usage](../user/USAGE.md#input-and-conversion)). Converted games need system libraries built for the target OS and a compatible x86-64 host. This mode does not build those libraries, and releases ship them for Linux and Windows only. Tests inspect all three output formats; execution checks run only on their compatible hosts.
 
 Use a separate build directory for the full build.
 
@@ -30,9 +30,18 @@ git submodule update --init --recursive
 - Linux display refresh queries require SDL's XRandR support (`libxrandr-dev` on Debian/Ubuntu; `libXrandr-devel` on Fedora). Bundled SDL configuration fails without it. Keep `SDL_X11_XRANDR` enabled.
 - Linux: GCC, G++, binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu). SDL's Wayland backend requires the Wayland, xkbcommon and EGL development files (`libwayland-dev`, `libxkbcommon-dev` and `libegl-dev` on Debian/Ubuntu; `wayland-devel`, `libxkbcommon-devel` and `mesa-libEGL-devel` on Fedora), and `libdecor-0-dev` (`libdecor-devel`) for window decorations on GNOME. SDL loads both backends at run time and prefers Wayland when `WAYLAND_DISPLAY` is set; `SDL_VIDEODRIVER=x11` selects X11 (XWayland). Titles that bundle their own SDL read `SDL_VIDEODRIVER` too, and some of them fail to start with `x11`. Without the Wayland files configuration still succeeds, and the build uses X11 only. Audio output needs SDL's PipeWire, PulseAudio or ALSA backend, built from their development files (`libpipewire-0.3-dev`, `libpulse-dev` and `libasound2-dev` on Debian/Ubuntu; `pipewire-devel`, `pulseaudio-libs-devel` and `alsa-lib-devel` on Fedora). SDL loads them at run time. Without any of them SDL keeps only its silent dummy and disk drivers, so configuration fails.
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
-- Windows: only MinGW-w64 GCC 15.2.0 (WinLibs `x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7), archive `winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip`) is currently supported. Add its `mingw64/bin` directory to `PATH` before configuring.
+- Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can quarantine the executables that the relinker tests create in the temp directory, which fails `optional_plt`, `empty_tls`, `windows_address_space` and `windows_icon`. Set `TEMP` and `TMP` to a directory the scanner excludes before running `ctest`.
+- Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
 - FFmpeg binaries are downloaded during configuration unless `FFMPEG_PREBUILT_DIR` is set. With the WinLibs CMake, the download fails with status 60 (`SSL peer certificate or SSH remote key was not OK`) unless `SSL_CERT_FILE` names a CA bundle, for example `C:\Program Files\Git\ucrt64\etc\ssl\certs\ca-bundle.crt` from Git for Windows 2.56 and later (`mingw64` instead of `ucrt64` before 2.56), as in CI.
+
+## Web converter releases
+
+The Release workflow builds the web converter and the Linux and Windows libraries from the same commit. It tests the converter and publishes its frontend and WASM files as `web-<tag>.zip`, with the tag and commit recorded in `web-release.json`.
+
+Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
+
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
 
 ## Commands
 
@@ -51,6 +60,41 @@ therefore tests the previous binaries and can show no effect at all.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
+## Windows setup and troubleshooting
+
+The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
+
+For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
+
+The [Windows MSYS2 workflow](../../.github/workflows/windows-msys2.yml) builds and tests the full runtime nightly at 08:23 UTC and can be started manually with `workflow_dispatch`. The regular Windows build uses WinLibs.
+
+Scoop's standalone GCC 15.2.0 package cannot build the runtime: disabling SEH selects SjLj exceptions, and its SEH backend cannot compile System V ABI catch handlers. Use MSYS2 UCRT64 or a DWARF-capable WinLibs distribution. This restriction does not apply to relinker-only builds.
+
+In PowerShell, prepend the supported WinLibs toolchain and Git for Windows to the current session's `PATH`. Adjust the paths for the installed locations; a Portable Git installation can be used in place of `C:\Program Files\Git`.
+
+```powershell
+$env:PATH = "C:\tools\winlibs\mingw64\bin;C:\Program Files\Git\cmd;C:\Program Files\Git\usr\bin;$env:PATH"
+```
+
+If configuration reports `Could NOT find Python3` or selects an unusable interpreter, pass the absolute path to a working Python 3 executable:
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DPython3_EXECUTABLE="C:/path/to/python.exe"
+```
+
+If `gen-describe.ps1` fails while generating libusb's `version_describe.h`, check the Bash path printed in the build output. A WindowsApps or System32 `bash.exe` can launch WSL and fail with `WSL_E_DEFAULT_DISTRO_NOT_FOUND` when no distribution is installed. Install Git for Windows with Bash, or use Portable Git, and put its `cmd` and `usr\bin` directories on `PATH` before retrying the build. Use Bash and `cygpath.exe` from the same Git installation.
+
+After `cmake --build build --target libs --parallel` succeeds, copy the toolchain's runtime DLLs beside the patched libraries:
+
+```powershell
+$toolchainBin = "C:\tools\winlibs\mingw64\bin"
+foreach ($runtimeName in @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
+    Copy-Item -LiteralPath (Join-Path $toolchainBin $runtimeName) -Destination "build/core/libs/libs"
+}
+```
+
+When preparing a title's `libs/` directory, copy these DLLs with the patched `.prx` files. The Windows runtime loader does not search `PATH` for these dependencies; missing DLLs can cause error 126 even when the `.prx` is present. See [runtime layout](../user/USAGE.md#runtime-layout).
+
 ## CMake flags
 
 Project switches accept `ON` or `OFF`:
@@ -59,6 +103,7 @@ Project switches accept `ON` or `OFF`:
 |----------------------------------|---------|--------------------------------------------------|
 | `-DBUILD_TESTING=ON`             | `OFF`   | Build and register tests.                        |
 | `-DANYPS5_RELINKER_ONLY=ON`      | `OFF`   | Build only the relinker and its tests, without third-party dependencies. |
+| `-DANYPS5_BUILD_WASM=ON`         | `OFF`   | Build only the browser relinker (`relinker_web` target). Requires `emcmake` from Emscripten and `BUILD_TESTING=OFF`. |
 | `-DANYPS5_ENABLE_SPIRV_TOOLS=ON` | `OFF`   | Enable SPIR-V validation and optimization.       |
 | `-DANYPS5_ENABLE_ASAN=ON`       | `OFF`   | Build with AddressSanitizer on Linux and move the guest arena out of ASan's shadow gap. |
 | `-DANYPS5_USE_SYSTEM_DEPS=ON`    | `OFF`   | Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the submodules. |
@@ -80,7 +125,17 @@ Build configuration parameters:
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
-With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator` and `LibAtrac9` always stay bundled and still need `git submodule update --init`.
+With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg` and `vorbis` always stay bundled and still need `git submodule update --init`.
+
+## Quick syntax checks
+
+After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
+
+```sh
+python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+```
+
+Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
 ## Write watch tests
 
@@ -102,7 +157,7 @@ On Windows MinGW frees `thread_local` objects before their destructors run, so t
 
 ## Compute pipeline replay
 
-Build `agc_compute_pipeline_replay` in the full build with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`; replay validates the captured module before calling Vulkan. Set `APS5_DUMP_COMPUTE_PIPELINES` to a dedicated empty directory before starting a title to save each uncached compute pipeline's final SPIR-V, descriptor layouts, push constant ranges, specialization values, subgroup size and creation flags before compilation. Files are named `compute-<identity>/capture.aps5cp`; identical records are deduplicated. Capture stops with an error at 128 records, 256 MiB total or 36 MiB per record (at most 8,388,608 SPIR-V words, or 32 MiB of shader code). Capture files contain shader code and device metadata, but no guest buffers or textures; review them before sharing.
+Build `agc_compute_pipeline_replay` in the full build with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`; replay validates the captured module before calling Vulkan. Set `APS5_DUMP_COMPUTE_PIPELINES` to a dedicated empty directory before starting a title to save each uncached compute pipeline's final SPIR-V, descriptor layouts, push constant ranges, specialization values, subgroup size and creation flags before compilation. Files are named `compute-<identity>/capture.aps5cp`; identical records are deduplicated. The pipelines of the start-up f32 denormal flush probe are not captured. Capture stops with an error at 128 records, 256 MiB total or 36 MiB per record (at most 8,388,608 SPIR-V words, or 32 MiB of shader code). Capture files contain shader code and device metadata, but no guest buffers or textures; review them before sharing.
 
 Set `APS5_DUMP_COMPUTE_MIN_WORDS` to capture only modules at or above that SPIR-V word count, for example `100000` when investigating large NVIDIA compilations. The default is `0` (all modules); values outside `0` through `8388608` fail. The filter applies only when capture is enabled.
 
@@ -137,23 +192,25 @@ Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newl
 
 ## Device loss reports
 
-On a device that supports `VK_EXT_device_fault`, the first `VK_ERROR_DEVICE_LOST` prints the driver's fault description, the faulting addresses and the vendor fault codes as `[device-fault]` lines. Set `APS5_GPU_CHECKPOINTS=1` to also record a `VK_NV_device_diagnostic_checkpoints` marker with the program address before each compute dispatch; the report then lists the last markers the GPU reached. Checkpoints are disabled by default and ignored on devices without the extension.
+On a device that supports `VK_EXT_device_fault`, the first `VK_ERROR_DEVICE_LOST` prints the driver's fault description, the faulting addresses and the vendor fault codes as `[device-fault]` lines. Set `APS5_GPU_CHECKPOINTS=1` to also record a `VK_NV_device_diagnostic_checkpoints` marker with the program address before each compute dispatch; the report then lists the last markers the GPU reached. On a device without that extension but with `VK_AMD_buffer_marker` (RADV and AMD's own drivers), each compute dispatch instead writes a numbered marker into a host-visible buffer when the GPU reaches it and another when it finishes; the report then names the programs of the last dispatch reached, of the last one finished and of up to eight dispatches between them. Checkpoints are disabled by default and ignored on devices without the extension.
 
 ## Worker sampler
 
 Set `APS5_SAMPLE_WORKER=<file>` to sample queue worker 0 every millisecond (in practice every timer tick). Every 20 s and at exit it writes `<file>`, one `module offset self inclusive` line per sampled address, and `<file stem>.collapsed.txt`, the worker's whole stacks in the collapsed format that speedscope.app and flamegraph.pl read: one `frame;...;frame count` line per distinct stack, root first, each frame as `module+0xRVA`. A walk that ends before the thread's root starts with `[truncated]`. The `#` lines give the samples, the walk depth (64 frames), the truncated walks, the mean and longest time the worker was suspended, and the size and PE timestamp of each module, to check the binary a file is symbolized against. A frame with `.pdata` is stepped by `RtlVirtualUnwind`; any other frame by its DWARF record in `.ehfram`, the unwind data the libraries are built with. Those steps read only inside the worker's stack, and a module is indexed after the worker resumes, the first time a walk meets it.
 
-`APS5_SAMPLE_THREADS=<file>` samples every thread of the process every 2 ms and writes the 40 hottest addresses of each busy thread to `<file>`, 12 frames deep and through `.pdata` only. Both samplers exist only on Windows; the addresses are symbolized offline, for example with `nm` on the `.prx`.
+`APS5_SAMPLE_COMMITTER=<file>` samples queue 0's draw committer the same way and writes the same two files. The committer records the draws the worker hands over (`APS5_PIPELINED_DRAWS`), so when the worker's stacks wait in `DrawPipeline::Enqueue`, its stacks show what bounds the frame. It starts with the first pipelined draw; with `APS5_PIPELINED_DRAWS=0` nothing is sampled.
+
+`APS5_SAMPLE_THREADS=<file>` samples every thread of the process every 2 ms and writes the 40 hottest addresses of each busy thread to `<file>`, 12 frames deep and through `.pdata` only. The samplers exist only on Windows; the addresses are symbolized offline, for example with `nm` on the `.prx`.
 
 ## Performance trace
 
 Set `APS5_TRACE_FRAMES=<start>:<count>` to record `<count>` presents from present `<start>` (counted from 0), or `APS5_TRACE_SECONDS=<start>:<length>` to record from the first present at least `<start>` seconds after the first present until the first present `<length>` seconds later. Both values are whole numbers and the length is above 0; a malformed value, or both switches together, fails the first present. The window opens and closes at presents.
 
-Set `APS5_TRACE_EVENTS=<count>` to change the queue-worker and presenter buffers for a frame or seconds window. The count is a whole number from 1 through 4,194,304; the default is 262,144. An invalid value fails when one of these threads first binds to the trace, before recording. Each buffer uses `count * sizeof(TraceThread::Slice)` bytes (currently 32 bytes per event): 8 MiB at the default, 96 MiB at `3145728`, and 128 MiB at the maximum, per thread. The buffers are allocated even while waiting for the window to open, and formatting the trace uses additional memory. Shader preparation keeps its explicitly sized 32,768-event buffers, and the GPU range limit stays 262,144. Summary-only sessions allocate no event buffers and do not read this setting. A larger buffer can still fill; use a shorter window or increase the count within the bound.
+Set `APS5_TRACE_EVENTS=<count>` to change the queue-worker and presenter buffers for a frame or seconds window. The count is a whole number from 1 through 4,194,304; the default is 262,144. An invalid value fails when one of these threads first binds to the trace, before recording. Each buffer uses `count * sizeof(TraceThread::Slice)` bytes (currently 32 bytes per event): 8 MiB at the default, 96 MiB at `3145728`, and 128 MiB at the maximum, per thread. The buffers are allocated even while waiting for the window to open, and formatting the trace uses additional memory. Shader preparation keeps its explicitly sized 32,768-event buffers, as does a title thread named `title` that binds one the first time it registers a shader or resolves a shader ABI. The GPU range limit stays 262,144. Summary-only sessions allocate no event buffers and do not read this setting. A larger buffer can still fill; use a shorter window or increase the count within the bound.
 
 Inside the window the queue workers and the presenter record every `PerformanceTimer` scope and stage as a complete event named after its frame timing key: `Driver.WorkerWait`, `Driver.Packet`, `Driver.Packet.draw`, `Graphics.Draw`, `Driver.Present`, `Driver.Present.inflight_wait`, `Vulkan.Retire` and so on. A slice shorter than 20 us is only counted: its time is in the thread's counter `<thread> folded` (milliseconds per present) and in the summary. A thread writes a present's counter sample at its first slice after the next present, so the last present of the window has no sample; its time is still in the summary. By default, each queue worker and presenter allocates a buffer for 262,144 events when it starts; a full buffer stops that thread's recording, sets `trace_dropped` and puts an instant event `trace buffer full` on the thread's track at the start of the first lost slice (slices are appended when their outer scope ends, so that can precede the last recorded slice by up to one outer-scope length), with the number of lost slices in `args.events_lost`. When the window closes, the presenter formats the trace once and a `ProfileOutput` writer thread writes `aps5-trace-<commit>-<pid>.json.gz` (Chrome trace-event JSON, opened by ui.perfetto.dev or chrome://tracing) and appends one line to `aps5-summary.jsonl`, both in `APS5_TRACE_DIR` or the working directory. A window that is still open when the title exits writes nothing.
 
-The summary line has `commit` and `dirty` of the build, `env` (every `APS5_*` variable; a value containing `/` or `\` is written as `<path>`), `gpu`, `driver`, `os`, `resolution` (the video output's), `window`, `presents`, `frame_ms` (p50, p90, p99 and max of the intervals between presents), `gpu_busy_ms_per_present` (the batch timestamps behind `[present]`), `worker_busy_pct` (share of the window each queue worker spends in `Driver.Packet`, `Driver.Suspend`, `Driver.EndSubmission`, `Driver.Rewind` and `Driver.Completion`), `top_phases_ms_per_frame` (the eight largest scopes and stages, without `Driver.WorkerWait`), `trace_dropped`, `trace_dropped_threads` and `trace`. `trace_dropped` is `true` when any thread lost a slice, any thread's totals table (512 scope and stage entries) was full, or the `gpu` track was full. `trace_dropped_threads` is present only then and has one entry per such thread name (threads that share a name, such as the shader prepare threads, share one entry: `events_lost` is summed, `events_full_after_s` is the earliest, `totals_full` is true if any is): `events_full_after_s` (seconds from the first present of the window to the start of the first lost slice; absent for `gpu` and, in every summary line (windowed `APS5_TRACE_FRAMES`/`APS5_TRACE_SECONDS` and `APS5_TRACE_SUMMARY_EVERY`), whenever the first lost slice starts outside the line's span of presents, including a slice whose scope began before the window opened or one lost after the window's last present), `events_lost` (slices not recorded; absent when 0; in `APS5_TRACE_SUMMARY_EVERY` lines it counts the thread buffer's losses since it started, not only those of the line's span) and `totals_full` (`true` when the thread's totals table overflowed, which makes the summary numbers incomplete; a thread with `events_lost` only has complete totals). A trace holds timings, scope names, counts and thread names; no guest memory, paths or strings of the title.
+The summary line has `commit` and `dirty` of the build, `env` (every `APS5_*` variable; a value containing `/` or `\` is written as `<path>`), `gpu`, `driver`, `os`, `cpu` (the CPU brand string), `cpu_threads` and `memory_mib` (physical memory) of the host (all three absent on a host that is not x86 or reports no brand string), `title_id`, `title` and `content_version` from `app0/sce_sys/param.json` (only when the title has one; `content_version` is empty when the file has no `contentVersion`, or one that is not a string of at most 15 characters), `resolution` (the video output's), `window`, `presents`, `frame_ms` (p50, p90, p99 and max of the intervals between presents), `gpu_busy_ms_per_present` (the batch timestamps behind `[present]`), `worker_busy_pct` (share of the window each queue worker spends in `Driver.Packet`, `Driver.Suspend`, `Driver.EndSubmission`, `Driver.Rewind` and `Driver.Completion`), `top_phases_ms_per_frame` (the eight largest scopes and stages, without `Driver.WorkerWait`), `trace_dropped`, `trace_dropped_threads` and `trace`. `trace_dropped` is `true` when any thread lost a slice, any thread's totals table (512 scope and stage entries) was full, or the `gpu` track was full. `trace_dropped_threads` is present only then and has one entry per such thread name (threads that share a name, such as the shader prepare threads, share one entry: `events_lost` is summed, `events_full_after_s` is the earliest, `totals_full` is true if any is): `events_full_after_s` (seconds from the first present of the window to the start of the first lost slice; absent for `gpu` and, in every summary line (windowed `APS5_TRACE_FRAMES`/`APS5_TRACE_SECONDS` and `APS5_TRACE_SUMMARY_EVERY`), whenever the first lost slice starts outside the line's span of presents, including a slice whose scope began before the window opened or one lost after the window's last present), `events_lost` (slices not recorded; absent when 0; in `APS5_TRACE_SUMMARY_EVERY` lines it counts the thread buffer's losses since it started, not only those of the line's span) and `totals_full` (`true` when the thread's totals table overflowed, which makes the summary numbers incomplete; a thread with `events_lost` only has complete totals). A trace holds timings, scope names, counts and thread names; no guest memory, paths or strings of the title.
 
 The shader preparation threads are traced as well, `shader prepare`, with a buffer for 32,768 events each. A wait for the GPU mutex on a traced thread is a `GpuMutex.wait.<site>` slice (`dispatch`, `draw`, `present`, `flush` and so on, as on the `[lock]` line).
 
@@ -169,9 +226,63 @@ Set `APS5_TRACE_SUMMARY_EVERY=<seconds>` (a whole number above 0; a malformed va
 
 The switch combines with `APS5_TRACE_FRAMES` or `APS5_TRACE_SECONDS`. The intervals run for the whole session and the window records its full trace on top: the event buffers are allocated and filled only while the window is open, the window's own summary line (with `trace` set and no `interval_*` fields) holds only the time inside the window, and the interval lines continue unchanged around it. Without a window switch no buffer is allocated at all. The two switches do not share a clock origin: `interval_*` is relative to the first present, as the window's `APS5_TRACE_SECONDS` start is.
 
+Set `APS5_TRACE_BENCH=1` together with `APS5_TRACE_SUMMARY_EVERY` to also keep every interval's frame times for a benchmark report. At each interval the presenter hands the kept intervals to a writer thread, which formats and compresses the file and rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory: one JSON object with `format` (`aps5-bench/1`), the identity fields of the summary line (`commit`, `dirty`, `env`, `gpu`, `driver`, `os`, `cpu`, `cpu_threads`, `memory_mib` and, with `param.json`, `title_id`, `title` and `content_version`), `intervals_dropped` and `intervals`. Each interval has `start_s`, `end_s`, `first_present`, `resolution`, `gpu_busy_ms` (the interval's total) and `frame_us`, the whole microseconds between consecutive presents. The file keeps the last 240 intervals; `intervals_dropped` counts older ones it no longer holds. Any other value, or the switch without `APS5_TRACE_SUMMARY_EVERY`, fails the first present. The file is written to `<name>.tmp` and then moved over the previous one, so a crash or kill during a rewrite leaves the last complete report. Only the newest report waits for the writer: one handed over while an older one is still pending replaces it. The frame times cost 4 bytes per present in memory.
+
 `python tools/trace_digest.py aps5-summary.jsonl` prints the interval lines of such a file as one row per interval (frame p50, p90, p99, max, GPU busy per present, the busiest queue worker and the largest phase) and a text sparkline of the frame p99 and of the GPU busy time; lines of window captures in the file are skipped, and a change of commit, environment, GPU, driver or OS between intervals is reported. `--json` prints the rows as JSON.
 
 With `APS5_TRACE_SUMMARY_EVERY` set, the recorder writes a timestamp pair per batch for the whole run and every `PerformanceTimer` scope adds its time to the thread's totals, two clock reads per scope. A thread's totals are read while it runs, so a scope that straddles an interval boundary is counted in one interval or the other.
+
+## GPU time per command class
+
+Set `APS5_PROFILE_GPU=1` (any value) to time the recorder's GPU work with timestamp queries and print one `[gputime]` line on stderr. `APS5_PROFILE_DRAW` alone does not print it: a batch then gets only its whole-batch timestamp pair. A timed range is a pair of bottom-of-pipe stamps that both wait for all earlier work, so a range is the time its own work adds after everything recorded before it. A batch holds at most 512 ranges, its whole-batch range included. The line is written when a batch's timestamps are read after its fence, at least 10 s after the previous line, and covers every batch read since then.
+
+The header fields: `<n> ms of GPU time` is the sum of the program-keyed ranges only (dispatches and buffer copies, see `by program`); draws and the driver's own commands are not in it. `in <n> batches` counts the batches read. `batch <n> ms first to last command` sums the whole-batch ranges, from the stamp written when the batch opens (it waits for the batches before it) to the stamp written at `Submit`. `classes <n> ms` is the plain sum of every class range, including `present-blit`, which runs outside the batches. `all ranges <n> ms` is, per batch, the union of its class and program ranges, with overlapping time counted once; `present-blit` is not in it. `untimed <n> ms` is `batch` minus `all ranges`: batch time that no range covers, including the work of dropped ranges. `<n> presents` counts the `VulkanDevice::present` calls since the previous line. `<n> ranges dropped at the 512 cap` counts ranges refused because their batch was full.
+
+A class range covers a command together with its own barriers. In `VulkanDevice::CopyBuffer` the `copy` class range spans the leading barrier, the transfer and the trailing barrier, and the program-keyed range sits inside it around the transfer alone, so the transfer counts in both `GPU time` and `classes` but once in `all ranges`. A dispatch's leading and trailing barriers are ranges of their own classes, placed before and after its program range, not around it. `GPU time` plus `classes` can therefore exceed `batch`; compare `all ranges` with `batch` instead.
+
+`by program` lists up to 12 keys, highest time first, as `0x<key> x<ranges> <ms>ms`. A dispatch's key is its guest program address, or the program's `variantId` when the address is 0. A buffer copy's key is the program address of the copy kernel it replaces, or 0 for a PM4 DMA copy (opcode 0x50). `by class` lists every class with at least one range since the previous line as `<name> x<ranges> <ms>ms <MiB>MiB (per present x<ranges> <ms>ms <MiB>MiB)`; the per-present figures are 0 when there was no present. MiB is the byte count each range passes to `EndGpuTiming`. The classes, with the function that opens each range:
+
+- `dispatch-lead`: a dispatch's leading barrier, when it is recorded rather than merged into the previous trailing barrier (`VulkanDevice::recordDispatch`). 0 MiB.
+- `dispatch-trail`: a dispatch's trailing barrier (`recordDispatch`). 0 MiB.
+- `indirect-args`: the barrier that makes an indirect dispatch's host-imported group counts visible to the indirect read (`recordDispatch`). 12 bytes per range.
+- `label-run`: a run of GPU label stores (`vkCmdUpdateBuffer`, plus the queued occlusion dump folds of a per-batch run) with its barriers (`Recorder::RecordStore` for inline runs, `Recorder::closeStoreRun` for per-batch runs). Stored bytes.
+- `fill`: a guest fill of host-imported memory, as `vkCmdFillBuffer` or pattern copies, with its barriers (`VulkanDevice::FillBuffer`). Filled bytes.
+- `fill-clear`: a fill done as a `vkCmdClearColorImage` of a storage image, between two layout barriers (`StorageTexture::FillClear`). Filled bytes.
+- `copy`: the buffer copy of `VulkanDevice::CopyBuffer`, a whole-surface image copy (`StorageTexture::CopyFrom`) and the depth plane copies to and from storage images through a staging buffer (`copyPlane` and the layered copy in `DepthSurface.cpp`). Copied bytes.
+- `staging-in`: a build's copies of guest buffer regions into staging or host-copy buffers, between two barriers (`GuestBufferMemory::recordGpuCopies`). Copied bytes.
+- `staging-out`: the copies of shader-written sub-ranges back into the import (`GuestBufferMemory::RecordCopyBacks`). Copied bytes.
+- `draw`: for a lean draw, from its first barrier to the end of its render pass, so draws that continue the pass fall inside one range (`recordDraw`, ended by `Recorder::endOpenRenderPass`); for a recorded draw with layout transitions, from its first barrier to its download barrier (`Draw`). 0 MiB.
+- `storage-upload`: detiles of guest bytes into a storage image, whole (`StorageTexture::upload`) or by changed runs (`StorageTexture::uploadWindows`), and pending units copied from an alias image (`StorageTexture::borrowUnits`). Uploaded bytes.
+- `storage-writeback`: retiles of a storage image back to guest memory, by windows (`StorageTexture::writeBackWindows`) or by layers (`StorageTexture::writeBackLayers`). Stored bytes.
+- `dcc-clear`: a `vkCmdClearColorImage` of a storage image whose DCC keys read as a clear, at upload (`StorageTexture::upload`) or for a fill of its key bytes (`StorageTexture::clearByKeysFill`, with `APS5_KEYS_FILL_CLEAR=1`). Surface bytes.
+- `dcc-keys`: queued DCC key stores, as `0xff` fills and seed copies between two barriers (`Recorder::recordKeyStores`). Key bytes.
+- `present-blit`: the presentation command buffer from its first to its last command, timed in its own two-query pool (`VulkanDevice::present`) and added when its slot retires (`Recorder::AddGpuTiming`). Width x height x 4 bytes of the swapchain extent.
+- `shadow-publish`: copies of unit shadow slabs into the import, with their barriers (`recordCopies` in `UnitShadow.cpp`, reached from `PublishShadow`). Copied bytes.
+- `template-refresh`: the `vkCmdUpdateBuffer` updates of a cached dispatch's changed data words, as one range from the first update to the last (`ShaderResources::refreshData`, called from `recordDispatch`). Refreshed bytes.
+
+## Guest clock scale
+
+Set `APS5_TIME_SCALE=<factor>` to scale `sceKernelGetProcessTime`, `sceKernelGetProcessTimeCounter` and `sceKernelReadTsc` from their first observed value. A positive factor below 1 slows guest time; a factor above 1 speeds it up. An unset, zero, negative or non-numeric value uses `1.0` (normal speed). On Windows, `sceKernelClockGettime` monotonic clock ids are scaled too; on Linux they return the native host monotonic clock unchanged. A title's own `rdtsc` instruction and `sceKernelGetTscFrequency` are unscaled, so dividing scaled TSC deltas by the reported real frequency gives guest-time intervals. Host sleeps and waits still take real time, so this is a diagnostic aid for titles whose frame or timeout logic depends on guest time; it does not speed up the emulator or GPU work. The setting is read once when the process starts.
+
+`APS5_PAD_INPUT_FILE` command durations and reload polling use `sceKernelGetProcessTime`, so they follow the scale. At `0.02`, a 1-second injected press lasts about 50 seconds of real time, and a new command can take up to 5 seconds to be noticed.
+
+## Driver profile lines
+
+With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on stderr at most every 10 s. A line either counts the last 10 s (its counters are read and cleared when it is printed; the text says `(10 s)` or `over 10 s`) or counts from the start of the process (the text says `(cumulative)`). A rate is the difference of two cumulative lines divided by the time between them.
+
+| Line | Counts |
+|---|---|
+| `[rescache] revalidate` | last 10 s |
+| `[texture-cache]` | last 10 s |
+| `[pipecache]` | last 10 s |
+| `[rescache]` (hits, misses, entries) | from the start |
+| `[vk]` | from the start |
+| `[indirect]` (gpu-side, cpu-side) | from the start |
+| `[flip]` | from the start |
+| `[fill-sync]` | from the start |
+| `[buffers] descriptor elements bound` | from the start |
+
+`[gputime]` is described above and needs `APS5_PROFILE_GPU`. Other profile lines state their window in their text or are not listed here because their counters were not checked.
 
 ## Driver thread priority
 

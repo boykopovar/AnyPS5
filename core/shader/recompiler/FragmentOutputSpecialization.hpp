@@ -32,7 +32,7 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
             reversed = constant.value;
         }
         if (constant.id < PipelineSpecialization::ExportPackingBase || constant.id >= PipelineSpecialization::ExportPackingBase + 8u) continue;
-        if (constant.value > static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11)) throw std::runtime_error("invalid prepared fragment export packing");
+        if (constant.value > static_cast<std::uint32_t>(ColorExportPacking::Unorm4_4_4_4)) throw std::runtime_error("invalid prepared fragment export packing");
         if (constant.value != static_cast<std::uint32_t>(ColorExportPacking::None)) packed.insert(constant.id - PipelineSpecialization::ExportPackingBase);
     }
     if (packed.empty() && !dualSource && reversed == 0u) return words;
@@ -81,7 +81,7 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
     for (const auto location : packed) {
         const auto variable = output(location);
         if (variable == 0u) continue;
-        if (!specializedIds.contains(PipelineSpecialization::ExportPackingBase + location)) throw std::runtime_error("fragment output " + std::to_string(location) + " has no 10_11_11 unorm packing path");
+        if (!specializedIds.contains(PipelineSpecialization::ExportPackingBase + location)) throw std::runtime_error("fragment output " + std::to_string(location) + " has no color export packing path");
         if (!floatVectorPointer(outputs.at(variable))) throw std::runtime_error("packed fragment output " + std::to_string(location) + " is not a float4");
         retyped.insert(variable);
     }

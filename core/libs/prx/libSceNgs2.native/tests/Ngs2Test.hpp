@@ -6,12 +6,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <vector>
 
 extern "C" {
 int APS5_VABI sceNgs2ParseWaveformData(const void*, size_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2ParseWaveformFile(const char*, uint32_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat*, uint32_t, uint32_t, Ngs2WaveformBlock*);
+int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat*, uint32_t*, uint32_t*, uint32_t*, uint32_t*);
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption*);
 int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption*, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
@@ -28,20 +30,30 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t, const Ngs2RenderBufferInfo*, uint32
 int APS5_VABI sceNgs2PanInit(Ngs2PanWork*, const float*, float, uint32_t);
 int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork*, const Ngs2PanParam*, uint32_t, uint32_t, float*);
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t, const Ngs2RackOption*, Ngs2ContextBufferInfo*);
+int APS5_VABI sceNgs2RackLock(uintptr_t);
+int APS5_VABI sceNgs2RackUnlock(uintptr_t);
 int APS5_VABI sceNgs2RackCreate(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
 int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2BufferAllocator*, uintptr_t*);
 int APS5_VABI sceNgs2RackDestroy(uintptr_t, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t, uint32_t, uintptr_t*);
 int APS5_VABI sceNgs2RackGetInfo(uintptr_t, Ngs2RackInfo*, size_t);
+int APS5_VABI sceNgs2RackSetUserData(uintptr_t, uintptr_t);
+int APS5_VABI sceNgs2RackGetUserData(uintptr_t, uintptr_t*);
 int APS5_VABI sceNgs2VoiceControl(uintptr_t, const Ngs2VoiceParamHeader*);
 int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t, const Ngs2VoiceCommand*, size_t);
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t, Ngs2VoiceState*, size_t);
 int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t, uint32_t*);
+int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t, uintptr_t*, uint32_t*);
+int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t, uint32_t, Ngs2VoiceMatrixInfo*, size_t);
+int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t, uint32_t, Ngs2CustomModuleInfo*, size_t);
 int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t, uint32_t, Ngs2VoicePortInfo*, size_t);
 int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t, uint32_t, void*, size_t);
 int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam*);
 int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam*, Ngs2GeomListenerWork*, std::uint32_t);
 int APS5_VABI sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam*);
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork*, const Ngs2GeomSourceParam*, Ngs2GeomAttribute*, std::uint32_t);
+int APS5_VABI sceNgs2ReportRegisterHandler(std::uint32_t, Ngs2ReportHandler, std::uintptr_t, Ngs2Handle*);
+int APS5_VABI sceNgs2ReportUnregisterHandler(Ngs2Handle);
 }
 
 inline void Check(bool value, int line) {
@@ -51,6 +63,18 @@ inline void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
+    std::uint32_t values[4] = {0xa1, 0xa2, 0xa3, 0xa4};
+    bool threw = false;
+    try {
+        sceNgs2GetWaveformFrameInfo(&format, &values[0], &values[1], &values[2], &values[3]);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(values[0] == 0xa1 && values[1] == 0xa2 && values[2] == 0xa3 && values[3] == 0xa4);
+    return threw;
+}
 
 inline constexpr std::uint32_t Grain = 8;
 

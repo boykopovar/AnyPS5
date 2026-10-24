@@ -1,6 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_PEFORMAT_HPP
 #define ELFPATCHER_WINDOWS_PEFORMAT_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -21,6 +22,21 @@ struct PeSection {
     std::uint32_t Rva;
     std::uint32_t Characteristics;
     std::vector<std::uint8_t> Data;
+    std::uint32_t VirtualSize = 0;
+
+    std::uint64_t MemorySize() const {
+        return std::max<std::uint64_t>(Data.size(), VirtualSize);
+    }
+
+    bool Writable(const std::uint32_t rva, const std::uint64_t size) {
+        if (rva < Rva || rva - Rva > MemorySize() || size > MemorySize() - (rva - Rva))
+            return false;
+        if (rva - Rva + size > Data.size()) {
+            VirtualSize = static_cast<std::uint32_t>(MemorySize());
+            Data.resize(static_cast<std::size_t>(rva - Rva + size));
+        }
+        return true;
+    }
 };
 
 struct PeDirectory {

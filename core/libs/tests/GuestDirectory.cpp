@@ -1,6 +1,9 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "SceTypes.hpp"
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -8,32 +11,96 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 extern "C" {
 void* APS5_VABI opendir_nid_postfix(const char*);
 GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
 int APS5_VABI readdir_r_nid_postfix(void*, GuestDirectoryEntry*, GuestDirectoryEntry**);
 int APS5_VABI closedir_nid_postfix(void*);
 void APS5_VABI rewinddir_nid_postfix(void*);
+std::int64_t APS5_VABI telldir_nid_postfix(void*);
+void APS5_VABI seekdir_nid_postfix(void*, std::int64_t);
 int* APS5_VABI __error_nid_postfix();
+int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
 }
 static void Require(bool value) { if (!value) std::abort(); }
+static std::map<std::string, std::uint32_t> ReadFileNumbers(void* directory) {
+    std::map<std::string, std::uint32_t> numbers;
+    rewinddir_nid_postfix(directory);
+    while (auto* entry = readdir_nid_postfix(directory)) {
+        Require(entry->fileNumber != 0);
+        numbers[entry->name] = entry->fileNumber;
+    }
+    return numbers;
+}
+static std::uint32_t FileNumber(const std::filesystem::path& path) {
+    FileStat status{};
+    Require(lstat_nid_postfix(path.string().c_str(), &status) == 0);
+    return static_cast<std::uint32_t>(status.st_ino);
+}
+static bool CreateLinks(const std::filesystem::path& root) {
+#ifdef _WIN32
+    if (CreateSymbolicLinkW((root / "file-link").c_str(), L"sample.txt", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
+        Require(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+        std::fprintf(stderr, "Windows readdir link checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+        return false;
+    }
+    Require(CreateSymbolicLinkW((root / "directory-link").c_str(), L"subdirectory",
+        SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+#else
+    std::filesystem::create_symlink("sample.txt", root / "file-link");
+    std::filesystem::create_directory_symlink("subdirectory", root / "directory-link");
+#endif
+    return true;
+}
 int main() {
     const auto root = std::filesystem::path("anyps5-directory-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     Require(std::filesystem::create_directory(root / "subdirectory"));
     { std::ofstream file(root / "sample.txt"); file << "test"; }
+    const bool links = CreateLinks(root);
+    std::vector<const char*> numbered{"sample.txt", "subdirectory"};
+    if (links) numbered.insert(numbered.end(), {"file-link", "directory-link"});
     void* directory = opendir_nid_postfix(root.string().c_str());
     Require(directory != nullptr);
     std::map<std::string, int> entries;
+    std::map<std::string, std::uint32_t> fileNumbers;
     *__error_nid_postfix() = 13;
     while (auto* entry = readdir_nid_postfix(directory)) {
         Require(entry->nameLength == std::strlen(entry->name));
         Require(entry->recordLength == 8 + ((entry->nameLength + 4) & ~3));
         Require(entry->recordLength <= sizeof(*entry));
         entries[entry->name] = entry->type;
+        Require(entry->fileNumber != 0);
+        fileNumbers[entry->name] = entry->fileNumber;
     }
     Require(*__error_nid_postfix() == 13); // EOF preserves errno.
+    for (const char* name : numbered) Require(fileNumbers.at(name) == FileNumber(root / name));
+    if (links) Require(fileNumbers.at("file-link") != fileNumbers.at("sample.txt"));
+    { std::ofstream file(root / "created.txt"); file << "new"; }
+    auto changed = ReadFileNumbers(directory);
+    Require(changed.at("created.txt") == FileNumber(root / "created.txt"));
+    Require(changed.at("sample.txt") == fileNumbers.at("sample.txt"));
+    Require(std::filesystem::remove(root / "created.txt"));
+    changed = ReadFileNumbers(directory);
+    Require(changed.count("created.txt") == 0 && changed == fileNumbers);
+#ifdef _WIN32
+    const HANDLE pending = CreateFileW((root / "pending.txt").c_str(), GENERIC_WRITE | DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW, 0, nullptr);
+    Require(pending != INVALID_HANDLE_VALUE);
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    Require(SetFileInformationByHandle(pending, FileDispositionInfo, &disposition, sizeof(disposition)) != 0);
+    FileStat pendingStatus{};
+    Require(lstat_nid_postfix((root / "pending.txt").string().c_str(), &pendingStatus) == -1);
+    changed = ReadFileNumbers(directory);
+    Require(changed.count("pending.txt") == 1 && changed.at("sample.txt") == fileNumbers.at("sample.txt"));
+    Require(CloseHandle(pending) != 0);
+    Require(ReadFileNumbers(directory) == fileNumbers);
+#endif
     Require(entries.at("sample.txt") == 8);
     Require(entries.at("subdirectory") == 4);
     Require(entries.at(".") == 4 && entries.at("..") == 4);
@@ -85,6 +152,23 @@ int main() {
         nullResultThrows = true;
     }
     Require(nullResultThrows);
+    rewinddir_nid_postfix(directory);
+    Require(readdir_nid_postfix(directory) != nullptr);
+    const std::int64_t second = telldir_nid_postfix(directory);
+    Require(second != -1);
+    auto* entryAfterTell = readdir_nid_postfix(directory);
+    Require(entryAfterTell != nullptr);
+    const std::string secondName = entryAfterTell->name;
+    while (readdir_nid_postfix(directory)) {}
+    seekdir_nid_postfix(directory, second);
+    auto* entryAfterSeek = readdir_nid_postfix(directory);
+    Require(entryAfterSeek != nullptr && secondName == entryAfterSeek->name);
+    Require(entryAfterSeek->fileNumber == fileNumbers.at(secondName));
+    *__error_nid_postfix() = 0;
+    Require(telldir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    seekdir_nid_postfix(nullptr, second);
+    Require(*__error_nid_postfix() == 9);
     Require(closedir_nid_postfix(directory) == 0);
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 2);
@@ -114,6 +198,10 @@ int main() {
     Require(names.at(std::string(file.begin(), file.end())) == 8 && names.size() == 3);
     Require(closedir_nid_postfix(unicode) == 0);
     std::filesystem::remove_all(root / std::filesystem::path(folder));
+    if (links) {
+        std::filesystem::remove(root / "file-link");
+        std::filesystem::remove(root / "directory-link");
+    }
     std::filesystem::remove(root / "sample.txt");
     std::filesystem::remove(root / "subdirectory");
     std::filesystem::remove(root);

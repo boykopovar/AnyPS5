@@ -35,7 +35,7 @@ constexpr std::size_t FusedCodeAlignment = 256;
 constexpr char TrailerMagic[8] = {'b', 'a', 'r', 'e', 'f', 'o', 'o', 't'};
 constexpr std::size_t TrailerCodeBytesOffset = sizeof(TrailerMagic) + 3 * sizeof(std::uint32_t);
 constexpr std::uint32_t Rsrc1VgprMask = 0x3fu;
-constexpr std::uint32_t Rsrc1SgprMask = 0xfu << 6u;
+constexpr std::uint32_t Rsrc2OffchipLdsEnable = 1u << 18u;
 constexpr std::uint32_t Rsrc2UserSgprMask = (0x1fu << 1u) | (1u << 27u);
 
 bool ValidHalves(const Shader* front, const Shader* back) {
@@ -120,15 +120,19 @@ std::uint32_t FrontProgramBytes(const char* function, const Shader* front) {
     return static_cast<std::uint32_t>((end - 1) * 4);
 }
 
-std::uint32_t MergeRsrc1(std::uint32_t back, std::uint32_t front) {
-    const auto vgprs = std::max(back & Rsrc1VgprMask, front & Rsrc1VgprMask);
-    const auto sgprs = std::max(back & Rsrc1SgprMask, front & Rsrc1SgprMask);
-    return (back & ~(Rsrc1VgprMask | Rsrc1SgprMask)) | vgprs | sgprs;
-}
-
-std::uint32_t MergeRsrc2(const char* function, std::uint32_t back, std::uint32_t front) {
-    if ((front & ~Rsrc2UserSgprMask & ~back) != 0) Fail(function, "front half requires hardware state the back half does not enable");
-    return (back & ~Rsrc2UserSgprMask) | (front & Rsrc2UserSgprMask);
+std::array<std::uint32_t, 2> mergeGeometryResources(std::uint32_t frontRsrc1, std::uint32_t frontRsrc2, std::uint32_t backRsrc1, std::uint32_t backRsrc2) {
+    const auto frontVgprs = ((frontRsrc1 & Rsrc1VgprMask) + 1u) * 4u;
+    const auto backVgprs = ((backRsrc1 & Rsrc1VgprMask) + 1u) * 4u;
+    const auto frontTotal = frontVgprs + (frontRsrc2 >> 28u) * 8u;
+    const auto backTotal = backVgprs + (backRsrc2 >> 28u) * 8u;
+    const auto maxTotal = std::max(frontTotal, backTotal);
+    const auto shared = std::max(frontVgprs, backVgprs) >= maxTotal ? 0u : (maxTotal - std::min(frontTotal, backTotal) + 7u) / 64u;
+    const auto vgprs = std::max(frontRsrc1 & Rsrc1VgprMask, backRsrc1 & Rsrc1VgprMask);
+    const auto rsrc1Field = std::max((frontRsrc1 >> 29u) & 3u, (backRsrc1 >> 29u) & 3u);
+    const auto rsrc2Field = std::max((frontRsrc2 >> 16u) & 3u, (backRsrc2 >> 16u) & 3u);
+    const auto rsrc1 = (backRsrc1 & ~(Rsrc1VgprMask | (3u << 29u))) | vgprs | (rsrc1Field << 29u);
+    const auto rsrc2 = (backRsrc2 & ~(0xf0000000u | (3u << 16u) | Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable)) | ((shared & 15u) << 28u) | (rsrc2Field << 16u) | (frontRsrc2 & (Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable));
+    return {rsrc1, rsrc2};
 }
 
 const ShaderRegister* FindHalfRegister(const Shader* shader, std::uint32_t offset) {
@@ -148,10 +152,14 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
     const auto* frontRsrc1 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC1_GS);
     const auto* frontRsrc2 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC2_GS);
     if (frontRsrc1 == nullptr || frontRsrc2 == nullptr) Fail(function, "front half has no GS resource registers");
+    const auto* backRsrc1 = FindHalfRegister(back, SPI_SHADER_PGM_RSRC1_GS);
+    const auto* backRsrc2 = FindHalfRegister(back, SPI_SHADER_PGM_RSRC2_GS);
+    if (backRsrc1 == nullptr || backRsrc2 == nullptr) Fail(function, "back half has no GS resource registers");
+    const auto resources = mergeGeometryResources(frontRsrc1->value, frontRsrc2->value, backRsrc1->value, backRsrc2->value);
     layout.sh.assign(back->sh_registers, back->sh_registers + back->num_sh_registers);
     for (auto& reg : layout.sh) {
-        if (reg.offset == SPI_SHADER_PGM_RSRC1_GS) reg.value = MergeRsrc1(reg.value, frontRsrc1->value);
-        else if (reg.offset == SPI_SHADER_PGM_RSRC2_GS) reg.value = MergeRsrc2(function, reg.value, frontRsrc2->value);
+        if (reg.offset == SPI_SHADER_PGM_RSRC1_GS) reg.value = resources[0];
+        else if (reg.offset == SPI_SHADER_PGM_RSRC2_GS) reg.value = resources[1];
     }
     for (std::uint32_t i = 0; i < front->num_sh_registers; ++i) {
         const auto& reg = front->sh_registers[i];

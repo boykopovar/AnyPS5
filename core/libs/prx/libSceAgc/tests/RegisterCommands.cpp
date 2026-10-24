@@ -8,6 +8,8 @@
 extern "C" {
 std::uint32_t* APS5_VABI sceAgcDcbSetCfRegisterDirect(CommandBuffer*, ShaderRegister);
 std::uint32_t* APS5_VABI sceAgcDcbSetCfRegisterRangeDirect(CommandBuffer*, std::uint32_t, const std::uint32_t*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer*, std::uint32_t, const std::uint32_t*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer*, std::uint32_t, const std::uint32_t*, std::uint32_t);
 std::uint32_t* APS5_VABI sceAgcDcbSetCxRegisterDirect(CommandBuffer*, ShaderRegister);
 std::uint32_t* APS5_VABI sceAgcDcbSetShRegisterDirect(CommandBuffer*, ShaderRegister);
 std::uint32_t* APS5_VABI sceAgcDcbSetUcRegisterDirect(CommandBuffer*, ShaderRegister);
@@ -92,9 +94,35 @@ void testConfig() {
     expectFailure([&] { sceAgcDcbSetCfRegisterDirect(nullptr, {0, 1}); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, values.data(), 0); });
     expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0xffffu, values.data(), 2); });
-    const auto* misaligned = reinterpret_cast<const std::uint32_t*>(reinterpret_cast<const unsigned char*>(values.data()) + 1);
-    expectFailure([&] { sceAgcDcbSetCfRegisterRangeDirect(&storage.buffer, 0x100u, misaligned, 1); });
     check(storage.words == before && storage.buffer.cursor_up == reserved + 4, "invalid config register write modified buffer");
+}
+
+void testRangeFromAnyByte() {
+    const std::array writers{sceAgcCbSetShRegisterRangeDirect, sceAgcCbSetUcRegisterRangeDirect, sceAgcDcbSetCfRegisterRangeDirect};
+    const std::array headers{0xc0047600u, 0xc0047900u, 0xc0046800u};
+    alignas(16) std::array<unsigned char, 32> bytes{};
+    for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<unsigned char>(0x10u + i);
+    struct Case {
+        std::size_t offset;
+        std::array<std::uint32_t, 4> values;
+    };
+    const std::array cases{
+        Case{1, {0x14131211u, 0x18171615u, 0x1c1b1a19u, 0x201f1e1du}},
+        Case{2, {0x15141312u, 0x19181716u, 0x1d1c1b1au, 0x21201f1eu}},
+        Case{3, {0x16151413u, 0x1a191817u, 0x1e1d1c1bu, 0x2221201fu}},
+        Case{13, {0x201f1e1du, 0x24232221u, 0x28272625u, 0x2c2b2a29u}},
+    };
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (const auto& entry : cases) {
+            Storage storage;
+            storage.words.fill(0xabcdef01u);
+            const auto* values = reinterpret_cast<const std::uint32_t*>(bytes.data() + entry.offset);
+            auto* packet = writers[i](&storage.buffer, 0x40u, values, 4);
+            check(packet == storage.words.data() && storage.buffer.cursor_up == packet + 6, "unaligned register range allocation mismatch");
+            check(packet[0] == headers[i] && packet[1] == 0x40u && std::equal(entry.values.begin(), entry.values.end(), packet + 2), "unaligned register values were not read byte for byte");
+            check(packet[6] == 0xabcdef01u, "unaligned register range overwrote the following word");
+        }
+    }
 }
 
 void testIndirect() {
@@ -193,6 +221,10 @@ void testDirectList() {
         packet = writers[i](&split.buffer, paired.data(), 4);
         check(std::equal(expectedSplit.begin(), expectedSplit.end(), packet) && split.buffer.cursor_up == packet + expectedSplit.size(), "register pairs were not written as two ranges");
         check(sizes[i](0) == 0, "an empty register list has a size");
+        Storage empty;
+        empty.words.fill(sentinel);
+        check(writers[i](&empty.buffer, nullptr, 0) == empty.words.data() && empty.buffer.cursor_up == empty.words.data() && empty.words.front() == sentinel, "an empty register list wrote a packet");
+        expectFailure([&] { writers[i](nullptr, nullptr, 0); });
         check(sizes[i](0x15555555u) == 0xfffffffcu, "largest register list size mismatch");
         for (const auto count : {0x15555556u, 0x40000000u, 0xffffffffu}) {
             expectFailure([&] { sizes[i](count); });
@@ -206,6 +238,7 @@ int main() {
     try {
         testDirect();
         testConfig();
+        testRangeFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
         testDirectList();

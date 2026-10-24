@@ -29,7 +29,7 @@ int main() {
         auto empty = valid; empty.StubOffset = 384; empty.StubSize = 0;
         bytes = Fixture(); builder.WriteTable(bytes, empty);
         Require(Io::ReadU64(bytes, Io::ReadU64(bytes, 40) + 5 * 64 + 16) == 0x1100);
-        for (int kind = 0; kind < 8; ++kind) {
+        for (int kind = 0; kind < 11; ++kind) {
             bytes = Fixture(); auto request = valid;
             switch (kind) {
                 case 0: request.DynStrSize = 257; break;
@@ -40,12 +40,15 @@ int main() {
                 case 5: Io::WriteU64(bytes, 32, std::numeric_limits<std::uint64_t>::max()); break;
                 case 6: Io::WriteU64(bytes, 80, std::numeric_limits<std::uint64_t>::max() - 4); break;
                 case 7: Io::WriteU16(bytes, 56, 20); break;
+                case 8: request.DynStrSize = 16; break;
+                case 9: bytes.resize(40); break;
+                case 10: Io::WriteU64(bytes, 32, 48); Io::WriteU32(bytes, 48, 1); Io::WriteU64(bytes, 56, 128); break;
             }
             const auto before = bytes;
             bool rejected = false;
-            try { builder.WriteTable(bytes, request); } catch (const std::exception&) { rejected = true; }
+            try { builder.WriteTable(bytes, request); } catch (const std::runtime_error&) { rejected = true; }
             Require(rejected && bytes == before);
         }
-        std::cout << "10 section range cases passed\n";
+        std::cout << "13 section range cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

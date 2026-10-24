@@ -93,6 +93,16 @@ void ApplyRangeName(uintptr_t address, VirtualQueryInfo* info) {
  if (next != g_rangeNames.end()) info->end = std::min<uintptr_t>(info->end, next->first);
 }
 
+void ReleaseClaimedDirectMemory(int64_t start, size_t len) {
+ try {
+  UnmapDirectMemoryViews(DirectMemoryViews(start, len));
+ } catch (...) {
+  DirectMemoryAbandonRelease(start, len);
+  throw;
+ }
+ DirectMemoryFinishRelease(start, len);
+}
+
 std::mutex g_prtLock;
 PrtAperture g_prtApertures[PRT_APERTURE_COUNT] = {};
 
@@ -105,22 +115,7 @@ size_t _flexibleUsedLocked() {
     return used;
 }
 
-int _mapFlexible(void** addr, size_t len, int prot, int flags) {
-    const size_t configured = _configuredFlexibleSize();
-    const size_t images = GuestImageSegmentBytes_nid_no_patch();
-    std::lock_guard lock(g_flexibleLock);
-    const size_t used = images + _flexibleUsedLocked();
-    if (len > configured - std::min(configured, used)) {
-        std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, used, configured);
-        return SCE_KERNEL_ERROR_ENOMEM;
-    }
-    const int result = DoMapAnon(addr, len, prot, flags);
-    if (result == 0) g_flexibleRanges[reinterpret_cast<uintptr_t>(*addr)] = len;
-    return result;
-}
-
-void _releaseFlexible(uintptr_t start, size_t len) {
-    std::lock_guard lock(g_flexibleLock);
+void _releaseFlexibleLocked(uintptr_t start, size_t len) {
     const uintptr_t end = start + len;
     auto it = g_flexibleRanges.upper_bound(start);
     if (it != g_flexibleRanges.begin()) --it;
@@ -134,6 +129,78 @@ void _releaseFlexible(uintptr_t start, size_t len) {
     }
 }
 
+int _mapFlexible(void** addr, size_t len, int prot, int flags) {
+    const size_t configured = _configuredFlexibleSize();
+    const size_t images = GuestImageSegmentBytes_nid_no_patch();
+    std::lock_guard lock(g_flexibleLock);
+    size_t replaced = 0;
+    constexpr int MapFixed = 0x10;
+    constexpr int MapNoOverwrite = 0x80;
+    if (addr != nullptr && *addr != nullptr && (flags & (MapFixed | MapNoOverwrite)) == MapFixed) {
+        const auto start = reinterpret_cast<uintptr_t>(*addr);
+        if (len <= std::numeric_limits<uintptr_t>::max() - start) {
+            const auto end = start + len;
+            for (const auto& [rangeStart, rangeLength] : g_flexibleRanges) {
+                const auto rangeEnd = rangeStart + rangeLength;
+                if (rangeStart < end && rangeEnd > start) replaced += std::min(end, rangeEnd) - std::max(start, rangeStart);
+            }
+        }
+    }
+    const size_t used = images + _flexibleUsedLocked() - replaced;
+    if (len > configured - std::min(configured, used)) {
+        std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, used, configured);
+        return SCE_KERNEL_ERROR_ENOMEM;
+    }
+    const int result = DoMapAnon(addr, len, prot, flags);
+    if (result == 0) {
+        const auto start = reinterpret_cast<uintptr_t>(*addr);
+        _releaseFlexibleLocked(start, len);
+        g_flexibleRanges[start] = len;
+    }
+    return result;
+}
+
+void _releaseFlexible(uintptr_t start, size_t len) {
+    std::lock_guard lock(g_flexibleLock);
+    _releaseFlexibleLocked(start, len);
+}
+
+std::mutex g_lockedRangesLock;
+std::map<uintptr_t, size_t> g_lockedRanges;
+
+void RecordLockedRange(uintptr_t start, uintptr_t end) {
+    std::lock_guard lock(g_lockedRangesLock);
+    auto it = g_lockedRanges.begin();
+    while (it != g_lockedRanges.end()) {
+        if (it->first <= end && it->first + it->second >= start) {
+            start = std::min(start, it->first);
+            end = std::max(end, it->first + it->second);
+            it = g_lockedRanges.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    g_lockedRanges[start] = end - start;
+}
+
+void ForgetLockedRange(uintptr_t start, uintptr_t end) {
+    std::lock_guard lock(g_lockedRangesLock);
+    auto it = g_lockedRanges.upper_bound(start);
+    if (it != g_lockedRanges.begin()) --it;
+    while (it != g_lockedRanges.end() && it->first < end) {
+        const uintptr_t rangeStart = it->first;
+        const uintptr_t rangeEnd = rangeStart + it->second;
+        if (rangeEnd <= start) { ++it; continue; }
+        it = g_lockedRanges.erase(it);
+        if (rangeStart < start) g_lockedRanges[rangeStart] = start - rangeStart;
+        if (rangeEnd > end) g_lockedRanges[end] = rangeEnd - end;
+    }
+}
+
+}
+
+void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len) {
+    _releaseFlexible(address, len);
 }
 
 extern "C" {
@@ -154,7 +221,8 @@ int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t s
  if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
  int64_t start = 0;
  size_t size = 0;
- if (!DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size)) { *phys_addr_out = 0; *size_out = 0; return SCE_KERNEL_ERROR_EAGAIN; }
+ const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
+ if (result != 0) { *phys_addr_out = 0; *size_out = 0; return result; }
  *phys_addr_out = start;
  *size_out = size;
  return 0;
@@ -192,12 +260,16 @@ int APS5_VABI sceKernelEnableDmemAliasing(void) {
 
 int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)alignment;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+ return result;
 }
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)type;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+ return result;
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
@@ -209,6 +281,7 @@ int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const
 
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
  if (result == 0 && name) sceKernelSetVirtualRangeName(*addr, len, name);
  return result;
 }
@@ -225,12 +298,17 @@ int32_t APS5_VABI sceKernelMapNamedFlexibleMemoryInternal(void** addr_in_out, si
 }
 
 int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
- return DoMprotect(addr, len, prot);
+ constexpr int DefinedProtection = 0x3F7;
+ if (len == 0) return 0;
+ return DoMprotect(addr, len, prot & DefinedProtection);
 }
 
 int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
  const int result = DoMunmap(reinterpret_cast<void*>(vaddr), len);
- if (result == 0) _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
+ if (result == 0) {
+  _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
+  ForgetLockedRange(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
+ }
  return result;
 }
 
@@ -242,7 +320,11 @@ int APS5_VABI sceKernelMmap(void* addr, size_t len, int prot, int flags, int fd,
 }
 
 int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
- return sceKernelMunmap(reinterpret_cast<uint64_t>(addr), len);
+ const auto start = reinterpret_cast<uintptr_t>(addr);
+ if (start == 0 || (start & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || len > std::numeric_limits<uintptr_t>::max() - start)
+  return SCE_KERNEL_ERROR_EINVAL;
+ if (len != 0) _releaseFlexible(start, len);
+ return 0;
 }
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
@@ -250,14 +332,15 @@ int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if ((static_cast<std::uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 ||
      len > DIRECT_MEMORY_SIZE || static_cast<std::uint64_t>(start) > DIRECT_MEMORY_SIZE - len)
      return SCE_KERNEL_ERROR_EINVAL;
- const auto views = DirectMemoryViews(start, len);
- DirectMemoryFree(start, len);
- UnmapDirectMemoryViews(views);
+ if (!DirectMemoryClaimRelease(start, len, false)) return 0;
+ ReleaseClaimedDirectMemory(start, len);
  return 0;
 }
 
 int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
- return DoReserveVirtual(addr, len, flags, alignment);
+ const int result = DoReserveVirtual(addr, len, flags, alignment);
+ if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+ return result;
 }
 
 int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
@@ -339,13 +422,13 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || (static_cast<uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
  if (len == 0) return 0;
- const auto views = DirectMemoryViews(start, len);
- if (!DirectMemoryCheckedFree(start, len)) return SCE_KERNEL_ERROR_ENOENT;
- UnmapDirectMemoryViews(views);
+ if (!DirectMemoryClaimRelease(start, len, true)) return SCE_KERNEL_ERROR_ENOENT;
+ ReleaseClaimedDirectMemory(start, len);
  return 0;
 }
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
+ if (len == 0) return 0;
  return DoMtypeprotect(addr, len, type, prot);
 }
 
@@ -386,10 +469,9 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
  return 0;
 }
 
-int APS5_VABI sceKernelInternalMemoryGetAvailableSize(size_t* size) {
- if (!size) return SCE_KERNEL_ERROR_EINVAL;
- *size = 0;
- return 0;
+int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
+ if (!size) return -1;
+ throw std::logic_error("sceKernelInternalMemoryGetAvailableSize: internal pool statistics are not implemented");
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
@@ -412,7 +494,7 @@ int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
 int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int* gpu_total, int* gpu_available) {
  if (!cpu_total || !cpu_available || !gpu_total || !gpu_available) return SCE_KERNEL_ERROR_EFAULT;
  constexpr std::uint64_t PageTableGranularity = 2ULL * 1024 * 1024;
- constexpr std::uint64_t PageTablePoolEntries = 2048;
+ constexpr std::uint64_t PageTablePoolEntries = 8192;
  std::uint64_t cpuUsed = 0;
  std::uint64_t gpuUsed = 0;
  GuestPageTableUsage(PageTableGranularity, &cpuUsed, &gpuUsed);
@@ -463,6 +545,7 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
   switch (entry.operation) {
   case OpMapDirect:
    result = DoMapDirect(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags, static_cast<int64_t>(entry.offset), 0);
+   if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(entry.start), entry.length);
    break;
   case OpUnmap:
    result = sceKernelMunmap(reinterpret_cast<uint64_t>(entry.start), entry.length);
@@ -524,7 +607,10 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     auto* const address = reinterpret_cast<void*>(start);
     const SIZE_T bytes = end - start;
     std::lock_guard lock(g_workingSetLock);
-    if (VirtualLock(address, bytes)) return 0;
+    if (VirtualLock(address, bytes)) {
+        RecordLockedRange(start, end);
+        return 0;
+    }
     if (GetLastError() != ERROR_WORKING_SET_QUOTA) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualLock failed");
     SIZE_T minimum = 0;
     SIZE_T maximum = 0;
@@ -532,7 +618,10 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     if (!GetProcessWorkingSetSizeEx(GetCurrentProcess(), &minimum, &maximum, &flags)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "GetProcessWorkingSetSizeEx failed");
     if (bytes > std::numeric_limits<SIZE_T>::max() - maximum) return SCE_KERNEL_ERROR_EAGAIN;
     if (!SetProcessWorkingSetSizeEx(GetCurrentProcess(), minimum + bytes, maximum + bytes, flags)) return SCE_KERNEL_ERROR_EAGAIN;
-    if (VirtualLock(address, bytes)) return 0;
+    if (VirtualLock(address, bytes)) {
+        RecordLockedRange(start, end);
+        return 0;
+    }
     if (GetLastError() != ERROR_WORKING_SET_QUOTA) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualLock failed");
     return SCE_KERNEL_ERROR_EAGAIN;
 }
@@ -581,19 +670,26 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
         }
         cursor = next;
     }
+    ForgetLockedRange(start, end);
     return 0;
 }
 #else
 int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     auto* const address = reinterpret_cast<void*>(start);
     const std::size_t bytes = end - start;
-    if (::mlock(address, bytes) == 0) return 0;
+    if (::mlock(address, bytes) == 0) {
+        RecordLockedRange(start, end);
+        return 0;
+    }
     int error = errno;
     rlimit limit{};
     if ((error == ENOMEM || error == EPERM || error == EAGAIN) && getrlimit(RLIMIT_MEMLOCK, &limit) == 0 && limit.rlim_cur < limit.rlim_max) {
         limit.rlim_cur = limit.rlim_max;
         if (setrlimit(RLIMIT_MEMLOCK, &limit) == 0) {
-            if (::mlock(address, bytes) == 0) return 0;
+            if (::mlock(address, bytes) == 0) {
+                RecordLockedRange(start, end);
+                return 0;
+            }
             error = errno;
         }
     }
@@ -607,7 +703,10 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
 
 int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
     if (!GuestRangeMapped(start, end)) return SCE_KERNEL_ERROR_ENOMEM;
-    if (::munlock(reinterpret_cast<void*>(start), end - start) == 0) return 0;
+    if (::munlock(reinterpret_cast<void*>(start), end - start) == 0) {
+        ForgetLockedRange(start, end);
+        return 0;
+    }
     const int error = errno;
     if (error == ENOMEM) return SCE_KERNEL_ERROR_ENOMEM;
     throw std::system_error(error, std::generic_category(), "munlock failed");
@@ -632,6 +731,37 @@ int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) 
     if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
     return UnlockHostPages(start, end);
+}
+
+int APS5_VABI sceKernelMunlockall_nid_postfix() {
+#ifndef _WIN32
+    ::munlockall();
+#endif
+    std::map<uintptr_t, size_t> ranges;
+    {
+        std::lock_guard lock(g_lockedRangesLock);
+        ranges.swap(g_lockedRanges);
+    }
+#ifdef _WIN32
+    for (const auto& [start, len] : ranges) {
+        const auto end = start + len;
+        for (auto cursor = start; cursor < end;) {
+            MEMORY_BASIC_INFORMATION region{};
+            if (VirtualQuery(reinterpret_cast<const void*>(cursor), &region, sizeof(region)) != sizeof(region)) break;
+            const auto next = std::min(end, reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize);
+            if (region.State == MEM_COMMIT && (region.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0 && !VirtualUnlock(reinterpret_cast<void*>(cursor), next - cursor)) {
+                if (GetLastError() != ERROR_NOT_LOCKED) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualUnlock failed");
+                for (auto page = cursor; page < next; page += HostPageSize()) {
+                    if (!VirtualUnlock(reinterpret_cast<void*>(page), std::min(HostPageSize(), next - page)) && GetLastError() != ERROR_NOT_LOCKED) {
+                        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualUnlock failed");
+                    }
+                }
+            }
+            cursor = next;
+        }
+    }
+#endif
+    return 0;
 }
 
 }

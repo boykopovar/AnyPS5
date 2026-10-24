@@ -362,6 +362,15 @@ IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
 }
 
+IrValue& TranslationContext::invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct) {
+    IrValue* noNan = &ir.ConstantBool(true);
+    for (IrValue* source : sources) {
+        IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(ir.BitCastU32(*source), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u));
+        noNan = &ir.LogicalAnd(*noNan, ir.LogicalNot(nan));
+    }
+    return ir.LogicalOr(invalidProduct, *noNan);
+}
+
 IrU32 TranslationContext::quietNan16(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x0200u))) : bits;
 }
@@ -370,21 +379,25 @@ std::array<IrU32, 2> TranslationContext::quietNan64(const std::array<IrU32, 2>& 
     return ieeeMode ? std::array<IrU32, 2>{bits[0], IrU32(ir.BitwiseOr(bits[1].Value(), ir.Constant(0x00080000u)))} : bits;
 }
 
+IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
+    IrValue& bits = ir.BitCastU32(value.Value());
+    IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
+    IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
+    IrValue* result = nullptr;
+    if (omod == 3u) {
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
+    } else {
+        const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
+    }
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), ir.Constant(0u), *result);
+    result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
+    return IrF32(ir.BitCastF32(*result));
+}
+
 IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value) {
     if (operand.omod != 0u && outputModifierApplies(4u)) {
-        IrValue& bits = ir.BitCastU32(value.Value());
-        IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
-        IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
-        IrValue* result = nullptr;
-        if (operand.omod == 3u) {
-            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
-        } else {
-            const std::uint32_t exponentStep = operand.omod == 1u ? 0x00800000u : 0x01000000u;
-            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
-        }
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), ir.Constant(0u), *result);
-        result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
-        value = IrF32(ir.BitCastF32(*result));
+        value = scaleF32Result(operand.omod, value);
     }
     if (operand.clamp) {
         const IrF32 saturated(ir.Emit(IrOpcode::FPSaturate32, IrType::F32, {&value.Value()}));

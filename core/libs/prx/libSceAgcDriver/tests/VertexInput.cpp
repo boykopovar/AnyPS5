@@ -135,18 +135,40 @@ void run() {
             input[0].resource.fields[2] = records;
             Require(live.TryGet(100, input) == stored, "record count rebuilt a vertex layout");
             Require(VertexBufferReadSize(input[0], 5, 1) == 176u, "record count changed the direct fetch extent");
-            if (records != 0) Require(VertexBufferExtent(input[0]) == 32u * records, "cached layout froze the indirect descriptor extent");
-            else fails([&] { VertexBufferExtent(input[0]); });
+            if (records != 0) {
+                Require(VertexBufferExtent(input[0]) == 32u * (records - 1u) + 16u, "cached layout froze the indirect descriptor extent");
+                Require(VertexBufferExtent(input[0]) == VertexBufferReadSize(input[0], records - 1u, 1), "the indirect extent is not the fetch of the last record");
+            } else {
+                fails([&] { VertexBufferExtent(input[0]); });
+            }
         }
+        auto last = attribute();
+        last.resource.fields[0] += 16u;
+        Require(16u + VertexBufferExtent(last) == 32u * 128u, "the last element of each record was copied past the descriptor's records");
         input[0].resource.fields[1] = 0;
         input[0].resource.fields[3] |= 2u << 28u;
         input[0].resource.fields[2] = 0;
         const auto zeroStride = live.TryGet(101, input);
         Require(VertexFetchOutOfRange(input[0]), "zero records did not select zero fill");
         input[0].resource.fields[2] = 64;
-        Require(live.TryGet(101, input) == zeroStride && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 64, "cached zero-stride layout froze the live zero-fill decision");
+        Require(live.TryGet(101, input) == zeroStride && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 16, "cached zero-stride layout froze the live zero-fill decision");
         input[0].resource.fields[2] = 0;
         Require(live.TryGet(101, input) == zeroStride && VertexFetchOutOfRange(input[0]), "record count zero reused a live fetch");
+        input[0] = attribute();
+        input[0].resource.fields[1] = 0;
+        input[0].resource.fields[3] |= 3u << 28u;
+        input[0].resource.fields[2] = 16;
+        const auto wholeFetch = live.TryGet(105, input);
+        for (const auto records : {0u, 8u, 15u}) {
+            input[0].resource.fields[2] = records;
+            Require(live.TryGet(105, input) == wholeFetch && VertexFetchOutOfRange(input[0]), "a fetch that only partly fits was not read as zero");
+        }
+        for (const auto records : {16u, 17u, 0xffffffffu}) {
+            input[0].resource.fields[2] = records;
+            Require(live.TryGet(105, input) == wholeFetch && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 16, "a fetch inside the byte range was read as zero or sized by NUM_RECORDS");
+        }
+        input[0].resource.fields[3] &= ~(3u << 28u);
+        Require(VertexFetchOutOfRange(input[0]), "OOB_SELECT 0 read a zero-stride fetch");
         input[0] = attribute();
         input[0].formatComponents = 1;
         const auto narrow = live.TryGet(102, input);

@@ -50,6 +50,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Format16Unorm = 7;
 constexpr std::uint32_t Format16Uint = 11;
+constexpr std::uint32_t Format32Uint = 20;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t TypeCube = 11;
@@ -68,6 +69,7 @@ constexpr std::size_t FirstSliceOffset = 0xe0000;
 constexpr std::size_t PaddedCubeOffset = 0x120000;
 constexpr std::size_t SmallCubeOffset = 0x180000;
 constexpr std::size_t LargeCubeOffset = 0x200000;
+constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -324,6 +326,18 @@ void DepthBitsBaseSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, 
     Expect(output, 0x1234u, "D16 depth-bits array from base slice 1");
 }
 
+void GuestDepthBitsCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    constexpr std::array<std::uint32_t, 9> values{0x00000001u, 0x007fffffu, 0x80000000u, 0x80000001u, 0x7f800001u, 0x7fc00001u, 0xffffffffu, 0x3e800000u, 0x12345678u};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        auto* base = block.At(GuestDepthBitsOffset + index * SliceBytes);
+        FillSlice(base, SliceBytes, values[index], 4u);
+        Load(device, base, {Format32Uint, 128, 128, Type2D, 0, Swizzle64KbZX}, 0, output, false, static_cast<std::uint32_t>(index * 13u));
+        char what[96];
+        std::snprintf(what, sizeof(what), "32-bit depth-bits read of guest memory holding 0x%08x", values[index]);
+        Expect(output, values[index], what);
+    }
+}
+
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     auto* one = block.At(OneSliceOffset);
     DrawDepth(device, reinterpret_cast<std::uintptr_t>(one), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
@@ -431,6 +445,7 @@ int main() {
         IntegerCase(*device, block, output);
         DepthBitsArrayCase(*device, block, output);
         DepthBitsBaseSliceCase(*device, block, output);
+        GuestDepthBitsCase(*device, block, output);
         FirstSliceCase(*device, block, output);
         PaddedCubeCase(*device, block, output);
         SmallD16CubeCase(*device, block, output);

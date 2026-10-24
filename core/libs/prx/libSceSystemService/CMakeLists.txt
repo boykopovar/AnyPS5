@@ -1,4 +1,4 @@
-add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp LoadExec.cpp)
+add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp)
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver)
 configure_windows_unwind(libSceSystemService)
@@ -22,11 +22,16 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_loadexec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
+        set(loadexecLibraries $<TARGET_FILE:libSceSystemService> $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel>)
+        if(APS5_ENABLE_TRACY)
+            list(APPEND loadexecLibraries $<TARGET_FILE:TracyClient>)
+        endif()
         add_test(NAME loadexec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_loadexec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_loadexec_host>
-            $<TARGET_FILE:libSceSystemService> $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> ${CMAKE_CXX_COMPILER})
+            ${loadexecLibraries} ${CMAKE_CXX_COMPILER})
         set_tests_properties(loadexec_arguments PROPERTIES TIMEOUT 30)
+        add_asan_test_options(loadexec_arguments verify_asan_link_order=0)
     endif()
     add_test_executable(guest_system_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemExit.cpp)
     target_include_directories(guest_system_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -34,22 +39,36 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_system_exit_tests)
     add_test(NAME guest_system_exit_parameters COMMAND guest_system_exit_tests)
     add_test(NAME guest_system_exit COMMAND guest_system_exit_tests --exit)
+    add_test(NAME guest_requested_exit COMMAND guest_system_exit_tests --requested-exit-driver)
     add_test(NAME guest_quick_exit COMMAND guest_system_exit_tests --quick-exit)
     add_test(NAME guest_immediate_exit COMMAND guest_system_exit_tests --immediate)
+    add_test(NAME guest_immediate_exit_drain COMMAND guest_system_exit_tests --exit-drain-driver)
+    set_tests_properties(guest_immediate_exit_drain PROPERTIES TIMEOUT 20)
     add_test(NAME guest_return_from_main COMMAND guest_system_exit_tests --return-from-main)
     add_test(NAME guest_system_relaunch COMMAND guest_system_exit_tests --relaunch-driver)
     add_test(NAME guest_nested_exit COMMAND guest_system_exit_tests --nested-exit-driver)
-    set_tests_properties(guest_system_exit PROPERTIES
+    add_test(NAME guest_exit_finalizers_before_shutdown COMMAND guest_system_exit_tests --exit-order-driver)
+    set_tests_properties(guest_system_exit guest_requested_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest shutdown completed"
         FAIL_REGULAR_EXPRESSION "Guest exit handler ran|Guest thread resumed during exit")
+    set_tests_properties(guest_requested_exit PROPERTIES TIMEOUT 10)
     set_tests_properties(guest_quick_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest quick_exit handlers completed")
     set_tests_properties(guest_system_relaunch PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest relaunch completed" TIMEOUT 30)
     set_tests_properties(guest_nested_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest nested exit completed" TIMEOUT 30)
+    set_tests_properties(guest_exit_finalizers_before_shutdown PROPERTIES
+        PASS_REGULAR_EXPRESSION "Guest finalizers ran before shutdown" TIMEOUT 30)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+        add_test_executable(guest_system_load_exec_standard_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLoadExecStandardError.cpp)
+        target_include_directories(guest_system_load_exec_standard_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_system_load_exec_standard_error_tests PRIVATE libSceSystemService libkernel libc)
+        add_test(NAME guest_system_load_exec_standard_error COMMAND guest_system_load_exec_standard_error_tests)
+        set_tests_properties(guest_system_load_exec_standard_error PROPERTIES TIMEOUT 20)
+    endif()
     if(WIN32)
-        set_tests_properties(guest_system_exit guest_system_exit_parameters guest_immediate_exit guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_system_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_immediate_exit_drain guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit guest_exit_finalizers_before_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemService.cpp)
@@ -70,6 +89,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_service_language PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_system_service_time_zone_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceTimeZone.cpp)
+    target_include_directories(guest_system_service_time_zone_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_time_zone_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_time_zone_tests)
+    add_test(NAME guest_system_service_time_zone COMMAND guest_system_service_time_zone_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_service_time_zone PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_system_kill_app_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemKillApp.cpp)
     target_include_directories(guest_system_kill_app_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_kill_app_tests PRIVATE libSceSystemService libc)
@@ -77,10 +105,14 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_kill_app_parameters COMMAND guest_system_kill_app_tests)
     add_test(NAME guest_system_kill_app COMMAND guest_system_kill_app_tests --kill)
     add_test(NAME guest_system_kill_app_status COMMAND guest_system_kill_app_tests --kill)
-    set_tests_properties(guest_system_kill_app PROPERTIES
+    add_test(NAME guest_lnc_util_kill_app COMMAND guest_system_kill_app_tests --lnc-kill)
+    add_test(NAME guest_lnc_util_kill_app_with_reason COMMAND guest_system_kill_app_tests --lnc-kill-reason)
+    add_test(NAME guest_lnc_util_kill_app_status COMMAND guest_system_kill_app_tests --lnc-kill)
+    add_test(NAME guest_lnc_util_kill_app_with_reason_status COMMAND guest_system_kill_app_tests --lnc-kill-reason)
+    set_tests_properties(guest_system_kill_app guest_lnc_util_kill_app guest_lnc_util_kill_app_with_reason PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest shutdown and atexit completed")
     if(WIN32)
-        set_tests_properties(guest_system_kill_app guest_system_kill_app_status guest_system_kill_app_parameters PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_system_kill_app guest_system_kill_app_status guest_system_kill_app_parameters guest_lnc_util_kill_app guest_lnc_util_kill_app_with_reason guest_lnc_util_kill_app_status guest_lnc_util_kill_app_with_reason_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -2,12 +2,16 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_SUBMIT_INCLUDE_DCB_HPP
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 namespace AgcDriver {
 
 int SubmitMany(std::uint32_t* const* addresses, const std::uint32_t* sizes, std::uint32_t count, std::uint32_t queue);
 
 }
+
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords();
 
 extern "C" int APS5_VABI sceAgcDriverSubmitDcb(const Packet* packet);
 extern "C" int APS5_VABI sceAgcDriverAgrSubmitDcb(const Packet* packet);

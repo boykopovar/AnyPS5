@@ -5,11 +5,28 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+
+struct NetIovec {
+    void* base;
+    std::uint64_t length;
+};
+
+struct NetMsghdr {
+    void* name;
+    std::uint32_t nameLength;
+    NetIovec* iov;
+    int iovLength;
+    void* control;
+    std::uint32_t controlLength;
+    int flags;
+};
+static_assert(sizeof(NetMsghdr) == 48 && offsetof(NetMsghdr, iov) == 16 && offsetof(NetMsghdr, flags) == 44);
 
 extern "C" {
 int APS5_VABI socket_nid_postfix(int, int, int);
@@ -36,6 +53,7 @@ int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
 std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
 std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
 std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
+std::int64_t APS5_VABI sceNetRecvmsg(int, NetMsghdr*, int);
 int APS5_VABI sceNetSocketClose(int);
 int* APS5_VABI sceNetErrnoLoc();
 int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
@@ -61,7 +79,7 @@ static DWORD Protection(const void* address) {
 int main(int argc, char** argv) {
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t capacity = 32;
-    constexpr const char* names[] = {"recv", "recvfrom", "read", "sceKernelRead", "sceNetRecv", "sceNetRecvfrom"};
+    constexpr const char* names[] = {"recv", "recvfrom", "read", "sceKernelRead", "sceNetRecv", "sceNetRecvfrom", "sceNetRecvmsg"};
     Require(argc == 2 || argc == 3, "receive API argument required");
     Require(argc != 3 || std::strcmp(argv[2], "tcp") == 0, "unknown transport");
     const bool stream = argc == 3;
@@ -121,7 +139,13 @@ int main(int argc, char** argv) {
             case 2: return read_nid_postfix(receiver, buffer, bytes);
             case 3: return sceKernelRead(receiver, buffer, bytes);
             case 4: return sceNetRecv(receiver, buffer, bytes, flags);
-            default: return sceNetRecvfrom(receiver, buffer, bytes, flags, address, addressLength);
+            case 5: return sceNetRecvfrom(receiver, buffer, bytes, flags, address, addressLength);
+            default: {
+                const auto first = std::min<std::size_t>(bytes, 3);
+                NetIovec vectors[]{{buffer, first}, {nullptr, 0}, {static_cast<char*>(buffer) + first, bytes - first}};
+                NetMsghdr message{nullptr, 0, vectors, 3, nullptr, 0, 0};
+                return sceNetRecvmsg(receiver, &message, flags);
+            }
         }
     };
     const auto waitForPacket = [&] {
@@ -243,6 +267,51 @@ int main(int argc, char** argv) {
             if (mask & 1) Require(Protection(address) == PAGE_READONLY, "sender address rearmed");
             if (mask & 2) Require(Protection(length) == PAGE_READONLY, "sender length rearmed");
         }
+        if (api == 5) {
+            for (const bool readOnlyAddress : {true, false}) {
+                auto* address = static_cast<unsigned char*>(outputMapping) + 16;
+                auto* length = reinterpret_cast<std::uint32_t*>(static_cast<unsigned char*>(outputMapping) + page + 16);
+                {
+                    const GuestArena::HostWrite addressDestination(address, 32);
+                    const GuestArena::HostWrite lengthDestination(length, sizeof(*length));
+                    Require(addressDestination.Open() && lengthDestination.Open(), "initialize refused sender outputs");
+                    std::memset(address, 0xa5, 32);
+                    *length = 32;
+                }
+                void* refused = static_cast<char*>(outputMapping) + (readOnlyAddress ? 0 : page);
+                Require(sceKernelMprotect(refused, page, 1) == 0, "make one sender output read-only");
+                send();
+                waitForPacket();
+                std::array<char, capacity> recovery{};
+                Require(receive(recovery.data(), recovery.size(), 0, address, length) == static_cast<int>(0x8041010eu) && *error == 14,
+                    "read-only sender output fails with EFAULT");
+                Require(*length == 32 && std::all_of(address, address + 32, [](unsigned char value) { return value == 0xa5; }),
+                    "refused sender outputs remain unchanged");
+                Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload) &&
+                    std::memcmp(recovery.data(), payload, sizeof(payload)) == 0, "refused sender output preserves queued data");
+                Require(sceKernelMprotect(refused, page, 3) == 0, "restore sender output permission");
+            }
+            auto* address = static_cast<unsigned char*>(outputMapping) + 16;
+            Require(sceKernelMprotect(outputMapping, page, 1) == 0, "make an unused sender address read-only");
+            std::uint32_t zero = 0;
+            std::array<char, capacity> recovery{};
+            send();
+            waitForPacket();
+            Require(receive(recovery.data(), recovery.size(), 0, address, &zero) == sizeof(payload) && zero == 0 &&
+                std::memcmp(recovery.data(), payload, sizeof(payload)) == 0, "zero-capacity sender address needs no write access");
+            Require(sceKernelMprotect(outputMapping, page, 3) == 0, "restore unused sender address permission");
+            address = static_cast<unsigned char*>(outputMapping) + page - senderAddress.size();
+            Require(sceKernelMprotect(static_cast<char*>(outputMapping) + page, page, 1) == 0,
+                "make bytes beyond the sender address read-only");
+            std::uint32_t oversized = 32;
+            send();
+            waitForPacket();
+            Require(receive(recovery.data(), recovery.size(), 0, address, &oversized) == sizeof(payload) &&
+                oversized == senderAddress.size() && std::memcmp(address, senderAddress.data(), oversized) == 0,
+                "guard only the sender address bytes the receive writes");
+            Require(sceKernelMprotect(static_cast<char*>(outputMapping) + page, page, 3) == 0,
+                "restore bytes beyond the sender address");
+        }
         Require(sceKernelMunmap(outputTwin, page * 2) == 0, "unmap the second sender output mapping");
         Require(sceKernelMunmap(outputMapping, page * 2) == 0, "unmap sender outputs");
         Require(sceKernelReleaseDirectMemory(outputPhysical, page * 2) == 0, "release sender output memory");
@@ -257,6 +326,42 @@ int main(int argc, char** argv) {
     collect();
     Require(Protection(buffer) == PAGE_READONLY && Protection(buffer + capacity - 1) == PAGE_READONLY,
         "failed receive releases the host write guard");
+    if (api == 6) {
+        Require(sceKernelMprotect(static_cast<char*>(mapping) + page, page, 1) == 0,
+            "make the later receive vector read-only");
+        send();
+        waitForPacket();
+        Require(receive(buffer, capacity, 0, nullptr, nullptr) == static_cast<int>(0x8041010eu) && *error == 14,
+            "a later read-only vector fails with EFAULT");
+        Require(std::all_of(buffer - 1, buffer + capacity + 1, [](char value) { return value == '!'; }),
+            "a rejected vector list leaves every destination unchanged");
+        collect();
+        Require(Protection(buffer) == PAGE_READONLY, "a later vector failure releases earlier guards");
+        std::array<char, capacity> recovery{};
+        Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload),
+            "a rejected vector list preserves queued data");
+        Require(sceKernelMprotect(static_cast<char*>(mapping) + page, page, 3) == 0,
+            "restore the later receive vector");
+        NetIovec vectors[]{{buffer, 3}, {nullptr, 0}, {buffer + 3, capacity - 3}};
+        auto* message = reinterpret_cast<NetMsghdr*>(static_cast<char*>(twin) + 32);
+        const NetMsghdr initial{nullptr, 0, vectors, 3, nullptr, 123, -1};
+        {
+            const GuestArena::HostWrite destination(message, sizeof(*message));
+            Require(destination.Open(), "initialize the receive message");
+            std::memcpy(message, &initial, sizeof(initial));
+        }
+        Require(sceKernelMprotect(twin, page, 1) == 0, "make the receive message read-only");
+        send();
+        waitForPacket();
+        Require(sceNetRecvmsg(receiver, message, 0) == static_cast<int>(0x8041010eu) && *error == 14,
+            "read-only message outputs fail with EFAULT");
+        Require(message->flags == -1 && message->controlLength == 123, "rejected message outputs unchanged");
+        Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload),
+            "a rejected message preserves queued data");
+        Require(sceKernelMprotect(twin, page, 3) == 0, "restore receive message write permission");
+        reset();
+        collect();
+    }
     Require(sceKernelMprotect(mapping, page * 2, 1) == 0, "make guest memory read-only");
     send();
     waitForPacket();

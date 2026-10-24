@@ -69,6 +69,9 @@ void Ngs2Voice::ResetSetup() {
     userFxHandler = nullptr;
     userFxData = {};
     userFxFlags = 0;
+    callback = nullptr;
+    callbackData = 0;
+    callbackFlags = 0;
 }
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
@@ -387,20 +390,16 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     throw std::runtime_error("NGS2: voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
-static Ngs2Voice& CheckedVoice(Ngs2Handle handle) {
-    auto* voice = Ngs2FindVoice(handle);
-    if (voice == nullptr) throw std::invalid_argument("NGS2: invalid voice handle");
-    return *voice;
-}
-
 #pragma GCC visibility push(default)
 
 extern "C" {
 
 int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
-    std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
-    if (param_list == nullptr) APS5_INVALID_ARG_EX;
+    if (param_list == nullptr) return SCE_NGS2_ERROR_NULL_PARAM_LIST;
+    const Ngs2Lock lock;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
         ApplyParam(voice, *param);
         if (param->next == 0) break;
@@ -409,8 +408,10 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
 }
 
 int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCommand* commands, size_t num_commands) {
-    std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
+    const Ngs2Lock lock;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
     for (std::size_t i = 0; i < num_commands; i++) {
         const auto& command = commands[i];
@@ -431,9 +432,12 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
 }
 
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t state_size) {
+    const Ngs2Lock lock;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    if (state_size < sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
     if (state == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    std::lock_guard lock(Ngs2Mutex());
-    const auto& voice = CheckedVoice(voice_handle);
+    const auto& voice = *found;
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
             if (state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
@@ -475,8 +479,10 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
 int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs2VoicePortInfo* info, size_t info_size) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (info_size != sizeof(Ngs2VoicePortInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-    std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
+    const Ngs2Lock lock;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     const auto& source = PortAt(voice, port);
     *info = {};
     info->matrix_id = source.matrix;
@@ -487,8 +493,10 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
 
 int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, void* info, size_t info_size) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    std::lock_guard lock(Ngs2Mutex());
-    const auto& voice = CheckedVoice(voice_handle);
+    const Ngs2Lock lock;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    const auto& voice = *found;
     switch (info_id) {
         case SCE_NGS2_VOICE_INFO_CHANNELS: {
             if (info_size != sizeof(Ngs2VoiceChannelsInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
@@ -501,8 +509,34 @@ int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, vo
 
 int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_flags) {
     if (state_flags == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    const Ngs2Lock lock;
+    const auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    *state_flags = found->stateFlags;
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t voice_handle, uintptr_t* owner_rack, uint32_t* voice_index) {
     std::lock_guard lock(Ngs2Mutex());
-    *state_flags = CheckedVoice(voice_handle).stateFlags;
+    const auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    if (owner_rack == nullptr || voice_index == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    *owner_rack = reinterpret_cast<Ngs2Handle>(found->rack);
+    *voice_index = static_cast<uint32_t>(found - found->rack->voices.data());
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_id, Ngs2VoiceMatrixInfo* info, size_t info_size) {
+    if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (info_size != sizeof(Ngs2VoiceMatrixInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+    const Ngs2Lock lock;
+    const auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    if (matrix_id >= found->matrices.size()) APS5_INVALID_ARG_EX;
+    const auto& levels = found->matrices[matrix_id];
+    *info = {};
+    info->num_levels = static_cast<std::uint32_t>(levels.size());
+    std::copy(levels.begin(), levels.end(), info->levels);
     return SCE_NGS2_OK;
 }
 
@@ -512,6 +546,10 @@ int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, flo
 
 int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
     return Ngs2PanGetVolumeMatrix(work, params, num_params, matrix_format, out_volume_matrix);
+}
+
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, std::uint32_t flags) {
+    return Ngs2GeomApply(listener, source, out_attrib, flags);
 }
 
 int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {

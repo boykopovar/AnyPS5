@@ -81,6 +81,12 @@ static void CheckUserDefinedParams(const std::filesystem::path& path) {
     }
 }
 
+static void CheckContentVersion(const std::filesystem::path& path) {
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":"01.002.000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion == "01.002.000", "Incorrect content version");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A missing content version was not empty");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":1,"localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A content version that is not a string was kept");
+}
+
 static void CheckNesting(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"extra":)";
     const auto nested = [&](std::size_t arrays) {
@@ -102,11 +108,12 @@ static void CheckFlexibleMemorySize(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}})";
     Require(!ParseText(path, prefix + "}").flexibleMemorySizeBytes, "Absent kernel changed the default budget");
     Require(!ParseText(path, prefix + R"(,"kernel":{}})").flexibleMemorySizeBytes, "Absent flexible size changed the default budget");
+    Require(!ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":0}})").flexibleMemorySizeBytes, "A zero flexible size changed the default budget");
     for (const auto bytes : {std::uint64_t{16384}, std::uint64_t{838860800}, std::uint64_t{18446744073709535232ull}}) {
         const auto parsed = ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":)" + std::to_string(bytes) + "}}");
         Require(parsed.flexibleMemorySizeBytes == bytes, "Incorrect flexible memory size in bytes");
     }
-    for (const auto* value : {"0", "-0", "-16384", "1", "16385", "838860800.0", "8e8", "true", "null", "\"838860800\"", "18446744073709551616"}) {
+    for (const auto* value : {"-0", "-16384", "1", "16385", "838860800.0", "8e8", "true", "null", "\"838860800\"", "18446744073709551616"}) {
         bool rejected = false;
         try { ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":)" + value + "}}"); }
         catch (const std::runtime_error&) { rejected = true; }
@@ -225,6 +232,7 @@ int main() {
         }
         CheckLanguages(path);
         CheckUserDefinedParams(path);
+        CheckContentVersion(path);
         CheckOutputPermission(path);
         CheckNesting(path);
     } catch (const std::exception& error) {

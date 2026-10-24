@@ -10,6 +10,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -62,6 +63,11 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
         errno = EFAULT;
         return -1;
     }
+    if (const auto archived = File::ReadArchivedFile(fd, buf, nbyte, &offset)) {
+        if (*archived >= 0) return *archived;
+        errno = static_cast<int>(-*archived);
+        return -1;
+    }
 #ifdef _WIN32
     if (offset < 0) {
         errno = EINVAL;
@@ -74,11 +80,12 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
 }
 
 std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, std::int64_t offset) {
-#ifdef _WIN32
     if (offset < 0) {
         errno = EINVAL;
         return -1;
     }
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbyte);
+#ifdef _WIN32
     return NativePositioned_nid_no_patch(fd, const_cast<void*>(buf), nbyte, offset, true);
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
@@ -127,9 +134,9 @@ int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, bool write, std::
 }
 
 int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, bool write, std::int32_t* id, const char* name) {
+    if (req != nullptr && id != nullptr && size > AioRequestNumMax) throw std::runtime_error(std::string(name) + ": more than 128 requests per batch is not modelled");
     const int error = ValidateRequests(req, size, id);
     if (error != 0) return error;
-    if (size > AioRequestNumMax) throw std::runtime_error(std::string(name) + ": more than 128 requests per batch is not modelled");
     for (std::int32_t i = 0; i < size; ++i) {
         const std::int32_t queue = AllocateId();
         SetState(queue, RunRequest(req[i], write) ? AioCompleted : AioAborted);

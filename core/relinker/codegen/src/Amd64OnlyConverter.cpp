@@ -2,6 +2,7 @@
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
@@ -55,12 +56,16 @@ public:
     ) : _seg(seg), _matches(matches), _ph(ph), _branchTargets(branchTargets), _pending(pending), _claimed(claimed), _matcher(matcher) {}
 
     [[nodiscard]] std::optional<Placement> Window(const std::size_t index) const {
-        if (index + 1 < _matches.size() && (_pending.contains(index + 1) || _movable(index + 1, true))) {
-            if (auto placement = _relocate(index, index, index + 1))
-                return placement;
+        for (const bool avoidSegment : {true, false}) {
+            if (index + 1 < _matches.size() && (_pending.contains(index + 1) || _movable(index + 1, true, avoidSegment))) {
+                if (auto placement = _relocate(index, index, index + 1))
+                    return placement;
+            }
+            if (index > 0 && _movable(index - 1, false, avoidSegment)) {
+                if (auto placement = _relocate(index, index - 1, index))
+                    return placement;
+            }
         }
-        if (index > 0 && _movable(index - 1, false))
-            return _relocate(index, index - 1, index);
         return std::nullopt;
     }
 
@@ -108,8 +113,8 @@ private:
         return kind != ControlFlowKind::Sequential && kind != ControlFlowKind::ConditionalBranch;
     }
 
-    [[nodiscard]] bool _movable(const std::size_t index, const bool last) const {
-        return !_claimed.contains(index) && !_pending.contains(index) && (last || !_blocksFollowing(index));
+    [[nodiscard]] bool _movable(const std::size_t index, const bool last, const bool avoidSegment = false) const {
+        return !_claimed.contains(index) && !_pending.contains(index) && (last || !_blocksFollowing(index)) && !(avoidSegment && _info(index).SegmentPrefix != 0);
     }
 
     [[nodiscard]] TrampolineSite _site(const std::uint64_t start, const std::size_t length, LoweredBody body) const {
@@ -256,6 +261,15 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
         const auto match = std::lower_bound(matches.begin(), matches.end(), offset, [](const InstructionMatch& item, const std::uint64_t value) { return item.Offset < value; });
         return match != matches.end() && match->Offset == offset;
     };
+    const auto pastPrefixes = [&](const std::uint64_t address) {
+        const auto offset = address - ph.MappedAddress;
+        const auto after = std::upper_bound(matches.begin(), matches.end(), offset, [](const std::uint64_t value, const InstructionMatch& item) { return value < item.Offset; });
+        if (after == matches.begin())
+            return false;
+        const auto& match = *std::prev(after);
+        const auto inside = offset - match.Offset;
+        return inside != 0 && inside < match.Length && inside > DecodedInstruction{seg.data() + match.Offset, match.Length}.OpcodeOffset();
+    };
     const X64InstructionDecoder decoder;
     std::set<std::uint64_t> targets;
     for (const auto& match : matches) {
@@ -263,7 +277,7 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
         const auto next = static_cast<std::int64_t>(ph.MappedAddress + match.Offset + info.Length);
         if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
             const auto target = next + info.BranchDisp;
-            if (target >= 0)
+            if (target >= 0 && !pastPrefixes(static_cast<std::uint64_t>(target)))
                 targets.insert(static_cast<std::uint64_t>(target));
         } else if (info.HasRipRelativeDisp && info.Opcode == kLea) {
             std::int32_t displacement;
@@ -382,6 +396,8 @@ void Amd64OnlyConverter::_convertSegment(
                     for (auto next = item.Index + 1; siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size; ++next) {
                         if (next >= matches.size() || matches[next].Offset != match.Offset + siteLength)
                             throw CodegenException("AMD-only instruction too short for a jump and not followed by an instruction", fileOffset);
+                        if (claimed.contains(next))
+                            throw CodegenException("AMD-only instruction too short for a jump is followed by an instruction another stub already moved", ph.Offset + matches[next].Offset);
                         const auto& following = matches[next];
                         const std::span<const std::uint8_t> bytes(seg.data() + following.Offset, following.Length);
                         const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());

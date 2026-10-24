@@ -10,6 +10,9 @@ import tempfile
 from test_guest_symbol_names import dynamic_tags, imported_symbols, module_symbols
 from test_macos_output import MachO
 from test_windows_import_modules import executable
+from test_guest_intel_trampolines import main_fixture
+from test_guest_module_directories import needed_libraries
+from test_guest_needed_modules import module_with_needed
 
 ARGS = 0x1122334455667788
 ARGP = 0x99AABBCCDDEEFF00
@@ -56,14 +59,94 @@ def no_relocation_module():
     return image
 
 
+def check_lifecycle_host(relinker, host, work, linux, deferred):
+    case = work / f'lifecycle-host-{deferred}'
+    modules, plugins = case / 'sce_module', case / 'Media/Plugins'
+    modules.mkdir(parents=True)
+    plugins.mkdir(parents=True)
+    image = no_relocation_module()
+    image[0x1010:0x1013] = b'\x31\xc0\xc3'
+    tags = []
+    for position in range(0x2000, 0x2200, 16):
+        tag, value = struct.unpack_from('<qQ', image, position)
+        if tag == 0:
+            break
+        if tag != 1:
+            tags.append((tag, value))
+    tags.append((0, 0))
+    for index, tag in enumerate(tags):
+        struct.pack_into('<qQ', image, 0x2000 + index * 16, *tag)
+    struct.pack_into('<QQ', image, 120 + 32, len(tags) * 16, len(tags) * 16)
+    (plugins if deferred else modules).joinpath('initializer.prx').write_bytes(image)
+    (plugins / 'plugin.prx').write_bytes(module_with_needed((b'libOptional.prx',), (0,)))
+    image = main_fixture()
+    image[0x4000:0x400c] = bytes.fromhex('b83c000000bf2a0000000f05')
+    source, output = case / 'input.elf', case / 'output.elf'
+    source.write_bytes(image)
+    result = subprocess.run([str(relinker), '--skip-syscall-check', '--module-dir', 'Media/Plugins', str(source), str(output)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    relative = 'Media/Plugins' if deferred else 'sce_module'
+    initializer = case / 'app0' / relative / 'initializer.prx.guest.prx'
+    assert needed_libraries(initializer.read_bytes()) == ['libkernel.prx']
+    assert needed_libraries(output.read_bytes()) == ([] if deferred else ['$ORIGIN/app0/sce_module/initializer.prx.guest.prx', 'libkernel.prx'])
+    if linux:
+        libraries = case / 'libs'
+        libraries.mkdir()
+        shutil.copyfile(host, libraries / 'libkernel.prx')
+        events = case / 'events.txt'
+        output.chmod(0o755)
+        run = subprocess.run([str(output)], env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                             capture_output=True, text=True, timeout=30)
+        assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+        if deferred:
+            assert not events.exists(), events.read_text()
+            run = subprocess.run([sys.executable, '-c', 'import ctypes,sys; ctypes.CDLL(sys.argv[1])', str(initializer)],
+                                 env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                                 capture_output=True, text=True, timeout=30)
+            assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert events.read_text() == 'result=0\n', events.read_text()
+
+
 def macho_binds(image):
     linkedit = MachO(image).segment('__LINKEDIT')
     return image[linkedit['fileoff']:linkedit['fileoff'] + linkedit['filesize']]
 
 
-def load_and_record(work, provider, module):
+def macho_x86_64(path):
+    header = Path(path).read_bytes()[:8]
+    return len(header) == 8 and struct.unpack('<II', header) == (0xFEEDFACF, 0x01000007)
+
+
+def macos_loader(work):
+    source, loader = work / 'loader.c', work / 'loader'
+    source.write_text(
+        '#include <dlfcn.h>\n'
+        '#include <stddef.h>\n'
+        '#include <stdio.h>\n'
+        '#include <stdlib.h>\n'
+        '\n'
+        'int main(int argc, char **argv) {\n'
+        '    if (argc != 5) return 4;\n'
+        '    void *host = dlopen(argv[1], RTLD_NOW | RTLD_GLOBAL);\n'
+        '    if (!host) { fprintf(stderr, "%s\\n", dlerror()); return 1; }\n'
+        '    void (*set)(size_t, const void *) = (void (*)(size_t, const void *))dlsym(host, "SetPendingArgs");\n'
+        '    if (!set) { fprintf(stderr, "%s\\n", dlerror()); return 2; }\n'
+        '    set((size_t)strtoull(argv[3], NULL, 0), (const void *)(size_t)strtoull(argv[4], NULL, 0));\n'
+        '    if (!dlopen(argv[2], RTLD_NOW | RTLD_LOCAL)) { fprintf(stderr, "%s\\n", dlerror()); return 3; }\n'
+        '    return 0;\n'
+        '}\n'
+    )
+    result = subprocess.run(['xcrun', 'clang', '-arch', 'x86_64', str(source), '-o', str(loader)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    return (['/usr/bin/arch', '-x86_64'] if platform.machine() == 'arm64' else []) + [str(loader)]
+
+
+def load_and_record(work, provider, module, loader=None):
     events = work / 'events.txt'
-    run = subprocess.run([sys.executable, __file__, '--load', str(provider), str(module)],
+    command = loader + [str(provider), str(module), hex(ARGS), hex(ARGP)] if loader else [sys.executable, __file__, '--load', str(provider), str(module)]
+    run = subprocess.run(command,
                          env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
                          capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
@@ -83,9 +166,11 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     host = Path(sys.argv[2]).resolve()
     linux = sys.platform == 'linux' and os.uname().machine == 'x86_64'
-    macos = sys.platform == 'darwin' and platform.machine() == 'x86_64'
+    macos = sys.platform == 'darwin' and macho_x86_64(host)
     with tempfile.TemporaryDirectory(prefix='anyps5-guest-args-') as directory:
         work = Path(directory)
+        for deferred in (False, True):
+            check_lifecycle_host(relinker, host, work, linux, deferred)
         modules = work / 'sce_module'
         modules.mkdir()
         name = 'args.prx'
@@ -131,6 +216,7 @@ def main():
         if linux:
             libraries = work / 'libs'
             libraries.mkdir()
+            shutil.copyfile(host, libraries / 'libkernel.prx')
             shutil.copyfile(host, libraries / 'libc.prx')
             load_and_record(work, libraries / 'libc.prx', converted)
         elif macos:
@@ -138,7 +224,7 @@ def main():
             libraries.mkdir()
             shutil.copyfile(host, libraries / 'libkernel.prx')
             (libraries / 'libc.prx').symlink_to('libkernel.prx')
-            load_and_record(mach, libraries / 'libkernel.prx', mach_converted)
+            load_and_record(mach, libraries / 'libkernel.prx', mach_converted, macos_loader(work))
         else:
             print('Guest module argument tests passed: native execution skipped')
             return

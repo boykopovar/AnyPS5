@@ -16,6 +16,9 @@ int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
 int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
+int APS5_VABI pthread_cond_init_nid_postfix(PthreadCond* cond, const PthreadCondattr* attr);
+int APS5_VABI pthread_cond_destroy_nid_postfix(PthreadCond* cond);
+int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
 void APS5_VABI __pthread_cxa_finalize_nid_postfix(void*);
@@ -29,6 +32,7 @@ static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 static constexpr int POSIX_EPERM = 1;
+static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -121,6 +125,23 @@ int main() {
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
 
     Require(scePthreadCondDestroy(&cond) == SCE_OK);
+
+    PthreadCondattr unset = nullptr;
+    Require(scePthreadCondInit(&cond, &unset, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&context.mutex) == SCE_OK);
+    Require(scePthreadCondTimedwait(&cond, &context.mutex, 1000) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(scePthreadMutexUnlock(&context.mutex) == SCE_OK);
+    Require(scePthreadCondDestroy(&cond) == SCE_OK);
+    Require(pthread_cond_init_nid_postfix(&cond, &unset) == 0);
+    {
+        const KernelTimespec negativeSeconds{-1, 0};
+        const KernelTimespec negativeNanoseconds{1, -1};
+        Require(scePthreadMutexLock(&context.mutex) == SCE_OK);
+        Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, &negativeSeconds) == POSIX_EINVAL);
+        Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, &negativeNanoseconds) == POSIX_EINVAL);
+        Require(scePthreadMutexUnlock(&context.mutex) == SCE_OK);
+    }
+    Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
     Require(scePthreadMutexDestroy(&context.mutex) == SCE_OK);
 
     Require(sceKernelSleep(0) == SCE_OK);

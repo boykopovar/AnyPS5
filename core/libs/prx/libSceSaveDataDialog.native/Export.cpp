@@ -33,6 +33,9 @@ int APS5_VABI sceSaveDataDialogUpdateStatus(void) {
 }
 
 int APS5_VABI sceSaveDataDialogGetResult(void* result) {
+ if (g_status != SAVE_DATA_DIALOG_STATUS_FINISHED) {
+  return SAVE_DATA_DIALOG_ERROR_NOT_FINISHED;
+ }
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
@@ -41,7 +44,7 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  r->result = SAVE_DATA_DIALOG_RESULT_OK;
  r->button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
  r->user_data = g_user_data;
- if (r->dir_name != nullptr && g_dir_name[0] != '\0') {
+ if (r->dir_name != nullptr) {
   std::snprintf(static_cast<SaveDataDirName*>(r->dir_name)->data,
    sizeof(SaveDataDirName::data), "%s", g_dir_name);
  }
@@ -76,6 +79,9 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
 
 int APS5_VABI sceSaveDataDialogClose(const void* closeParam) {
  (void)closeParam;
+ if (g_status != SAVE_DATA_DIALOG_STATUS_RUNNING) {
+  return SAVE_DATA_DIALOG_ERROR_NOT_RUNNING;
+ }
  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
@@ -85,6 +91,9 @@ int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) {
 }
 
 int APS5_VABI sceSaveDataDialogTerminate(void) {
+ if (g_status == SAVE_DATA_DIALOG_STATUS_NONE) {
+  return SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED;
+ }
  g_status = SAVE_DATA_DIALOG_STATUS_NONE;
  g_mode = 0;
  g_user_data = nullptr;
@@ -95,12 +104,18 @@ int APS5_VABI sceSaveDataDialogTerminate(void) {
 int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta) {
  (void)target;
  (void)delta;
+ if (g_status != SAVE_DATA_DIALOG_STATUS_RUNNING) {
+  return SAVE_DATA_DIALOG_ERROR_NOT_RUNNING;
+ }
  return SAVE_DATA_DIALOG_OK;
 }
 
 int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate) {
  (void)target;
  (void)rate;
+ if (g_status != SAVE_DATA_DIALOG_STATUS_RUNNING) {
+  return SAVE_DATA_DIALOG_ERROR_NOT_RUNNING;
+ }
  return SAVE_DATA_DIALOG_OK;
 }
 

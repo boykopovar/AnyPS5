@@ -92,6 +92,13 @@ class CiGateTests(unittest.TestCase):
     def test_other_triggers_pass(self):
         self.assertGated(workflow("  pull_request_target:\n    types: [opened]\n  push:\n    branches: [main]\n", "  tests:\n    runs-on: ubuntu-latest\n"))
 
+    def test_four_space_indentation_is_read(self):
+        def wide(text):
+            return "\n".join(" " * (2 * (len(line) - len(line.lstrip(" ")))) + line.lstrip(" ") for line in text.split("\n"))
+        gated = "  tests:\n    needs: eligibility\n    if: ${{ needs.eligibility.outputs.tests == 'true' }}\n    runs-on: ubuntu-latest\n"
+        self.assertGated(wide(workflow(PULL_REQUEST, gated)))
+        self.assertUngated(wide(workflow(PULL_REQUEST, "  tests:\n    needs: eligibility\n    runs-on: ubuntu-latest\n")), "tests")
+
     def test_repository_workflows_pass(self):
         files = {path.name: path.read_text(encoding="utf-8") for path in WORKFLOWS.glob("*.y*ml")}
         self.assertIn("build.yml", files)

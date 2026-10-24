@@ -114,7 +114,12 @@ def main():
             artifact = case / "app0" / "sce_module" / "needed.prx.guest.prx"
             assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), artifact
             assert list((case / "app0").rglob("*.guest.prx")) == [artifact]
-            assert "        |-- sce_module/\n              |-- needed.prx.guest.prx\n" in result.stdout, result.stdout
+            layout = "        |-- sce_module/\n              |-- needed.prx.guest.prx\n"
+            assert layout in result.stdout, result.stdout
+            for spelling in (os.path.join(".", output.name), os.path.join("..", case.name, output.name)):
+                relative = subprocess.run([str(relinker), *(["--windows"] if windows else []), "input.elf", spelling], cwd=case,
+                                          capture_output=True, text=True, timeout=30)
+                assert relative.returncode == 0 and layout in relative.stdout, (spelling, relative.stdout, relative.stderr)
             if windows and os.name == "nt":
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
@@ -181,7 +186,7 @@ def main():
             assert output.exists(), output
             assert not list((case / "app0").rglob("*.guest.prx"))
             if not windows:
-                assert needed_libraries(output.read_bytes()) == ["needed.debug_prx" if "debug-name" in case.name else "needed.prx"]
+                assert needed_libraries(output.read_bytes()) == ["needed.prx"]
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):

@@ -13,6 +13,7 @@ std::int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm*);
 std::int64_t APS5_VABI mktime_nid_postfix(GuestTm*);
 GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t*, GuestTm*);
 void APS5_VABI tzset_nid_postfix();
+int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
 }
 
 using Converter = std::int64_t (APS5_VABI *)(GuestTm*);
@@ -64,11 +65,7 @@ static void CheckFailure(Converter convert) {
 }
 
 static void CheckZone(const char* zone) {
-#ifdef _WIN32
-    Require(_putenv_s("TZ", zone) == 0, "Could not set the time zone");
-#else
-    Require(setenv("TZ", zone, 1) == 0, "Could not set the time zone");
-#endif
+    Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
     constexpr std::array<Converter, 2> converters{libc_mktime_nid_postfix, mktime_nid_postfix};
     constexpr std::array<std::int64_t, 8> timers{-86401, -2, -1, 0, 1, 59, 60, 86400};

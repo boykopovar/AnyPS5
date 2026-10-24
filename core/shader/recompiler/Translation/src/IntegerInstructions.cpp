@@ -25,6 +25,36 @@ bool TranslationContext::integer16Binary(const RdnaInstruction& inst, IrOpcode o
     return true;
 }
 
+IrU32 TranslationContext::readU16Factor(const RdnaOperand& operand, bool highHalf, bool negate) {
+    const IrU32 raw = applyBitSourceModifiers(operand, readRawU32(operand));
+    const IrU32 field(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&raw.Value(), &ir.Constant(highHalf ? 16u : 0u), &ir.Constant(highHalf ? 16u : 24u)}));
+    return negate ? IrU32(ir.BitwiseXor(field.Value(), ir.Constant(0x8000u))) : field;
+}
+
+bool TranslationContext::vMulLoU16(const RdnaInstruction& inst) {
+    const RdnaOperand& lhs = sourceAt(inst, 0u);
+    const RdnaOperand& rhs = sourceAt(inst, 1u);
+    const IrU32 left = readU16Factor(lhs, lhs.opSel, false);
+    const IrU32 right = readU16Factor(rhs, rhs.opSel, false);
+    write16Bits(inst.destination, IrU32(ir.BitwiseAnd(ir.IMul(left.Value(), right.Value()), ir.Constant(0xffffu))));
+    return true;
+}
+
+bool TranslationContext::vPkMulLoU16(const RdnaInstruction& inst) {
+    const RdnaOperand& lhs = sourceAt(inst, 0u);
+    const RdnaOperand& rhs = sourceAt(inst, 1u);
+    const auto lane = [&](bool highLane) {
+        const IrU32 left = readU16Factor(lhs, highLane ? lhs.opSelHi : lhs.opSel, highLane ? lhs.negateHi : lhs.negate);
+        const IrU32 right = readU16Factor(rhs, highLane ? rhs.opSelHi : rhs.opSel, highLane ? rhs.negateHi : rhs.negate);
+        return IrU32(ir.IMul(left.Value(), right.Value()));
+    };
+    const IrU32 low = lane(false);
+    const IrU32 high = lane(true);
+    const IrU32 result = packU16Lanes(low, high);
+    writeOperand(inst.destination, &result.Value());
+    return true;
+}
+
 IrU32 TranslationContext::saturateU16Result(const RdnaInstruction& inst, const IrU32& value, bool sign) {
     if (!inst.destination.clamp) {
         return value;

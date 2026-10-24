@@ -1,10 +1,21 @@
 #include "SceTypes.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <thread>
+#include <memory>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
@@ -17,6 +28,9 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 int APS5_VABI scePthreadKeyDelete(PthreadKey key);
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
+int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
@@ -24,6 +38,10 @@ int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
 int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
+int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* time);
 int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
 int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
 int APS5_VABI scePthreadSemWait(PthreadSem* sem);
@@ -226,6 +244,166 @@ static void ConditionRecovery() {
     Require(scePthreadMutexDestroy(&mutex) == 0);
 }
 
+enum class ConditionWaitMode { SceTimed, Sce, PosixTimed, Posix };
+
+struct SignaledCondition {
+    PthreadMutex mutex = nullptr;
+    PthreadCond condition = nullptr;
+    PthreadCond* slot = &condition;
+    ConditionWaitMode mode = ConditionWaitMode::SceTimed;
+    int lockCount = 1;
+    bool cancellationDisabled = false;
+    bool released = false;
+    std::atomic<int> ready{0};
+    std::array<int, 2> results{-1, -1};
+    std::array<bool, 2> cleaned{};
+};
+
+struct SignaledConditionWorker {
+    SignaledCondition* context;
+    int index;
+};
+
+static void APS5_VABI UnlockSignaledCondition(void* value) {
+    auto& worker = *static_cast<SignaledConditionWorker*>(value);
+    auto& context = *worker.context;
+    for (int level = 0; level < context.lockCount; ++level) Require(scePthreadMutexUnlock(&context.mutex) == 0);
+    Require(scePthreadMutexUnlock(&context.mutex) == static_cast<int>(0x80020001));
+    context.cleaned[worker.index] = true;
+}
+
+static void* APS5_VABI SignaledConditionWaiter(void* value) {
+    auto& worker = *static_cast<SignaledConditionWorker*>(value);
+    auto& context = *worker.context;
+    if (context.cancellationDisabled) Require(scePthreadSetcancelstate(CANCEL_DISABLE, nullptr) == 0);
+    for (int level = 0; level < context.lockCount; ++level) Require(scePthreadMutexLock(&context.mutex) == 0);
+    std::uintptr_t cleanup[8];
+    __pthread_cleanup_push_imp_nid_postfix(UnlockSignaledCondition, &worker, cleanup);
+    context.ready.fetch_add(1);
+    int result = 0;
+    do {
+        switch (context.mode) {
+        case ConditionWaitMode::SceTimed:
+            result = scePthreadCondTimedwait(context.slot, &context.mutex, 2000000);
+            break;
+        case ConditionWaitMode::Sce:
+            result = scePthreadCondWait(context.slot, &context.mutex);
+            break;
+        case ConditionWaitMode::PosixTimed: {
+            KernelTimespec deadline{};
+            Require(clock_gettime_nid_postfix(0, &deadline) == 0);
+            deadline.tv_sec += 2;
+            result = pthread_cond_timedwait_nid_postfix(context.slot, &context.mutex, &deadline);
+            break;
+        }
+        case ConditionWaitMode::Posix:
+            result = pthread_cond_wait_nid_postfix(context.slot, &context.mutex);
+            break;
+        }
+    } while (result == 0 && !context.released);
+    context.results[worker.index] = result;
+    __pthread_cleanup_pop_imp_nid_postfix(1);
+    return nullptr;
+}
+
+static bool ConditionRegistered(Pthread thread) {
+    const std::lock_guard lock(thread->cancelLock);
+    return thread->cancelWait != nullptr;
+}
+
+static void InitializeSignaledCondition(SignaledCondition& context, bool recursive) {
+    PthreadMutexattr attr = nullptr;
+    Require(scePthreadMutexattrInit(&attr) == 0);
+    Require(scePthreadMutexattrSettype(&attr, recursive ? 2 : 1) == 0);
+    Require(scePthreadMutexInit(&context.mutex, &attr, nullptr) == 0);
+    Require(scePthreadMutexattrDestroy(&attr) == 0);
+    context.lockCount = recursive ? 3 : 1;
+    Require(scePthreadCondInit(context.slot, nullptr, nullptr) == 0);
+}
+
+static void CanceledConditionSignal(ConditionWaitMode mode, bool recursive) {
+    SignaledCondition context;
+    context.mode = mode;
+    InitializeSignaledCondition(context, recursive);
+    std::array<SignaledConditionWorker, 2> workers{{{&context, 0}, {&context, 1}}};
+    std::array<Pthread, 2> threads{};
+    for (int index = 0; index < 2; ++index) {
+        Require(scePthreadCreate(&threads[index], nullptr, SignaledConditionWaiter, &workers[index], nullptr) == 0);
+        while (context.ready.load() <= index) std::this_thread::yield();
+        Require(scePthreadMutexLock(&context.mutex) == 0);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!ConditionRegistered(threads[index]) && std::chrono::steady_clock::now() < deadline) {
+            Require(scePthreadMutexUnlock(&context.mutex) == 0);
+            std::this_thread::yield();
+            Require(scePthreadMutexLock(&context.mutex) == 0);
+        }
+        Require(ConditionRegistered(threads[index]));
+        Require(scePthreadMutexUnlock(&context.mutex) == 0);
+    }
+    Require(scePthreadMutexLock(&context.mutex) == 0);
+    context.released = true;
+    Require(scePthreadCondSignal(&context.condition) == 0);
+    int selected = -1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (selected < 0 && std::chrono::steady_clock::now() < deadline) {
+        for (int index = 0; index < 2; ++index) if (!ConditionRegistered(threads[index])) selected = index;
+        std::this_thread::yield();
+    }
+    Require(selected >= 0);
+    Require(scePthreadCancel(threads[selected]) == 0);
+    Require(scePthreadMutexUnlock(&context.mutex) == 0);
+    Join(threads[selected], CANCELED);
+    Join(threads[1 - selected], nullptr);
+    Require(context.results[selected] == -1 && context.results[1 - selected] == 0);
+    Require(context.cleaned[0] && context.cleaned[1]);
+    Require(scePthreadCondDestroy(&context.condition) == 0);
+    Require(scePthreadMutexDestroy(&context.mutex) == 0);
+}
+
+static void DestroyedSignaledCondition(ConditionWaitMode mode, bool recursive, bool cancel, bool cancellationDisabled) {
+    SignaledCondition context;
+    context.mode = mode;
+    context.cancellationDisabled = cancellationDisabled;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const auto bytes = static_cast<std::size_t>(system.dwPageSize);
+    context.slot = static_cast<PthreadCond*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(context.slot != nullptr);
+#else
+    const auto bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    context.slot = static_cast<PthreadCond*>(mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(context.slot != MAP_FAILED);
+#endif
+    *context.slot = nullptr;
+    InitializeSignaledCondition(context, recursive);
+    const std::weak_ptr<TimedWait::Condition> retained = (*context.slot)->_cv;
+    SignaledConditionWorker worker{&context, 0};
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, SignaledConditionWaiter, &worker, nullptr) == 0);
+    while (context.ready.load() == 0) std::this_thread::yield();
+    Require(scePthreadMutexLock(&context.mutex) == 0);
+    context.released = true;
+    Require(scePthreadCondSignal(context.slot) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (ConditionRegistered(thread) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(!ConditionRegistered(thread));
+    Require(scePthreadCondDestroy(context.slot) == 0);
+    Require(!retained.expired());
+#ifdef _WIN32
+    Require(VirtualFree(context.slot, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(context.slot, bytes) == 0);
+#endif
+    if (cancel) Require(scePthreadCancel(thread) == 0);
+    Require(scePthreadMutexUnlock(&context.mutex) == 0);
+    Join(thread, cancel && !cancellationDisabled ? CANCELED : nullptr);
+    Require(context.cleaned[0]);
+    Require(context.results[0] == (cancel && !cancellationDisabled ? -1 : 0));
+    Require(retained.expired());
+    Require(scePthreadMutexDestroy(&context.mutex) == 0);
+}
+
 static void* APS5_VABI HeldTarget(void*) {
     CheckDefaults();
     targetRelease.wait(false);
@@ -274,6 +452,14 @@ int main() {
     }
     Require(scePthreadKeyDelete(key) == 0);
     ConditionRecovery();
+    for (const auto mode : {ConditionWaitMode::SceTimed, ConditionWaitMode::Sce, ConditionWaitMode::PosixTimed, ConditionWaitMode::Posix}) {
+        for (bool recursive : {false, true}) {
+            CanceledConditionSignal(mode, recursive);
+            DestroyedSignaledCondition(mode, recursive, true, false);
+            DestroyedSignaledCondition(mode, recursive, false, false);
+            DestroyedSignaledCondition(mode, recursive, true, true);
+        }
+    }
     disabled = true;
     ConditionRecovery();
     JoinRecovery();

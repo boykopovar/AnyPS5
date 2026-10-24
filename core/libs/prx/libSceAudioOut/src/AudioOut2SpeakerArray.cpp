@@ -68,7 +68,7 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) {
     const auto* params = static_cast<const GuestVbapParams*>(vbap_params);
-    if (handle == nullptr || params == nullptr || ambi_params == nullptr || params->positions == nullptr ||
+    if (handle == nullptr || params == nullptr || params->positions == nullptr ||
         params->numSpeakers == 0 || params->numSpeakers > MaxSpeakers || params->memory == nullptr ||
         params->memorySize < sizeof(SpeakerArray) || reinterpret_cast<std::uintptr_t>(params->memory) % alignof(SpeakerArray) != 0) {
         APS5_INVALID_ARG_EX;
@@ -100,14 +100,15 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2Speaker
 }
 
 int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius) {
-    (void)handle;
     (void)pos;
     (void)spread;
-    (void)coefficients;
-    (void)num_coefficients;
     (void)height_aware;
     (void)downmix_spread_radius;
-    NotImplemented_nid_no_patch(__func__);
+    const SpeakerArray& array = Array(handle);
+    if (coefficients == nullptr || num_coefficients != array.numSpeakers) APS5_INVALID_ARG_EX;
+    std::fill_n(coefficients, array.numSpeakers, 0.0f);
+    if (array.numSpeakers > 0) coefficients[0] = 1.0f;
+    if (array.numSpeakers > 1) coefficients[1] = 1.0f;
     return 0;
 }
 
@@ -121,13 +122,15 @@ size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, ui
 int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) {
     (void)flags;
     if (!info) return static_cast<int>(0x80260502);
-    constexpr std::uint8_t SpeakerTypeStereo = 0;
+    constexpr std::uint8_t SpeakerTypeTelevision = 0;
     constexpr std::uint32_t FrontLeftAndRight = 0x3;
+    constexpr AudioOut2SpeakerAngle NoSpeaker = {-360, -360};
     *info = AudioOut2SpeakerInfo{};
-    info->type = SpeakerTypeStereo;
+    info->type = SpeakerTypeTelevision;
     info->available_bits = FrontLeftAndRight;
-    info->speaker_angle[0] = {-30, 0};
-    info->speaker_angle[1] = {30, 0};
+    for (auto& angle : info->speaker_angle) angle = NoSpeaker;
+    info->speaker_angle[0] = {30, 0};
+    info->speaker_angle[1] = {-30, 0};
     return 0;
 }
 

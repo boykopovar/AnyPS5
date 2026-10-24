@@ -1,6 +1,7 @@
 #include "Recompiler.hpp"
 #include "StencilReplay.hpp"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <list>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <mutex>
 #include <new>
@@ -38,6 +40,7 @@
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
+#include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
@@ -84,11 +87,17 @@ ShaderStageKind toShaderStageKind(ShaderStage stage) {
 
 namespace {
 
+bool MergedHullStage(const RecompileRequest& request) {
+    const auto stage = request.shader.stage;
+    return (stage == ShaderStage::Local || stage == ShaderStage::TessellationControl) && request.graphics && request.graphics->tessellation && request.graphics->tessellation->mergedHull;
+}
+
 // The host subgroup width wave64 programs are laid out for. Debug aid: APS5_SINGLE_LANE=<hex code
 // addresses, comma separated, or "all"> keeps the listed programs at one guest lane per invocation.
 std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     const bool vertexStage = request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Local;
     if (vertexStage && !request.target.vertexSubgroups) return 1u;
+    if (request.shader.stage == ShaderStage::TessellationControl && MergedHullStage(request)) return 1u;
     static const std::string list = [] { const char* text = std::getenv("APS5_SINGLE_LANE"); return text ? std::string(text) : std::string(); }();
     if (!list.empty()) {
         if (list == "all") return 64u;
@@ -99,10 +108,16 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code) {
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull) {
+    static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
+    if (stage == ShaderStageKind::Local && mergedHull) {
+        RdnaProgram program;
+        program.code = EndProgram;
+        program.instructions.push_back(DecodeRdnaInstruction(0u, EndProgram, 0u));
+        return program;
+    }
     if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
-    static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
     program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
     return program;
 }
@@ -120,10 +135,26 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
     return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation);
 }
 
+void ValidateRequestInputs(const RecompileRequest& request) {
+    const auto stage = toShaderStageKind(request.shader.stage);
+    const bool vertexFamily = stage == ShaderStageKind::Vertex || stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation || stage == ShaderStageKind::Mesh;
+    if (!vertexFamily) {
+        static_cast<void>(RequestInputInfo(request));
+        return;
+    }
+    const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
+    const auto* tessellation = request.graphics && request.graphics->tessellation ? &*request.graphics->tessellation : nullptr;
+    ValidateVertexStageInputs(stage, request.context, mesh, tessellation);
+}
+
 std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
     if (!request.context.compute.has_value()) return 0u;
     const auto bytes = static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u;
     return bytes + 4u > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
+}
+
+bool HardwareFloat32Flush(const RecompileRequest& request) {
+    return request.target.float32FlushToZero && (!request.context.floatMode.has_value() || ((request.context.floatMode->floatMode >> 4u) & 3u) == 0u);
 }
 
 std::atomic<std::uint64_t> frontEndBuilds{0};
@@ -132,8 +163,8 @@ std::atomic<std::uint64_t> frontEndBuilds{0};
 
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
-        : stage(request.shader.stage), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+        : stage(request.shader.stage), mergedHull(MergedHullStage(request)), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
+          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
     }
 
@@ -141,8 +172,8 @@ struct PreparedControlFlow {
     PreparedControlFlow& operator=(const PreparedControlFlow&) = delete;
 
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
-        return stage == request.shader.stage && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
-               swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount &&
+        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
+               swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount && swappc.waveSize == swappcInfo.waveSize &&
                std::ranges::equal(fallbacks, swappcInfo.linkedCallFallbacks) && std::ranges::equal(code, request.shader.code);
     }
 
@@ -152,6 +183,7 @@ struct PreparedControlFlow {
     }
 
     ShaderStage stage;
+    bool mergedHull;
     std::vector<std::uint32_t> fallbacks;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
@@ -161,7 +193,7 @@ struct PreparedControlFlow {
 
 std::shared_ptr<const PreparedControlFlow> ShaderPreparationContext::AcquireFrontend(const RecompileRequest& request) {
     const auto inputInfo = RequestInputInfo(request);
-    const SwappcInfo swappc{inputInfo.vertex != nullptr, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), 0u, request.context.linkedCallFallbacks};
+    const SwappcInfo swappc{inputInfo.vertex != nullptr, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize, request.context.linkedCallFallbacks};
     static const bool reuse = std::getenv("APS5_NO_PERF_FRONTEND_PAIR") == nullptr;
     if (reuse && frontend != nullptr && frontend->Matches(request, swappc)) {
         return frontend;
@@ -203,19 +235,23 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.shaderHash = request.shader.codeAddress;
     translateOptions.waveSize = request.context.waveSize;
     translateOptions.userDataBaseRegister = request.context.userDataBaseRegister;
+    translateOptions.gcnLegacyVertexInputs = GcnGuestShaders() && request.context.userDataBaseRegister == 0u;
     translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
     translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
     translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
+    translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.floatMode = request.context.floatMode;
+    translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.inputInfo = inputInfo;
 
     constexpr InstructionTranslator translator;
 
+    if (frontend->mergedHull && cfg.hasFetchCall) throw std::runtime_error("a merged hull program that calls a fetch subroutine is unsupported");
     EmbeddedFetchPlan embeddedFetch;
-    if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
+    if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) && !frontend->mergedHull && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
         embeddedFetch = EmbeddedVertexFetchAnalyzer{}.Analyze(decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize);
         translateOptions.embeddedFetch = &embeddedFetch;
     }
@@ -235,6 +271,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ReadLaneEliminator readLaneEliminator;
     constexpr MaskedSelectEliminator maskedSelectEliminator;
+    constexpr VectorWindowStoreEliminator vectorWindowStoreEliminator;
     const auto simplify = [&] {
         dumpIr("translate");
         ssaBuilder.Rewrite(program);
@@ -251,6 +288,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
+
+        if (vectorWindowStoreEliminator.Eliminate(program).removedStores != 0u) {
             deadCodeEliminator.Eliminate(program);
         }
 
@@ -286,9 +327,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     if (inputInfo.vertex != nullptr) {
         constexpr TessellationLowering tessellationLowering;
-        tessellationLowering.Lower(program, inputInfo.vertex->tess);
+        tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);
     }
 
+    deadCodeEliminator.EliminateUnobservedPhis(program);
+    deadCodeEliminator.Eliminate(program);
     constexpr SrtWalker srtWalker;
     srtWalker.BuildPlan(program);
     deadCodeEliminator.Eliminate(program);
@@ -299,6 +342,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
+    if (request.context.convertedSamples) {
+        for (auto& image : program.Resources().info.images) image.convertedSamples = true;
+    }
 
     return program;
 }
@@ -307,9 +353,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 // shared immutable object every later capture that reproduces the snapshot receives, so Populate
 // and the per-request copy run once per distinct snapshot.
 struct ResultMemoEntry {
-    std::uint64_t variantId;
-    std::uint64_t hash;
+    std::uint64_t variantId = 0;
+    std::uint64_t hash = 0;
     std::shared_ptr<const RecompileResult> result;
+    std::uint64_t used = 0;
 };
 
 struct EmissionFailure {
@@ -317,6 +364,10 @@ struct EmissionFailure {
     BindingLayout layout;
     std::exception_ptr failure;
 };
+
+constexpr std::size_t ResultMemoSets = 64;
+constexpr std::size_t ResultMemoWays = 4;
+using ResultMemoTable = std::array<ResultMemoEntry, ResultMemoSets * ResultMemoWays>;
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::mutex mutex;
@@ -326,6 +377,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedCallFallbacks;
     std::shared_ptr<const IrResourcePlan> plan;
+    bool runtimeCaptured = false;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
     // title issues every frame (0x1048947300 at the intro video). APS5_NO_FAILURE_MEMO=1 rebuilds.
@@ -333,9 +385,8 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::unique_ptr<IrProgram> program;
     std::vector<std::shared_ptr<const CompiledVariant>> variants;
     std::vector<EmissionFailure> emissionFailures;
-    // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
-    std::list<ResultMemoEntry> memo;
-    std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    std::unique_ptr<ResultMemoTable> memo;
+    std::uint64_t memoClock = 0;
 };
 
 namespace {
@@ -396,7 +447,9 @@ bool diskPlans() {
     return enabled && ShaderDiskCache::Enabled() && !DebugProbeActive();
 }
 
-std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true) {
+bool sameLayout(const BindingLayout& left, const BindingLayout& right);
+
+std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true, const SourceHandle* preparedHandle = nullptr) {
     static PrimedSharedMutex mutex;
     // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
     static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
@@ -439,6 +492,8 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
     {
         std::lock_guard lock(source->mutex);
         if (source->plan == nullptr) {
+            const bool hasPreparedArtifact = preparedHandle != nullptr && preparedHandle->artifact != nullptr;
+            if (hasPreparedArtifact && (preparedHandle->source != source || !MatchesPreparedShader(request, *preparedHandle))) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the resource plan source");
             if (FailureMemo() && source->planFailure) std::rethrow_exception(source->planFailure);
             const bool disk = diskPlans();
             std::vector<std::byte> planKey;
@@ -454,7 +509,9 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
                 try {
                     ResourceProgram resource(request, preparation, reclaim);
                     source->plan = std::move(resource.plan);
-                    source->program = std::move(resource.program);
+                    if (!hasPreparedArtifact && std::ranges::none_of(source->variants, [&](const auto& variant) { return sameLayout(variant->layout, request.layout); })) {
+                        source->program = std::move(resource.program);
+                    }
                 } catch (...) {
                     if (FailureMemo()) source->planFailure = std::current_exception();
                     throw;
@@ -464,6 +521,25 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
         }
     }
     return source;
+}
+
+std::shared_ptr<const IrResourcePlan> acquirePlan(const RecompileRequest& request, const std::shared_ptr<SourceEntry>& source, bool runtimeCapture, const SourceHandle* preparedHandle = nullptr) {
+    for (;;) {
+        {
+            std::lock_guard lock(source->mutex);
+            if (source->plan != nullptr) {
+                if (runtimeCapture) source->runtimeCaptured = true;
+                return source->plan;
+            }
+        }
+        if (getSource(request, nullptr, true, preparedHandle) != source) throw std::runtime_error("ShaderRecompiler: resource plan source changed while reloading");
+    }
+}
+
+void releaseUndrawnPlan(const SourceHandle& handle) {
+    if (handle.source == nullptr || !diskPlans()) return;
+    std::lock_guard lock(handle.source->mutex);
+    if (!handle.source->runtimeCaptured) handle.source->plan.reset();
 }
 
 std::array<std::uint32_t, 3> partialThreads(const RecompileRequest& request) {
@@ -494,6 +570,12 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     const bool nativeSampleOffsets = request.target.nonConstantImageOffsets && std::find(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end(), spv::CapabilityImageGatherExtended) != request.target.supportedCapabilities.end();
     resourceMaterializer.ApplyStaticInterface(program, nativeSampleOffsets);
 
+    constexpr ConstantFolder constantFolder;
+    if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) {
+        constantFolder.Fold(program);
+        ResolveControlFlowIdentities(program);
+    }
+
     deadCodeEliminator.RemoveIdentities(program);
     constexpr RedundantValueEliminator redundantValueEliminator;
     static_cast<void>(redundantValueEliminator.Eliminate(program));
@@ -521,34 +603,90 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.nonConstantImageOffsets = request.target.nonConstantImageOffsets;
     targetOptions.narrowSubgroupClock = request.target.narrowSubgroupClock;
     targetOptions.float64DenormPreserve = request.target.float64DenormPreserve;
+    targetOptions.depthRangeRemap = request.target.depthRangeRemap;
     targetOptions.registrationModules = registration;
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
+    targetOptions.spannedWaves = request.target.spannedWaves;
+    targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
+    targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
+    targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
+    targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
+    targetOptions.largePixelFunctionLdsBuffer = request.target.largePixelFunctionLdsBuffer;
+    targetOptions.pixelFunctionStorageDwords = request.target.pixelFunctionStorageDwords;
+    targetOptions.meshBarycentricPixel = request.shader.stage == ShaderStage::Fragment && request.graphics && request.graphics->mesh;
+    if (request.shader.stage == ShaderStage::Mesh && request.graphics && request.graphics->meshBarycentrics) {
+        const auto& paired = *request.graphics->meshBarycentrics;
+        const auto emulated = DescribeEmulatedInterface(paired.parameters, paired.emulation, true);
+        const auto& layout = emulated.layout;
+        targetOptions.meshBarycentricVertex = true;
+        targetOptions.barycentricSmoothLocation = layout.smoothLocation;
+        targetOptions.barycentricLinearLocation = layout.linearLocation;
+        targetOptions.barycentricPositionsLocation = layout.positionsLocation;
+        targetOptions.meshExportedLocations = emulated.passed;
+        for (const auto& parameter : emulated.perVertex) targetOptions.meshPerVertexLocations.emplace_back(parameter.sourceLocation, parameter.location);
+        if (!request.graphics->mesh || !request.target.mesh) throw std::runtime_error("barycentric emulation on the mesh path needs a mesh configuration and a device with mesh shaders");
+        const auto& config = *request.graphics->mesh;
+        const auto& limits = *request.target.mesh;
+        if (config.provokingVertex != 0u) throw std::runtime_error("barycentric emulation on the mesh path is only measured with the first provoking vertex");
+        const std::uint64_t perVertexParameters = emulated.perVertex.size();
+        const std::uint64_t sharedBytes = 16ull * config.maxVertices * (1u + perVertexParameters) + DeviceMemoryLdsBytes(request);
+        if (sharedBytes > limits.maxSharedMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(sharedBytes) + " bytes of mesh shared memory for " + std::to_string(config.maxVertices) + " vertices, the device allows " + std::to_string(limits.maxSharedMemoryBytes));
+        MeshOutputUse use;
+        std::set<std::uint32_t> flatLocations;
+        for (const auto& output : program.Info().outputs) {
+            if (output.kind == StageOutputKind::Parameter && std::ranges::find(targetOptions.meshExportedLocations, output.location) != targetOptions.meshExportedLocations.end()) flatLocations.insert(output.location);
+            if (output.kind == StageOutputKind::ClipDistance) use.clipDistances = std::max(use.clipDistances, output.index + 1u);
+            if (output.kind == StageOutputKind::CullDistance) use.cullDistances = std::max(use.cullDistances, output.index + 1u);
+            if (output.kind == StageOutputKind::Layer) use.layer = true;
+        }
+        use.flatParameters = static_cast<std::uint32_t>(flatLocations.size());
+        use.perVertexParameters = static_cast<std::uint32_t>(perVertexParameters);
+        use.clipVaryings = emulated.barycentrics;
+        const auto budget = MeshBarycentricOutputBudget(config, limits, use);
+        if (budget.components > limits.maxOutputComponents) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(budget.components) + " mesh output components (" + std::to_string(budget.vertexLocations) + " per-vertex and " + std::to_string(budget.primitiveLocations) + " per-primitive locations), the device allows " + std::to_string(limits.maxOutputComponents));
+        if (budget.bytes > limits.maxOutputMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(budget.bytes) + " bytes of mesh output memory, the device allows " + std::to_string(limits.maxOutputMemoryBytes));
+    }
+    targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
+    targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
     result.variantId = nextVariantId();
-    result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
+    SpirvEmitInfo emitted;
+    try {
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+    } catch (const SpannedWaveUnsupported& error) {
+        std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
+        targetOptions.spannedWaves = false;
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+    }
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
         program.Metadata().bindingLayoutComplete = false;
         bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay);
         targetOptions.registrationModules = false;
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
+        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
     result.registrationModule = registration;
+    if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
+    result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
-        result.stencilReferences = StencilReferenceValues(program);
+        result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
+    result.windowLaneGuards = 0;
+    for (const auto& block : program.Blocks()) result.windowLaneGuards += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::WindowLaneGuard; }));
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
     result.hostSubgroupSize = HostSubgroupSize(request);
+    result.fullSubgroups = emitted.fullSubgroups;
+    result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -562,7 +700,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         result.fragmentParameters = DescribeFragmentParameters(program, inputInfo);
         const auto& inputs = program.Info().inputs;
         const auto reads = [&](StageInputKind kind) { return std::any_of(inputs.begin(), inputs.end(), [&](const auto& input) { return input.kind == kind; }); };
-        if (program.Metadata().barycentricEmulation) result.barycentricEmulation = {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)};
+        if (program.Metadata().barycentricEmulation) result.barycentricEmulation = {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective), program.Info().smoothOffsetBarycentrics};
     }
     if (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Local) {
         if (inputInfo.vertex == nullptr) throw std::runtime_error("vertex input metadata is missing");
@@ -620,6 +758,7 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         if (!supplied.emplace(constant.id, constant.value).second) throw std::runtime_error("duplicate prepared specialization ID");
     }
     std::map<std::uint32_t, std::uint32_t> values;
+    std::set<std::uint32_t> retained;
     std::set<std::uint32_t> specializedIds;
     std::set<std::uint32_t> pushTypes;
     std::optional<std::uint32_t> replaySlotBytes;
@@ -631,6 +770,12 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared specialization instruction");
         if (!artifact.stencilReferences.empty() && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId) {
+            if (PipelineSpecialization::IsWorkgroupOffset(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset is supplied at dispatch, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate workgroup offset specialization");
+                cursor += count;
+                continue;
+            }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
             auto value = found->second;
@@ -647,7 +792,11 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-        if (op == spv::OpSpecConstant) {
+        if (op == spv::OpSpecConstant && count == 4u && retained.contains(words[cursor + 2u])) {
+            materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count);
+        } else if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId && retained.contains(words[cursor + 1u])) {
+            materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count);
+        } else if (op == spv::OpSpecConstant) {
             if (count != 4u || !values.contains(words[cursor + 2u])) throw std::runtime_error("invalid prepared specialization constant");
             materialized.insert(materialized.end(), {(4u << 16u) | spv::OpConstant, words[cursor + 1u], words[cursor + 2u], values.at(words[cursor + 2u])});
         } else if (op == spv::OpMemberDecorate && count == 5u && words[cursor + 3u] == spv::DecorationOffset && pushTypes.contains(words[cursor + 1u])) {
@@ -698,17 +847,19 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #endif
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
+    std::unordered_set<std::uint32_t> functionLdsBuffer;
     for (std::size_t cursor = 5; cursor < materialized.size();) {
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if (op == spv::OpVariable && count >= 4u) {
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet) functionLdsBuffer.insert(materialized[cursor + 1u]);
+        if (op == spv::OpVariable && count >= 4u && !functionLdsBuffer.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
         }
         cursor += count;
     }
-    module->spirv = std::move(materialized);
+    module->spirv = InternSpirv(std::move(materialized));
     module->specializationId = constants.empty() ? 0u : nextVariantId();
     return module;
 }
@@ -845,7 +996,24 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
     return entry->module;
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults = false) {
+const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
+    const auto& images = variant.info.info.images;
+    const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.targetMerge; });
+    if (image == images.end() || registrationDefaults) return snapshot;
+    if (!request.context.pixel || request.context.pixel->targetMerge.mask == 0u) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
+    if (image + 1 != images.end() || snapshot.images.size() + 1u != images.size()) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge image");
+    merged = snapshot;
+    DescriptorValue descriptor;
+    std::ranges::copy(request.context.pixel->targetMerge.descriptor, descriptor.dwords.begin());
+    descriptor.dwordCount = 8u;
+    descriptor.availableDwordMask = 0xffu;
+    merged.images.push_back(descriptor);
+    return merged;
+}
+
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false) {
+    ResourceSnapshot merged;
+    const auto& snapshot = mergeTargetImage(variant, request, captured, registrationDefaults, merged);
     RecompileResult result;
     const auto& artifact = variant.artifact;
     static_cast<CompiledShaderArtifact&>(result) = {
@@ -865,14 +1033,22 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .vertexOffsetConflict = artifact.vertexOffsetConflict,
         .instanceOffsetConflict = artifact.instanceOffsetConflict,
         .hostSubgroupSize = artifact.hostSubgroupSize,
+        .fullSubgroups = artifact.fullSubgroups,
+        .functionLdsBuffer = artifact.functionLdsBuffer,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
+        .meshBarycentrics = artifact.meshBarycentrics,
         .stencilReferences = artifact.stencilReferences,
         .stencilReplaySafe = artifact.stencilReplaySafe,
+        .bdaWrites = artifact.bdaWrites,
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
     };
+    for (const auto reg : variant.bindings.layout.userDataRegisters) {
+        const auto index = reg - request.context.userDataBaseRegister;
+        result.userDataRegisterReads |= reg >= request.context.userDataBaseRegister && index < 64u ? std::uint64_t{1} << index : ~std::uint64_t{0};
+    }
     const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
@@ -887,6 +1063,13 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         moduleKey.push_back(request.context.pixel->reversedBlend);
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
+    }
+    const bool depthRemap = request.target.depthRangeRemap && request.shader.stage == ShaderStage::Vertex && request.context.vertex.has_value();
+    if (depthRemap) {
+        if (request.context.vertex->depthRemapMode != 0u && request.layout.pushConstantOffsetBytes % (RuntimeAbi::PushConstantDwords * 4u) + request.layout.pushConstantSizeBytes > DepthRemapPushOffsetBytes) {
+            throw std::runtime_error("a remapped vertex shader's push data must end before the depth remap words");
+        }
+        moduleKey.push_back(request.context.vertex->depthRemapMode);
     }
     result.vertexAttributes.reserve(result.vertexInputs.size());
     std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClasses{};
@@ -916,7 +1099,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             if (artifact.registrationModule) runtimeSelectors.at(input.location / RuntimeAbi::VertexSelectorsPerDword) |= (selectors & 0xfffu) << (input.location % RuntimeAbi::VertexSelectorsPerDword * 16u);
         }
     }
-    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel) {
+    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel || depthRemap) {
         {
             std::shared_lock lock(plan->mutex);
             if (const auto found = plan->modules.find(moduleKey); found != plan->modules.end()) entry = found->second;
@@ -937,6 +1120,9 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                 constants.push_back({PipelineSpecialization::ReversedBlend, moduleKey[index++]});
                 if (variant.info.info.rasterPrimitive) constants.push_back({PipelineSpecialization::RasterPrimitive, moduleKey[index++]});
                 if (variant.info.info.layerExported) constants.push_back({PipelineSpecialization::LayerExported, moduleKey[index++]});
+            }
+            if (depthRemap) {
+                for (std::uint32_t word = 0; word < PipelineSpecialization::DepthRemapWords; ++word) constants.push_back({PipelineSpecialization::DepthRemapBase + word, moduleKey[index++]});
             }
             if (!artifact.vertexInputPatches.empty()) {
                 for (const auto& input : result.vertexInputs) {
@@ -969,12 +1155,18 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     } else {
         result.spirv = artifact.spirv;
     }
-    const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    const auto resolved = ResourceMaterializer::ResolveImageTablesShared(variant.info.info, snapshot, artifact.variantId);
+    const auto& tables = *resolved;
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
+    if (std::ranges::none_of(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::BdaPagetable || binding.role == DescriptorRole::FaultBuffer; })) result.bdaAbiVersion = 0u;
     result.pushConstants = std::move(bindings.pushConstants);
+    result.readsDepthRemapPush = depthRemap;
+    if (request.shader.stage == ShaderStage::Compute) {
+        for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
+    }
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
         result.pushConstants.resize(result.pushConstants.size() + sizeof(std::uint32_t));
@@ -992,13 +1184,14 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             std::copy_n(runtimeSelectors.begin(), layout.runtimeStateDwords, data->guestDescriptor.begin() + first);
         }
     }
+    result.shaderDataUserWords = std::move(bindings.shaderDataUserWords);
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
     if (!tables.map.empty()) {
         result.imageTablePoison.reserve(tables.poison.size());
         for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
         result.imageTableRanges = snapshot.tables.ranges;
         result.imageTableReadRanges.reserve(snapshot.tables.tables.size());
-        for (const auto& table : snapshot.tables.tables) result.imageTableReadRanges.push_back(table.readRanges);
+        for (const auto& table : snapshot.tables.tables) result.imageTableReadRanges.push_back(table.readRanges.Copy());
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
@@ -1009,6 +1202,40 @@ bool sameLayout(const BindingLayout& left, const BindingLayout& right) {
     return left.descriptorSet == right.descriptorSet && left.firstBinding == right.firstBinding && left.pushConstantOffsetBytes == right.pushConstantOffsetBytes && left.pushConstantSizeBytes == right.pushConstantSizeBytes;
 }
 
+}
+
+SharedSpirv InternSpirv(std::vector<std::uint32_t> words) {
+    SharedSpirv spirv(std::move(words));
+    const auto hash = spirv.ContentHash();
+    static std::mutex mutex;
+    static std::unordered_map<std::uint64_t, std::vector<SharedSpirv>> interned;
+    std::lock_guard lock(mutex);
+    auto& candidates = interned[hash.low ^ (hash.high * 0x9e3779b97f4a7c15ull)];
+    for (const auto& candidate : candidates) {
+        if (candidate.ContentHash() == hash && candidate == spirv) return candidate;
+    }
+    candidates.push_back(spirv);
+    return spirv;
+}
+
+MeshOutputBudget MeshBarycentricOutputBudget(const MeshConfiguration& mesh, const MeshTargetLimits& limits, const MeshOutputUse& use) {
+    const auto alignUp = [](std::uint64_t value, std::uint64_t granularity) { return granularity <= 1u ? value : (value + granularity - 1u) / granularity * granularity; };
+    MeshOutputBudget budget;
+    budget.vertexLocations = 1u + use.flatParameters + use.clipVaryings + (use.clipDistances + 3u) / 4u + (use.cullDistances + 3u) / 4u;
+    budget.primitiveLocations = 3u + 3u * use.perVertexParameters + 1u + (use.layer ? 1u : 0u);
+    budget.components = 4ull * (budget.vertexLocations + budget.primitiveLocations);
+    budget.bytes = 16ull * (budget.vertexLocations * alignUp(mesh.maxVertices, limits.outputPerVertexGranularity) + budget.primitiveLocations * alignUp(mesh.maxPrimitives, limits.outputPerPrimitiveGranularity));
+    return budget;
+}
+
+std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment) {
+    if (!fragment.barycentricEmulation.active) return std::nullopt;
+    MeshBarycentricLayout layout;
+    layout.emulation = fragment.barycentricEmulation;
+    for (const auto& parameter : fragment.fragmentParameters) {
+        layout.parameters.push_back({parameter.location, parameter.sourceLocation, false, parameter.perVertex});
+    }
+    return layout;
 }
 
 struct PreparedInterface {
@@ -1092,7 +1319,7 @@ RecompileResult materializeVariant(SourceEntry& source, const RecompileRequest& 
     return result;
 }
 
-RecompileResult RecompileImpl(const RecompileRequest& request) {
+RecompileResult recompileOnce(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     RequestMemoryView memory(request.context.memory);
     const auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
@@ -1106,8 +1333,19 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
-    materializer.Materialize(*source->plan, runtime, snapshot);
+    materializer.Materialize(*acquirePlan(request, source, true), runtime, snapshot);
     return materializeVariant(*source, request, snapshot);
+}
+
+RecompileResult RecompileImpl(const RecompileRequest& request) {
+    try {
+        return recompileOnce(request);
+    } catch (const ConvertedSampleRequired&) {
+        if (request.context.convertedSamples) throw;
+    }
+    auto converted = request;
+    converted.context.convertedSamples = true;
+    return recompileOnce(converted);
 }
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
@@ -1116,7 +1354,10 @@ bool ResultMemo() {
     return resultMemo;
 }
 
-constexpr std::size_t ResultMemoEntries = 256;
+ResultMemoEntry* memoSet(SourceEntry& source, std::uint64_t index) {
+    if (source.memo == nullptr) return nullptr;
+    return source.memo->data() + static_cast<std::size_t>((index ^ (index >> 32u)) % ResultMemoSets) * ResultMemoWays;
+}
 
 struct ResultMemoCounters {
     std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
@@ -1187,14 +1428,10 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
-        mixWords(table.codes);
-        mix(table.readRanges.size());
-        for (const auto& [base, size] : table.readRanges) {
-            mix(base);
-            mix(size);
-        }
+        mix(table.codes.Hash());
+        mix(table.words.Hash());
+        mix(table.readRanges.Hash());
     }
-    mixDescriptors(tables.words);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);
@@ -1209,6 +1446,11 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(request.context.pixel->reversedBlend);
         mix(static_cast<std::uint64_t>(request.context.pixel->rasterPrimitive));
         mix(request.context.pixel->layerExported);
+        const auto& merge = request.context.pixel->targetMerge;
+        mix(merge.target);
+        mix(merge.mask);
+        mix(merge.samples);
+        for (const auto word : merge.descriptor) mix(word);
     }
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;
@@ -1235,13 +1477,16 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     {
         std::lock_guard lock(source.mutex);
         index = (variant->artifact.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
-        const auto found = source.memoIndex.find(index);
-        if (found != source.memoIndex.end() && found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
-            source.memo.splice(source.memo.begin(), source.memo, found->second);
-            counters.hits.fetch_add(1, std::memory_order_relaxed);
-            if (memoHit != nullptr) *memoHit = true;
-            reportResultMemo();
-            return found->second->result;
+        if (auto* set = memoSet(source, index)) {
+            for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+                auto& entry = set[way];
+                if (entry.result == nullptr || entry.variantId != variant->artifact.variantId || entry.hash != hash) continue;
+                entry.used = ++source.memoClock;
+                counters.hits.fetch_add(1, std::memory_order_relaxed);
+                if (memoHit != nullptr) *memoHit = true;
+                reportResultMemo();
+                return entry.result;
+            }
         }
     }
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -1252,25 +1497,23 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     std::shared_ptr<const RecompileResult> shared = std::move(result);
     {
         std::lock_guard lock(source.mutex);
-        const auto found = source.memoIndex.find(index);
-        if (found != source.memoIndex.end()) {
-            if (found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
-                source.memo.splice(source.memo.begin(), source.memo, found->second);
-                shared = found->second->result;
-            } else {
-                source.memo.erase(found->second);
-                source.memoIndex.erase(found);
+        if (source.memo == nullptr) source.memo = std::make_unique<ResultMemoTable>();
+        auto* set = memoSet(source, index);
+        auto* victim = set;
+        bool present = false;
+        for (std::size_t way = 0; way < ResultMemoWays && !present; ++way) {
+            auto& entry = set[way];
+            if (entry.result != nullptr && entry.variantId == variant->artifact.variantId && entry.hash == hash) {
+                entry.used = ++source.memoClock;
+                shared = entry.result;
+                present = true;
+            } else if (entry.used < victim->used) {
+                victim = &entry;
             }
         }
-        if (source.memoIndex.find(index) == source.memoIndex.end()) {
-            source.memo.push_front({variant->artifact.variantId, hash, shared});
-            source.memoIndex.emplace(index, source.memo.begin());
-            while (source.memo.size() > ResultMemoEntries) {
-                const auto& last = source.memo.back();
-                source.memoIndex.erase((last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash);
-                source.memo.pop_back();
-                counters.evictions.fetch_add(1, std::memory_order_relaxed);
-            }
+        if (!present) {
+            if (victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+            *victim = {variant->artifact.variantId, hash, shared, ++source.memoClock};
         }
     }
     reportResultMemo();
@@ -1316,8 +1559,15 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
 
 std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
-    if (request.useCache) return getSource(request)->plan;
+    if (request.useCache) {
+        const auto source = getSource(request);
+        return acquirePlan(request, source, false);
+    }
     return makeResourcePlan(request);
+}
+
+void ReleaseUndrawnResourcePlan(const SourceHandle& handle) {
+    releaseUndrawnPlan(handle);
 }
 
 namespace {
@@ -1326,11 +1576,12 @@ namespace {
 // traced into the capture (ResourceCapture::readTrace).
 void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     const auto& plan = *capture.plan;
+    SrtRuntime traced = runtime;
+    traced.userDataUse = &capture.userDataUse;
     if (std::none_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; })) {
-        ResourceMaterializer{}.Materialize(plan, runtime, capture.snapshot);
+        ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
         return;
     }
-    SrtRuntime traced = runtime;
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
     auto& other = capture.readTrace.otherReads;
@@ -1348,7 +1599,7 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     auto capture = std::make_shared<ResourceCapture>();
     if (request.useCache) {
         capture->source = getSource(request);
-        capture->plan = capture->source->plan;
+        capture->plan = acquirePlan(request, capture->source, true);
     } else {
         capture->plan = makeResourcePlan(request);
     }
@@ -1425,20 +1676,20 @@ std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(cons
 
 std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key) {
     if (handle == nullptr || !MatchesPreparedShader(request, *handle, key)) return std::nullopt;
-    if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) static_cast<void>(RequestInputInfo(request));
+    if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) ValidateRequestInputs(request);
     return PreparedShaderInvocation(request, handle);
 }
 
 std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const SrtRuntime& runtime) const {
     auto capture = std::make_shared<ResourceCapture>();
     capture->source = handle->source;
-    capture->plan = handle->source->plan;
+    capture->plan = acquirePlan(request, handle->source, true, handle.get());
     materializeCapture(*capture, runtime);
     return capture;
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
-    if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
     result->cacheHit = true;
@@ -1466,7 +1717,7 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
 
 std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle) {
     if (!MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
-    if (capture.source != handle.source || capture.plan != handle.source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    if (capture.source != handle.source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle.source, handle.artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, capture.snapshot));
     result->cacheHit = true;
@@ -1479,10 +1730,10 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // The whole vertex family (Vertex, Local, TC, TE, Mesh) validates V# fields the memo key does not cover.
-    if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) static_cast<void>(RequestInputInfo(request));
+    if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) ValidateRequestInputs(request);
     auto capture = std::make_shared<ResourceCapture>();
     capture->source = handle.source;
-    capture->plan = handle.source->plan;
+    capture->plan = acquirePlan(request, handle.source, true, &handle);
     if (profile) capture->sourceNanoseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
     materializeCapture(*capture, runtime);
     return capture;

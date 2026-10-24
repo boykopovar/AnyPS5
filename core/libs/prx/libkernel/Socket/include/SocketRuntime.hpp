@@ -16,6 +16,9 @@ int Close(int descriptor);
 void Forget(int descriptor);
 bool IsOpen(int descriptor);
 int Family(int descriptor);
+int Type(int descriptor);
+bool Listening(int descriptor);
+std::intptr_t NativeDescriptor(int descriptor);
 std::int64_t Read(int descriptor, void* buffer, std::size_t length);
 std::int64_t Write(int descriptor, const void* buffer, std::size_t length);
 int Stat(int descriptor, FileStat* status);
@@ -31,6 +34,8 @@ struct Interest {
 std::uintptr_t CurrentWaker();
 void Wake(std::uintptr_t waker);
 bool WaitAny(const std::vector<Interest>& interests, std::uint64_t deadlineNanos);
+bool PipeReadState(int descriptor, std::int64_t* data, bool* eof);
+bool PipeWriteState(int descriptor, std::int64_t* data, bool* eof, bool* writable);
 std::int64_t Readv(int descriptor, const Iovec* iov, int iovcnt);
 std::int64_t Writev(int descriptor, const Iovec* iov, int iovcnt);
 }

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
@@ -33,6 +34,10 @@ bool& Driver::resolvingAhead() {
 bool& Driver::gateOpened() {
     static thread_local bool opened = false;
     return opened;
+}
+
+std::uint64_t Driver::DispatchesAdoptedAhead() const {
+    return dispatchesAdoptedAhead.load(std::memory_order_relaxed);
 }
 
 void Driver::clearResolvedAhead() {
@@ -103,6 +108,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
     if (!allQueues && submission.queue == 0) return;
     auto& resolved = resolvedAhead();
     if (resolved.contains(from) || device.Load() == nullptr) return;
+    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& stats = groupCaptureStats();
     const auto begin = std::chrono::steady_clock::now();
     ++stats.runs;
@@ -146,7 +152,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 const auto argumentsEnd = arguments + 3u * sizeof(std::uint32_t);
                 const bool written = std::any_of(writes.begin(), writes.end(), [&](const auto& range) { return range.first < argumentsEnd && arguments < range.second; })
                     || std::any_of(labels.begin(), labels.end(), [&](const RunLabel& label) { return label.address < argumentsEnd && arguments < label.address + label.size; });
-                if (unknownWrites || written) {
+                if ((unknownWrites || written) && indirectArgumentsPath(packet, arguments) != IndirectGpu) {
                     ++stats.writtenBefore;
                     break;
                 }
@@ -203,10 +209,10 @@ void Driver::reportGroupCapture(std::uint32_t queue) {
     auto& stats = groupCaptureStats();
     const auto now = std::chrono::steady_clock::now();
     if (now - stats.reported < std::chrono::seconds(10)) return;
-    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu rejected by the device\n",
+    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu rejected by the device, %llu dropped because the argument re-read differed\n",
                                          queue, static_cast<unsigned long long>(stats.runs), static_cast<unsigned long long>(stats.resolved), static_cast<unsigned long long>(stats.resolvedHits), stats.resolveMs, stats.resolveMaxMs,
                                          static_cast<unsigned long long>(stats.adopted), stats.adopted != 0 ? stats.ageMs / static_cast<double>(stats.adopted) : 0.0, stats.ageMaxMs, static_cast<unsigned long long>(stats.addressMismatches), static_cast<unsigned long long>(stats.keyMismatches),
-                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.deviceRejects));
+                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.deviceRejects), static_cast<unsigned long long>(stats.argumentMismatches));
     stats = GroupCaptureStats{};
     stats.reported = now;
 }

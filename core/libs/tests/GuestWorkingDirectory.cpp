@@ -3,9 +3,11 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 extern "C" {
 int APS5_VABI chdir_nid_postfix(const char*);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
@@ -41,6 +43,14 @@ int main() {
     Require(allocated && std::strcmp(allocated, path) == 0 && allocations == 1);
     ApplicationHeapFree_nid_no_patch(allocated);
     Require(releases == 1);
+    for (const auto size : {std::size_t{1}, std::size_t{2}, std::size_t{1024}, std::numeric_limits<std::size_t>::max()}) {
+        const int before = allocations;
+        allocated = getcwd_nid_postfix(nullptr, size);
+        if (!allocated) std::fputs("getcwd(NULL, size) must ignore size when allocating its result\n", stderr);
+        Require(allocated && std::strcmp(allocated, path) == 0 && allocations == before + 1);
+        ApplicationHeapFree_nid_no_patch(allocated);
+        Require(releases == allocations);
+    }
     Require(chdir_nid_postfix("sample.txt") == -1 && *__error_nid_postfix() == 20);
     Require(chdir_nid_postfix("missing") == -1 && *__error_nid_postfix() == 2);
     Require(chdir_nid_postfix("..") == 0);

@@ -18,7 +18,7 @@ namespace {
 
 void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRva, const std::uint32_t stubRva, const std::uint64_t imageBase) {
     for (auto& section : sections) {
-        if (section.Data.size() < 8 || targetRva < section.Rva || targetRva - section.Rva > section.Data.size() - 8)
+        if (!section.Writable(targetRva, 8))
             continue;
         Io::WriteU64(section.Data, targetRva - section.Rva, imageBase + stubRva);
         return;
@@ -28,7 +28,7 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 
 }
 
-WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports) {
+WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), message(std::move(message)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed Windows guest image base");
 }
@@ -68,7 +68,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, nullptr, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); });
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, nullptr, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
@@ -84,6 +84,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         for (const auto& import : module.Imports) {
             relocations.Imports.push_back({import.Name, import.TargetRva, import.Addend, static_cast<std::int32_t>(index), import.RelocationType, import.Library});
             relocations.Imports.back().Function = import.Function;
+            relocations.Imports.back().Weak = import.Weak;
         }
     }
     libraries.insert(libraries.begin(), guestPaths.begin(), guestPaths.end());

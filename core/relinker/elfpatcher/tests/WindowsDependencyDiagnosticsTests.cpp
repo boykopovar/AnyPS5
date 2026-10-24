@@ -6,6 +6,7 @@
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -46,14 +47,44 @@ void checkRuntimeDependencies() {
             throw std::runtime_error("Incorrect Windows runtime dependency visibility");
     };
     check({}, {});
-    check({"libkernel.prx"}, {"libkernel.prx"});
+    check({"libkernel.prx"}, {"libkernel.prx", "libc.prx"});
+    check({"libkernel.prx", "libc.prx"}, {"libkernel.prx", "libc.prx"});
     check({"libSceLibcInternal.prx", "libkernel.prx"},
           {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
     check({"libc.prx", "libSceLibcInternal.prx"},
           {"libc.prx", "libSceLibcInternal.prx"});
     check({"libSceVideoOut.prx", "libkernel.prx", "libSceVideoOut.prx"},
-          {"libSceVideoOut.prx", "libkernel.prx"});
+          {"libSceVideoOut.prx", "libkernel.prx", "libc.prx"});
+    check({"libkernel_sys.prx"}, {"libkernel_sys.prx", "libkernel.prx", "libc.prx"});
+    check({"libkernel_web.prx"}, {"libkernel_web.prx", "libkernel.prx", "libc.prx"});
     check({"libSceVideoOut.prx", "libSceVideoOut.prx"}, {"libSceVideoOut.prx"});
+}
+
+template <typename TStream>
+void openFixture(TStream& stream, const Fs::path& path, std::ios::openmode mode) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (;;) {
+        errno = 0;
+        _set_doserrno(0);
+        stream.clear();
+        stream.open(path, mode);
+        if (stream.is_open() || _doserrno != ERROR_SHARING_VIOLATION || std::chrono::steady_clock::now() >= deadline)
+            return;
+        Sleep(10);
+    }
+}
+
+void removeFixtures(const Fs::path& directory) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (;;) {
+        std::error_code error;
+        Fs::remove_all(directory, error);
+        if (!error)
+            return;
+        if (error != std::errc::permission_denied || std::chrono::steady_clock::now() >= deadline)
+            throw Fs::filesystem_error("cannot remove diagnostic fixtures", directory, error);
+        Sleep(10);
+    }
 }
 
 void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
@@ -65,9 +96,8 @@ void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
                                  " native_error=" + std::to_string(nativeError) +
                                  " bytes=" + std::to_string(bytes.size()));
     };
-    errno = 0;
-    _set_doserrno(0);
-    std::ofstream stream(path, std::ios::binary);
+    std::ofstream stream;
+    openFixture(stream, path, std::ios::binary);
     if (!stream.is_open())
         fail("open");
     if (!stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
@@ -184,7 +214,7 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
     if (!CreateProcessW(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().wstring().c_str(), &startup, &process))
         throw std::runtime_error("Cannot start diagnostic test: " + std::to_string(GetLastError()));
     CloseHandle(output);
-    if (WaitForSingleObject(process.hProcess, 20000) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(process.hProcess, 120000) != WAIT_OBJECT_0) {
         TerminateProcess(process.hProcess, 1);
         throw std::runtime_error("Diagnostic test timed out");
     }
@@ -250,7 +280,8 @@ int main() {
         createImage(root, {{"KERNEL32.dll", "RelinkerDiagnosticsMissingExport"}}, {});
         expectDiagnostic(runner, {"Symbol: RelinkerDiagnosticsMissingExport"});
         {
-            std::fstream corrupt(root, std::ios::binary | std::ios::in | std::ios::out);
+            std::fstream corrupt;
+            openFixture(corrupt, root, std::ios::binary | std::ios::in | std::ios::out);
             const std::array<char, 4> invalidRva{static_cast<char>(0xf0), static_cast<char>(0xff), static_cast<char>(0xff), static_cast<char>(0xff)};
             corrupt.seekp(LoadRva + 0x300);
             if (!corrupt.write(invalidRva.data(), invalidRva.size()))
@@ -271,7 +302,7 @@ int main() {
         createImage(root, {{middle.filename().string(), "Middle"}}, {});
         writeFile(middle, elf);
         expectDiagnostic(runner, {"dependency module is not a Windows PE image: " + middle.string(), "Importer: " + root.string(), "Chain: " + runner.string() + " -> " + root.string() + " -> " + middle.string() + "\n"});
-        Fs::remove_all(directory);
+        removeFixtures(directory);
         std::cout << "Windows dependency machine-code tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

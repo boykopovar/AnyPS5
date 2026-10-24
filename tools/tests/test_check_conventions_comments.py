@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from check_conventions import STUB_BODY, SYSTEM_DEPENDENCY, Check, function_body, links, output
 
-CONVENTIONS_TEST_SHARDS = 6
+CONVENTIONS_TEST_SHARDS = 12
 
 
 def iter_test_cases(suite):
@@ -155,6 +155,54 @@ class RawLiteralCommentTests(unittest.TestCase):
         for comment in ('// " R"text(https://example.test)text"', '/* " R"text(https://example.test)text" */'):
             with self.subTest(comment=comment):
                 self.assertEqual(self.findings(comment, [1]), [("comment", self.path, 1, "")])
+
+
+class HashCommentTests(unittest.TestCase):
+    def findings(self, path, source, added):
+        check = Check.__new__(Check)
+        check.tree = set()
+        check.status = {}
+        check.findings = []
+        lines = source.split("\n")
+        check.added = {path: [(number, lines[number - 1]) for number in added]}
+        with patch.object(check, "show", return_value=source), patch.object(check, "duplicates"):
+            check.code()
+        return check.findings
+
+    def test_hash_inside_python_multiline_string_is_not_a_comment(self):
+        for quote in ('"""', "'''"):
+            with self.subTest(quote=quote):
+                source = f'TEMPLATE = {quote}\n#include <cstdint>\n{quote}\nprint("#ok")\n'
+                self.assertEqual(self.findings("tools/generate.py", source, [1, 2, 3, 4]), [])
+
+    def test_python_comment_after_a_multiline_string_is_reported(self):
+        source = 'TEMPLATE = """\n#include <cstdint>\n"""  # pending\nvalue = 1 # pending\n'
+        self.assertEqual(self.findings("tools/generate.py", source, [2, 3, 4]),
+                         [("comment", "tools/generate.py", 3, ""), ("comment", "tools/generate.py", 4, "")])
+
+    def test_python_shebang_is_not_a_comment(self):
+        for source in ("#!/usr/bin/env python3\nprint(1)\n", "\ufeff#!/usr/bin/env python3\nprint(1)\n"):
+            with self.subTest(source=source):
+                self.assertEqual(self.findings("tools/generate.py", source, [1, 2]), [])
+
+    def test_unparsable_python_falls_back_to_the_line_check(self):
+        source = 'TEMPLATE = """\n#include <cstdint>\n'
+        self.assertEqual(self.findings("tools/generate.py", source, [2]), [("comment", "tools/generate.py", 2, "")])
+
+    def test_hash_inside_cmake_quoted_and_bracket_arguments_is_not_a_comment(self):
+        for source in ('set(content "#ifndef GUARD\n#define GUARD\n#endif\n")\n',
+                       'set(patch [=[\n#include <utility>\n]=])\n',
+                       'set(patch [[\n#include <utility>\n]])\n',
+                       'message(STATUS "a\\"#b")\n',
+                       'string(REPLACE \\# x out "${in}")\n'):
+            with self.subTest(source=source):
+                added = list(range(1, source.count("\n") + 1))
+                self.assertEqual(self.findings("cmake/Generate.cmake", source, added), [])
+
+    def test_cmake_line_and_bracket_comments_are_reported(self):
+        source = 'set(value 1) # pending\n#[[\npending\n]]\nset(patch [=[\n#include <utility>\n]=]) # pending\n'
+        self.assertEqual(self.findings("CMakeLists.txt", source, [1, 2, 3, 4, 6, 7]),
+                         [("comment", "CMakeLists.txt", number, "") for number in (1, 2, 3, 4, 7)])
 
 
 class SilentStubTests(unittest.TestCase):
@@ -343,9 +391,16 @@ class SilentStubSectionTests(unittest.TestCase):
         result = self.check_stub("# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n", "docs/dev/TechnicalDebt.md")
         self.assertNotIn("[debt-file]", result.stdout + result.stderr)
 
+    def test_entry_without_a_core_link_in_a_library_file_is_rejected(self):
+        result = self.check_stub("# libSceExample technical debt\n\n### Functional\n\n- A driver limitation.\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/debt/libSceExample.md:5: error: [debt-file]", result.stdout)
+        self.assertIn("docs/dev/TechnicalDebt.md", result.stdout)
+
 
 class TestFixtureExportTests(unittest.TestCase):
-    def check(self, path, text):
+    def check(self, path, text=None, base=None):
+        files = path if text is None else {path: text}
         checker = Path(__file__).resolve().parents[1] / "check_conventions.py"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -365,9 +420,12 @@ class TestFixtureExportTests(unittest.TestCase):
             git("init", "-q")
             write("core/libs/prx/libkernel/src/Time.cpp", "std::uint64_t APS5_VABI sceKernelGetProcessTime() { return now(); }\n")
             write("core/libs/prx/libSceNgs2/tests/Render.cpp", "static int APS5_VABI Process(int value) { return value; }\n")
+            for relative, content in (base or {}).items():
+                write(relative, content)
             git("add", ".")
             git("commit", "-qm", "feat: add libraries")
-            write(path, text)
+            for relative, content in files.items():
+                write(relative, content)
             git("add", ".")
             git("commit", "-qm", "feat: add source")
             env = {key: value for key, value in os.environ.items()
@@ -395,13 +453,74 @@ class TestFixtureExportTests(unittest.TestCase):
         self.assertIn("core/libs/prx/libSceAudioOut/src/Clock.cpp:1: error: [duplicate-export]", result.stdout)
         self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
 
+    def test_large_export_set_uses_a_file_backed_pattern(self):
+        names = [f"ConventionExport{index:08d}LongName" for index in range(1100)]
+        self.assertGreater(len("|".join(names)), 32767)
+        source = "\n".join(f"int APS5_VABI {name}(void) {{ return 0; }}" for name in names)
+        source += "\nstd::uint64_t APS5_VABI sceKernelGetProcessTime() { return now(); }\n"
+        result = self.check("core/libs/prx/libSceAudioOut/src/Exports.cpp", source)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Exports.cpp:1101: error: [duplicate-export]", result.stdout)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
+    def test_export_shadowing_an_assembly_export_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                            "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n    "    ret\\n");\n'})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceLibcInternal/Export.cpp:1: error: [duplicate-export]", result.stdout)
+        self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_export_shadowing_a_spaced_or_split_assembly_export_is_a_duplicate(self):
+        for macro, call in (("APS5_ASM_FUNCTION", ' ("setjmp_nid_postfix")'),
+                            ("APS5_ASM_FUNCTION", '(\n        "setjmp_nid_postfix")'),
+                            ("APS5_SIGNAL_ASM_FUNCTION", ' (\n        "setjmp_nid_postfix")')):
+            with self.subTest(macro=macro, call=call):
+                result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                                    "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                                    base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    ' + macro + call + '\n    "    ret\\n");\n'})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("core/libs/prx/libSceLibcInternal/Export.cpp:1: error: [duplicate-export]", result.stdout)
+                self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_assembly_export_in_another_library_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Clock.cpp",
+                            'asm(".text\\n"\n    APS5_SIGNAL_ASM_FUNCTION("sceKernelGetProcessTime")\n    "    ret\\n");\n')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Clock.cpp:2: error: [duplicate-export]", result.stdout)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
+    def test_assembly_export_after_a_raw_string_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Jump.cpp",
+                            'asm(R"(\n    .text\n)" APS5_ASM_FUNCTION("setjmp_nid_postfix") R"(\n    ret\n)");\n',
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n    "    ret\\n");\n'})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Jump.cpp:3: error: [duplicate-export]", result.stdout)
+        self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_assembly_export_in_a_block_comment_is_not_an_export(self):
+        result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                            "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": '/*\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n*/\n'})
+        self.assertNotIn("duplicate-export", result.stdout, result.stdout + result.stderr)
+
+    def test_assembly_name_that_is_not_an_identifier_keeps_the_check(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Clock.cpp",
+                            'asm(".text\\n"\n    APS5_ASM_FUNCTION("x(y")\n    "    ret\\n");\nstd::uint64_t APS5_VABI sceKernelGetProcessTime() {\n    return 1;\n}\n')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
     def test_comment_in_a_shader_is_reported(self):
+        shaders = {}
         for path in ("core/libs/prx/libSceAgcDriver/Graphics/shaders/Fill.comp", "core/libs/prx/libSceAgcDriver/tests/shaders/Fill.frag", "core/libs/prx/libSceAgcDriver/Graphics/shaders/Fill.glsl"):
-            for line in ("    // fill the target", "    /* fill the target */"):
-                with self.subTest(path=path, line=line):
-                    result = self.check(path, f"#version 450\nvoid main() {{\n{line}\n}}\n")
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn(f"{path}:3: error: [comment]", result.stdout)
+            for style, line in (("Line", "    // fill the target"), ("Block", "    /* fill the target */")):
+                stem, extension = path.rsplit(".", 1)
+                shaders[f"{stem}{style}.{extension}"] = f"#version 450\nvoid main() {{\n{line}\n}}\n"
+        result = self.check(shaders)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for path in shaders:
+            with self.subTest(path=path):
+                self.assertIn(f"{path}:3: error: [comment]", result.stdout)
 
     def test_shader_without_comments_passes(self):
         result = self.check("core/libs/prx/libSceAgcDriver/Graphics/shaders/Fill.vert",
@@ -645,6 +764,20 @@ class RepositoryChecksTests(unittest.TestCase):
                 self.assertEqual([number for number, _ in check.added[name]], [1, 2])
                 check.code()
                 self.assertEqual(check.findings, [("comment", name, 2, "")])
+
+    def test_large_export_set_checks_duplicates_without_command_line_limit(self):
+        first = self.root / "core/libs/prx/libSceA/Export.cpp"
+        first.parent.mkdir(parents=True)
+        first.write_text("int APS5_VABI sceLargeExportSet1999(int value) { return value; }\n", encoding="utf-8")
+        self.commit()
+        second = self.root / "core/libs/prx/libSceB/Export.cpp"
+        second.parent.mkdir(parents=True)
+        second.write_text("".join(f"int APS5_VABI sceLargeExportSet{index}(int value) {{ return value; }}\n" for index in range(2000)), encoding="utf-8")
+        self.commit()
+        first.write_text("", encoding="utf-8")
+        check = Check("HEAD~1", "HEAD")
+        check.code()
+        self.assertEqual(check.findings, [("duplicate-export", "core/libs/prx/libSceB/Export.cpp", 2000, "sceLargeExportSet1999 is also in libSceA")])
 
     def test_checks_from_a_subdirectory_see_the_whole_repository(self):
         definition = "int APS5_VABI sceFooBar(int a, int b) { return a + b; }\n"

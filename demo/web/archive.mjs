@@ -1,8 +1,9 @@
 import { BlobReader, Uint8ArrayReader, ZipReader, ZipWriter, configure } from "https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.57/lib/zip-no-worker.js/+esm";
+import { batchMemoryEstimate, batchOutputDirectory, MEMORY_LIMIT, memoryEstimate } from "./batch.mjs";
 
 configure({ useWebWorkers: false, useCompressionStream: false, chunkSize: 65536 });
 
-export const MEMORY_LIMIT = 256 * 1024 * 1024;
+export { batchMemoryEstimate, batchOutputDirectory, memoryEstimate, MEMORY_LIMIT };
 export const CONVERSION_LIMIT = 256 * 1024 * 1024;
 export const ICON_LIMIT = 16 * 1024 * 1024;
 const MAX_ENTRIES = 100000;
@@ -27,24 +28,45 @@ function safeSize(value) {
   return value;
 }
 
-async function headerBytes(entry) {
-  if (entry.uncompressedSize < 4) return null;
+async function headerBytes(entry, size = 4) {
+  if (entry.uncompressedSize < size) return null;
   const stop = new AbortController();
-  const header = new Uint8Array(4);
+  const header = new Uint8Array(size);
   let filled = 0;
   try {
     await entry.getData(new WritableStream({
       write(chunk) {
-        const length = Math.min(4 - filled, chunk.length);
+        const length = Math.min(size - filled, chunk.length);
         header.set(chunk.subarray(0, length), filled);
         filled += length;
-        if (filled === 4) stop.abort();
+        if (filled === size) stop.abort();
       }
     }), { signal: stop.signal, checkSignature: false });
   } catch (error) {
-    if (!stop.signal.aborted || filled !== 4) throw error;
+    if (!stop.signal.aborted || filled !== size) throw error;
   }
-  return header;
+  return filled === size ? header : null;
+}
+
+async function isAppleDouble(entry) {
+  const header = await headerBytes(entry, 26);
+  const view = header && new DataView(header.buffer, header.byteOffset, header.byteLength);
+  if (!view || view.getUint32(0) !== 0x00051607 || view.getUint32(4) !== 0x00020000) return false;
+  const size = 26 + view.getUint16(24) * 12;
+  const table = size === 26 ? header : await headerBytes(entry, size);
+  if (!table) return false;
+  const descriptors = new DataView(table.buffer, table.byteOffset, table.byteLength);
+  const identifiers = new Set();
+  for (let position = 26; position < size; position += 12) {
+    const identifier = descriptors.getUint32(position);
+    const offset = descriptors.getUint32(position + 4);
+    const length = descriptors.getUint32(position + 8);
+    if (identifier === 0 || identifier === 1 || identifiers.has(identifier)
+        || offset > entry.uncompressedSize || length > entry.uncompressedSize - offset
+        || ((offset !== 0 || length !== 0) && offset < size)) return false;
+    identifiers.add(identifier);
+  }
+  return true;
 }
 
 const SELF_MAGICS = [
@@ -110,6 +132,10 @@ export class Archive {
     let total = 0;
     for await (const entry of this.reader.getEntriesGenerator()) {
       if (this.entries.length >= MAX_ENTRIES) throw new Error("Input contains more than 100,000 entries");
+      if (Number.isInteger(entry.versionMadeBy) && entry.versionMadeBy >> 8 === 0 && entry.filename.includes("\\")) {
+        entry.filename = entry.filename.replaceAll("\\", "/");
+        if (entry.filename.endsWith("/")) entry.directory = true;
+      }
       validPath(entry.filename);
       const key = entry.filename.replace(/\/$/u, "").toLowerCase();
       if (paths.has(key)) throw new Error(`Duplicate ZIP path: ${entry.filename}`);
@@ -122,12 +148,30 @@ export class Archive {
       this.entries.push(entry);
     }
     if (!this.entries.some(entry => !entry.directory)) throw new Error("No files were selected");
+    const directories = new Set();
     for (const entry of this.entries) {
       const parts = entry.filename.split("/");
       for (let index = 1; index < parts.length; index++) {
-        if (paths.get(parts.slice(0, index).join("/").toLowerCase()) === false) throw new Error(`A file is also used as a folder: ${entry.filename}`);
+        const parent = parts.slice(0, index).join("/").toLowerCase();
+        if (paths.get(parent) === false) throw new Error(`A file is also used as a folder: ${entry.filename}`);
+        if (!entry.filename.toLowerCase().startsWith("__macosx/")) directories.add(parent);
       }
     }
+    const applicationPaths = new Map([...paths].filter(([name]) => name !== "__macosx" && !name.startsWith("__macosx/")));
+    const metadata = this.entries.filter(entry => entry.filename.startsWith("__MACOSX/"));
+    let appleDouble = metadata.some(entry => !entry.directory);
+    for (const entry of metadata) {
+      if (entry.directory) {
+        const companion = entry.filename.slice("__MACOSX/".length).replace(/\/$/u, "").toLowerCase();
+        if (companion && applicationPaths.get(companion) !== true && !directories.has(companion)) { appleDouble = false; break; }
+        continue;
+      }
+      const match = /^__MACOSX\/(.*\/)?\._([^/]+)$/u.exec(entry.filename);
+      const companion = match && ((match[1] ?? "") + match[2]).toLowerCase();
+      if (!companion || (!applicationPaths.has(companion) && !directories.has(companion)) || !await isAppleDouble(entry)) { appleDouble = false; break; }
+    }
+    if (appleDouble) this.entries = this.entries.filter(entry => !entry.filename.startsWith("__MACOSX/"));
+    if (!this.entries.some(entry => !entry.directory)) throw new Error("No files were selected");
     let prefix = "";
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
@@ -204,8 +248,8 @@ export class Archive {
   async close() { await this.reader.close(); }
 }
 
-export function memoryEstimate(archiveBytes, selectedBytes, libraryBytes, entries) {
-  return safeSize(Math.ceil(archiveBytes * 1.02) + selectedBytes * 4 + libraryBytes + entries * 1024 + 8 * 1024 * 1024);
+export function createPackageWriter(destination) {
+  return new ZipWriter(destination, { level: 9, zip64: true, bufferedWrite: false, useWebWorkers: false, useCompressionStream: false, preventClose: true });
 }
 
 async function appendEntry(writer, name, entry, report) {
@@ -221,13 +265,13 @@ async function appendEntry(writer, name, entry, report) {
   await Promise.all([
     entry.getData(stream.writable, { checkSignature: true }),
     writer.add(name, stream.readable.pipeThrough(limit), {
-      versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes,
+      versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes >>> 16 ? entry.externalFileAttributes : ((0o100644 << 16) | (entry.externalFileAttributes & 0xffff)) >>> 0,
       onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? "Writing files" : "Compressing ZIP", input: name, completed, total: entry.uncompressedSize })
     })
   ]);
 }
 
-class DirectoryWriter {
+export class DirectoryWriter {
   constructor(destination) {
     this.destination = destination;
   }
@@ -255,8 +299,7 @@ class DirectoryWriter {
         }
         await writer.close();
       } catch (error) {
-        await reader.cancel(error);
-        await writer.abort(error);
+        await Promise.allSettled([reader.cancel(error), writer.abort(error)]);
         throw error;
       } finally {
         reader.releaseLock();
@@ -271,7 +314,7 @@ class DirectoryWriter {
         }
         await writer.close();
       } catch (error) {
-        await writer.abort(error);
+        await Promise.allSettled([writer.abort(error)]);
         throw error;
       } finally {
         writer.releaseLock();
@@ -282,13 +325,19 @@ class DirectoryWriter {
   async close() {}
 }
 
-export async function packageArchive(archive, converted, outputName, libraryFile, destination, report, directory = false) {
+export async function packageArchive(archive, converted, outputName, libraryFile, destination, report, directory = false, options = {}) {
   const libraries = new ZipReader(new BoundedBlobReader(libraryFile));
-  const writer = directory ? new DirectoryWriter(destination) : new ZipWriter(destination, { level: 9, zip64: true, bufferedWrite: false, useWebWorkers: false, useCompressionStream: false, preventClose: true });
+  const ownsWriter = !options.writer;
+  const writer = options.writer ?? (directory ? new DirectoryWriter(destination) : createPackageWriter(destination));
+  const outputPath = name => {
+    const path = options.prefix ? `${options.prefix}${name}` : name;
+    validPath(path);
+    return path;
+  };
   const names = new Set();
   const claim = name => {
-    validPath(name);
-    const key = name.replace(/\/$/u, "").toLowerCase();
+    const path = outputPath(name);
+    const key = path.replace(/\/$/u, "").toLowerCase();
     if (names.has(key)) throw new Error(`Output path collision: ${name}`);
     names.add(key);
   };
@@ -308,19 +357,34 @@ export async function packageArchive(archive, converted, outputName, libraryFile
       if (!module.name.startsWith("app0/sce_module/")) throw new Error("Invalid converted module path");
       claim(module.name);
     }
+    const outputEntries = [
+      ...libraryEntries.map(entry => ({ name: entry.filename, directory: entry.directory })),
+      ...originalFiles.map(item => ({ name: "app0/" + item.name, directory: item.entry.directory })),
+      { name: outputName },
+      ...(converted.diagnostics ? [{ name: "windows-diagnostics-imports.txt" }] : []),
+      ...converted.modules.map(module => ({ name: module.name }))
+    ];
+    const files = new Set(outputEntries.filter(entry => !entry.directory).map(entry => entry.name.toLowerCase()));
+    for (const { name } of outputEntries) {
+      const parts = name.replace(/\/$/u, "").toLowerCase().split("/");
+      for (let index = 1; index < parts.length; index++) {
+        const parent = parts.slice(0, index).join("/");
+        if (files.has(parent)) throw new Error(`Output path collision: ${parent}`);
+      }
+    }
     const binary = { versionMadeBy: 0x31e, externalFileAttributes: (0o100755 << 16) >>> 0 };
-    await writer.add(outputName, new Uint8ArrayReader(converted.executable), binary);
-    if (converted.diagnostics) await writer.add("windows-diagnostics-imports.txt", new Uint8ArrayReader(new TextEncoder().encode(converted.diagnostics)));
-    for (const module of converted.modules) await writer.add(module.name, new Uint8ArrayReader(module.bytes), binary);
+    await writer.add(outputPath(outputName), new Uint8ArrayReader(converted.executable), binary);
+    if (converted.diagnostics) await writer.add(outputPath("windows-diagnostics-imports.txt"), new Uint8ArrayReader(new TextEncoder().encode(converted.diagnostics)));
+    for (const module of converted.modules) await writer.add(outputPath(module.name), new Uint8ArrayReader(module.bytes), binary);
     for (const entry of libraryEntries) {
-      if (entry.directory) await writer.add(entry.filename, undefined, { directory: true });
-      else await appendEntry(writer, entry.filename, entry, report);
+      if (entry.directory) await writer.add(outputPath(entry.filename), undefined, { directory: true });
+      else await appendEntry(writer, outputPath(entry.filename), entry, report);
     }
     for (const { entry, name } of originalFiles) {
-      if (entry.directory) await writer.add("app0/" + name, undefined, { directory: true });
-      else await appendEntry(writer, "app0/" + name, entry, report);
+      if (entry.directory) await writer.add(outputPath("app0/" + name), undefined, { directory: true });
+      else await appendEntry(writer, outputPath("app0/" + name), entry, report);
     }
-    await writer.close();
+    if (ownsWriter) await writer.close();
   } finally {
     await libraries.close();
   }

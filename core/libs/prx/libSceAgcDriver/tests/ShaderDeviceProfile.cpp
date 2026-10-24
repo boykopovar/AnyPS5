@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -16,8 +17,8 @@ using AgcDriver::Graphics::Require;
 
 struct ProfileInput {
     std::vector<std::uint32_t> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
-    std::array<std::string, 2> extensionStrings{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
-    std::array<std::string_view, 2> extensions{extensionStrings[0], extensionStrings[1]};
+    std::vector<std::string> extensionStrings{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    std::vector<std::string_view> extensions{extensionStrings[0], extensionStrings[1]};
     VkPhysicalDeviceRobustness2FeaturesEXT robustness{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, nullptr, VK_FALSE, VK_FALSE, VK_TRUE};
     VkPhysicalDeviceDescriptorIndexingFeatures indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES, &robustness};
     VkPhysicalDevice8BitStorageFeatures bytes{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, &indexing, VK_TRUE};
@@ -54,7 +55,7 @@ void Reject(TAction action, const char* expected) {
         Require(std::string(error.what()).find(expected) != std::string::npos, "unexpected profile validation error");
         return;
     }
-    throw std::runtime_error("invalid shader device profile was accepted");
+    throw std::runtime_error(std::string("invalid shader device profile was accepted: ") + expected);
 }
 
 void CheckProfile() {
@@ -80,6 +81,7 @@ void CheckProfile() {
     invalid([](auto& value) { value.bda.bufferDeviceAddress = VK_FALSE; }, "bufferDeviceAddress");
     invalid([](auto& value) { value.device.pNext = nullptr; }, "bufferDeviceAddress");
     invalid([](auto& value) { value.core.shaderInt64 = VK_FALSE; }, "shaderInt64");
+    invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityGeometry); }, "geometryShader");
     invalid([](auto& value) { value.bytes.storageBuffer8BitAccess = VK_FALSE; }, "storageBuffer8BitAccess");
     ProfileInput withoutNull;
     withoutNull.robustness.nullDescriptor = VK_FALSE;
@@ -99,6 +101,8 @@ void CheckProfile() {
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityStorageImageMultisample); }, "shaderStorageImageMultisample");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityFragmentBarycentricKHR); }, "fragmentShaderBarycentric");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityMeshShadingEXT); }, "meshShader");
+    invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityDrawParameters); }, "shaderDrawParameters");
+    invalid([](auto& value) { value.extensions.push_back("SPV_KHR_terminate_invocation"); }, "shaderTerminateInvocation");
     ProfileInput enabled;
     enabled.capabilities.push_back(spv::CapabilitySampledImageArrayDynamicIndexing);
     enabled.capabilities.push_back(spv::CapabilityStorageImageArrayNonUniformIndexing);
@@ -106,6 +110,28 @@ void CheckProfile() {
     enabled.indexing.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
     const AgcDriver::ShaderDeviceProfile accepted(enabled.Target(), enabled.device, enabled.limits);
     Require(accepted.Target().supportedCapabilities.size() == 6u, "enabled descriptor indexing was rejected");
+    ProfileInput drawParameters;
+    drawParameters.capabilities.push_back(spv::CapabilityDrawParameters);
+    VkPhysicalDeviceShaderDrawParametersFeatures drawFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, &drawParameters.bda, VK_TRUE};
+    drawParameters.device.pNext = &drawFeatures;
+    const AgcDriver::ShaderDeviceProfile drawParametersAccepted(drawParameters.Target(), drawParameters.device, drawParameters.limits);
+    Require(std::ranges::find(drawParametersAccepted.Target().supportedCapabilities, spv::CapabilityDrawParameters) != drawParametersAccepted.Target().supportedCapabilities.end(), "enabled shaderDrawParameters was rejected");
+    ProfileInput terminating;
+    VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR terminate{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, &terminating.bda, VK_TRUE};
+    terminating.device.pNext = &terminate;
+    terminating.extensions.push_back("SPV_KHR_terminate_invocation");
+    const AgcDriver::ShaderDeviceProfile terminated(terminating.Target(), terminating.device, terminating.limits);
+    Require(std::ranges::find(terminated.Target().supportedExtensions, "SPV_KHR_terminate_invocation") != terminated.Target().supportedExtensions.end(), "enabled shaderTerminateInvocation was rejected");
+    ProfileInput disabled;
+    VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR disabledTerminate{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, &disabled.bda, VK_FALSE};
+    disabled.device.pNext = &disabledTerminate;
+    disabled.extensions.push_back("SPV_KHR_terminate_invocation");
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(disabled.Target(), disabled.device, disabled.limits); }, "shaderTerminateInvocation");
+    ProfileInput geometryEnabled;
+    geometryEnabled.capabilities.push_back(spv::CapabilityGeometry);
+    geometryEnabled.core.geometryShader = VK_TRUE;
+    const AgcDriver::ShaderDeviceProfile geometryAccepted(geometryEnabled.Target(), geometryEnabled.device, geometryEnabled.limits);
+    Require(std::ranges::find(geometryAccepted.Target().supportedCapabilities, spv::CapabilityGeometry) != geometryAccepted.Target().supportedCapabilities.end(), "enabled geometry shaders were rejected");
 }
 
 void CheckAbi() {
@@ -142,6 +168,11 @@ void CheckHeaps() {
     const auto single = allocate(image, 1u);
     const auto sixteenSamplers = allocate(image, 1u, 16u);
     Require(BindingAllocator{}.FindBinding(sixteenSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 32u, "sixteen logical samplers must fit with both descriptor variants");
+    Require(BindingAllocator{}.FindBinding(allocate(image, 1u, 17u).layout, DescriptorBindingKind::Samplers).resources.size() == 34u, "seventeen logical samplers must fit with both descriptor variants");
+    const auto twentySamplers = allocate(image, 1u, 20u);
+    Require(BindingAllocator{}.FindBinding(twentySamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 40u, "twenty logical samplers must fit with both descriptor variants");
+    const auto thirtyTwoSamplers = allocate(image, 1u, 32u);
+    Require(BindingAllocator{}.FindBinding(thirtyTwoSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 64u, "thirty-two logical samplers must fit with both descriptor variants");
     const auto full = allocate(image, RuntimeAbi::SampledHeapCapacity, RuntimeAbi::SamplerHeapCapacity / 2u);
     Require(single.layout.ShaderDataDwords() == full.layout.ShaderDataDwords() && single.layout.memoryOffsetDword == full.layout.memoryOffsetDword && !full.layout.UsesPushData(), "runtime layout depends on resource count");
     Require(full.layout.memoryOffsetDword == 0u && full.layout.DispatchThreadLimitDword() == 0u && full.layout.ShaderDataDwords() == 0u, "direct image resources allocated runtime metadata");

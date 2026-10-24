@@ -156,7 +156,26 @@ void Fill(std::uint32_t format) {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups, bool useCache = false) {
+void RequireInitializedTable(std::span<const std::uint32_t> words, const std::string& what) {
+    std::vector<std::uint32_t> tables;
+    std::size_t stores = 0;
+    std::size_t initialized = 0;
+    for (std::size_t at = 5; at < words.size();) {
+        const auto count = words[at] >> 16u;
+        const auto opcode = words[at] & 0xffffu;
+        Require(count != 0u && at + count <= words.size(), what + ": malformed SPIR-V");
+        const auto operands = words.subspan(at + 1u, count - 1u);
+        const auto table = [&](std::uint32_t id) { return std::find(tables.begin(), tables.end(), id) != tables.end(); };
+        if (opcode == 44u && operands.size() == 2u + 256u) tables.push_back(operands[1]);
+        if (opcode == 59u && operands.size() == 4u && table(operands[3])) ++initialized;
+        if (opcode == 62u && operands.size() >= 2u && table(operands[1])) ++stores;
+        at += count;
+    }
+    Require(tables.size() == 1u, what + ": the shader has " + std::to_string(tables.size()) + " sRGB tables, expected 1");
+    Require(stores == 0u && initialized == 1u, what + ": the sRGB table is stored " + std::to_string(stores) + " times and initializes " + std::to_string(initialized) + " variables, expected no store and one variable");
+}
+
+std::vector<std::uint32_t> Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups, bool useCache = false) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -176,6 +195,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return result.spirv.Copy();
 }
 
 void Verify(std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
@@ -194,7 +214,7 @@ void Verify(std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, co
 
 void CheckLoad(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
     Fill(format);
-    Run(device, code, Texels.data(), format, swizzle, Groups);
+    RequireInitializedTable(Run(device, code, Texels.data(), format, swizzle, Groups), what);
     Verify(dmask, format, swizzle, what);
 }
 

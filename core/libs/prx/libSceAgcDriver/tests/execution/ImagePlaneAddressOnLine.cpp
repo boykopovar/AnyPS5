@@ -47,6 +47,18 @@ alignas(256) constexpr std::array<std::uint32_t, 22> ExplicitLodCode{
     0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 22> ArrayExplicitLodCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xbf8c3f70, 0xf0900f28, 0x00610c02, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024,
+    0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 22> ArrayLevelZeroCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xbf8c3f70, 0xf09c0f28, 0x00610c02, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024,
+    0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 18> LineLodCode{
     0x34020087, 0xe0301000, 0x80000201, 0xe0301008, 0x80000301, 0xbf8c3f70, 0xf0900f00, 0x00610c02, 0xbf8c3f70,
     0xe0701020, 0x80000c01, 0xe0701024, 0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
@@ -78,6 +90,7 @@ constexpr std::array<SamplerCase, 5> SamplerCases{{
 constexpr std::array<float, 8> LodU{0.03125f, 0.33125f, 0.96875f, 0.0f, 1.0f, -0.2f, 1.3f, 0.6f};
 constexpr std::array<float, 8> Lods{0.0f, 1.0f, 2.0f, 1.25f, 2.75f, 3.6f, 6.0f, -1.0f};
 
+constexpr std::array<float, 5> Slices{0.0f, 1.0f, 2.7f, -1.0f, 5.0f};
 constexpr std::array<float, 8> LineV{0.0f, 0.5f, 1.0f, 1.5f, -0.25f, 3.0f, 0.25f, 0.75f};
 constexpr std::array<std::uint32_t, 8> LineY{0u, 1u, 2u, 3u, 0xffffffffu, 7u, 0u, 5u};
 
@@ -250,6 +263,24 @@ void FillLodInput() {
     }
 }
 
+void FillArrayInput(bool levelZero) {
+    Buffer.fill(0xdeadbeefu);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto lod = levelZero ? 0.0f : LaneLod(tid);
+        const std::array<std::uint32_t, 4> words{Bits(LaneU(tid)), Bits(LineV[(tid / 2u) % LineV.size()]), Bits(Slices[tid % Slices.size()]), Bits(lod)};
+        std::copy(words.begin(), words.end(), &Buffer[tid * Words]);
+    }
+}
+
+void FillLineInput(bool levelZero) {
+    Buffer.fill(0xdeadbeefu);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto lod = levelZero ? 0.0f : LaneLod(tid);
+        const std::array<std::uint32_t, 4> words{Bits(LaneU(tid)), 0u, Bits(lod), 0u};
+        std::copy(words.begin(), words.end(), &Buffer[tid * Words]);
+    }
+}
+
 std::array<std::uint32_t, Threads * 4u> SampleResults() {
     std::array<std::uint32_t, Threads * 4u> results{};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy_n(&Buffer[tid * Words + SampleResult], 4u, &results[tid * 4u]);
@@ -296,6 +327,28 @@ void CheckExplicitLod(AgcDriver::VulkanDevice& device) {
         }
     }
 }
+
+void CheckArray(AgcDriver::VulkanDevice& device) {
+    FillMippedLine();
+    for (const bool levelZero : {false, true}) {
+        for (const auto& sampler : SamplerCases) {
+            const auto samplerWords = SamplerDescriptor(sampler);
+            FillLineInput(levelZero);
+            Run(device, LineLodCode, MippedLineDescriptor(), samplerWords);
+            const auto reference = SampleResults();
+            FillArrayInput(levelZero);
+            Run(device, levelZero ? std::span<const std::uint32_t>(ArrayLevelZeroCode) : std::span<const std::uint32_t>(ArrayExplicitLodCode), MippedLineDescriptor(), samplerWords);
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                const auto what = std::string(levelZero ? "image_sample_lz" : "image_sample_l") + " 2d array on a 1D texture with " + sampler.name + ", u " + std::to_string(LaneU(tid)) + ", v " + std::to_string(LineV[(tid / 2u) % LineV.size()]) + ", slice " + std::to_string(Slices[tid % Slices.size()]);
+                for (std::uint32_t component = 0; component < 4u; ++component) {
+                    const auto value = Buffer[tid * Words + SampleResult + component];
+                    const auto expected = reference[tid * 4u + component];
+                    Require(value == expected, what + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " has bits " + std::to_string(value) + ", image_sample_l 1d returned bits " + std::to_string(expected));
+                }
+            }
+        }
+    }
+}
 }
 
 int main() {
@@ -311,6 +364,7 @@ int main() {
         Run(*device, Code, PlaneDescriptor());
         CheckPlane();
         CheckExplicitLod(*device);
+        CheckArray(*device);
         std::puts("image plane address on line tests passed");
         return 0;
     } catch (const std::exception& error) {

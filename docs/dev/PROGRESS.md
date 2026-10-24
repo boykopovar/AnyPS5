@@ -1,6 +1,6 @@
 # Progress reporting
 
-[`tools/progress.py`](../../tools/progress.py) generates `progress.json`, HTML, SVG maps and badges. The [Progress workflow](../../.github/workflows/progress.yml) publishes them after pushes to `main`. The [Progress report workflow](../../.github/workflows/progress-report.yml) compares the base and head trees of pull requests.
+[`tools/progress.py`](../../tools/progress.py) generates `progress.json`, HTML, SVG maps and badges. The [Pages workflow](../../.github/workflows/pages.yml) publishes them with the web converter after pushes to `main` that change the converter, the web page or these tools. The [Pages progress workflow](../../.github/workflows/pages-progress.yml) runs after pushes that change `core/libs/prx` or the opcode list, compares the generated `progress.json` with the deployed one and dispatches the Pages workflow only when they differ, so the history chart gains new days only when the progress changes. The [Progress report workflow](../../.github/workflows/progress-report.yml) compares the base and head trees of pull requests.
 
 ## Library counts
 
@@ -14,7 +14,7 @@ A library with no scanned definitions and no shared sources, such as one whose `
 
 ## History
 
-[`tools/progress_history.py`](../../tools/progress_history.py) measures the first-parent history of `main` with the same rules as `progress.py` and writes `history.json`, `history.svg` (shown in the README) and `history.html` (the chart with a tooltip per day plus a table, linked from the end of the progress page). The chart plots counts, not percentages: implemented and declared library functions and decoded shader instructions, so it shows how much is added over time; the percentages are on the progress map and the badges. It takes one point per day, at the last commit of the day, and skips commits whose tree lacks the scanned paths. The chart compacts as days accumulate: up to 31 days it labels every day, up to 150 days one label per Monday, beyond that one per month; points (and their tooltips) are drawn up to 45 days, after which the table and `history.json` keep every day. Old trees are measured with today's counting rules and instruction list, so the series is comparable but not what the page showed on that day. The workflow checks out the full history for it.
+[`tools/progress_history.py`](../../tools/progress_history.py) measures the first-parent history of `main` with the same rules as `progress.py` and writes `history.json`, `history.svg` and `history.html` (the chart with a tooltip per day plus a table, linked from the README and the end of the progress page). The chart plots counts, not percentages, so it shows how much is added over time: one panel for library functions and one for shader instructions, each on its own scale with the implemented count as a solid line and the declared total as a dashed one (for shaders the declared total is the instruction list in `tools/rdna_isa.txt`); the current percentage sits next to each panel's implemented label. It takes one point per UTC day, at the last commit of the day, and skips commits whose tree lacks the scanned paths. The chart compacts as days accumulate: up to 14 days it labels every day, up to 150 days one label per Monday, beyond that one per month; points are drawn up to 45 days, and every day keeps a hover tooltip, while the table and `history.json` keep every day. Old trees are measured with today's counting rules and instruction list, so the series is comparable but not what the page showed on that day. The workflow checks out the full history for it.
 
 ## Comparisons
 
@@ -24,11 +24,17 @@ Real removals and transitions back to stubs remain visible. Percentages retain t
 
 Implemented definitions are also classified as behaviourally empty when their body holds only `(void)name;` discards and at most one constant return, bare `return;` or `throw`, including a return of a local `static` wrapper that is itself behaviourally empty; wrapper calls whose arguments contain calls do not qualify. Comparisons list newly implemented behaviourally empty functions without changing any count. Older JSON snapshots without `inert_names` are accepted.
 
+## One library
+
+`--module NAME` limits the library totals to those directories under `core/libs/prx`. Repeat the flag to include several. A name that is not a directory is an error. Shader counts stay complete. A shared-source wrapper is included only when its own directory is named. `--json` prints the object written to `progress.json` on stdout, instead of the two summary lines. Either flag makes the output directory optional. Without them the directory is still required, and a run that names only the directory still writes the whole tree.
+
 ## Verification
 
 ```sh
 python3 tools/tests/test_progress.py
 python3 tools/progress.py /tmp/anyps5-progress
+python3 tools/progress.py --module libScePad
+python3 tools/progress.py --json
 python3 tools/tests/test_progress_history.py
 ```
 

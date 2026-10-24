@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,7 @@ using UsableSize = std::size_t (APS5_VABI *)(void*);
 
 std::mutex heapMutex;
 std::array<void*, 10> heapApi{};
+std::atomic<int> heapKind{0};
 std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
 Initialize heapFinalize = nullptr;
@@ -51,10 +53,13 @@ int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size
     catch (const std::length_error&) { return 12; }
 }
 
+int APS5_VABI defaultStatsFast(void* stats) { return GuestHeap::GuestHeapStatsFast_nid_postfix(stats); }
+
 std::array<void*, 10> defaultApi() {
     return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
         reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
-        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign)};
+        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign), nullptr,
+        reinterpret_cast<void*>(defaultStatsFast)};
 }
 
 class CallbackScope {
@@ -142,6 +147,18 @@ void ApplicationHeapRegister_nid_no_patch(void* const* api) {
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
     if (heapApi[0] != nullptr && heapApi != replacement) throw std::runtime_error("application heap: cannot replace an active allocator");
     heapApi = replacement;
+    heapKind.store(replacement == defaultApi() ? 1 : 2, std::memory_order_release);
+}
+
+bool ApplicationHeapDefault_nid_no_patch() {
+    int kind = heapKind.load(std::memory_order_acquire);
+    if (kind == 0) {
+        std::unique_lock lock(heapMutex);
+        ensureInitialized(lock);
+        if (heapFailure) std::rethrow_exception(heapFailure);
+        kind = heapKind.load(std::memory_order_acquire);
+    }
+    return kind == 1;
 }
 
 void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
@@ -154,6 +171,11 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
             if (read<std::uint64_t>(replacement, 0) != 0x78 || read<std::uint64_t>(replacement, 8) != 2) throw std::runtime_error("application heap: unsupported allocator replacement table");
             std::array<void*, 10> api;
             std::memcpy(api.data(), static_cast<const std::byte*>(replacement) + 0x20, sizeof(api));
+            const bool replaced = std::any_of(api.begin(), api.end(), [](const void* entry) { return entry != nullptr; });
+            if (replaced && ApplicationGuestHeapApi_nid_no_patch(api.data())) {
+                ApplicationHeapRegister_nid_no_patch(api.data());
+                return;
+            }
             ApplicationHeapRegister_nid_no_patch(api.data());
             const auto initialize = read<Initialize>(replacement, 0x10);
             if (initialize != nullptr) initialize();
@@ -184,7 +206,7 @@ void ApplicationHeapFree_nid_no_patch(void* pointer) {
 }
 
 void* ApplicationHeapReallocate_nid_no_patch(void* pointer, std::size_t bytes) {
-    if (bytes == 0 && pointer != nullptr) {
+    if (bytes == 0 && pointer != nullptr && !ApplicationHeapDefault_nid_no_patch()) {
         ApplicationHeapFree_nid_no_patch(pointer);
         return nullptr;
     }
@@ -202,8 +224,24 @@ void* ApplicationHeapAlign_nid_no_patch(std::size_t alignment, std::size_t bytes
     return pointer;
 }
 
+extern "C" void* APS5_VABI scriptingGetMem_nid_postfix(std::size_t alignment, std::size_t bytes) {
+    alignment = std::max<std::size_t>(alignment, 16);
+    if ((alignment & (alignment - 1)) != 0) return nullptr;
+    try {
+        return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    } catch (const std::length_error&) {
+        return nullptr;
+    }
+}
+
+extern "C" void APS5_VABI scriptingFreeMem_nid_postfix(void* pointer) {
+    GuestHeap::GuestHeapFree_nid_postfix(pointer);
+}
+
 void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std::size_t alignment) {
-    if (bytes == 0) {
+    if (bytes == 0 && !ApplicationHeapDefault_nid_no_patch()) {
         ApplicationHeapFree_nid_no_patch(pointer);
         return nullptr;
     }

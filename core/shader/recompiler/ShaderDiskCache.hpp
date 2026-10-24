@@ -13,7 +13,7 @@
 
 namespace ShaderRecompiler::ShaderDiskCache {
 
-inline constexpr std::uint32_t FormatVersion = 36;
+inline constexpr std::uint32_t FormatVersion = 46;
 
 enum class LoadStatus {
     Loaded,
@@ -53,7 +53,7 @@ void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, s
 [[nodiscard]] std::string EntryName(std::span<const std::byte> key);
 
 void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out);
-[[nodiscard]] bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result);
+[[nodiscard]] bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result, std::shared_ptr<const void> owner = nullptr);
 
 [[nodiscard]] std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const CompiledVariant& variant);
 [[nodiscard]] LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key, CompiledVariant& variant, std::shared_ptr<const void> owner = nullptr);
@@ -73,6 +73,8 @@ void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> va
 [[nodiscard]] bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan);
 void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan);
 void Flush();
+void Shutdown();
+[[nodiscard]] unsigned Writers();
 [[nodiscard]] Counters Totals();
 
 }

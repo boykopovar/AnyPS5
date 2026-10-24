@@ -23,7 +23,6 @@ using Clock = std::chrono::steady_clock;
 
 static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
 static constexpr std::uint32_t DEFAULT_MAX_PORTS = 16;
-static constexpr std::size_t ADVANCED_GRAINS_MAX = 16;
 // Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 // Grains the device waits for before it starts playing (and again whenever it ran dry), so the
@@ -264,7 +263,6 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) try {
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     std::lock_guard lock(context->lock);
     if (context->device != 0) {
-        if (context->advancedGrains.size() >= ADVANCED_GRAINS_MAX) throw std::runtime_error("AudioOut2: more than 16 completed grains await a push");
         if (!context->advancedMode) {
             while (!context->pendingGrains.empty()) {
                 Render(*context, context->pendingGrains.front());
@@ -323,7 +321,7 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
     auto* context = FromHandle(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     std::lock_guard lock(context->lock);
-    const auto level = QueueLevel(*context, Clock::now());
+    const auto level = std::min(context->queueDepth, QueueLevel(*context, Clock::now()) + static_cast<std::uint32_t>(context->advancedGrains.size()));
     if (queue_level) *queue_level = level;
     if (available_queue) *available_queue = context->queueDepth - level;
     context->queueLevelPolls++;

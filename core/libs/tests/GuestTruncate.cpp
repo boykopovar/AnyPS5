@@ -5,12 +5,15 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <io.h>
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 #else
 #include <unistd.h>
 #endif
@@ -18,12 +21,17 @@
 extern "C" {
 int APS5_VABI truncate_nid_postfix(const char*, std::int64_t);
 int APS5_VABI sceKernelTruncate_nid_postfix(const char*, std::int64_t);
+int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
+int APS5_VABI sceKernelFtruncate(int, std::int64_t);
+int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
+int APS5_VABI sceKernelClose(int);
 int* APS5_VABI __error_nid_postfix();
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEnoent = 2;
+constexpr int GuestEbadf = 9;
 constexpr int GuestEacces = 13;
 constexpr int GuestEfault = 14;
 constexpr int GuestEisdir = 21;
@@ -40,6 +48,31 @@ static std::string Contents(const std::filesystem::path& file) {
     return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
 }
 
+#ifdef _WIN32
+static unsigned parameterReports = 0;
+
+static void CountParameterReport(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {
+    ++parameterReports;
+}
+
+static void CheckDescriptorFailures(const char* path) {
+    const int closed = sceKernelOpen(path, 2, 0);
+    Require(closed >= 0 && sceKernelClose(closed) == 0);
+    const auto previous = _set_thread_local_invalid_parameter_handler(CountParameterReport);
+    for (const int descriptor : {-2, -1, closed, std::numeric_limits<int>::max()}) {
+        for (const std::int64_t length : {std::int64_t{0}, std::int64_t{8}}) {
+            RequireFailure(ftruncate_nid_postfix(descriptor, length), GuestEbadf);
+            Require(sceKernelFtruncate(descriptor, length) == SceKernelErrorBase + GuestEbadf);
+        }
+    }
+    Require(_set_thread_local_invalid_parameter_handler(previous) == CountParameterReport);
+    if (parameterReports != 0) std::fprintf(stderr, "ftruncate invoked the CRT parameter handler %u times\n", parameterReports);
+    Require(parameterReports == 0);
+    RequireFailure(ftruncate_nid_postfix(closed, 0), GuestEbadf);
+    Require(sceKernelFtruncate(-1, 0) == SceKernelErrorBase + GuestEbadf);
+}
+#endif
+
 int main() {
     const auto name = "anyps5-truncate-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto directory = std::filesystem::path(name);
@@ -47,6 +80,10 @@ int main() {
     const auto file = directory / "sized.txt";
     { std::ofstream output(file, std::ios::binary); output << "0123456789abcdef"; }
     const auto path = file.string();
+#ifdef _WIN32
+    CheckDescriptorFailures(path.c_str());
+    Require(Contents(file) == "0123456789abcdef");
+#endif
 
     Require(truncate_nid_postfix(path.c_str(), 6) == 0);
     Require(std::filesystem::file_size(file) == 6);

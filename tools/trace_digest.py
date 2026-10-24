@@ -2,8 +2,10 @@ import argparse
 import bisect
 import collections
 import gzip
+import html
 import json
 import sys
+import zlib
 from pathlib import Path
 
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
@@ -21,7 +23,7 @@ RAMP = "._:-=+*#%@"
 
 
 def is_wait(name):
-    return name.startswith("GpuMutex.wait.") or "wait" in name.rsplit(".", 1)[-1].lower()
+    return "wait" in name.lower()
 
 
 class Trace:
@@ -31,7 +33,14 @@ class Trace:
         self.presents = []
         self.folded = collections.defaultdict(float)
         self.batched = []
-        for event in document["traceEvents"]:
+        if not isinstance(document, (list, dict)):
+            raise ValueError("trace must be an event array or object")
+        events = document if isinstance(document, list) else document.get("traceEvents", [])
+        if not isinstance(events, list):
+            raise ValueError("traceEvents must be an array")
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                raise ValueError(f"trace event {index} must be an object")
             phase = event.get("ph")
             if phase == "M" and event.get("name") == "thread_name":
                 self.threads[event["tid"]] = event["args"]["name"]
@@ -56,6 +65,17 @@ class Trace:
                 entry[4] = any(is_wait(parent[2]) for parent in stack)
                 stack.append(entry)
 
+    def select_threads(self, names):
+        available = self.threads.keys() | self.slices.keys() | self.folded.keys()
+        unknown = set(names) - {self.name(tid) for tid in available}
+        if unknown:
+            raise ValueError("unknown thread: " + ", ".join(sorted(unknown)))
+        selected = {tid for tid in available if self.name(tid) in names}
+        self.threads = {tid: name for tid, name in self.threads.items() if tid in selected}
+        self.slices = {tid: slices for tid, slices in self.slices.items() if tid in selected}
+        self.folded = {tid: value for tid, value in self.folded.items() if tid in selected}
+        self.batched = [entry for entry in self.batched if entry[0] in selected]
+
     def name(self, tid):
         return self.threads.get(tid, f"tid {tid}")
 
@@ -69,7 +89,7 @@ class Trace:
 
 def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as handle:
+    with opener(path, "rt", encoding="utf-8-sig") as handle:
         return Trace(json.load(handle))
 
 
@@ -77,7 +97,7 @@ def load_summary(path, trace_path):
     candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
     if not candidate.exists():
         return None
-    lines = [json.loads(line) for line in candidate.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [json.loads(line) for line in candidate.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
@@ -89,11 +109,17 @@ def load_summary(path, trace_path):
 
 def load_stacks(path):
     stacks = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
-        stacks.append((frames.split(";"), int(count)))
+        try:
+            weight = int(count)
+        except ValueError as error:
+            raise ValueError(f"{path}:{number}: sample count must be a positive integer") from error
+        if weight <= 0 or any(not frame.strip() for frame in frames.split(";")):
+            raise ValueError(f"{path}:{number}: expected nonempty frames and a positive sample count")
+        stacks.append((frames.split(";"), weight))
     return stacks
 
 
@@ -121,15 +147,21 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
     waits = []
     for tid in sorted(trace.slices.keys() | trace.folded.keys()):
         slices = trace.slices.get(tid, [])
-        traced = sum(dur for _, dur, _, depth, _ in slices if depth == 0)
-        waited = sum(dur for _, dur, name, _, nested in slices if is_wait(name) and not nested)
+        traced = 0.0
+        waited = 0.0
         leaders = collections.Counter()
         for ts, dur, name, depth, nested in slices:
-            totals[name] += dur
-            if depth == 0 and not is_wait(name):
-                leaders[name] += dur
-            if is_wait(name) and not nested:
-                waits.append((dur, name, trace.name(tid), ts))
+            overlap = max(min(ts + dur, frames[-1][2]) - max(ts, frames[0][1]), 0.0) if frames else dur
+            if overlap > 0:
+                totals[name] += overlap
+                if depth == 0:
+                    traced += overlap
+                    if not is_wait(name):
+                        leaders[name] += overlap
+                if is_wait(name) and not nested:
+                    waited += overlap
+            if is_wait(name) and not nested and (overlap > 0 or not frames):
+                waits.append((overlap, name, trace.name(tid), max(ts, frames[0][1]) if frames else ts))
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
                         "untraced_ms_per_frame": max(span_us - traced, 0.0) / 1000.0 / count,
@@ -188,8 +220,15 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
     return result
 
 
+def table_cell(value):
+    return html.escape(str(value)).replace("|", "&#124;").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
 def markdown(result):
     lines = []
+    if result.get("thread_filter"):
+        lines += ["Thread filter: " + ", ".join(table_cell(name) for name in result["thread_filter"])
+                  + ". Frame bounds, summary and stack samples remain capture-wide.", ""]
     summary = result["summary"]
     if summary:
         frame = summary["frame_ms"]
@@ -217,8 +256,8 @@ def markdown(result):
     lines.append("|---|---|---|---|---|---|")
     for thread in result["threads"]:
         largest = ", ".join(f"{entry['name']} {entry['ms_per_frame']:.1f}" for entry in thread["top"])
-        lines.append(f"| {thread['thread']} | {thread['busy_ms_per_frame']:.1f} ({thread['busy_pct']:.0f} %) | {thread['wait_ms_per_frame']:.1f} ({thread['wait_pct']:.0f} %) "
-                     f"| {thread['untraced_ms_per_frame']:.1f} | {thread['folded_ms_per_frame']:.1f} | {largest} |")
+        lines.append(f"| {table_cell(thread['thread'])} | {thread['busy_ms_per_frame']:.1f} ({thread['busy_pct']:.0f} %) | {thread['wait_ms_per_frame']:.1f} ({thread['wait_pct']:.0f} %) "
+                     f"| {thread['untraced_ms_per_frame']:.1f} | {thread['folded_ms_per_frame']:.1f} | {table_cell(largest)} |")
     lines.append("")
     lines.append("**Largest slices** (ms per frame, inclusive, all threads): " + ", ".join(f"{entry['name']} {entry['ms']:.1f}" for entry in result["top_slices_ms_per_frame"]))
     lines.append("")
@@ -245,7 +284,7 @@ def markdown(result):
 
 
 def load_intervals(path):
-    lines = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [json.loads(line) for line in Path(path).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     return [line for line in lines if "interval_start_s" in line]
 
 
@@ -261,15 +300,16 @@ def digest_intervals(lines):
     for line in lines:
         workers = line.get("worker_busy_pct", {})
         busiest = max(workers.items(), key=lambda entry: entry[1]) if workers else None
-        phases = list(line.get("top_phases_ms_per_frame", {}).items())
+        phases = line.get("top_phases_ms_per_frame", {})
+        largest = max(phases.items(), key=lambda entry: entry[1]) if phases else None
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
-                     "top_phase": {"name": phases[0][0], "ms_per_frame": phases[0][1]} if phases else None,
+                     "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
                      "trace_dropped": line.get("trace_dropped", False)})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution")
-    changed = [index for index, line in enumerate(lines) if any(line.get(key) != first.get(key) for key in keys)]
+    changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
     return {"intervals": rows, "identity": {key: first.get(key) for key in keys}, "identity_changed_at": changed}
 
 
@@ -289,33 +329,60 @@ def markdown_intervals(result):
         worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
         lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
-                     f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {phase} |")
+                     f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
     p99 = [row["frame_ms"]["p99"] for row in rows]
     gpu = [row["gpu_busy_ms_per_present"] for row in rows]
     lines += ["", "```", f"p99 ms  {sparkline(p99)}  0-{max(p99):.1f}", f"gpu ms  {sparkline(gpu)}  0-{max(gpu):.1f}", "```"]
     return "\n".join(lines) + "\n"
 
 
+def nonnegative_integer(value):
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return number
+
+
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", help="aps5-trace-*.json.gz (or .json), or a .jsonl summary file with APS5_TRACE_SUMMARY_EVERY lines")
     parser.add_argument("--summary", help="file with the summary line (default: aps5-summary.jsonl next to the trace)")
     parser.add_argument("--stacks", help="collapsed-stack file of APS5_SAMPLE_WORKER (<file stem>.collapsed.txt)")
-    parser.add_argument("--frames", type=int, default=5, help="slowest frames to list (default 5)")
-    parser.add_argument("--top", type=int, default=10, help="entries per list (default 10)")
+    parser.add_argument("--thread", action="append", default=[], metavar="NAME",
+                        help="include event tracks with this exact thread name; repeat to select several tracks")
+    parser.add_argument("--frames", type=nonnegative_integer, default=5, help="slowest frames to list (default 5)")
+    parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
+    if options.summary and not Path(options.summary).is_file():
+        parser.error(f"summary file not found: {options.summary}")
+    if options.thread and options.trace.endswith(".jsonl"):
+        parser.error("--thread requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
-    result = digest(load_trace(options.trace), load_summary(options.summary, options.trace),
-                    load_stacks(options.stacks) if options.stacks else None, options.frames, options.top)
+    try:
+        stacks = load_stacks(options.stacks) if options.stacks else None
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    trace = load_trace(options.trace)
+    if options.thread:
+        trace.select_threads(options.thread)
+    result = digest(trace, load_summary(options.summary, options.trace),
+                    stacks, options.frames, options.top)
+    if options.thread:
+        result["thread_filter"] = sorted(set(options.thread))
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
     return 0
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (EOFError, OSError, ValueError, zlib.error) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        sys.exit(2)

@@ -16,6 +16,8 @@ int APS5_VABI close_nid_postfix(int);
 int APS5_VABI dup_nid_postfix(int);
 int APS5_VABI dup2_nid_postfix(int, int);
 int APS5_VABI shm_open_nid_postfix(const char*, int, int);
+void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
+int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
 }
 
 namespace {
@@ -101,6 +103,21 @@ void OneViewWritesAndRuns() {
     Require(close_nid_postfix(duplicate) == 0);
 }
 
+void MmapOfTheDescriptorSharesTheObject() {
+    const int fd = Create(nullptr, Read | Write);
+    auto* jit = static_cast<volatile unsigned char*>(Map(fd, Read | Write));
+    void* mapped = mmap_nid_postfix(nullptr, Size, Read | Write, 0x1, fd, 0);
+    Require(mapped != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    auto* view = static_cast<volatile unsigned char*>(mapped);
+    jit[0x200] = 0x5a;
+    Require(view[0x200] == 0x5a);
+    view[0x300] = 0x6b;
+    Require(jit[0x300] == 0x6b);
+    Require(munmap_nid_postfix(mapped, Size) == 0);
+    Require(sceKernelMunmap(const_cast<unsigned char*>(jit), Size) == 0);
+    Require(close_nid_postfix(fd) == 0);
+}
+
 void Dup2KeepsTheDescriptorTableInStep() {
     const int fd = Create(nullptr, Read | Write);
     const int target = shm_open_nid_postfix(reinterpret_cast<const char*>(1), 0x2, 0600);
@@ -170,5 +187,8 @@ int main() {
     WriteThroughAliasRunsThroughExecutableView();
     OneViewWritesAndRuns();
     Dup2KeepsTheDescriptorTableInStep();
+#ifndef __APPLE__
+    MmapOfTheDescriptorSharesTheObject();
+#endif
     InvalidArgumentsAreRejected();
 }

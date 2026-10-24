@@ -13,18 +13,25 @@ static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const char* key = "ANYPS5_GUEST_ENV_TEST_4C27";
 #ifdef _WIN32
-    Require(_putenv_s(key, "inherited") == 0);
+    Require(_putenv_s(key, "host") == 0);
 #else
-    Require(::setenv(key, "inherited", 1) == 0);
+    Require(::setenv(key, "host", 1) == 0);
 #endif
-    Require(std::strcmp(getenv_nid_postfix(key), "inherited") == 0);
+    Require(getenv_nid_postfix(key) == nullptr);
+#ifdef _WIN32
+    Require(_putenv_s("HOME", "C:\\Users\\host") == 0);
+#else
+    Require(::setenv("HOME", "/home/host", 1) == 0);
+#endif
+    for (const char* host : {"HOME", "PATH"}) Require(std::getenv(host) != nullptr && getenv_nid_postfix(host) == nullptr);
+    Require(setenv_nid_postfix(key, "inherited", 0) == 0);
     Require(setenv_nid_postfix(key, "kept out", 0) == 0);
     Require(std::strcmp(getenv_nid_postfix(key), "inherited") == 0);
     char value[] = "copied";
     Require(setenv_nid_postfix(key, value, 1) == 0);
     value[0] = 'X';
     Require(std::strcmp(getenv_nid_postfix(key), "copied") == 0);
-    Require(std::strcmp(std::getenv(key), "inherited") == 0);
+    Require(std::strcmp(std::getenv(key), "host") == 0);
     Require(setenv_nid_postfix(key, "", 1) == 0);
     Require(getenv_nid_postfix(key) && *getenv_nid_postfix(key) == 0);
     char borrowed[] = "ANYPS5_GUEST_ENV_TEST_4C27=one";

@@ -1,6 +1,7 @@
 #include "ControlFlow/Structurizer.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <iterator>
 #include <map>
@@ -251,6 +252,17 @@ void requireSameStructuredExecutions(const std::vector<std::vector<std::uint32_t
     requireUnconditionalEntry(original, graph, name);
 }
 
+void requireNoRouteVariables(const std::vector<std::vector<std::uint32_t>>& successors, const char* name) {
+    if (std::getenv("APS5_FORCE_STRUCTURIZER_FALLBACK") != nullptr) return;
+    auto graph = makeGraph(successors);
+    Structurizer{}.Structurize(graph);
+    for (const auto& block : graph.blocks) {
+        if (block.terminator.condition == BranchCondition::GotoVariable || block.terminator.gotoValue >= 0) {
+            throw std::runtime_error(std::string(name) + ": block " + std::to_string(block.id) + " routes through a goto variable instead of a structured selection");
+        }
+    }
+}
+
 void requireGrowthBudgetRefusal(ControlFlowGraph graph, const char* name) {
     const std::string growthBudget = "CFG shared merge splitting exceeded growth budget";
     try {
@@ -423,6 +435,9 @@ int main() {
         requireStructuredBranches(elseReturn, "an early return in one arm of a selection whose other arm reaches the same merge");
         requireDominatedMerges(elseReturn, "an early return in one arm of a selection whose other arm reaches the same merge");
         requireOriginalBranches(elseReturn, elseReturnSuccessors, "an early return in one arm of a selection whose other arm reaches the same merge");
+        const std::vector<std::vector<std::uint32_t>> branchingReturn{{5, 1}, {3, 2}, {13}, {9, 4}, {13}, {10, 6}, {8, 7}, {13}, {13, 9}, {13}, {12, 11}, {12}, {13}, {}};
+        requireSameStructuredExecutions(branchingReturn, "an arm whose returns branch once a tail shared across arms is cloned");
+        requireNoRouteVariables(branchingReturn, "an arm whose returns branch once a tail shared across arms is cloned");
         std::vector<std::vector<std::uint32_t>> diamonds;
         for (std::uint32_t diamond = 0; diamond < 50u; ++diamond) {
             const auto head = diamond * 3u;

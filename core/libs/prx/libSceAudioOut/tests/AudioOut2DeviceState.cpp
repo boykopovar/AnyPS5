@@ -98,9 +98,9 @@ void SpeakerInfoReportsTheFrontPair() {
     Require(info.type == 0);
     Require(info.available_bits == 0x3);
     Require(info.flags == 0);
-    Require(info.speaker_angle[0].azimuth == -30 && info.speaker_angle[0].elevation == 0);
-    Require(info.speaker_angle[1].azimuth == 30 && info.speaker_angle[1].elevation == 0);
-    for (int index = 2; index < 16; index++) Require(info.speaker_angle[index].azimuth == 0 && info.speaker_angle[index].elevation == 0);
+    Require(info.speaker_angle[0].azimuth == 30 && info.speaker_angle[0].elevation == 0);
+    Require(info.speaker_angle[1].azimuth == -30 && info.speaker_angle[1].elevation == 0);
+    for (int index = 2; index < 16; index++) Require(info.speaker_angle[index].azimuth == -360 && info.speaker_angle[index].elevation == -360);
     Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorInvalidArgument);
 }
 

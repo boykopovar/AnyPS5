@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 extern "C" std::uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(std::uint32_t operation);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, std::uint32_t operation);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
 
 namespace {
@@ -37,6 +38,15 @@ void testSizes() {
         check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
+
+        std::array<std::uint32_t, 64> unversionedWords{};
+        CommandBuffer unversionedBuffer{unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
+                                        unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
+                                        nullptr, nullptr, 0};
+        check(sceAgcDcbContextStateOp(&unversionedBuffer, operation) == unversionedWords.data(), "context state op did not start at the cursor");
+        const auto unversionedWritten = static_cast<std::uint64_t>(unversionedBuffer.cursor_up - unversionedWords.data()) * sizeof(std::uint32_t);
+        check(unversionedWritten == sizes[operation], "context state size differs from the written packets");
+        check(words == unversionedWords, "unversioned context state op mismatch with versioned op");
     }
 }
 

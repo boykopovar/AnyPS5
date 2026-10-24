@@ -9,7 +9,11 @@
 namespace {
 
 std::uint64_t mspaceAtomicIdMask = 0;
-std::array<std::uint64_t, 64> mstateTable{};
+constexpr std::size_t MspaceTableCapacity = 65;
+std::array<std::uint64_t, MspaceTableCapacity> mstateTable{};
+
+static_assert(MspaceTableCapacity == 65);
+static_assert(mstateTable.size() == MspaceTableCapacity);
 
 static_assert(sizeof(LibcHeapInfo) == 32);
 static_assert(offsetof(LibcHeapInfo, mspace_atomic_id_mask) == 16);

@@ -10,6 +10,7 @@ int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name);
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name);
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI scePthreadGetname(Pthread thread, char* name);
 }
 
 static constexpr int GUEST_ESRCH = 3;
@@ -35,6 +36,10 @@ static void* APS5_VABI Unnamed(void*) {
     return nullptr;
 }
 
+static void* APS5_VABI ExitNow(void*) {
+    return nullptr;
+}
+
 int main() {
     const Pthread self = pthread_self_nid_postfix();
     for (const char* name : {"", "A", "AnyPS5Probe", "0123456789012345678901234567890"}) {
@@ -44,6 +49,21 @@ int main() {
     Pthread worker = nullptr;
     Require(scePthreadCreate(&worker, nullptr, Unnamed, nullptr, nullptr) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);
+
+    // A joined thread answers pthread_getname_np with ESRCH (PS5 firmware 13.60) and leaves the
+    // output buffer untouched, so the posix wrapper must not read the retained object's name.
+    Pthread joined = nullptr;
+    Require(scePthreadCreate(&joined, nullptr, ExitNow, nullptr, "JoinedWorker") == 0);
+    Require(scePthreadJoin(joined, nullptr) == 0);
+    const auto afterJoin = Read(joined, GUEST_ESRCH);
+    for (unsigned char byte : afterJoin) Require(byte == 0xAA);
+
+    // The SCE sibling has no measured joined-thread behaviour on the console; it still reads the
+    // retained object's name, which only pins today's behaviour of scePthreadGetname.
+    std::array<char, 64> sibling{};
+    sibling.fill(0x5A);
+    Require(scePthreadGetname(joined, sibling.data()) == 0);
+    Require(std::memcmp(sibling.data(), "JoinedWorker", sizeof("JoinedWorker")) == 0);
 
     const auto untouched = Read(nullptr, GUEST_ESRCH);
     for (unsigned char byte : untouched) Require(byte == 0xAA);

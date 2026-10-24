@@ -22,6 +22,7 @@ int APS5_VABI sceKernelMunmap(void*, std::size_t);
 int APS5_VABI mlock_nid_postfix(const void*, std::size_t);
 int APS5_VABI munlock_nid_postfix(const void*, std::size_t);
 int APS5_VABI mlockall_nid_postfix(int);
+int APS5_VABI munlockall_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -110,6 +111,18 @@ int main() {
 #elif defined(_WIN32)
     Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
+    Require(mlock_nid_postfix(mapped, page) == 0);
+#ifdef HAS_LOCKED_KILOBYTES
+    Require(LockedKilobytes() - lockedBefore == page / 1024);
+#endif
+    *__error_nid_postfix() = untouched;
+    Require(munlockall_nid_postfix() == 0);
+    Require(*__error_nid_postfix() == untouched);
+#ifdef HAS_LOCKED_KILOBYTES
+    Require(LockedKilobytes() == lockedBefore);
+#elif defined(_WIN32)
+    Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
+#endif
 
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1);
@@ -144,5 +157,9 @@ int main() {
     RequireLockAllUnsupported(1);
     RequireLockAllUnsupported(2);
     RequireLockAllUnsupported(1 | 2);
+
+    *__error_nid_postfix() = untouched;
+    Require(munlockall_nid_postfix() == 0);
+    Require(*__error_nid_postfix() == untouched);
     return 0;
 }

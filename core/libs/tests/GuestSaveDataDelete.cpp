@@ -103,8 +103,10 @@ int main() {
     Check(mountResultCode == 0, "the existing save mounts read/write");
     if (mountResultCode == 0) {
         Check(WriteMountedFile(mountedPayload, sizeof(mountedPayload)), "the guest alias writes the mounted save");
+        Check(Delete("absent", sizeof("absent")) == 0, "a missing save can be deleted while another save is mounted");
         std::error_code caseAliasError;
-        const bool caseAlias = std::filesystem::equivalent(kept.parent_path(), work / "_sd" / "Kept", caseAliasError);
+        const auto casePath = work / "_sd" / "Kept";
+        const bool caseAlias = std::filesystem::exists(casePath) && std::filesystem::equivalent(kept.parent_path(), casePath, caseAliasError);
         if (caseAliasError && caseAliasError != std::errc::no_such_file_or_directory) {
             Check(false, "case-alias host identity probe has no unexpected filesystem error");
         } else if (caseAlias) {

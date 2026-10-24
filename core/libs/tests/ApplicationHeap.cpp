@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <source_location>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -15,6 +16,7 @@
 #include <windows.h>
 #elif defined(__linux__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -36,6 +38,8 @@ char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(void (APS5_VABI*)());
+void* APS5_VABI scriptingGetMem_nid_postfix(std::size_t, std::size_t);
+void APS5_VABI scriptingFreeMem_nid_postfix(void*);
 }
 
 namespace {
@@ -51,13 +55,17 @@ std::size_t lastSize = 0;
 std::size_t lastAlignment = 0;
 unsigned posixCalls = 0;
 unsigned initializes = 0;
+unsigned finalizes = 0;
 unsigned frees = 0;
 bool fail = false;
 bool recurse = false;
 bool nullPosixResult = false;
 
-void require(bool condition) {
-    if (!condition) throw std::runtime_error("application heap test failed");
+void require(bool condition, std::source_location location = std::source_location::current()) {
+    if (!condition) {
+        std::fprintf(stderr, "application heap test failed at line %u\n", location.line());
+        throw std::runtime_error("application heap test failed");
+    }
 }
 
 void installProcessParameters() {
@@ -117,7 +125,7 @@ void reject(TAction action) {
 }
 
 void APS5_VABI initialize() { ++initializes; }
-void APS5_VABI finalize() { require(initializes == 1); }
+void APS5_VABI finalize() { require(initializes == 1 && ++finalizes == 1); }
 void APS5_VABI exitCallbackAllocates() {
     if (ApplicationHeapAllocate_nid_no_patch(16) != storage.data()) throw std::runtime_error("application heap test failed");
 }
@@ -169,6 +177,17 @@ void write(std::array<std::byte, TSize>& data, std::size_t offset, TValue value)
 
 }
 
+#ifdef __linux__
+extern "C" void HeapTestSdkInitialize() { initialize(); }
+extern "C" void HeapTestSdkFinalize() { finalize(); }
+extern "C" void* HeapTestAllocatorEntry(unsigned index) {
+    require(index < 7);
+    void* result;
+    std::memcpy(&result, replacement.data() + 0x20 + index * sizeof(result), sizeof(result));
+    return result;
+}
+#endif
+
 int main(int argc, char** argv) {
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
     reject([] { ApplicationHeapRegister_nid_no_patch(nullptr); });
@@ -188,6 +207,50 @@ int main(int argc, char** argv) {
     write(replacement, 0x40, &align);
     write(replacement, 0x48, &realign);
     write(replacement, 0x50, &posixAlign);
+#ifdef __linux__
+    if (argc > 1 && (std::strcmp(argv[1], "sdk") == 0 || std::strcmp(argv[1], "sdk-partial") == 0)) {
+        require(argc == 3);
+        void* sdk = dlopen(argv[2], RTLD_NOW | RTLD_GLOBAL);
+        require(sdk != nullptr && initializes == 1 && finalizes == 0);
+        if (std::strcmp(argv[1], "sdk-partial") == 0) {
+            reject([] { ApplicationHeapInitialize_nid_no_patch(process.data()); });
+            require(initializes == 1);
+            require(dlclose(sdk) == 0);
+            return 0;
+        }
+        const auto sdkAllocate = reinterpret_cast<void* (*)(std::size_t)>(dlsym(sdk, "gQX+4GDQjpM#guest"));
+        require(sdkAllocate != nullptr);
+        auto* live = static_cast<unsigned char*>(sdkAllocate(32));
+        require(live == reinterpret_cast<unsigned char*>(storage.data()));
+        std::memset(live, 0x5a, 32);
+        ApplicationHeapInitialize_nid_no_patch(process.data());
+        require(initializes == 1);
+        for (unsigned index = 0; index < 32; ++index) require(live[index] == 0x5a);
+        ApplicationHeapFree_nid_no_patch(live);
+        require(frees == 1);
+        require(ApplicationHeapAlign_nid_no_patch(64, 48) == storage.data());
+        require(lastSize == 48 && lastAlignment == 64);
+        ApplicationHeapFree_nid_no_patch(storage.data());
+        require(frees == 2);
+        require(dlclose(sdk) == 0 && finalizes == 0);
+        require(ApplicationHeapAllocate_nid_no_patch(24) == storage.data() && lastSize == 24);
+        ApplicationHeapFree_nid_no_patch(storage.data());
+        require(frees == 3 && initializes == 1);
+        return 0;
+    }
+    if (argc > 1 && std::strcmp(argv[1], "sdk-default") == 0) {
+        require(argc == 3);
+        void* sdk = dlopen(argv[2], RTLD_NOW | RTLD_GLOBAL);
+        require(sdk != nullptr && initializes == 1);
+        std::memset(replacement.data() + 0x10, 0, replacement.size() - 0x10);
+        ApplicationHeapInitialize_nid_no_patch(process.data());
+        void* pointer = ApplicationHeapAllocate_nid_no_patch(24);
+        require(pointer != nullptr && pointer != storage.data() && lastSize == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
+        require(frees == 0 && dlclose(sdk) == 0 && finalizes == 1);
+        return 0;
+    }
+#endif
     if (argc > 1 && std::strcmp(argv[1], "lazy") == 0) {
         installProcessParameters();
         require(initializes == 0);
@@ -196,6 +259,28 @@ int main(int argc, char** argv) {
         require(frees == 1);
         _init_env_nid_postfix();
         require(initializes == 1);
+        return 0;
+    }
+    if (argc > 1 && std::strcmp(argv[1], "scripting") == 0) {
+        installProcessParameters();
+        constexpr std::size_t blockBytes = 0x40000;
+        auto* first = static_cast<std::byte*>(scriptingGetMem_nid_postfix(0x1000, blockBytes));
+        require(initializes == 0 && lastSize == 0);
+        auto* second = static_cast<std::byte*>(scriptingGetMem_nid_postfix(0x1000, blockBytes));
+        require(initializes == 0 && lastSize == 0);
+        require(first != nullptr && second != nullptr && reinterpret_cast<std::uintptr_t>(first) % 0x1000 == 0 && reinterpret_cast<std::uintptr_t>(second) % 0x1000 == 0);
+        require(first + blockBytes <= second || second + blockBytes <= first);
+        std::memset(first, 0x5a, blockBytes);
+        std::memset(second, 0xa5, blockBytes);
+        require(first[blockBytes - 1] == std::byte{0x5a} && second[0] == std::byte{0xa5});
+        scriptingFreeMem_nid_postfix(first);
+        scriptingFreeMem_nid_postfix(second);
+        require(initializes == 0 && frees == 0);
+        _init_env_nid_postfix();
+        require(initializes == 1);
+        require(_Znwm_nid_postfix(40) == storage.data() && lastSize == 40);
+        _ZdlPv_nid_postfix(storage.data());
+        require(frees == 1);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "exit-order") == 0) {
@@ -218,7 +303,8 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < 63; ++i) require(pointer[i] == 0x5a);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(pointer, 11));
         for (unsigned i = 0; i < 11; ++i) require(pointer[i] == 0x5a);
-        require(ApplicationHeapReallocate_nid_no_patch(pointer, 0) == nullptr);
+        require(ApplicationHeapReallocate_nid_no_patch(pointer, 0) == pointer && ApplicationHeapUsableSize_nid_no_patch(pointer) == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
         ApplicationHeapFree_nid_no_patch(pointer);
@@ -232,14 +318,20 @@ int main(int argc, char** argv) {
         require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 9);
         for (unsigned i = 0; i < 9; ++i) require(pointer[i] == 0x3c);
         *__error_nid_postfix() = 0;
-        require(reallocf_nid_postfix(pointer, 0) == nullptr && *__error_nid_postfix() == 0);
+        require(reallocf_nid_postfix(pointer, 0) == pointer && *__error_nid_postfix() == 0 && ApplicationHeapUsableSize_nid_no_patch(pointer) == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
         reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
         pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 40));
         require(pointer != nullptr);
-        require(reallocf_nid_postfix(pointer, SIZE_MAX - 4096) == nullptr && *__error_nid_postfix() == 12);
+        *__error_nid_postfix() = 77;
+        require(reallocf_nid_postfix(pointer, SIZE_MAX - 4096) == nullptr && *__error_nid_postfix() == 77);
         reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
-        *__error_nid_postfix() = 0;
-        require(reallocf_nid_postfix(nullptr, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
+        pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 40));
+        require(pointer != nullptr);
+        require(reallocf_nid_postfix(pointer, SIZE_MAX - 0x1008f) == nullptr && *__error_nid_postfix() == 22);
+        reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
+        *__error_nid_postfix() = 77;
+        require(reallocf_nid_postfix(nullptr, SIZE_MAX) == nullptr && *__error_nid_postfix() == 77);
         void* empty = ApplicationHeapAllocate_nid_no_patch(0);
         require(empty != nullptr);
         ApplicationHeapFree_nid_no_patch(empty);
@@ -373,7 +465,7 @@ int main(int argc, char** argv) {
     require(directory == reinterpret_cast<char*>(storage.data()) && directory[0] == '/' && lastSize == std::strlen(directory) + 1);
     ApplicationHeapFree_nid_no_patch(directory);
     directory = getcwd_nid_postfix(nullptr, 200);
-    require(directory == reinterpret_cast<char*>(storage.data()) && lastSize == 200);
+    require(directory == reinterpret_cast<char*>(storage.data()) && lastSize == std::strlen(directory) + 1);
     ApplicationHeapFree_nid_no_patch(directory);
     fail = true;
     *__error_nid_postfix() = 0;
@@ -385,4 +477,24 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     require(getcwd_nid_postfix(nullptr, 0) == nullptr && *__error_nid_postfix() == 12);
     fail = false;
+    const auto beforeScripting = frees;
+    const auto sizeBeforeScripting = lastSize;
+    scriptingFreeMem_nid_postfix(nullptr);
+    auto* small = static_cast<std::byte*>(scriptingGetMem_nid_postfix(0, 31));
+    auto* aligned = static_cast<std::byte*>(scriptingGetMem_nid_postfix(64, 37));
+    require(small != nullptr && small != storage.data() && reinterpret_cast<std::uintptr_t>(small) % 16 == 0);
+    require(aligned != nullptr && aligned != storage.data() && reinterpret_cast<std::uintptr_t>(aligned) % 64 == 0);
+    std::memset(small, 0x5a, 31);
+    std::memset(aligned, 0xa5, 37);
+    require(small + 31 <= aligned || aligned + 37 <= small);
+    scriptingFreeMem_nid_postfix(small);
+    scriptingFreeMem_nid_postfix(aligned);
+    require(scriptingGetMem_nid_postfix(24, 80) == nullptr);
+    require(scriptingGetMem_nid_postfix(16, std::numeric_limits<std::size_t>::max()) == nullptr);
+    fail = true;
+    auto* unaffected = scriptingGetMem_nid_postfix(16, 64);
+    require(unaffected != nullptr);
+    scriptingFreeMem_nid_postfix(unaffected);
+    fail = false;
+    require(frees == beforeScripting && lastSize == sizeBeforeScripting);
 }

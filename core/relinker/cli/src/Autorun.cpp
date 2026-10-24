@@ -6,6 +6,7 @@
 #include <limits>
 #include <string>
 #include <cstdlib>
+#include <cerrno>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -59,10 +60,12 @@ int Autorun(const std::string& absPath, bool toWindows) {
     cmd += '\'';
     rawCode = std::system(cmd.c_str());
 
-    if (rawCode != -1) {
-        const int signal = rawCode & 0x7F;
-        exitCode = signal ? 128 + signal : (rawCode >> 8) & 0xFF;
+    if (rawCode == -1) {
+        const int runError = errno;
+        throw Domain::RelinkerException("Cannot run or wait for the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
     }
+    const int signal = rawCode & 0x7F;
+    exitCode = signal ? 128 + signal : (rawCode >> 8) & 0xFF;
     std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
 #endif
 

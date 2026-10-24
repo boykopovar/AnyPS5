@@ -37,12 +37,13 @@ struct ShaderInfo {
     bool dispatchThreadLimit = false;
     bool rasterPrimitive = false;
     bool layerExported = false;
+    bool smoothOffsetBarycentrics = false;
 
     bool operator==(const ShaderInfo& other) const = default;
 };
 
 [[nodiscard]] inline std::uint32_t WorkgroupMemoryStrideDwords(const ShaderInfo& info) {
-    return info.sharedMemoryBytes == 0u ? 0u : info.sharedMemoryBytes / 4u + 1u;
+    return info.sharedMemoryBytes == 0u ? 0u : (info.sharedMemoryBytes / 4u + 2u) & ~1u;
 }
 
 }

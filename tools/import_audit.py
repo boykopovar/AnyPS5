@@ -1,7 +1,7 @@
 import argparse
 import hashlib
 import json
-import re
+import os
 import struct
 import subprocess
 import sys
@@ -14,8 +14,6 @@ import progress
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
-NID = re.compile(r"[A-Za-z0-9+\-]{11}")
-NID_POSTFIX = "_nid_postfix"
 MODULE_SUFFIX = "#"
 CLASSES = ("implemented", "stub", "absent", "module")
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
@@ -136,7 +134,7 @@ def elf_program_dynamic_symbols(path, data):
     if symbol_count is None:
         raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
     symbol_offset = file_offset(symbol_address, symbol_count * symbol_size, "dynamic symbol table")
-    imports = set()
+    imports = {}
     exports = set()
     for index in range(symbol_count):
         name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * symbol_size, path, "dynamic symbol")
@@ -144,7 +142,7 @@ def elf_program_dynamic_symbols(path, data):
             continue
         symbol = cstring(data, string_offset + name, string_offset + string_size, path, "dynamic symbol name").split(MODULE_SUFFIX, 1)[0]
         if section_index == 0:
-            imports.add(symbol)
+            imports[symbol] = imports.get(symbol, True) and info >> 4 == 2
         elif info >> 4 in (1, 2, 10) and other & 3 in (0, 3):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
@@ -182,7 +180,7 @@ def elf_exports(path, data):
             binding, visibility = info >> 4, other & 3
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
-            names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name"))
+            names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
     return names
 
 
@@ -192,7 +190,7 @@ def elf_imports(path, data):
         imports, _, needed = elf_program_dynamic_symbols(path, data)
         return imports, needed
     sections = elf_sections(path, data)
-    symbols = set()
+    symbols = {}
     needed = set()
     for section in sections:
         kind, offset, size, link, entry = section[1], section[4], section[5], section[6], section[9]
@@ -202,10 +200,11 @@ def elf_imports(path, data):
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
-                name, _, _, index, _, _ = unpack("<IBBHQQ", data, offset + position, path, "dynamic symbol")
+                name, info, _, index, _, _ = unpack("<IBBHQQ", data, offset + position, path, "dynamic symbol")
                 if name and index == 0:
                     symbol = cstring(data, strings_offset + name, strings_offset + strings_size, path, "import name")
-                    symbols.add(symbol.split(MODULE_SUFFIX, 1)[0])
+                    symbol = symbol.split(MODULE_SUFFIX, 1)[0]
+                    symbols[symbol] = symbols.get(symbol, True) and info >> 4 == 2
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
@@ -220,7 +219,7 @@ def elf_imports(path, data):
     return symbols, needed
 
 
-def pe_exports(path, data):
+def pe_headers(path, data):
     header = unpack("<I", data, 0x3c, path, "PE header offset")[0]
     if unpack("<I", data, header, path, "PE signature")[0] != 0x4550:
         raise AuditError(f"{path}: invalid PE signature at 0x{header:x}")
@@ -233,12 +232,10 @@ def pe_exports(path, data):
     if optional_size < directory + 8:
         raise AuditError(f"{path}: PE optional header of {optional_size} bytes has no export directory")
     take(data, optional, optional_size, path, "PE optional header")
-    if unpack("<I", data, optional + directory - 4, path, "data directory count")[0] == 0:
+    count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
+    if count == 0:
         raise AuditError(f"{path}: PE file declares no data directories")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
-    rva, size = unpack("<II", data, optional + directory, path, "export data directory")
-    if not rva or size < 40:
-        raise AuditError(f"{path}: PE file has no export table")
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
     def to_offset(address, length):
@@ -255,6 +252,15 @@ def pe_exports(path, data):
             take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
             return raw_offset + relative, min(raw_offset + raw_size, len(data))
         raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+
+    return to_offset, optional + directory, count
+
+
+def pe_exports(path, data):
+    to_offset, directory, _ = pe_headers(path, data)
+    rva, size = unpack("<II", data, directory, path, "export data directory")
+    if not rva or size < 40:
+        raise AuditError(f"{path}: PE file has no export table")
 
     table = unpack("<IIHHIIIIIII", data, to_offset(rva, 40)[0], path, "export directory")
     function_count, name_count, functions_rva, names_rva, ordinals_rva = table[6:11]
@@ -285,6 +291,37 @@ def pe_exports(path, data):
             cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
         names.add(name)
     return names
+
+
+def pe_imports(path, data):
+    to_offset, directory, count = pe_headers(path, data)
+    if count < 2:
+        return set()
+    rva, size = unpack("<II", data, directory + 8, path, "import data directory")
+    if not rva:
+        return set()
+    if size < 20:
+        raise AuditError(f"{path}: PE import table of {size} bytes holds no import entry")
+    names = set()
+    for index in range(size // 20):
+        entry = unpack("<IIIII", data, to_offset(rva + index * 20, 20)[0], path, "import directory entry")
+        if entry == (0, 0, 0, 0, 0):
+            return names
+        if not entry[3]:
+            raise AuditError(f"{path}: PE import entry {index} names no library")
+        offset, limit = to_offset(entry[3], 1)
+        names.add(cstring(data, offset, limit, path, "import library name", "ASCII", "strict"))
+    raise AuditError(f"{path}: PE import table is not NUL-terminated")
+
+
+def read_host_imports(path, data=None):
+    if data is None:
+        data = path.read_bytes()
+    if data[:2] == b"MZ":
+        return pe_imports(path, data)
+    if data[:4] == b"\x7fELF":
+        return elf_imports(path, data)[1]
+    raise AuditError(f"{path}: neither ELF nor PE (first bytes {data[:4]!r})")
 
 
 def read_exports(path, data=None):
@@ -327,14 +364,70 @@ def built_libraries(directories):
     return {name: sorted(files) for name, files in exports.items()}, libraries
 
 
+def built_host_dependencies(directories):
+    """Map each built .prx to its imported .prx names and identify PE importers.
+
+    The loader resolves these host-to-host dependencies with LoadLibrary, so a
+    name with no file in --libs or --modules fails even when every game import
+    is implemented. System DLLs resolve through the OS and are not reported.
+    """
+    direct = {}
+    windows = set()
+    images = {}
+    for directory in directories:
+        for file in directory_files(directory, "*.prx"):
+            data = file.read_bytes()
+            digest = hashlib.sha256(data).digest()
+            if file.name in images:
+                previous, fingerprint = images[file.name]
+                if digest != fingerprint:
+                    raise AuditError(f"ambiguous built library {file.name}: {previous} and {file} have different contents")
+                continue
+            images[file.name] = (file, digest)
+            direct[file.name] = sorted({name for name in read_host_imports(file, data) if name.lower().endswith(".prx")})
+            if data[:2] == b"MZ":
+                windows.add(file.name)
+    return direct, windows
+
+
+def audit_host_dependencies(direct, libraries, modules, windows=()):
+    """Walk host imports transitively; list each missing library with its chain."""
+    available = set(libraries) | set(modules)
+    folded = defaultdict(set)
+    for name in available:
+        folded[name.lower()].add(name)
+    missing = []
+    for root in sorted(direct):
+        expanded = set()
+        stack = [(name, [root, name]) for name in reversed(direct[root])]
+        while stack:
+            name, chain = stack.pop()
+            if chain[-2] in windows:
+                matches = folded.get(name.lower(), ())
+                if len(matches) > 1:
+                    raise AuditError(f"ambiguous Windows host library {name}: {', '.join(sorted(matches))}")
+                name = next(iter(matches), name)
+                chain[-1] = name
+            if name not in available:
+                missing.append({"importer": root, "chain": chain})
+            elif name in direct and name not in expanded and name not in chain[1:-1]:
+                expanded.add(name)
+                for dependency in reversed(direct[name]):
+                    if dependency in chain:
+                        continue
+                    stack.append((dependency, chain + [dependency]))
+    return sorted(missing, key=lambda entry: (entry["importer"], entry["chain"]))
+
+
 def module_files(directory):
     for file in directory_files(directory, "*"):
         with file.open("rb") as handle:
             magic = handle.read(4)
-        if magic == b"\x7fELF":
+        if magic == b"\x7fELF" or (magic.startswith(b"MZ") and file.name.endswith(".guest.prx")):
             yield file
         elif (file.suffix.lower() in (".prx", ".sprx", ".suprx", ".debug_prx", ".elf")
-              or magic.startswith(b"MZ") or magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")):
+              or magic.startswith(b"MZ")
+              or magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")):
             raise AuditError(f"{file}: expected ELF module (first bytes {magic!r})")
 
 
@@ -352,18 +445,22 @@ def read_modules(directories):
                     raise AuditError(f"ambiguous guest module {file.name}: {previous} and {file} have different contents")
                 continue
             images[file.name] = (file, digest)
-            own = elf_imports(file, data)
-            symbols, needed = own
-            imports[file.name] = (sorted(symbols), sorted(needed))
-            for name in elf_exports(file, data):
-                exports[name].add(file.name)
+            if data.startswith(b"MZ"):
+                imports[file.name] = ([], [])
+                names = pe_exports(file, data)
+            else:
+                symbols, needed = elf_imports(file, data)
+                imports[file.name] = (sorted(symbols.items()), sorted(needed))
+                names = elf_exports(file, data)
+            for name in names:
+                exports[name.split(MODULE_SUFFIX, 1)[0]].add(file.name)
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
-def nid_of(name, aliases):
+def nids_of(name, aliases):
     if name in aliases:
         return aliases[name]
-    return nid_names.compute_nid(name.removesuffix(NID_POSTFIX))
+    return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
 
 
 def source_stubs(source):
@@ -373,16 +470,15 @@ def source_stubs(source):
     shared = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
-        for file in library.rglob("*.cpp"):
+        for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(errors="ignore")):
-                aliases[name] = nid
+                aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
         if "shared_sources" in group:
             shared[library.name] = group["shared_sources"]
-        done = {nid_of(name, aliases) for name in group["done_names"]}
+        done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
         for name in group["todo_names"]:
-            nid = nid_of(name, aliases)
-            if nid not in done:
+            for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
     for library, owner in shared.items():
         chain = [library]
@@ -409,9 +505,12 @@ def read_registry(path):
         if not isinstance(entry, dict) or not isinstance(entry.get("nid"), str) or not isinstance(entry.get("library"), str):
             raise AuditError(f"{path}: entry {index} needs string fields 'nid' and 'library': {entry!r}")
         nid = entry["nid"].split("#", 1)[0]
-        if not NID.fullmatch(nid):
-            raise AuditError(f"{path}: entry {index} has an invalid NID {entry['nid']!r}")
-        imports.append((nid, entry["library"], bool(entry.get("weak", False))))
+        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in nid):
+            raise AuditError(f"{path}: entry {index} has an invalid import symbol {entry['nid']!r}")
+        weak = entry.get("weak", False)
+        if not isinstance(weak, bool):
+            raise AuditError(f"{path}: entry {index} needs a boolean 'weak' field")
+        imports.append((nid, entry["library"], weak))
     return imports
 
 
@@ -436,6 +535,32 @@ def check_conservation(references, records):
         raise AuditError(f"conservation failed: {references} references in, {classified} classified, unknown classes {unknown}")
 
 
+MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
+
+
+def module_stem(name, fold):
+    if fold:
+        name = name.lower()
+    for suffix in MODULE_FILE_SUFFIXES:
+        if len(name) > len(suffix) and name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name
+
+
+class ModuleNames(set):
+    """Title module names, matched like the relinker: by the name without its .prx, .sprx, .suprx or .debug_prx suffix, and
+    ignoring case for Windows output."""
+
+    def __init__(self, names=(), fold=False):
+        super().__init__(names)
+        self.fold = fold
+        self.stems = {module_stem(name, fold) for name in self}
+
+    def __contains__(self, library):
+        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+
+
 def classify(nid, library, providers, stubs, modules):
     if library and library in modules:
         return "module"
@@ -446,39 +571,67 @@ def classify(nid, library, providers, stubs, modules):
     return "implemented"
 
 
-def audit(imports, exports, stubs, libraries, modules, module_imports=None, module_exports=None, *, needed_libraries=()):
+def audit(imports, exports, stubs, libraries, modules, module_imports=None, module_exports=None, *, needed_libraries=(), windows_libraries=()):
+    windows_names = {}
+    for library in windows_libraries:
+        windows_names.setdefault(library.casefold(), set()).add(library)
+
+    def system_library(name):
+        if name:
+            for suffix in (".sprx", ".suprx", ".debug_prx"):
+                if name.endswith(suffix):
+                    normalized = name.removesuffix(suffix) + ".prx"
+                    candidates = windows_names.get(normalized.casefold(), ())
+                    if normalized in candidates:
+                        return normalized
+                    if len(candidates) == 1:
+                        return next(iter(candidates))
+        return name
+
+    def available(name):
+        return name in modules or system_library(name) in libraries
+
     records = {}
     for nid, library, weak in imports:
         record = records.setdefault((nid, library), {"nid": nid, "library": library, "references": 0, "weak": weak})
         record["references"] += 1
-        record["weak"] = weak
+        record["weak"] = record["weak"] and weak
     for module, (symbols, needed) in (module_imports or {}).items():
-        for nid in symbols:
-            record = records.setdefault((nid, None, module), {"nid": nid, "library": None, "module": module, "references": 0, "weak": False})
+        for nid, weak in symbols:
+            record = records.setdefault((nid, None, module), {"nid": nid, "library": None, "module": module, "references": 0, "weak": weak})
             record["references"] += 1
+            record["weak"] = record["weak"] and weak
     for record in records.values():
         nid, library = record["nid"], record["library"]
         providers = exports.get(nid, [])
-        if library is None:
+        if not library:
             providers = sorted(set(providers) | set((module_exports or {}).get(nid, [])))
-        kind = classify(nid, library, providers, stubs, modules)
+        resolved_nid = nid
+        record["symbol_mismatch"] = False
+        if not providers:
+            resolved_nid = nid_names.compute_nid(nid)
+            providers = exports.get(resolved_nid, [])
+            record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
+            if not library:
+                providers = sorted(set(providers) | set((module_exports or {}).get(resolved_nid, [])))
+        kind = classify(resolved_nid, library, providers, stubs, modules)
         record["class"] = kind
         record["providers"] = providers
-        record["library_mismatch"] = kind in ("implemented", "stub") and bool(library) and library not in providers and "libc.prx" not in providers
-        record["name"] = next((stubs[(provider, nid)] for provider in providers if (provider, nid) in stubs), None) if kind == "stub" else None
+        record["library_mismatch"] = kind in ("implemented", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
+        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind == "stub" else None
     ordered = sorted(records.values(), key=lambda record: (record["class"], record["library"] or "", record.get("module") or "", record["nid"]))
     check_conservation(len(imports) + sum(len(symbols) for symbols, _ in (module_imports or {}).values()), ordered)
     missing = defaultdict(int)
     for library in needed_libraries:
-        if library not in libraries and library not in modules:
+        if not available(library):
             missing[library] = 0
     for record in ordered:
         library = record["library"]
-        if library and library not in libraries and library not in modules:
+        if library and not available(library):
             missing[library] += 1
     for _, needed in (module_imports or {}).values():
         for library in needed:
-            if library not in libraries and library not in modules:
+            if not available(library):
                 missing[library] += 1
     return ordered, dict(sorted(missing.items()))
 
@@ -490,7 +643,7 @@ def current_stop(imports, records):
         if weak:
             continue
         record = classes.get((nid, library))
-        if record is not None and record["class"] == "absent":
+        if record is not None and (record["class"] == "absent" or record["symbol_mismatch"]):
             return record
     return None
 
@@ -538,7 +691,7 @@ def git_stamp(source=ROOT):
     return commit, dirty
 
 
-def summarize(records, references, missing):
+def summarize(records, references, missing, missing_hosts=()):
     counts = {kind: sum(1 for record in records if record["class"] == kind) for kind in CLASSES}
     by_references = {kind: sum(record["references"] for record in records if record["class"] == kind) for kind in CLASSES}
     return {
@@ -547,7 +700,9 @@ def summarize(records, references, missing):
         "unique_by_class": counts,
         "references_by_class": by_references,
         "missing_libraries": missing,
+        "missing_host_dependencies": [{"importer": entry["importer"], "chain": list(entry["chain"])} for entry in missing_hosts],
         "library_mismatch": sum(1 for record in records if record["library_mismatch"]),
+        "symbol_mismatch": sum(1 for record in records if record["symbol_mismatch"]),
     }
 
 
@@ -557,14 +712,34 @@ def label(record):
     else:
         mark = "" if record.get("name_verified", True) else " (name does not hash to this NID)"
         text = f"{record['nid']}  {record['name']}{mark}"
+    if record["weak"]:
+        text += "  (weak import)"
     return f"{text}  (imported by {record['module']})" if record.get("module") else text
 
 
-def render(summary, records, missing, stops):
+def locate_missing(names, roots, depth=4):
+    wanted = {name.lower(): name for name in names}
+    found = {}
+    for root in roots:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        base = len(root.parts)
+        for directory, directories, files in os.walk(root):
+            if len(Path(directory).parts) - base >= depth:
+                directories[:] = []
+            for file in files:
+                name = wanted.get(file.lower())
+                if name is not None and name not in found:
+                    found[name] = Path(directory)
+    return found
+
+
+def render(summary, records, missing, stops, missing_hosts=(), located=None):
     lines = [f"{summary['references']} references, {summary['unique_imports']} unique imports"]
     for kind in CLASSES:
         lines.append(f"  {kind:<12}{summary['unique_by_class'][kind]:>6} imports  {summary['references_by_class'][kind]:>6} references")
-    for title, kind in (("Absent: no built library exports these, so the loader fails", "absent"), ("Stub: exported but throws when called", "stub")):
+    for title, kind in (("Absent: no built library exports these", "absent"), ("Stub: exported but throws when called", "stub")):
         selected = [record for record in records if record["class"] == kind]
         if selected:
             lines.append("")
@@ -575,6 +750,10 @@ def render(summary, records, missing, stops):
                     current = record["library"]
                     lines.append(f"  [{current or 'library not named'}]")
                 lines.append(f"    {label(record)}")
+    mismatched = [record for record in records if record["symbol_mismatch"]]
+    if mismatched:
+        lines.extend(["", f"Qualified import names exported only as their NID ({len(mismatched)}): the loader cannot resolve these names"])
+        lines.extend(f"  {label(record)} -> {nid_names.compute_nid(record['nid'])}" for record in mismatched)
     if stops:
         lines.append("")
         lines.append("Current stop (first unresolved import, in registry order)")
@@ -587,6 +766,12 @@ def render(summary, records, missing, stops):
         lines.extend(f"  {library}: {count} imports" for library, count in missing.items())
         if any(count == 0 for count in missing.values()):
             lines.append("  Libraries with 0 imports are declared dependencies; Windows can skip them if no import needs them")
+        for library, directory in sorted((located or {}).items()):
+            lines.append(f"  {library} is in {directory}: pass that directory with --modules")
+    if missing_hosts:
+        lines.append("")
+        lines.append(f"Host dependencies with no file in --libs or --modules ({len(missing_hosts)})")
+        lines.extend(f"  Importer: {entry['importer']} Chain: {' -> '.join(entry['chain'])}" for entry in missing_hosts)
     if summary["library_mismatch"]:
         lines.append("")
         lines.append(f"{summary['library_mismatch']} imports are exported only by a library other than the one they name: they resolve on Linux and can fail on Windows")
@@ -601,6 +786,8 @@ def main(argv=None):
     parser.add_argument("--source", default=str(PRX), help="core/libs/prx tree used to find throwing stubs (default: this repository's)")
     parser.add_argument("--names", help="aerolib.csv style file (NID, name per line) used to name absent imports")
     parser.add_argument("--json", type=Path, help="write the full result to this file")
+    parser.add_argument("--strict-stubs", action="store_true",
+                        help="also fail when a referenced import resolves to a throwing stub")
     parser.add_argument("--strict-providers", action="store_true", help="fail when a named import is provided only by another library; retains the existing libc and title-module rules")
     args = parser.parse_args(argv)
     try:
@@ -618,11 +805,16 @@ def main(argv=None):
         imports = [entry for _, entries in registries for entry in entries]
         needed = sorted({library for path in dependency_registries for library in read_needed_registry(path)})
         exports, libraries = built_libraries(args.libs)
+        host_dependencies, windows = built_host_dependencies(args.libs)
         module_imports, module_exports = read_modules(args.modules)
-        records, missing = audit(imports, exports, source_stubs(args.source), libraries, set(module_imports), module_imports, module_exports, needed_libraries=needed)
+        modules = set(module_imports)
+        modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
+        modules = ModuleNames(modules, fold=bool(windows))
+        records, missing = audit(imports, exports, source_stubs(args.source), libraries, modules, module_imports, module_exports, needed_libraries=needed, windows_libraries=windows)
+        missing_hosts = audit_host_dependencies(host_dependencies, libraries, modules, windows)
         if args.names:
             attach_names(records, load_names(args.names))
-        summary = summarize(records, sum(record["references"] for record in records), missing)
+        summary = summarize(records, sum(record["references"] for record in records), missing, missing_hosts)
         stops = [{"registry": str(path), "stop": current_stop(entries, records)} for path, entries in registries]
         if args.json:
             commit, dirty = git_stamp(Path(args.source))
@@ -638,11 +830,13 @@ def main(argv=None):
     except OSError as error:
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
-    print(render(summary, records, missing, stops))
-    return 1 if summary["unique_by_class"]["absent"] or missing or (args.strict_providers and summary["library_mismatch"]) else 0
+    located = locate_missing(missing, {path.resolve().parent for path in args.registries}) if missing else None
+    print(render(summary, records, missing, stops, missing_hosts, located))
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

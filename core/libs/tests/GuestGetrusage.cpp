@@ -14,6 +14,7 @@ struct ResourceUsage {
     std::int64_t rest[14];
 };
 extern "C" int APS5_VABI getrusage_nid_postfix(int who, ResourceUsage* usage);
+extern "C" int* APS5_VABI __error_nid_postfix();
 static void Require(bool value) { if (!value) std::abort(); }
 static std::int64_t CpuMicros(int who) {
     ResourceUsage usage{};
@@ -28,7 +29,22 @@ static void SpinUntil(int who, std::int64_t micros) {
         Require(std::chrono::steady_clock::now() < deadline);
     }
 }
+static void RequireFailure(int who, ResourceUsage* usage, int error) {
+    *__error_nid_postfix() = 0;
+    Require(getrusage_nid_postfix(who, usage) == -1);
+    Require(*__error_nid_postfix() == error);
+}
 int main() {
+    ResourceUsage untouched;
+    std::memset(&untouched, 0x5a, sizeof(untouched));
+    const ResourceUsage pattern = untouched;
+    RequireFailure(2, &untouched, 22);
+    RequireFailure(-2, &untouched, 22);
+    Require(std::memcmp(&untouched, &pattern, sizeof(untouched)) == 0);
+    RequireFailure(7, nullptr, 22);
+    RequireFailure(0, nullptr, 14);
+    RequireFailure(1, nullptr, 14);
+    RequireFailure(-1, nullptr, 14);
     ResourceUsage children;
     std::memset(&children, 0xff, sizeof(children));
     Require(getrusage_nid_postfix(-1, &children) == 0);

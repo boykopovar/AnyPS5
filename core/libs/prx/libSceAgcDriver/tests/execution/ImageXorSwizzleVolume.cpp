@@ -27,6 +27,7 @@ constexpr std::uint32_t Height = 24;
 constexpr std::uint32_t Depth = 20;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type3D = 10;
+constexpr std::uint32_t TileS4KBX = 0x15;
 constexpr std::uint32_t TileZ64KBX = 0x18;
 constexpr std::uint32_t TileS64KBX = 0x19;
 constexpr std::uint32_t TileD64KBX = 0x1a;
@@ -79,6 +80,7 @@ void FillTexels(std::uint32_t tileMode) {
     Require(geometry.guestBytes <= Texels.size(), "volume does not fit the test allocation");
     const auto* equation = FindTextureSwizzleEquation(geometry.thick ? 0x100u | XorSwizzleMode(descriptor.tileMode) : XorSwizzleMode(descriptor.tileMode), 4u);
     Require(equation != nullptr, "volume swizzle equation is missing");
+    const auto blockBytes = ThinBlockLayout(descriptor.tileMode, 4u)[0];
     const auto& mip = geometry.mips.at(0);
     const auto block = geometry.thick ? ThickBlockExtent(descriptor.tileMode, 4u) : std::array<std::uint32_t, 3>{ThinBlockLayout(descriptor.tileMode, 4u)[1], ThinBlockLayout(descriptor.tileMode, 4u)[2], 1u};
     for (std::uint32_t z = 0; z < Depth; ++z) {
@@ -86,7 +88,7 @@ void FillTexels(std::uint32_t tileMode) {
             for (std::uint32_t x = 0; x < Width; ++x) {
                 auto offset = geometry.GuestLayerOffset(z) + mip.tiledOffset;
                 if (mip.tail) offset += EquationOffset(*equation, x + mip.tailX, y + mip.tailY, z);
-                else offset += (static_cast<std::uint64_t>(y / block[1]) * mip.blocksPerRow + x / block[0]) * 65536u + EquationOffset(*equation, x, y, z);
+                else offset += (static_cast<std::uint64_t>(y / block[1]) * mip.blocksPerRow + x / block[0]) * blockBytes + EquationOffset(*equation, x, y, z);
                 const auto texel = Texel(x, y, z);
                 std::copy(texel.begin(), texel.end(), Texels.begin() + static_cast<std::ptrdiff_t>(offset));
             }
@@ -145,6 +147,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillInput();
+        Run(*device, TileS4KBX, "thick SW_4KB_S_X volume");
         Run(*device, TileS64KBX, "thick SW_64KB_S_X volume");
         Run(*device, TileD64KBX, "thick SW_64KB_D_X volume");
         Run(*device, TileZ64KBX, "thin SW_64KB_Z_X volume");

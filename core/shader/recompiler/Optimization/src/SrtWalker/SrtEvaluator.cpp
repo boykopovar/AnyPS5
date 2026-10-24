@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -83,7 +84,7 @@ bool BasicEvaluator<TNode>::EvaluateWide(TNode value, std::uint64_t& result) {
         return false;
     }
     const TNode& inst = value;
-    if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && inst.Argument(0) == _activeMask) {
+    if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
         return EvaluateWide(inst.Argument(1), result);
     }
     if (inst.Id() < _dense.Size()) {
@@ -194,7 +195,18 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     std::uint64_t low = 0;
     std::uint64_t high = 0;
     std::uint64_t offset = 0;
-    if (!Arg(handle, 0, low) || !Arg(handle, 1, high) || !Arg(inst, 1, offset)) {
+    std::int32_t origin = -1;
+    const auto baseWord = [&] {
+        const TNode source = handle.Argument(0);
+        if (_runtime.userDataUse == nullptr || source.HasImmediate() || source.Opcode() != IrOpcode::GetUserData) return Arg(handle, 0, low);
+        const auto reg = RegIndex(static_cast<ScalarReg>(source.Argument(0).RegisterIndex()));
+        if (reg < _program.userDataBase || reg - _program.userDataBase >= _runtime.userData.size() || reg - _program.userDataBase >= SrtUserDataUse::TrackedWords) return Arg(handle, 0, low);
+        origin = static_cast<std::int32_t>(reg - _program.userDataBase);
+        low = _runtime.userData[reg - _program.userDataBase];
+        _runtime.userDataUse->asBase |= std::uint64_t {1} << origin;
+        return true;
+    };
+    if (!baseWord() || !Arg(handle, 1, high) || !Arg(inst, 1, offset)) {
         return false;
     }
     const auto base = ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
@@ -229,6 +241,7 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
         result = 0;
         return true;
     }
+    if (_runtime.userDataUse != nullptr) _runtime.userDataUse->reads.emplace_back(address, origin);
     if (_inaccessible != nullptr && _runtime.accessible != nullptr && !_runtime.accessible(_runtime.userContext, address, sizeof(std::uint32_t)) && LoadedFromMemory(*handle.Value())) {
         *_inaccessible = {inst.Value(), address};
         return false;
@@ -260,6 +273,9 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::FPTrunc32:
         case IrOpcode::FPIsNan32:
         case IrOpcode::BitwiseNot32:
+        case IrOpcode::BitCount32:
+        case IrOpcode::FindILsb32:
+        case IrOpcode::FindUMsb32:
         case IrOpcode::LogicalNot: return 1u;
         case IrOpcode::CompositeConstructU64:
         case IrOpcode::IAdd32:
@@ -273,6 +289,8 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::FPMul32:
         case IrOpcode::FPOrdLessThanEqual32:
         case IrOpcode::FPOrdGreaterThanEqual32:
+        case IrOpcode::FPUnordLessThanEqual32:
+        case IrOpcode::FPUnordGreaterThanEqual32:
         case IrOpcode::BitwiseAnd32:
         case IrOpcode::BitwiseAnd64:
         case IrOpcode::BitwiseOr32:
@@ -315,9 +333,13 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
     }
     switch (value.Opcode()) {
         case IrOpcode::GetUserData:
-        case IrOpcode::GetShaderBase:
-        case IrOpcode::ReadFirstLane:
-        case IrOpcode::ReadConst: return true;
+        case IrOpcode::GetShaderBase: return true;
+        case IrOpcode::ReadFirstLane: return value.ArgumentCount() < 2 ? std::optional(false) : std::nullopt;
+        case IrOpcode::ReadConst: {
+            const auto* slot = value.ArgumentCount() < 2 || value.Argument(1) == nullptr ? nullptr : value.Argument(1)->Resolve();
+            if (slot == nullptr || !slot->HasImmediate() || slot->Type() != IrType::U32 || slot->ImmediateU32() >= program.srtReads.size()) return false;
+            return std::nullopt;
+        }
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value);
         case IrOpcode::Phi: return std::nullopt;
@@ -342,10 +364,27 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
 }
 
 template<typename TNode>
-bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value) {
+bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask) {
+    std::unordered_set<const IrValue*> firstLanes;
+    return MayEvaluate(program, value, activeMask, firstLanes);
+}
+
+template<typename TNode>
+bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask, std::unordered_set<const IrValue*>& firstLanes) {
     std::unordered_map<const IrValue*, bool> known;
-    const auto requirements = [&program](IrValue* current) {
+    const auto takesActiveArm = [activeMask](const IrValue* current) {
+        return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
+    };
+    const auto requirements = [&program, &takesActiveArm](IrValue* current) {
         std::vector<IrValue*> required;
+        if (takesActiveArm(current)) {
+            required.push_back(current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr);
+            return required;
+        }
+        if (current->Opcode() == IrOpcode::ReadConst) {
+            required.push_back(program.srtReads[current->Argument(1)->Resolve()->ImmediateU32()].value);
+            return required;
+        }
         if (current->IsPhi()) {
             required.push_back(ResolveInvariantPhi(program, current));
             return required;
@@ -372,15 +411,28 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
         }
         return required;
     };
+    std::unordered_set<const IrValue*> expanding;
     std::vector<std::pair<IrValue*, bool>> pending{{value->Resolve(), false}};
     while (!pending.empty()) {
         const auto [current, expanded] = pending.back();
         pending.pop_back();
         if (known.contains(current)) continue;
-        if (const auto alone = evaluableAlone(program, *current)) {
+        if (current->Opcode() == IrOpcode::ReadFirstLane && current->ArgumentCount() >= 2) {
+            auto* source = current->Argument(0) != nullptr ? current->Argument(0)->Resolve() : nullptr;
+            const auto* mask = current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr;
+            if (!firstLanes.insert(current).second) {
+                known.emplace(current, false);
+                continue;
+            }
+            known.emplace(current, source != nullptr && MayEvaluate(program, source, mask, firstLanes));
+            firstLanes.erase(current);
+            continue;
+        }
+        if (const auto alone = takesActiveArm(current) ? std::nullopt : evaluableAlone(program, *current)) {
             known.emplace(current, *alone);
             continue;
         }
+        if (!expanded && !expanding.insert(current).second) continue;
         const auto required = requirements(current);
         if (!expanded) {
             pending.emplace_back(current, true);
@@ -389,13 +441,59 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             }
             continue;
         }
-        known.emplace(current, std::ranges::all_of(required, [&known](const IrValue* argument) { return argument != nullptr && known.at(argument); }));
+        known.emplace(current, std::ranges::all_of(required, [&known](const IrValue* argument) {
+            const auto found = argument != nullptr ? known.find(argument) : known.end();
+            return found != known.end() && found->second;
+        }));
     }
     return known.at(value->Resolve());
 }
 
 template<typename TNode>
+bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value) {
+    if (value == nullptr) return false;
+    if (MayEvaluate(program, value)) return true;
+    value = value->Resolve();
+    const auto decides = [&program, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index)); };
+    switch (value->Opcode()) {
+        case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
+        case IrOpcode::LogicalAnd:
+        case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+        default: return false;
+    }
+}
+
+template<typename TNode>
+EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const IrValue& value) {
+    if (value.IsIdentity()) {
+        return EvaluatorReads::Arguments;
+    }
+    if (value.HasImmediate()) {
+        return EvaluatorReads::Nothing;
+    }
+    switch (value.Opcode()) {
+        case IrOpcode::LoadAddressU32:
+        case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x2:
+        case IrOpcode::IAddCarry32:
+        case IrOpcode::GetUserData:
+        case IrOpcode::GetShaderBase:
+        case IrOpcode::Phi:
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
+        default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
+    }
+}
+
+template<typename TNode>
 bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& result) {
+    if (Reads(_program, *inst.Value()) == EvaluatorReads::Nothing) {
+        return false;
+    }
     std::uint64_t a = 0;
     std::uint64_t b = 0;
     std::uint64_t c = 0;
@@ -407,14 +505,20 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             if (reg < _program.userDataBase || reg - _program.userDataBase >= _runtime.userData.size()) {
                 return false;
             }
+            if (_runtime.userDataUse != nullptr) _runtime.userDataUse->asValue |= reg - _program.userDataBase < SrtUserDataUse::TrackedWords ? std::uint64_t {1} << (reg - _program.userDataBase) : ~std::uint64_t {0};
             result = _runtime.userData[reg - _program.userDataBase];
             return true;
         }
         case IrOpcode::GetShaderBase: result = _runtime.shaderBase; return true;
         case IrOpcode::Phi: return EvaluatePhi(inst, result);
         case IrOpcode::ReadFirstLane: {
+            for (const auto* outer = this; outer != nullptr; outer = outer->_outer) {
+                if (outer->_firstLane == inst.Value()) return false;
+            }
             const TNode mask = inst.Argument(1);
             BasicEvaluator active(_program, _runtime, _cleanFlatSlots, _cleanEvaluator, &mask);
+            active._outer = this;
+            active._firstLane = inst.Value();
             active.ReportInaccessibleReads(_inaccessible);
             active.ReportNullRootReads(_nullRoots);
             return active.EvaluateWide(inst.Argument(0), result);
@@ -540,6 +644,18 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
                 return true;
             }
             return false;
+        case IrOpcode::FPUnordLessThanEqual32:
+            if (binary()) {
+                result = !(Float32(a) > Float32(b)) ? 1u : 0u;
+                return true;
+            }
+            return false;
+        case IrOpcode::FPUnordGreaterThanEqual32:
+            if (binary()) {
+                result = !(Float32(a) < Float32(b)) ? 1u : 0u;
+                return true;
+            }
+            return false;
         case IrOpcode::BitwiseAnd32:
             if (binary()) {
                 result = static_cast<std::uint32_t>(a & b);
@@ -567,6 +683,26 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
         case IrOpcode::BitwiseNot32:
             if (Arg(inst, 0, a)) {
                 result = ~static_cast<std::uint32_t>(a);
+                return true;
+            }
+            return false;
+        case IrOpcode::BitCount32:
+            if (Arg(inst, 0, a)) {
+                result = static_cast<std::uint32_t>(std::popcount(static_cast<std::uint32_t>(a)));
+                return true;
+            }
+            return false;
+        case IrOpcode::FindILsb32:
+            if (Arg(inst, 0, a)) {
+                const auto val = static_cast<std::uint32_t>(a);
+                result = val == 0u ? 0xffffffffu : static_cast<std::uint32_t>(std::countr_zero(val));
+                return true;
+            }
+            return false;
+        case IrOpcode::FindUMsb32:
+            if (Arg(inst, 0, a)) {
+                const auto val = static_cast<std::uint32_t>(a);
+                result = val == 0u ? 0xffffffffu : static_cast<std::uint32_t>(31u - std::countl_zero(val));
                 return true;
             }
             return false;
@@ -695,17 +831,22 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         case IrOpcode::LogicalAnd:
-            if (binary()) {
-                result = (a != 0u) && (b != 0u) ? 1u : 0u;
+        case IrOpcode::LogicalOr: {
+            const bool decisive = inst.Opcode() == IrOpcode::LogicalOr;
+            const bool first = Arg(inst, 0, a);
+            if (first && (a != 0u) == decisive) {
+                result = decisive ? 1u : 0u;
                 return true;
             }
-            return false;
-        case IrOpcode::LogicalOr:
-            if (binary()) {
-                result = (a != 0u) || (b != 0u) ? 1u : 0u;
+            const bool second = Arg(inst, 1, b);
+            if (second && (b != 0u) == decisive) {
+                result = decisive ? 1u : 0u;
                 return true;
             }
-            return false;
+            if (!first || !second) return false;
+            result = decisive ? 0u : 1u;
+            return true;
+        }
         case IrOpcode::LogicalXor:
             if (binary()) {
                 result = (a != 0u) != (b != 0u) ? 1u : 0u;

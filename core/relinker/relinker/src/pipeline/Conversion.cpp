@@ -29,6 +29,7 @@
 #include <sstream>
 #include <bit>
 #include <domain/InputProgress.hpp>
+#include <relinker/patching/GamePatch.hpp>
 
 namespace Relinker {
 
@@ -45,16 +46,28 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (!input.Modules.empty() && input.ModuleRoot.empty()) throw Domain::RelinkerException("Module root is required");
     if (options.WindowsDiagnostics && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Windows diagnostics require the Windows target");
     if (options.LinuxFixedBase && options.Target != TargetSystem::Linux) throw Domain::RelinkerException("A fixed Linux base requires the Linux target");
+    if (options.MacosFixedBase && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("A fixed macOS base requires the macOS target");
     const bool windows = options.Target == TargetSystem::Windows;
     const bool macos = options.Target == TargetSystem::MacOs;
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 0, 1});
     auto sourceBytes = std::move(input.Executable);
+    std::vector<GamePatch::AppliedPatch> appliedPatches;
+    std::vector<GamePatch::PatchedRange> patchedRanges;
+    if (!options.Patches.empty()) {
+        auto patched = GamePatch::PatchTarget(sourceBytes, options.TargetName, options.Patches);
+        patchedRanges = std::move(patched.Ranges);
+        for (auto& patch : patched.Applied) {
+            inputProgress.Message(GamePatch::FormatApplied(patch) + "\n");
+            appliedPatches.push_back(std::move(patch));
+        }
+    }
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
         auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
+        GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
         std::map<std::string, std::size_t> stubsByName;
         const auto counted = [](const std::string& name) { return name == "VRSQRTPS" || name == "VRCPPS" || name == "256-bit store" || name == "scalar compare"; };
         for (const auto& report : converted.Reports) {
@@ -92,6 +105,18 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             throw Domain::RelinkerException("Relinker patch exceeds source image", patch.Offset);
         for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
     }
+    GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.RelinkPatches = result.Patches, .RelaData = result.DynamicSection.RelaData, .RelaPltData = result.DynamicSection.RelaPltData});
+
+    if (!options.Patches.empty()) {
+        for (auto& module : input.Modules) {
+            auto patched = GamePatch::PatchTarget(module.Bytes, GamePatch::ModuleTargetName(module.Path, input.ModuleRoot), options.Patches);
+            module.PatchedRanges = std::move(patched.Ranges);
+            for (auto& patch : patched.Applied) {
+                inputProgress.Message(GamePatch::FormatApplied(patch) + "\n");
+                appliedPatches.push_back(std::move(patch));
+            }
+        }
+    }
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
     if (!input.Modules.empty()) {
@@ -100,21 +125,27 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
 
+    std::optional<std::uint64_t> linuxBase;
+    if (!windows && !macos)
+        linuxBase = options.LinuxFixedBase || options.LazyBinding ? options.LinuxFixedBase : std::optional<std::uint64_t>(Elfpatcher::Linux::DefaultFixedBase);
+    if (!windows && !macos && options.LazyBinding)
+        inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>();
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); });
     } else if (windows) {
-        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports);
+        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); });
     } else {
         patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),
             std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
-                std::make_shared<Elfpatcher::SegmentFilter>(),
+                std::make_shared<Elfpatcher::SegmentFilter>(options.LazyBinding),
                 byteWriter
             ),
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
             byteWriter,
-            options.LinuxFixedBase
+            linuxBase,
+            options.TraceImports
         );
     }
 
@@ -131,7 +162,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::string diagnostics;
     if (windows) diagnostics = std::static_pointer_cast<Elfpatcher::Windows::WindowsPePatcher>(patcher)->GetDiagnostics();
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 1, 1});
-    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics)};
+    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics), std::move(appliedPatches), linuxBase};
 } catch (Domain::RelinkerException& error) {
     if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
     throw;

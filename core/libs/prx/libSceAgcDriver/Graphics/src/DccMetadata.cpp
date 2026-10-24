@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -55,10 +56,6 @@ DccKeys ByteKeys(std::uint8_t key) {
         case 0xff: return DccKeys::Uncompressed;
         default: return DccKeys::Mixed;
     }
-}
-
-bool SingleKeysReadable(const GuestTextureResource& resource) {
-    return KeyBytes % BytesPerElement(resource.format) == 0;
 }
 
 void ExpandSingleBlocks(std::span<std::byte> bytes, std::size_t elementBytes) {
@@ -162,7 +159,7 @@ struct GpuKeyStore {
 };
 
 struct KeyStoreMemo {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::vector<GpuKeyStore> entries;
     const Recorder* recorder = nullptr;
 };
@@ -234,7 +231,7 @@ void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
 bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uint64_t begin, std::size_t count) {
     const auto* import = HostImportFor(context, begin, count);
     if (import == nullptr) return false;
-    const VkDeviceSize first = begin - import->base;
+    const VkDeviceSize first = HostImportOffset(*import, begin);
     const VkDeviceSize last = first + count;
     const VkDeviceSize fillBegin = std::min((first + 3) & ~VkDeviceSize{3}, last);
     const VkDeviceSize fillEnd = std::max(last & ~VkDeviceSize{3}, fillBegin);
@@ -502,9 +499,9 @@ DccKeys readDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized
             return DccKeys::Mixed;
         }
         PublishShadow(metaAddress, count, PublishScope::Whole, PublishReason::Keys);
-        if (auto* recorder = Recorder::Active()) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count)) {
             Recorder::CountSync(2);
-            recorder->Sync();
+            recorder->SyncThrough(metaAddress, count);
         }
     }
     const auto* keys = reinterpret_cast<const std::uint8_t*>(metaAddress);
@@ -527,7 +524,7 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
     if (IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
     std::byte probe[16]{};
     if (!IsDccClear(keys) || !FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
-        static std::mutex reportedMutex;
+        static AgcDriver::Mutex reportedMutex;
         static std::set<std::pair<std::uint64_t, int>> reported;
         std::lock_guard lock(reportedMutex);
         if (reported.size() < 32 && reported.insert({resource.baseAddress, static_cast<int>(keys)}).second) std::fprintf(stderr, "[gpu] texture 0x%llx (format %u) has %s DCC keys at 0x%llx; its texels are read as stored\n", static_cast<unsigned long long>(resource.baseAddress), resource.format, DccKeysName(keys), static_cast<unsigned long long>(resource.dccAddress));
@@ -580,6 +577,25 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, st
     return currentDccKeys(metaAddress, keyCount, memoized);
 }
 
+std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
+    if (GuestMemory::GpuMutex().HeldByThisThread()) {
+        if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && (recorder->PendingWriteOverlaps(address, bytes) || AnyShadowedOverlaps(address, bytes))) {
+            const auto landed = KeysAfterPendingWrites(*recorder, address, bytes);
+            if (landed.mixed) return std::nullopt;
+            if (!landed.unknown && landed.value >= 0 && !AnyShadowedOverlaps(address, bytes)) return static_cast<std::uint8_t>(landed.value);
+            Recorder::CountSync(2);
+            recorder->Sync();
+        }
+    }
+    std::vector<std::byte> data(bytes);
+    GuestMemory::Read(address, data);
+    const auto first = data.front();
+    if (!std::all_of(data.begin(), data.end(), [&](std::byte value) { return value == first; })) return std::nullopt;
+    return std::to_integer<std::uint8_t>(first);
+}
+
 std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
     const auto count = DccKeyBytes(surfaceBytes);
     if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return std::nullopt;
@@ -590,6 +606,22 @@ std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint6
 
 bool IsDccClear(DccKeys keys) {
     return keys == DccKeys::Clear0000 || keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111 || keys == DccKeys::ClearRegister;
+}
+
+std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
+    if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+    if (AnyShadowedOverlaps(address, bytes)) return std::nullopt;
+    GuestMemory::FlushGpuWrites(address, bytes);
+    auto* recorder = GuestMemory::GpuMutex().HeldByThisThread() ? Recorder::Active() : nullptr;
+    if (recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
+        const auto landed = KeysAfterPendingWrites(*recorder, address, bytes);
+        if (landed.mixed || landed.unknown || landed.value < 0) return std::nullopt;
+        return static_cast<std::uint8_t>(landed.value);
+    }
+    const auto* data = reinterpret_cast<const std::uint8_t*>(address);
+    if (!AllKeysEqual(data + 1, bytes - 1, data[0])) return std::nullopt;
+    return data[0];
 }
 
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
@@ -633,7 +665,10 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
         return true;
     }
     Layout layout{};
-    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) return false;
+    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) {
+        std::fill(bytes.begin(), bytes.end(), std::byte{0});
+        return false;
+    }
     const bool color = keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111;
     const bool alpha = keys == DccKeys::Clear0001 || keys == DccKeys::Clear1111;
     const int alphaChannel = layout.channels == 3 ? -1 : alphaOnMsb ? static_cast<int>(layout.channels) - 1 : 0;
@@ -648,7 +683,9 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
             if (((value >> i) & 1u) != 0) element[bit / 8u] |= static_cast<std::byte>(1u << (bit % 8u));
         }
     }
-    for (std::size_t offset = 0; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
+    std::size_t offset = 0;
+    for (; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
+    std::fill(bytes.begin() + offset, bytes.end(), std::byte{0});
     return true;
 }
 
@@ -743,6 +780,44 @@ void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std:
     if (keys == DccKeys::ClearSingle) ExpandSingleBlocks(bytes, BytesPerElement(resource.format));
 }
 
+bool SingleKeysReadable(const GuestTextureResource& resource) {
+    return KeyBytes % BytesPerElement(resource.format) == 0;
+}
+
+bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element) {
+    if (!SingleKeysReadable(resource)) return false;
+    const auto bytes = BytesPerElement(resource.format);
+    if (element.size() < bytes) return false;
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    GuestMemory::ReadCommitted(resource.baseAddress, element.subspan(0, bytes));
+    return true;
+}
+
+bool ProvedSingleUniform(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof) {
+    if (!SingleKeysReadable(resource) || guestBytes < KeyBytes) return false;
+    const auto bytes = BytesPerElement(resource.format);
+    if (bytes == 0 || bytes > 16) return false;
+    const auto blocks = static_cast<std::size_t>(guestBytes / KeyBytes);
+    if (proof.generation != 0 && proof.address == resource.baseAddress && proof.bytes == guestBytes && proof.format == resource.format && collected != 0 && GuestMemory::UnchangedSince(resource.baseAddress, static_cast<std::size_t>(guestBytes), proof.generation)) return proof.uniform;
+    std::byte first[16]{};
+    bool uniform = true;
+    std::vector<std::byte> buffer(std::min<std::uint64_t>(guestBytes, std::uint64_t(1) << 20));
+    {
+        const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+        GuestMemory::ReadCommitted(resource.baseAddress, std::span(first, bytes));
+        for (std::size_t block = 1; block < blocks && uniform;) {
+            const auto offset = block * KeyBytes;
+            const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), guestBytes - offset));
+            GuestMemory::ReadCommitted(resource.baseAddress + offset, std::span(buffer).first(size));
+            const auto covered = size / KeyBytes;
+            for (std::size_t index = 0; index < covered && uniform; ++index) uniform = std::equal(first, first + bytes, buffer.begin() + index * KeyBytes);
+            block += covered;
+        }
+    }
+    proof = collected != 0 ? DccSingleProof{resource.baseAddress, guestBytes, collected, resource.format, uniform} : DccSingleProof{};
+    return uniform;
+}
+
 namespace {
 
 DccKeys EncodedKeys(const GuestTextureResource& resource, DccKeys keys) {
@@ -761,13 +836,62 @@ bool PendingFillsLeaveUncompressed(const Recorder& recorder, const GuestTextureR
 
 }
 
+namespace {
+
+struct KeyWaitTotals {
+    std::atomic<std::uint64_t> calls{0};
+    std::atomic<std::uint64_t> noPending{0};
+    std::atomic<std::uint64_t> known{0};
+    std::atomic<std::uint64_t> fillsUncompressed{0};
+    std::atomic<std::uint64_t> synced{0};
+};
+
+KeyWaitTotals& KeyWaits() {
+    static KeyWaitTotals totals;
+    return totals;
+}
+
+}
+
+DccKeyWaitCounts KeyWaitCounts() {
+    const auto& totals = KeyWaits();
+    return {totals.calls.load(std::memory_order_relaxed), totals.noPending.load(std::memory_order_relaxed), totals.known.load(std::memory_order_relaxed), totals.fillsUncompressed.load(std::memory_order_relaxed), totals.synced.load(std::memory_order_relaxed)};
+}
+
+bool DccKeyWritersPending(std::uint64_t metaAddress, std::size_t count) {
+    if (metaAddress == 0 || count == 0 || !Recorder::SnapshotWriteOverlaps(metaAddress, count)) return false;
+    auto& memo = Memo();
+    std::lock_guard lock(memo.mutex);
+    MemoRecorder(memo);
+    return std::none_of(memo.entries.begin(), memo.entries.end(), [&](const GpuKeyStore& store) { return store.note != 0 && store.begin <= metaAddress && metaAddress + count <= store.end; });
+}
+
+bool DccKeyWriterNeedsSync(std::uint64_t metaAddress, std::size_t count) {
+    if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count) && !PendingStoreKeys(*recorder, metaAddress, count).has_value();
+}
+
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
     const auto metaAddress = resource.dccAddress;
     if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return std::nullopt;
+    auto& waits = KeyWaits();
+    waits.calls.fetch_add(1, std::memory_order_relaxed);
     auto* recorder = Recorder::Active();
-    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, count) || PendingStoreKeys(*recorder, metaAddress, count).has_value()) return std::nullopt;
-    if (PendingFillsLeaveUncompressed(*recorder, resource, count)) return DccKeys::Uncompressed;
+    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, count)) {
+        waits.noPending.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    if (PendingStoreKeys(*recorder, metaAddress, count).has_value()) {
+        waits.known.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    if (PendingFillsLeaveUncompressed(*recorder, resource, count)) {
+        waits.fillsUncompressed.fetch_add(1, std::memory_order_relaxed);
+        return DccKeys::Uncompressed;
+    }
+    waits.synced.fetch_add(1, std::memory_order_relaxed);
     Recorder::CountSync(2);
     recorder->SyncThrough(metaAddress, count);
     return std::nullopt;

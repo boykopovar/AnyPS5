@@ -117,7 +117,7 @@ void Release(void* object) {
     }
 }
 
-void Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
     if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) Terminate();
     auto* header = FromUnwind(exception);
     if (exception->exception_class == DependentClass) {
@@ -131,9 +131,29 @@ bool Equal(const std::type_info* a, const std::type_info* b) {
     return a == b || (a && b && std::strcmp(a->name(), b->name()) == 0);
 }
 
-const char* Kind(const std::type_info* type) {
+static const std::type_info* TypeOfTypeInfo(const std::type_info* type) {
     auto table = *reinterpret_cast<const std::type_info* const* const*>(type);
-    return table[-1]->name();
+    return table[-1];
+}
+
+static const std::type_info* BaseAtSameAddress(const std::type_info* type) {
+    const char* kind = TypeOfTypeInfo(type)->name();
+    if (std::strcmp(kind, "N10__cxxabiv120__si_class_type_infoE") == 0)
+        return static_cast<const __cxxabiv1::__si_class_type_info*>(type)->__base_type;
+    if (std::strcmp(kind, "N10__cxxabiv121__vmi_class_type_infoE") != 0) return nullptr;
+    auto* vmi = static_cast<const __cxxabiv1::__vmi_class_type_info*>(type);
+    if (vmi->__base_count != 1 || (vmi->__base_info[0].__offset_flags & ~2L) != 0) return nullptr;
+    return vmi->__base_info[0].__base_type;
+}
+
+const char* Kind(const std::type_info* type) {
+    const std::type_info* kind = TypeOfTypeInfo(type);
+    for (unsigned depth = 0; depth < 16 && std::strncmp(kind->name(), "N10__cxxabiv1", 13) != 0; ++depth) {
+        const std::type_info* base = BaseAtSameAddress(kind);
+        if (!base) break;
+        kind = base;
+    }
+    return kind->name();
 }
 
 struct Search {

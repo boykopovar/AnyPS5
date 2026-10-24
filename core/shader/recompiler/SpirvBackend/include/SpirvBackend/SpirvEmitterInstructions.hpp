@@ -221,6 +221,7 @@ std::uint32_t EmitFPCmpClass32(SpirvEmitterState& state, std::uint32_t value, st
 void EmitReference(SpirvValueEmitContext& context);
 void EmitReferenceU32(SpirvValueEmitContext& context);
 void EmitUnlinkedCall(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t low, std::uint32_t high, std::uint32_t programCounter);
+void EmitWindowLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t index, std::uint32_t value, std::uint32_t current, std::uint32_t slot, std::uint32_t lane);
 void EmitControlNop(SpirvValueEmitContext& context);
 void EmitWaitcnt(SpirvValueEmitContext& context);
 void EmitSendmsg(SpirvValueEmitContext& context);
@@ -348,6 +349,7 @@ std::uint32_t EmitSharedAtomicMskor64(SpirvValueEmitContext& ctx, const IrValue&
 std::uint32_t EmitDataAppend(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitDataConsume(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitDataOrderedCount(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::uint32_t EmitDataOrderedSwap(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageQueryDimensions(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageQueryLod(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageRead(SpirvValueEmitContext& ctx, const IrValue& inst);

@@ -81,11 +81,11 @@ class EncodingTests(unittest.TestCase):
 
     def test_merge_conflict_preserves_unicode_paths(self):
         path = UNICODE + ".txt"
-        with command_output(TREE + "\n" + path + "\n", returncode=1):
+        with command_output(TREE + "\0" + path + "\0", returncode=1):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, {path}))
 
     def test_merge_success(self):
-        with command_output(TREE + "\n"):
+        with command_output(TREE + "\0"):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, set()))
 
     def test_merge_error_preserves_unicode(self):

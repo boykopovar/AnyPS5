@@ -18,6 +18,17 @@ struct HostImport;
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+
+struct PixelFunctionLdsLayouts {
+    VkDescriptorSetLayout empty = VK_NULL_HANDLE;
+    VkDescriptorSetLayout buffer = VK_NULL_HANDLE;
+};
+
+PixelFunctionLdsLayouts PixelFunctionLdsSetLayouts(const Context& context);
+void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, std::uint32_t subgroupSize);
+void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
+void CheckPixelFunctionLds(const Context& context);
+void ReleasePixelFunctionLds(VkDevice device);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
@@ -29,9 +40,9 @@ struct DrawInputCopy {
     std::uint64_t registryGeneration = 0;
 };
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
-DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes);
+DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived);
-const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment);
+const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     bool reused = false;
@@ -91,8 +102,20 @@ bool DrawRecipes();
 // draw index, the vertex ranges, the device features, APS5_NO_GPU_INDIRECT_DRAW) or under the device
 // lock in Draw (the memory state of the records). `readMs` is the CPU read's time (its sync);
 // `rewritten` counts a GPU-side draw whose records were copied and patched with a constant.
-enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, Count };
+enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, Count };
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten = false);
+std::array<std::uint64_t, static_cast<std::size_t>(IndirectDrawPath::Count)> IndirectDrawCounts();
+void CountEmptyIndirectDraw(double readMs);
+std::uint64_t EmptyIndirectDrawCount();
+
+struct DrawPassCounts {
+    std::uint64_t draws = 0;
+    std::uint64_t passesBegun = 0;
+    std::uint64_t passesContinued = 0;
+    std::uint64_t keyStoreFlushes = 0;
+    std::uint64_t storeFlushes = 0;
+};
+std::array<DrawPassCounts, 2> DrawPassTotals();
 const char* IndirectDrawPathName(IndirectDrawPath path);
 
 // Draw packets that drew nothing, for the [draws] line: Nothing (an empty count, or no color writes
@@ -117,6 +140,10 @@ void CountDrawSkip(DrawSkip kind, double us);
 std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters();
 
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass);
+void RunDepthCopyPass(const Context& context, const DepthCopyPass& pass);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
+bool DrawPipelineEnabled();
+bool CommitTrims();
 
 }
 

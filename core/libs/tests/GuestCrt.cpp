@@ -33,6 +33,7 @@ int APS5_VABI __fpclassifyd_nid_postfix(double value);
 unsigned __int128 APS5_VABI __udivti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
 __int128 APS5_VABI __divti3_nid_postfix(__int128 dividend, __int128 divisor);
 unsigned __int128 APS5_VABI __umodti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
+__int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor);
 SonyLconv* APS5_VABI localeconv_nid_postfix(void);
 int APS5_VABI sceAmprFpclassifyd(double value);
 unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix();
@@ -110,6 +111,31 @@ int main() {
     }
     Require(trapped);
 
+    Require(__modti3_nid_postfix(100, 3) == 1);
+    Require(__modti3_nid_postfix(-100, 3) == -1);
+    Require(__modti3_nid_postfix(100, -3) == 1);
+    Require(__modti3_nid_postfix(-100, -3) == -1);
+    Require(SonyModti3(0, 5) == 0);
+    Require(SonyModti3(3, 100) == 3);
+    Require(SonyModti3(-3, 100) == -3);
+    Require(SonyModti3(3, -100) == 3);
+    Require(SonyModti3(-3, -100) == -3);
+    Require(SonyModti3(large, 3) == large % 3);
+    Require(SonyModti3(-large, 3) == -(large % 3));
+    Require(SonyModti3(large, -3) == large % 3);
+    Require(SonyModti3(-large, -3) == -(large % 3));
+    Require(SonyModti3(minimum, 1) == 0);
+    Require(SonyModti3(minimum, -1) == 0);
+    Require(SonyModti3(maximum, 1) == 0);
+    Require(SonyModti3(maximum, -1) == 0);
+    trapped = false;
+    try {
+        SonyModti3(1, 0);
+    } catch (const std::exception&) {
+        trapped = true;
+    }
+    Require(trapped);
+
     const unsigned __int128 unsignedMaximum = ~(unsigned __int128)0;
     const unsigned __int128 largeDivisor = ((unsigned __int128)1 << 64) + 3;
     Require(__umodti3_nid_postfix(100, 3) == 1);
@@ -163,10 +189,20 @@ int main() {
     Require(asctime_s_nid_postfix(text, sizeof(text), &known) == 0);
     Require(std::strcmp(text, "Thu Jan  1 00:00:00 1970\n") == 0);
     known.tm_wday = 7;
-    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
     known.tm_wday = 4;
+    known.tm_year = 9000;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    known.tm_year = 70;
+    known.tm_mday = 32;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    known.tm_mday = 1;
     Require(sceAmprAsctimeS(nullptr, sizeof(text), &known) == EINVAL);
-    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
     Require(sceAmprAsctimeS(text, 25, &known) == EINVAL);
     const std::int64_t epoch = 0;
     Require(sceAmprCtimeS(text, sizeof(text), &epoch) == 0);
@@ -175,7 +211,8 @@ int main() {
     Require(ctime_s_nid_postfix(libcText, sizeof(libcText), &epoch) == 0);
     Require(std::strcmp(libcText, text) == 0);
     Require(sceAmprCtimeS(text, 25, &epoch) == EINVAL);
-    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
 
     char line[] = "a,b,,c";
     char* context = nullptr;

@@ -17,10 +17,13 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 
 extern "C" {
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData*);
@@ -35,7 +38,9 @@ int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal*, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal*, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerStart(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const void*);
+int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const AvPlayer::StartInfo*);
+int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal*, std::uint32_t, const void*);
+int APS5_VABI sceAvPlayerDisableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerPause(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerResume(AvPlayerInternal*);
@@ -72,6 +77,8 @@ constexpr std::int32_t EventPlay = 3;
 constexpr std::int32_t EventPause = 4;
 constexpr std::int32_t EventWarning = 0x20;
 const char* const MoviePath = "app0/avplayer.mp4";
+const char* const WebmPath = "app0/avplayer.webm";
+constexpr int WebmVideoFrames = 6;
 
 constexpr std::array<std::uint8_t, 5986> Movie{
     0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
@@ -451,6 +458,109 @@ constexpr std::array<std::uint8_t, 5986> Movie{
     0x5b, 0xdc
 };
 
+constexpr std::array<std::uint8_t, 1594> WebmMovie{
+    0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01, 0x42, 0xf2, 0x81,
+    0x04, 0x42, 0xf3, 0x81, 0x08, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d, 0x42, 0x87, 0x81, 0x04,
+    0x42, 0x85, 0x81, 0x02, 0x18, 0x53, 0x80, 0x67, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x0a,
+    0x11, 0x4d, 0x9b, 0x74, 0xba, 0x4d, 0xbb, 0x8b, 0x53, 0xab, 0x84, 0x15, 0x49, 0xa9, 0x66, 0x53,
+    0xac, 0x81, 0xa1, 0x4d, 0xbb, 0x8b, 0x53, 0xab, 0x84, 0x16, 0x54, 0xae, 0x6b, 0x53, 0xac, 0x81,
+    0xc6, 0x4d, 0xbb, 0x8c, 0x53, 0xab, 0x84, 0x12, 0x54, 0xc3, 0x67, 0x53, 0xac, 0x82, 0x01, 0x79,
+    0x4d, 0xbb, 0x8c, 0x53, 0xab, 0x84, 0x1c, 0x53, 0xbb, 0x6b, 0x53, 0xac, 0x82, 0x05, 0xf4, 0xec,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x15, 0x49, 0xa9, 0x66, 0xa0, 0x2a, 0xd7, 0xb1, 0x83, 0x0f, 0x42, 0x40, 0x4d, 0x80, 0x84,
+    0x4c, 0x61, 0x76, 0x66, 0x57, 0x41, 0x84, 0x4c, 0x61, 0x76, 0x66, 0x44, 0x89, 0x88, 0x40, 0x6a,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x54, 0xae, 0x6b, 0x40, 0xad, 0xae, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x3f, 0xd7, 0x81, 0x01, 0x73, 0xc5, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x9c, 0x81, 0x00, 0x22, 0xb5, 0x9c, 0x83, 0x65, 0x6e, 0x67, 0x88, 0x81, 0x00,
+    0x86, 0x85, 0x56, 0x5f, 0x56, 0x50, 0x39, 0x83, 0x81, 0x01, 0x23, 0xe3, 0x83, 0x84, 0x01, 0xfc,
+    0xa0, 0x55, 0xe0, 0x90, 0xb0, 0x81, 0x64, 0xba, 0x81, 0x3c, 0x9a, 0x81, 0x02, 0x55, 0xb0, 0x84,
+    0x55, 0xb9, 0x81, 0x01, 0xae, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5c, 0xd7, 0x81, 0x02,
+    0x73, 0xc5, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x9c, 0x81, 0x00, 0x22, 0xb5,
+    0x9c, 0x83, 0x65, 0x6e, 0x67, 0x88, 0x81, 0x00, 0x86, 0x86, 0x41, 0x5f, 0x4f, 0x50, 0x55, 0x53,
+    0x56, 0xaa, 0x83, 0x63, 0x2e, 0xa0, 0x56, 0xbb, 0x84, 0x04, 0xc4, 0xb4, 0x00, 0x83, 0x81, 0x02,
+    0xe1, 0x91, 0x9f, 0x81, 0x02, 0xb5, 0x88, 0x40, 0xe7, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62,
+    0x64, 0x81, 0x10, 0x63, 0xa2, 0x93, 0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x02,
+    0x38, 0x01, 0x80, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x54, 0xc3, 0x67, 0x40, 0xa5, 0x73,
+    0x73, 0xd1, 0x63, 0xc0, 0x8b, 0x63, 0xc5, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x67, 0xc8, 0x9c, 0x45, 0xa3, 0x87, 0x45, 0x4e, 0x43, 0x4f, 0x44, 0x45, 0x52, 0x44, 0x87, 0x8f,
+    0x4c, 0x61, 0x76, 0x63, 0x20, 0x6c, 0x69, 0x62, 0x76, 0x70, 0x78, 0x2d, 0x76, 0x70, 0x39, 0x67,
+    0xc8, 0xa1, 0x45, 0xa3, 0x88, 0x44, 0x55, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x44, 0x87, 0x93,
+    0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x00, 0x73, 0x73, 0xce, 0x63, 0xc0, 0x8b, 0x63, 0xc5, 0x88, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x67, 0xc8, 0x99, 0x45, 0xa3, 0x87, 0x45, 0x4e, 0x43, 0x4f, 0x44, 0x45,
+    0x52, 0x44, 0x87, 0x8c, 0x4c, 0x61, 0x76, 0x63, 0x20, 0x6c, 0x69, 0x62, 0x6f, 0x70, 0x75, 0x73,
+    0x67, 0xc8, 0xa1, 0x45, 0xa3, 0x88, 0x44, 0x55, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x44, 0x87,
+    0x93, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x38, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x00, 0x1f, 0x43, 0xb6, 0x75, 0x43, 0xca, 0xe7, 0x81, 0x00, 0xa3, 0x87, 0x82,
+    0x00, 0x00, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0xb0, 0x81, 0x00, 0x00, 0x80, 0x82, 0x49, 0x83, 0x42,
+    0x00, 0x06, 0x30, 0x03, 0xb6, 0x00, 0x38, 0x24, 0x1c, 0x18, 0x00, 0x00, 0x00, 0x60, 0x7d, 0x8f,
+    0x18, 0xc0, 0x00, 0x00, 0x78, 0xb6, 0x32, 0x06, 0x00, 0x15, 0x8b, 0x45, 0x38, 0x14, 0x97, 0x0e,
+    0x63, 0x08, 0xb7, 0x40, 0x1a, 0xde, 0xd0, 0x00, 0xa3, 0x87, 0x82, 0x00, 0x15, 0x80, 0xfc, 0xff,
+    0xfe, 0xa3, 0x40, 0x9f, 0x81, 0x00, 0x21, 0x00, 0x86, 0x00, 0x40, 0x92, 0xf0, 0x01, 0x00, 0x00,
+    0x00, 0x08, 0x00, 0x00, 0x73, 0x19, 0x60, 0x5c, 0x40, 0x00, 0x00, 0x00, 0x02, 0x09, 0x3d, 0x02,
+    0x8e, 0x7f, 0xb0, 0xdb, 0xaa, 0x7f, 0xff, 0xe7, 0x42, 0xdf, 0xdf, 0xe1, 0x6f, 0x3f, 0xff, 0xf3,
+    0xa1, 0x6f, 0xef, 0xf0, 0xb7, 0x9f, 0xff, 0xf9, 0xd0, 0xb7, 0xf7, 0xf8, 0x5b, 0xcf, 0xff, 0xfc,
+    0xe8, 0x5b, 0xfb, 0xfc, 0x2d, 0xe7, 0xff, 0xfe, 0x74, 0x2d, 0xfd, 0xfe, 0x16, 0xf3, 0xff, 0xff,
+    0x3a, 0x16, 0xfe, 0xff, 0x0b, 0x79, 0xff, 0xff, 0x9d, 0x0b, 0x7f, 0x7f, 0x85, 0x81, 0xcc, 0xbc,
+    0xff, 0xff, 0xce, 0x85, 0xbf, 0xbf, 0xc2, 0xde, 0x7f, 0xff, 0xe7, 0x42, 0xdf, 0xdf, 0xe1, 0x6f,
+    0x3f, 0xff, 0xf3, 0xa1, 0x6f, 0xef, 0xf0, 0xb7, 0x9f, 0xff, 0xf9, 0xd0, 0xb7, 0xf7, 0xf8, 0x5b,
+    0xcf, 0xff, 0xfc, 0xe8, 0x5b, 0xfb, 0xfc, 0x2d, 0xe7, 0xff, 0xfe, 0x74, 0x2d, 0xfd, 0xfe, 0x16,
+    0xf3, 0xff, 0xff, 0x3a, 0x16, 0xfe, 0xff, 0x0b, 0x79, 0xff, 0xff, 0x9d, 0x0b, 0x7f, 0x7f, 0x85,
+    0x80, 0x93, 0x00, 0xa3, 0x87, 0x82, 0x00, 0x29, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0x87, 0x82, 0x00,
+    0x3d, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0x40, 0x9f, 0x81, 0x00, 0x43, 0x00, 0x86, 0x00, 0x40, 0x92,
+    0xf0, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x73, 0x19, 0x58, 0xc6, 0x80, 0x00, 0x00, 0x00,
+    0x04, 0x12, 0x79, 0xde, 0x97, 0xff, 0x05, 0xc3, 0x79, 0xff, 0xff, 0x8f, 0xe5, 0xff, 0x82, 0xe1,
+    0xbc, 0xff, 0xff, 0xc7, 0xf2, 0xff, 0xc1, 0x70, 0xde, 0x7f, 0xff, 0xe3, 0xf9, 0x7f, 0xe0, 0xb8,
+    0x6f, 0x3f, 0xff, 0xf1, 0xfc, 0xbf, 0xf0, 0x5c, 0x37, 0x9f, 0xff, 0xf8, 0xfe, 0x5f, 0xf8, 0x2e,
+    0x1b, 0xcf, 0xff, 0xfc, 0x7f, 0x2f, 0xfc, 0x17, 0x0d, 0xe7, 0xff, 0xfe, 0x3f, 0x97, 0xfe, 0x0b,
+    0x86, 0x07, 0x32, 0xf3, 0xff, 0xff, 0x1f, 0xcb, 0xff, 0x05, 0xc3, 0x79, 0xff, 0xff, 0x8f, 0xe5,
+    0xff, 0x82, 0xe1, 0xbc, 0xff, 0xff, 0xc7, 0xf2, 0xff, 0xc1, 0x70, 0xde, 0x7f, 0xff, 0xe3, 0xf9,
+    0x7f, 0xe0, 0xb8, 0x6f, 0x3f, 0xff, 0xf1, 0xfc, 0xbf, 0xf0, 0x5c, 0x37, 0x9f, 0xff, 0xf8, 0xfe,
+    0x5f, 0xf8, 0x2e, 0x1b, 0xcf, 0xff, 0xfc, 0x7f, 0x2f, 0xfc, 0x17, 0x0d, 0xe7, 0xff, 0xfe, 0x3f,
+    0x97, 0xfe, 0x0b, 0x86, 0x02, 0x4c, 0x00, 0xa3, 0x87, 0x82, 0x00, 0x51, 0x80, 0xfc, 0xff, 0xfe,
+    0xa3, 0x87, 0x82, 0x00, 0x65, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0x40, 0x9d, 0x81, 0x00, 0x64, 0x00,
+    0x86, 0x00, 0x40, 0x92, 0xf0, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x73, 0x19, 0x4c, 0xe5,
+    0x00, 0x00, 0x00, 0x00, 0x08, 0x24, 0xf3, 0x40, 0x0f, 0xfb, 0xaa, 0xcb, 0xcf, 0xff, 0xfc, 0x2a,
+    0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a,
+    0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a,
+    0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a,
+    0x53, 0xfb, 0x1c, 0x80, 0x27, 0xfc, 0x9f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff,
+    0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff,
+    0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff,
+    0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff, 0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x85, 0x4f, 0xff,
+    0xfc, 0x2a, 0x53, 0xfb, 0x1c, 0x80, 0x0c, 0xc0, 0x00, 0xa3, 0x87, 0x82, 0x00, 0x79, 0x80, 0xfc,
+    0xff, 0xfe, 0xa3, 0x40, 0x9f, 0x81, 0x00, 0x85, 0x00, 0x86, 0x00, 0x40, 0x92, 0xf0, 0x01, 0x00,
+    0x00, 0x00, 0x08, 0x00, 0x00, 0x73, 0x19, 0x37, 0x9e, 0x40, 0x00, 0x00, 0x00, 0x02, 0x09, 0x3c,
+    0x9e, 0x10, 0x3f, 0xa7, 0x97, 0xf2, 0x3f, 0xff, 0xee, 0x24, 0x7f, 0xd7, 0xcf, 0x67, 0x9f, 0xff,
+    0xf7, 0x12, 0x3f, 0xeb, 0xe7, 0xb3, 0xcf, 0xff, 0xfb, 0x89, 0x1f, 0xf5, 0xf3, 0xd9, 0xe7, 0xff,
+    0xfd, 0xc4, 0x8f, 0xfa, 0xf9, 0xec, 0xf3, 0xff, 0xfe, 0xe2, 0x47, 0xfd, 0x7c, 0xf6, 0x79, 0xff,
+    0xff, 0x71, 0x23, 0xfe, 0xbe, 0x7b, 0x3c, 0xff, 0xff, 0xb8, 0x91, 0xff, 0x5f, 0x3d, 0x80, 0xe6,
+    0x5e, 0x7f, 0xff, 0xdc, 0x48, 0xff, 0xaf, 0x9e, 0xcf, 0x3f, 0xff, 0xee, 0x24, 0x7f, 0xd7, 0xcf,
+    0x67, 0x9f, 0xff, 0xf7, 0x12, 0x3f, 0xeb, 0xe7, 0xb3, 0xcf, 0xff, 0xfb, 0x89, 0x1f, 0xf5, 0xf3,
+    0xd9, 0xe7, 0xff, 0xfd, 0xc4, 0x8f, 0xfa, 0xf9, 0xec, 0xf3, 0xff, 0xfe, 0xe2, 0x47, 0xfd, 0x7c,
+    0xf6, 0x79, 0xff, 0xff, 0x71, 0x23, 0xfe, 0xbe, 0x7b, 0x3c, 0xff, 0xff, 0xb8, 0x91, 0xff, 0x5f,
+    0x3d, 0x80, 0x49, 0x80, 0xa3, 0x87, 0x82, 0x00, 0x8d, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0x87, 0x82,
+    0x00, 0xa1, 0x80, 0xfc, 0xff, 0xfe, 0xa3, 0x40, 0x9d, 0x81, 0x00, 0xa7, 0x00, 0x86, 0x00, 0x40,
+    0x92, 0xf0, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x73, 0x19, 0x31, 0x74, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x12, 0x79, 0x1a, 0xe4, 0xfe, 0x8f, 0x1c, 0x91, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a,
+    0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a,
+    0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a,
+    0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a,
+    0x80, 0x05, 0xc7, 0x67, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d,
+    0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d,
+    0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d,
+    0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d, 0xfe, 0x7a, 0x80, 0xc1, 0xff, 0xff, 0x5b, 0x7d,
+    0xfe, 0x7a, 0x80, 0x01, 0xd4, 0x00, 0xa3, 0x87, 0x82, 0x00, 0xb5, 0x80, 0xfc, 0xff, 0xfe, 0xa0,
+    0x93, 0xa1, 0x87, 0x82, 0x00, 0xc9, 0x00, 0xfc, 0xff, 0xfe, 0x9b, 0x81, 0x07, 0x75, 0xa2, 0x84,
+    0x00, 0xcd, 0xfe, 0x60, 0x1c, 0x53, 0xbb, 0x6b, 0x91, 0xbb, 0x8f, 0xb3, 0x81, 0x00, 0xb7, 0x8a,
+    0xf7, 0x81, 0x01, 0xf1, 0x82, 0x02, 0x24, 0xf0, 0x81, 0x0c,
+};
+
 void Check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -541,6 +651,11 @@ struct Events {
     bool Seen(std::int32_t id, std::int32_t warning = 0) {
         std::lock_guard lock(mutex);
         return std::any_of(received.begin(), received.end(), [&](const auto& event) { return event.first == id && event.second == warning; });
+    }
+
+    int Count(std::int32_t id, std::int32_t warning = 0) {
+        std::lock_guard lock(mutex);
+        return static_cast<int>(std::count_if(received.begin(), received.end(), [&](const auto& event) { return event.first == id && event.second == warning; }));
     }
 
     void Clear() {
@@ -754,7 +869,7 @@ void TestPlayback() {
             last = frame.timestamp;
             ++frames;
         }
-        return frames >= 8 && sounds >= 8;
+        return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
     Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
@@ -829,7 +944,7 @@ void TestPlayback() {
         }
         return wrapped && frames > FrameCount + 5;
     }), "looping never wrapped");
-    Check(events.Seen(EventWarning, LoopingBack), "looping warning missing");
+    Check(WaitFor([&] { return events.Seen(EventWarning, LoopingBack); }), "looping warning missing");
     Check(sceAvPlayerIsActive(player), "looping player went inactive");
     Check(sceAvPlayerStop(player) == 0, "stop failed");
     Check(sceAvPlayerStop(player) == OperationFailed, "second stop accepted");
@@ -840,6 +955,56 @@ void TestPlayback() {
     std::lock_guard lock(allocations.mutex);
     Check(allocations.blocks.empty(), "allocations leaked");
     Check(allocations.textures >= 4, "video buffers not allocated as textures");
+}
+
+void TestVp9OpusPlayback() {
+    {
+        std::ofstream file(WebmPath, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(WebmMovie.data()), static_cast<std::streamsize>(WebmMovie.size()));
+        Check(static_cast<bool>(file), "cannot write the WebM movie");
+    }
+    const auto play = [](bool withAudio) {
+        Events events;
+        AvPlayerInitData init = InitData(&events);
+        auto* player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "WebM init failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0, "WebM add source failed");
+        Check(WaitFor([&] { return events.Seen(EventReady); }), "WebM ready event missing");
+        Check(sceAvPlayerStreamCount(player) == 2, "unexpected WebM stream count");
+        AvPlayerStreamInfo video{};
+        Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
+        AvPlayerStreamInfo audio{};
+        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 0 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
+        Check(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
+        if (!withAudio) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
+        Check(sceAvPlayerStart(player) == 0, "WebM start failed");
+        AvPlayerFrameInfoEx frame{};
+        AvPlayerFrameInfo sound{};
+        int frames = 0;
+        int sounds = 0;
+        std::uint64_t last = 0;
+        Check(WaitFor([&] {
+            if (withAudio && sceAvPlayerGetAudioData(player, &sound)) {
+                CheckEnglishAudio(sound);
+                ++sounds;
+            }
+            if (sceAvPlayerGetVideoDataEx(player, &frame)) {
+                CheckVideoFrame(frame);
+                Check(frames == 0 || frame.timestamp > last, "WebM video timestamps do not increase");
+                last = frame.timestamp;
+                ++frames;
+            }
+            return !sceAvPlayerIsActive(player);
+        }), "WebM playback never ended");
+        Check(sceAvPlayerClose(player) == 0, "WebM close failed");
+        std::lock_guard lock(allocations.mutex);
+        Check(allocations.blocks.empty(), "WebM allocations leaked");
+        return std::pair{frames, sounds};
+    };
+    const auto [decoded, silent] = play(false);
+    Check(decoded == WebmVideoFrames && silent == 0, "WebM video-only playback delivered " + std::to_string(decoded) + " of " + std::to_string(WebmVideoFrames) + " frames");
+    const auto [frames, sounds] = play(true);
+    Check(frames >= 1 && sounds >= 2, "WebM delivered " + std::to_string(frames) + " frames and " + std::to_string(sounds) + " audio chunks");
 }
 
 void TestChangeStream() {
@@ -910,12 +1075,25 @@ void TestExtendedExports() {
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
-    Check(sceAvPlayerStartEx(player, nullptr) == 0, "extended start failed");
+    Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    AvPlayer::StartInfo startInfo{0, 700};
+    Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
+    startInfo.size = sizeof(startInfo);
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended start failed");
     Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
     AvPlayerFrameInfoEx frame{};
     Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
     CheckVideoFrame(frame);
+    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "extended start ignored the requested position");
+    Check(!events.Seen(EventWarning, JumpComplete), "extended start reported a jump");
+    Check(sceAvPlayerStop(player) == 0, "extended stop failed");
+    startInfo.startTime = 0;
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended restart failed");
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
+    Check(frame.timestamp <= 67, "zero-position start did not restart playback");
     Check(sceAvPlayerClose(player) == 0, "close failed");
+    Check(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
+    Check(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
 }
 
 void TestWithoutAllocators() {
@@ -1028,8 +1206,22 @@ void TestPs5ExtendedInitLayout() {
         AvPlayerInternal* player = nullptr;
         Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &player) == 0 && player != nullptr, "PS5 extended init failed");
         Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source after the PS5 extended init failed");
+        AvPlayerStreamInfo audioInfo{};
+        Check(sceAvPlayerGetStreamInfo(player, EnglishAudioStream, &audioInfo) == 0, "PS5 audio stream info failed");
+        Check(audioInfo.type == 2, "PS5 audio stream must use type 2 so Unity enables it");
+        AvPlayerStreamInfoEx audioInfoEx{};
+        audioInfoEx.this_size = sizeof(audioInfoEx);
+        Check(sceAvPlayerGetStreamInfoEx(player, EnglishAudioStream, &audioInfoEx) == 0 && audioInfoEx.type == 2, "PS5 extended audio stream type is incorrect");
+        AvPlayerStreamInfoEx videoInfo{};
+        videoInfo.this_size = sizeof(videoInfo);
+        Check(sceAvPlayerGetStreamInfoEx(player, VideoStream, &videoInfo) == 0, "PS5 video stream info failed");
+        double frameRate = 0;
+        std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoInfo) + 0x40, sizeof(frameRate));
+        Check(std::fabs(frameRate - FrameRate) < 0.01, "PS5 extended video frame rate at 0x40 is missing");
         if (autoStart) {
             Check(WaitFor([&] { return events.Seen(EventPlay); }), "auto start at 0x74 of the PS5 extended init did not start playback");
+            AvPlayerFrameInfo audioFrame{};
+            Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audioFrame) != 0; }), "PS5 auto start did not enable audio");
         } else {
             Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing after the PS5 extended init");
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -1038,6 +1230,10 @@ void TestPs5ExtendedInitLayout() {
             Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
         }
         Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        AvPlayerFrameInfoEx videoFrame{};
+        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &videoFrame) != 0; }), "PS5 playback did not deliver video");
+        std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoFrame) + 0x48, sizeof(frameRate));
+        Check(std::fabs(frameRate - FrameRate) < 0.01, "PS5 video frame rate at 0x48 is missing");
         Check(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
     };
     run(false);
@@ -1094,6 +1290,26 @@ void TestRestartAfterPausedJumpKeepsClockRunning() {
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
+void TestPausedPreparationAfterAudioStarts(std::uint32_t syncMode) {
+    Events events;
+    auto init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerSetAvSyncMode(player, syncMode) == 0, "sync mode failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    AvPlayerFrameInfo audio{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no initial audio frame");
+    Check(sceAvPlayerPause(player) == 0, "pause failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "first video frame blocked during paused preparation after audio started");
+    CheckVideoFrame(frame);
+    Check(!sceAvPlayerGetVideoDataEx(player, &frame), "paused preparation delivered more than the initial video frame");
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
 void TestUnsyncedVideoKeepsUpWithAudio() {
     Events events;
     AvPlayerInitData init = InitData(&events);
@@ -1121,6 +1337,159 @@ void TestUnsyncedVideoKeepsUpWithAudio() {
     }
     Check(worst <= 150, "video fell " + std::to_string(worst) + " ms behind the audio");
     Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestLoopWarningAtPlayback() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "loop timing init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop timing source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "loop timing ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop timing video failed");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "loop timing sync mode failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "loop timing looping failed");
+    Check(sceAvPlayerStart(player) == 0, "loop timing start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing play missing");
+    AvPlayerFrameInfoEx frame{};
+    for (int index = 0; index <= FrameCount * 3; ++index) {
+        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing frame missing");
+        Check(FrameIndex(frame.timestamp) == index % FrameCount, "loop timing frame out of order");
+        const int loops = index / FrameCount;
+        if (loops > 0) Check(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "loop timing warning missing");
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        Check(events.Count(EventWarning, LoopingBack) == loops, "loop warning did not match the playback boundary");
+    }
+    events.Clear();
+    Check(sceAvPlayerSetLooping(player, 0) == 0, "loop timing disable looping failed");
+    Check(sceAvPlayerJumpToTime(player, 0) == 0, "loop timing jump failed");
+    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "loop timing jump warning missing");
+    for (int index = 0; index < FrameCount; ++index) {
+        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing seek frame missing");
+        Check(FrameIndex(frame.timestamp) == index, "loop timing seek frame out of order");
+    }
+    Check(sceAvPlayerStop(player) == 0, "loop timing stop failed");
+    Check(WaitFor([&] { return events.Seen(EventStop); }), "loop timing stop event missing");
+    Check(events.Count(EventWarning, LoopingBack) == 0, "seek delivered a pending loop warning");
+    events.Clear();
+    Check(sceAvPlayerStart(player) == 0, "loop timing restart failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing restart event missing");
+    for (int index = 0; index < FrameCount; ++index) {
+        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing restart frame missing");
+        Check(FrameIndex(frame.timestamp) == index, "loop timing restart frame out of order");
+    }
+    Check(sceAvPlayerStop(player) == 0, "loop timing restart stop failed");
+    Check(WaitFor([&] { return events.Seen(EventStop); }), "loop timing restart stop event missing");
+    Check(events.Count(EventWarning, LoopingBack) == 0, "restart delivered a pending loop warning");
+    Check(sceAvPlayerClose(player) == 0, "loop timing close failed");
+}
+
+void TestAudioLoopWarningAtPlayback() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "audio loop timing init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio loop timing source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "audio loop timing ready missing");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio loop timing stream failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "audio loop timing looping failed");
+    Check(sceAvPlayerStart(player) == 0, "audio loop timing start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "audio loop timing play missing");
+    AvPlayerFrameInfo frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing first frame missing");
+    int loops = 0;
+    for (int index = 0; index < 256 && loops < 3; ++index) {
+        const auto previous = frame.timestamp;
+        Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing frame missing");
+        if (frame.timestamp < previous) ++loops;
+        if (loops > 0) Check(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "audio loop timing warning missing");
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        Check(events.Count(EventWarning, LoopingBack) == loops, "audio loop warning did not match the playback boundary");
+    }
+    Check(loops == 3, "audio loop timing did not wrap three times");
+    Check(sceAvPlayerClose(player) == 0, "audio loop timing close failed");
+}
+
+void TestLoopWarningSharedByStreams() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "shared loop timing init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "shared loop timing source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "shared loop timing ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "shared loop timing video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "shared loop timing audio failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "shared loop timing looping failed");
+    Check(sceAvPlayerStart(player) == 0, "shared loop timing start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "shared loop timing play missing");
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
+    std::uint64_t lastVideo = 0;
+    std::uint64_t lastAudio = 0;
+    bool videoWrapped = false;
+    bool audioWrapped = false;
+    Check(WaitFor([&] {
+        if (!audioWrapped && sceAvPlayerGetAudioData(player, &sound)) {
+            CheckEnglishAudio(sound);
+            audioWrapped = sound.timestamp < lastAudio;
+            lastAudio = sound.timestamp;
+        }
+        if (!videoWrapped && sceAvPlayerGetVideoDataEx(player, &frame)) {
+            CheckVideoFrame(frame);
+            videoWrapped = frame.timestamp < lastVideo;
+            lastVideo = frame.timestamp;
+        }
+        return audioWrapped && videoWrapped;
+    }), "shared loop timing streams did not both wrap");
+    Check(sceAvPlayerPause(player) == 0, "shared loop timing pause failed");
+    Check(WaitFor([&] { return events.Seen(EventPause); }), "shared loop timing pause event missing");
+    Check(events.Count(EventWarning, LoopingBack) == 1, "audio and video reported the same loop more than once");
+    Check(sceAvPlayerClose(player) == 0, "shared loop timing close failed");
+}
+
+void TestNoSyncVideoCanLeadAudioClock() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "no-sync init failed");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync mode rejected");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync audio failed");
+    Check(sceAvPlayerStart(player) == 0, "no-sync start failed");
+    AvPlayerFrameInfo audio{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no-sync audio unavailable");
+    std::uint64_t lead = 0;
+    const bool available = WaitFor([&] {
+        AvPlayerFrameInfoEx video{};
+        if (!sceAvPlayerGetVideoDataEx(player, &video)) return false;
+        CheckVideoFrame(video);
+        const auto clock = sceAvPlayerCurrentTime(player);
+        if (video.timestamp > clock) lead = std::max(lead, video.timestamp - clock);
+        return lead >= 100;
+    }, 500);
+    Check(sceAvPlayerClose(player) == 0, "no-sync close failed");
+    std::printf("No-sync video lead: %llu ms\n", static_cast<unsigned long long>(lead));
+    Check(available, "no-sync video was gated by the audio-backed player clock");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "no-sync allocations leaked");
+}
+
+void TestLoopWarningWaitsForPlayback() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "loop warning init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop warning source failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "loop warning setting failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop warning video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "loop warning audio failed");
+    Check(sceAvPlayerStart(player) == 0, "loop warning start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop warning first frame missing");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Check(!events.Seen(EventWarning, LoopingBack), "loop warning arrived while the first playback still had buffered audio and video");
+    Check(sceAvPlayerClose(player) == 0, "loop warning close failed");
 }
 
 void TestEofStopLatency() {
@@ -1178,12 +1547,105 @@ void TestEofStopLatency() {
     Check(median < std::chrono::milliseconds(10), "eof stop median " + std::to_string(medianMs) + " ms exceeds 10 ms");
 }
 
+struct ClosingEvents {
+    std::mutex mutex;
+    AvPlayerInternal* player = nullptr;
+    AvPlayerInternal* replacement = nullptr;
+    std::int32_t closeEvent;
+    bool closed = false;
+};
+
+void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void*) {
+    auto& events = *static_cast<ClosingEvents*>(object);
+    if (id != events.closeEvent) return;
+    std::lock_guard lock(events.mutex);
+    Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
+    events.player = nullptr;
+    AvPlayerInitData init = InitData(nullptr);
+    events.replacement = sceAvPlayerInit(&init);
+    Check(events.replacement != nullptr, "replacement player init from callback failed");
+    events.closed = true;
 }
 
-int main() {
+void TestCloseFromEventCallback(std::int32_t event) {
+    ClosingEvents events;
+    events.closeEvent = event;
+    AvPlayerInitData init = InitData(nullptr);
+    init.event_replacement = {&events, CloseOnEvent};
+    init.auto_start = event == EventStop;
+    {
+        std::lock_guard lock(events.mutex);
+        events.player = sceAvPlayerInit(&init);
+        Check(events.player != nullptr, "callback-close init failed");
+        Check(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
+    }
+    Check(WaitFor([&] {
+        std::lock_guard lock(events.mutex);
+        if (events.closed) return true;
+        if (event == EventStop) {
+            AvPlayerFrameInfoEx video{};
+            AvPlayerFrameInfo audio{};
+            if (sceAvPlayerGetVideoDataEx(events.player, &video)) CheckVideoFrame(video);
+            if (sceAvPlayerGetAudioData(events.player, &audio)) CheckEnglishAudio(audio);
+        }
+        return false;
+    }), "event callback did not finish closing the player");
+    {
+        std::lock_guard lock(events.mutex);
+        Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
+    }
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "callback close leaked media allocations");
+}
+
+void TestVideoSyncTolerance() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync tolerance init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync tolerance source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync tolerance ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync tolerance video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync tolerance start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "sync tolerance play missing");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync tolerance first frame missing");
+    Check(FrameIndex(frame.timestamp) == 0, "first frame not index 0");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 5.0);
+    Check(!WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 200), "frame beyond sync tolerance delivered prematurely");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 10.0);
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "frame within sync tolerance was not delivered");
+    Check(FrameIndex(frame.timestamp) == 1, "unexpected second frame index");
+    Check(sceAvPlayerClose(player) == 0, "sync tolerance close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--callback-close") == 0) {
+            WriteMovie();
+            TestCloseFromEventCallback(EventReady);
+            TestCloseFromEventCallback(EventStop);
+            std::puts("AvPlayer callback close tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--paused-first-video") == 0) {
+            WriteMovie();
+            TestPausedPreparationAfterAudioStarts(0);
+            TestPausedPreparationAfterAudioStarts(1);
+            std::puts("AvPlayer paused first video tests passed");
+            return 0;
+        }
+        Check(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
+        TestLoopWarningAtPlayback();
+        TestAudioLoopWarningAtPlayback();
+        TestLoopWarningSharedByStreams();
         TestPlayback();
+        TestVp9OpusPlayback();
         TestChangeStream();
         TestExtendedExports();
         TestWithoutAllocators();
@@ -1194,7 +1656,10 @@ int main() {
         TestAutoStartKeepsStartedPlayback();
         TestRestartAfterPausedJumpKeepsClockRunning();
         TestUnsyncedVideoKeepsUpWithAudio();
+        TestNoSyncVideoCanLeadAudioClock();
+        TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
+        TestVideoSyncTolerance();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

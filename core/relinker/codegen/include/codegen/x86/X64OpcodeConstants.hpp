@@ -146,6 +146,7 @@ inline constexpr std::uint8_t TwoByteMovdMovq = 0x7E;
 inline constexpr std::uint8_t TwoByteMovqMmxXmm = 0x6F;
 inline constexpr std::uint8_t TwoByteMovdqu = 0x7F;
 inline constexpr std::uint8_t TwoByteGrp7 = 0x01;
+inline constexpr std::uint8_t TwoByteMaskmov = 0xF7;
 inline constexpr std::uint8_t TwoByteShiftImm8Min = 0x70;
 inline constexpr std::uint8_t TwoByteShiftImm8Max = 0x73;
 inline constexpr std::uint8_t ThreeByteEscape38 = 0x38;

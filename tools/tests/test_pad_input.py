@@ -61,6 +61,10 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(command[1:], [64, 300])
         self.assertEqual(self.queue(1001, "cross"), [command[0] + 1, 16384, 300])
 
+    def test_timeline_command_is_advanced_after_clock_reset(self):
+        self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
     def test_equal_clock_still_produces_new_pulses(self):
         first = self.queue(1000, "cross")
         second = self.queue(1000, "down")
@@ -77,6 +81,26 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(2000, "release", "--right-stick", "0", "255"),
                          [2000, 0, 300, 128, 128, 0, 255])
 
+    def test_touchpad_halves_queue_their_bits_and_preserve_sequence(self):
+        self.assertEqual(self.queue(1000, "touch-left"), [1000, 0x200000, 300])
+        self.assertEqual(self.queue(1000, "touch-right"), [1001, 0x400000, 300])
+
+    def test_joined_buttons_are_pressed_together(self):
+        self.assertEqual(self.queue(1000, "l1+r1"), [1000, 0x400 | 0x800, 300])
+        self.assertEqual(self.queue(1000, "cross+square+up", "--hold-ms", "40"), [1001, 0x4000 | 0x8000 | 0x10, 40])
+
+    def test_invalid_joined_buttons_report_error_and_preserve_command(self):
+        original = "2000 16384 300\n"
+        for button in ["l1+nothing", "l1+release", "l1+l1", "l1+", "+r1"]:
+            with self.subTest(button=button):
+                self.path.write_text(original, encoding="utf-8")
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    self.queue(1000, button)
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("invalid button", errors.getvalue())
+                self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+
     def test_valid_stick_command_and_unsigned_tokens_preserve_sequence(self):
         self.path.write_text("+2000 +16384 +300 +0 +255 +128 +128\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "release"), [2001, 0, 300])
@@ -91,7 +115,9 @@ class PadInputTests(unittest.TestCase):
                      "18446744073709551616 16384 300\n", "2000 1 300\n", "2000 16384 0\n",
                      "2000 16384 5001\n", "2000 16384 300 0 256 128 128\n",
                      "2000 16384 300 extra\n", "2_000 16384 300\n", "-2000 16384 300\n",
-                     "0 16384 300\n", " " * 128 + "2000 16384 300\n"]:
+                     "0 16384 300\n", " " * 128 + "2000 16384 300\n",
+                     "APS5_PAD_TIMELINE 2 2000 1\n", "APS5_PAD_TIMELINE 1 0 1\n", "APS5_PAD_TIMELINE 1 2000 0\n",
+                     "APS5_PAD_TIMELINE 1 2000 4097\n", "APS5_PAD_TIMELINE 1 2000\n"]:
             with self.subTest(text=text):
                 self.path.write_text(text, encoding="utf-8")
                 self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])

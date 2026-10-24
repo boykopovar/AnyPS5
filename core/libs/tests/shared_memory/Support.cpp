@@ -6,6 +6,6 @@ extern "C" int* APS5_VABI __error_nid_postfix() {
     return &error;
 }
 
-extern "C" void NotImplemented_nid_no_patch(const char* name) {
+extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
     throw std::runtime_error(name);
 }

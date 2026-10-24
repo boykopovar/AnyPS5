@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,7 @@ namespace {
 
 std::jthread processSamplerThread;
 std::jthread workerSamplerThread;
+std::jthread committerSamplerThread;
 
 // Debug aid: APS5_SAMPLE_WORKER=<file> samples the calling thread every millisecond and, every 20 s,
 // writes "module+offset self inclusive" lines to <file> for offline symbolization with nm.
@@ -42,7 +44,7 @@ struct Sampler {
     std::uint64_t stackHigh = 0;
     std::vector<DwarfFrames> modules;
     std::uint64_t pendingModule = 0;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> counts;
     CollapsedStacks stacks;
     std::uint64_t samples = 0;
@@ -285,11 +287,7 @@ void StartProcessSampler() {
     });
 }
 
-}
-
-void StartWorkerSampler() {
-    StartProcessSampler();
-    const char* path = std::getenv("APS5_SAMPLE_WORKER");
+void StartCallingThreadSampler(const char* path, std::jthread& slot) {
     if (path == nullptr) return;
     auto sampler = std::make_unique<Sampler>();
     sampler->path = path;
@@ -302,7 +300,7 @@ void StartWorkerSampler() {
         sampler->stackHigh = reinterpret_cast<std::uint64_t>(block->StackBase);
     }
     if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &sampler->target, THREAD_ALL_ACCESS, FALSE, 0)) throw std::system_error(GetLastError(), std::system_category(), "Duplicating sampler thread handle");
-    workerSamplerThread = std::jthread([sampler = std::move(sampler)](std::stop_token token) {
+    slot = std::jthread([sampler = std::move(sampler)](std::stop_token token) {
         auto flushed = std::chrono::steady_clock::now();
         while (!token.stop_requested()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -316,14 +314,28 @@ void StartWorkerSampler() {
     });
 }
 
+}
+
+void StartWorkerSampler() {
+    StartProcessSampler();
+    StartCallingThreadSampler(std::getenv("APS5_SAMPLE_WORKER"), workerSamplerThread);
+}
+
+void StartCommitterSampler() {
+    StartCallingThreadSampler(std::getenv("APS5_SAMPLE_COMMITTER"), committerSamplerThread);
+}
+
 void StopWorkerSampler() {
     processSamplerThread.request_stop();
     workerSamplerThread.request_stop();
+    committerSamplerThread.request_stop();
     if (processSamplerThread.joinable()) processSamplerThread.join();
     if (workerSamplerThread.joinable()) workerSamplerThread.join();
+    if (committerSamplerThread.joinable()) committerSamplerThread.join();
 }
 #else
 void StartWorkerSampler() {}
+void StartCommitterSampler() {}
 void StopWorkerSampler() {}
 #endif
 

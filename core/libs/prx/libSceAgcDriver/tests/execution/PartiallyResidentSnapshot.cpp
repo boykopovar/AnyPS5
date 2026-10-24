@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -45,6 +46,8 @@ constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
+constexpr std::uint32_t LargeSide = 512;
+constexpr std::size_t LargeSurfaceBytes = std::size_t{LargeSide} * LargeSide * 4u;
 constexpr int Skipped = 77;
 
 class Device {
@@ -70,7 +73,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -110,6 +113,7 @@ public:
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -148,16 +152,16 @@ private:
 
 class ReservedSurface {
 public:
-    ReservedSurface() {
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, BlockBytes));
+    explicit ReservedSurface(std::size_t bytes) : size(bytes) {
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(size, BlockBytes));
         Require(block != nullptr, "partially resident snapshot: cannot reserve the guest surface");
-        GuestAllocations::Mutation().Add(block, SurfaceBytes, true, true, true);
+        GuestAllocations::Mutation().Add(block, size, true, true, true);
     }
 
     ~ReservedSurface() {
         GuestAllocations::Mutation().Remove(block);
-        Decommit(0, SurfaceBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, SurfaceBytes);
+        Decommit(0, size);
+        GuestArena::GuestArenaRelease_nid_postfix(block, size);
     }
 
     ReservedSurface(const ReservedSurface&) = delete;
@@ -188,6 +192,7 @@ public:
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
 
 private:
+    std::size_t size = 0;
     std::uint8_t* block = nullptr;
 };
 
@@ -199,11 +204,11 @@ void CountReads(std::uint64_t address, std::size_t bytes) {
     if (address < surfaceEnd.load() && address + bytes > surfaceBegin.load()) surfaceReads.fetch_add(1);
 }
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((Side - 1u) & 3u) << 30u),
-        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        ((side - 1u) >> 2u) | ((side - 1u) << 14u),
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
@@ -260,6 +265,48 @@ void Run(const Context& context, ReservedSurface& surface) {
         throw;
     }
     AgcDriver::GuestMemory::SetFlushHook(nullptr);
+}
+
+void LargeTracked(const Context& context, ReservedSurface& surface, std::size_t committedBytes) {
+    const auto address = surface.Address();
+    const auto words = Descriptor(address, LargeSide);
+    const auto layout = committedBytes == LargeSurfaceBytes ? std::string("committed") : std::string("partially resident");
+    Require(DescribeSurface(DecodeTextureResource(words)).guestBytes == LargeSurfaceBytes, "the large test descriptor does not describe the reserved surface");
+    surface.Commit(0, committedBytes);
+    std::memset(surface.Data(), 0x5a, committedBytes);
+    surfaceBegin = address;
+    surfaceEnd = address + LargeSurfaceBytes;
+    std::shared_ptr<Texture> previous;
+    const auto sample = [&](const std::string& when, bool uploaded) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        surfaceReads = 0;
+        auto texture = CachedSampledTexture(context, words);
+        Require(texture != nullptr && !texture->ViewsStorageImage(), "the large " + layout + " surface was not sampled through a snapshot " + when);
+        const auto reads = surfaceReads.load();
+        if (uploaded && (reads == 0 || texture == previous)) throw std::runtime_error("sampling the large " + layout + " surface " + when + " kept the texture uploaded before it");
+        if (!uploaded && (reads != 0 || texture != previous)) throw std::runtime_error("sampling the large " + layout + " surface " + when + " uploaded it again although the write tracker saw no write (" + std::to_string(reads) + " reads)");
+        previous = texture;
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountReads);
+    try {
+        sample("at its first use", true);
+        sample("again", false);
+        surface.Data()[0x100] = 0x11;
+        sample("after a CPU write", true);
+        sample("after the upload of the written surface", false);
+        surface.Data()[committedBytes - 0x40] = 0x22;
+        sample("after a CPU write to its last committed block", true);
+        sample("after the upload of the written block", false);
+        AgcDriver::GuestMemory::MarkWritten(address + 0x200, 4);
+        sample("after a driver store of the bytes already there, which a snapshot it did not keep cannot tell from a change", true);
+        sample("after the upload that followed the driver store", false);
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearCachedTextures(context.device);
+    surface.Decommit(0, committedBytes);
 }
 
 #ifdef _WIN32
@@ -368,9 +415,13 @@ int main(int argc, char** argv) {
             auto context = device->GetContext();
             TextureDetiler detiler(context);
             context.detiler = &detiler;
-            ReservedSurface surface;
+            const bool large = argc == 2 && std::string_view(argv[1]) == "--large-tracked";
+            ReservedSurface surface(large ? LargeSurfaceBytes : SurfaceBytes);
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            if (argc == 2 && std::string_view(argv[1]) == "--pending-stores") PendingStores(context, surface);
+            if (large) {
+                LargeTracked(context, surface, LargeSurfaceBytes);
+                LargeTracked(context, surface, BlockBytes);
+            } else if (argc == 2 && std::string_view(argv[1]) == "--pending-stores") PendingStores(context, surface);
             else if (argc == 2 && std::string_view(argv[1]) == "--untracked-hint") {
 #ifdef _WIN32
                 UntrackedHint(context, surface);

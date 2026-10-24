@@ -35,8 +35,9 @@ static constexpr std::size_t FIBER_OPT_PARAM_SIZE = 0x80;
 static constexpr std::size_t FIBER_MIN_CONTEXT_SIZE = 512;
 static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 static constexpr std::size_t FIBER_HOST_STACK_MARGIN = 1u << 20;
+static constexpr std::size_t FIBER_GUEST_STACK_MIN = 64u << 10;
 
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
+using GuestFiberEntry = FiberEntry;
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never
@@ -166,6 +167,9 @@ Aps5FiberSwitchStack_nid_no_patch:
 Aps5FiberTrampoline_nid_no_patch:
     mov %r12, %rcx
     and $-16, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
     sub $32, %rsp
     call Aps5FiberMain_nid_no_patch
     ud2
@@ -235,6 +239,9 @@ asm(".text\n"
     APS5_ASM_FUNCTION("Aps5FiberTrampoline_nid_no_patch") R"(
     mov %r12, %rdi
     and $-16, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
     call )" APS5_ASM_SYMBOL("Aps5FiberMain_nid_no_patch") R"(
     ud2
 )" APS5_ASM_FUNCTION_END("Aps5FiberTrampoline_nid_no_patch"));
@@ -331,6 +338,7 @@ static std::uint64_t* SizedWindow(const Fiber* fiber) {
 #ifdef _WIN32
 
 static StackBounds FiberBounds(const Fiber* fiber) {
+    if (!fiber->hostStack) return {fiber->context + fiber->contextSize, fiber->context, fiber->context};
     return {fiber->hostStack + fiber->hostStackBytes, fiber->hostStack + HostStackGuardBytes(), fiber->hostStack};
 }
 
@@ -421,7 +429,7 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
     fiber->context = static_cast<std::uint8_t*>(addr_context);
     fiber->contextSize = size_context;
     std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
-    AllocateHostStack(fiber);
+    if (size_context < FIBER_GUEST_STACK_MIN) AllocateHostStack(fiber);
     fiber->contextSizeCheck = g_contextSizeCheck.load(std::memory_order_relaxed);
     if (fiber->contextSizeCheck) {
         auto* words = SizedWindow(fiber);
@@ -507,7 +515,7 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
     if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     if (fiber_info->size != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
-    fiber_info->entry = reinterpret_cast<FiberEntry>(fiber->entry);
+    fiber_info->entry = fiber->entry;
     fiber_info->arg_on_initialize = fiber->argOnInitialize;
     fiber_info->addr_context = SizedWindow(fiber);
     fiber_info->size_context = fiber->contextSize;
@@ -557,5 +565,24 @@ int32_t APS5_VABI sceFiberStopContextSizeCheck(void) {
     return g_contextSizeCheck.compare_exchange_strong(expected, false) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
 
+int APS5_VABI _sceFiberAttachContextAndRun(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                          uint64_t arg_on_run, uint64_t* arg_on_return) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
+int APS5_VABI _sceFiberAttachContextAndSwitch(FiberObject* fiber, void* addr_context, uint64_t size_context,
+                                              uint64_t arg_on_run, uint64_t* arg_on_run_out) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject* fiber, const char* name, GuestFiberEntry entry,
+                                                        uint64_t arg_on_initialize, void* addr_context,
+                                                        uint64_t size_context, const FiberOptParam* opt_param,
+                                                        uint32_t flags, uint32_t build_version) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}

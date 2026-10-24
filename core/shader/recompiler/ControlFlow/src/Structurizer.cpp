@@ -1,6 +1,8 @@
 #include "ControlFlow/Structurizer.hpp"
 #include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <functional>
@@ -48,6 +50,79 @@ std::vector<std::uint32_t> analysisOrder(const ControlFlowGraph& graph, bool suc
 bool inPlaceIntersections() {
     static const bool enabled = std::getenv("APS5_NO_PERF_DOM_INTERSECTION") == nullptr;
     return enabled;
+}
+
+struct BlockSet {
+    std::vector<std::uint64_t> words;
+
+    static std::size_t wordCount(std::uint32_t count) {
+        return (static_cast<std::size_t>(count) + 63u) / 64u;
+    }
+
+    static BlockSet filled(std::uint32_t count, std::uint64_t fill) {
+        BlockSet set;
+        set.words.assign(wordCount(count), fill);
+        return set;
+    }
+
+    static BlockSet none(std::uint32_t count) {
+        return filled(count, 0);
+    }
+
+    static BlockSet all(std::uint32_t count) {
+        auto set = filled(count, ~std::uint64_t{0});
+        if (const auto tail = count % 64u) set.words.back() &= (std::uint64_t{1} << tail) - 1u;
+        return set;
+    }
+
+    static BlockSet only(std::uint32_t count, std::uint32_t id) {
+        auto set = none(count);
+        set.add(id);
+        return set;
+    }
+
+    static BlockSet fromIds(std::uint32_t count, const std::vector<std::uint32_t>& ids) {
+        auto set = none(count);
+        for (const auto id : ids) set.add(id);
+        return set;
+    }
+
+    void add(std::uint32_t id) {
+        words[static_cast<std::size_t>(id) / 64u] |= std::uint64_t{1} << (id % 64u);
+    }
+
+    void intersect(const BlockSet& other) {
+        for (std::size_t i = 0; i < words.size(); ++i) words[i] &= other.words[i];
+    }
+
+    bool operator==(const BlockSet& other) const {
+        return words == other.words;
+    }
+
+    std::vector<std::uint32_t> ids() const {
+        std::vector<std::uint32_t> out;
+        for (std::size_t word = 0; word < words.size(); ++word) {
+            auto bits = words[word];
+            while (bits != 0) {
+                const auto bit = static_cast<std::uint32_t>(std::countr_zero(bits));
+                out.push_back(static_cast<std::uint32_t>(word * 64u) + bit);
+                bits &= bits - 1u;
+            }
+        }
+        return out;
+    }
+};
+
+bool replaceSet(BlockSet& destination, BlockSet&& next) {
+    if (next == destination) return false;
+    destination = std::move(next);
+    return true;
+}
+
+std::vector<std::vector<std::uint32_t>> analysisVectors(const std::vector<BlockSet>& sets) {
+    std::vector<std::vector<std::uint32_t>> vectors(sets.size());
+    for (std::size_t i = 0; i < sets.size(); ++i) vectors[i] = sets[i].ids();
+    return vectors;
 }
 
 void intersectAnalysisSet(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& other) {
@@ -366,27 +441,41 @@ std::uint32_t joinWithinIteration(const ControlFlowGraph& graph, const NaturalLo
     if (!joins[trueTarget] || !joins[falseTarget]) {
         return globalMerge;
     }
-    std::vector<std::vector<std::uint32_t>> postDominators(graph.blocks.size());
-    for (const auto blockId : joining) {
-        postDominators[blockId] = blockId == globalMerge ? std::vector<std::uint32_t>{globalMerge} : joining;
-    }
+    const auto count = static_cast<std::uint32_t>(graph.blocks.size());
+    std::vector<std::vector<std::uint32_t>> postDominators(count);
     const auto order = analysisOrder(graph, true);
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (const auto blockId : order) {
-            if (!joins[blockId] || blockId == globalMerge) {
-                continue;
-            }
-            auto next = joining;
-            for (const auto successor : graph.FindBlock(blockId).successors) {
-                if (joins[successor]) {
-                    next = intersectSorted(next, postDominators[successor]);
+    if (inPlaceIntersections()) {
+        const auto universe = BlockSet::fromIds(count, joining);
+        std::vector<BlockSet> sets(count, BlockSet::none(count));
+        for (const auto blockId : joining) sets[blockId] = blockId == globalMerge ? BlockSet::only(count, globalMerge) : universe;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                if (!joins[blockId] || blockId == globalMerge) continue;
+                auto next = universe;
+                for (const auto successor : graph.FindBlock(blockId).successors) {
+                    if (joins[successor]) next.intersect(sets[successor]);
                 }
+                next.add(blockId);
+                changed = replaceSet(sets[blockId], std::move(next)) || changed;
             }
-            addSortedUnique(next, blockId);
-            if (next != postDominators[blockId]) {
-                postDominators[blockId] = std::move(next);
-                changed = true;
+        }
+        postDominators = analysisVectors(sets);
+    } else {
+        for (const auto blockId : joining) postDominators[blockId] = blockId == globalMerge ? std::vector<std::uint32_t>{globalMerge} : joining;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                if (!joins[blockId] || blockId == globalMerge) continue;
+                auto next = joining;
+                for (const auto successor : graph.FindBlock(blockId).successors) {
+                    if (joins[successor]) next = intersectSorted(next, postDominators[successor]);
+                }
+                addSortedUnique(next, blockId);
+                if (next != postDominators[blockId]) {
+                    postDominators[blockId] = std::move(next);
+                    changed = true;
+                }
             }
         }
     }
@@ -441,41 +530,70 @@ std::uint32_t mergeBesideReturns(const ControlFlowGraph& graph, const BasicBlock
         }
     }
     const auto count = static_cast<std::uint32_t>(graph.blocks.size());
-    const auto returns = [&](std::uint32_t blockId) {
-        if (!graph.Dominates(header.id, blockId) || !hasLinearPathToTerminal(graph, blockId)) {
-            return false;
+    enum class Returning : std::uint8_t { Unknown, Visiting, No, Yes };
+    std::vector<Returning> returning(count, Returning::Unknown);
+    const auto returns = [&](std::uint32_t start) {
+        std::vector<std::uint32_t> pending{start};
+        while (!pending.empty()) {
+            const auto blockId = pending.back();
+            const auto& block = graph.FindBlock(blockId);
+            if (returning[blockId] == Returning::Unknown) {
+                if (block.predecessors.size() == 1u && graph.Dominates(header.id, blockId)) {
+                    returning[blockId] = Returning::Visiting;
+                    std::copy_if(block.successors.begin(), block.successors.end(), std::back_inserter(pending), [&](std::uint32_t successor) { return returning[successor] == Returning::Unknown; });
+                    continue;
+                }
+                returning[blockId] = Returning::No;
+            } else if (returning[blockId] == Returning::Visiting) {
+                const bool privateReturn = std::all_of(block.successors.begin(), block.successors.end(), [&](std::uint32_t successor) { return returning[successor] == Returning::Yes; });
+                returning[blockId] = privateReturn ? Returning::Yes : Returning::No;
+            }
+            pending.pop_back();
         }
-        const auto tail = linearTail(graph, blockId);
-        return std::all_of(tail.begin(), tail.end(), [&](std::uint32_t member) { return graph.FindBlock(member).predecessors.size() == 1u; });
+        return returning[start] == Returning::Yes;
     };
     std::vector<std::vector<std::uint32_t>> kept(count);
-    std::vector<std::vector<std::uint32_t>> postDominators(count, allBlockIds(count));
     for (const auto& block : graph.blocks) {
         for (const auto successor : block.successors) {
-            if (!returns(successor)) {
-                kept[block.id].push_back(successor);
-            }
-        }
-        if (kept[block.id].empty()) {
-            postDominators[block.id] = {block.id};
+            if (!returns(successor)) kept[block.id].push_back(successor);
         }
     }
     const auto order = analysisOrder(graph, true);
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (const auto blockId : order) {
-            const auto& block = graph.blocks[blockId];
-            if (kept[block.id].empty()) {
-                continue;
+    std::vector<std::vector<std::uint32_t>> postDominators;
+    if (inPlaceIntersections()) {
+        std::vector<BlockSet> sets(count, BlockSet::all(count));
+        for (const auto& block : graph.blocks) {
+            if (kept[block.id].empty()) sets[block.id] = BlockSet::only(count, block.id);
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                const auto& block = graph.blocks[blockId];
+                if (kept[block.id].empty()) continue;
+                auto next = sets[kept[block.id].front()];
+                for (std::size_t i = 1; i < kept[block.id].size(); ++i) next.intersect(sets[kept[block.id][i]]);
+                next.add(block.id);
+                changed = replaceSet(sets[block.id], std::move(next)) || changed;
             }
-            auto next = postDominators[kept[block.id].front()];
-            for (std::size_t i = 1; i < kept[block.id].size(); ++i) {
-                intersectAnalysisSet(next, postDominators[kept[block.id][i]]);
-            }
-            addSortedUnique(next, block.id);
-            if (next != postDominators[block.id]) {
-                replaceAnalysisSet(postDominators[block.id], std::move(next));
-                changed = true;
+        }
+        postDominators = analysisVectors(sets);
+    } else {
+        postDominators.assign(count, allBlockIds(count));
+        for (const auto& block : graph.blocks) {
+            if (kept[block.id].empty()) postDominators[block.id] = {block.id};
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                const auto& block = graph.blocks[blockId];
+                if (kept[block.id].empty()) continue;
+                auto next = postDominators[kept[block.id].front()];
+                for (std::size_t i = 1; i < kept[block.id].size(); ++i) intersectAnalysisSet(next, postDominators[kept[block.id][i]]);
+                addSortedUnique(next, block.id);
+                if (next != postDominators[block.id]) {
+                    replaceAnalysisSet(postDominators[block.id], std::move(next));
+                    changed = true;
+                }
             }
         }
     }
@@ -532,41 +650,66 @@ std::uint32_t iterationSelectionMerge(const ControlFlowGraph& graph, const Natur
     if (!joins[trueTarget] || !joins[falseTarget]) {
         return InvalidControlFlowId;
     }
-    std::vector<std::vector<std::uint32_t>> postDominators(count, allBlockIds(count));
-    postDominators[join] = {join};
     const auto order = analysisOrder(graph, true);
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (const auto blockId : order) {
-            const auto& block = graph.blocks[blockId];
-            if (!joins[block.id] || block.id == join) {
-                continue;
-            }
-            bool seeded = !reuse;
-            auto next = seeded ? allBlockIds(count) : std::vector<std::uint32_t>{};
-            for (const auto successor : block.successors) {
-                if (joins[successor]) {
+    std::vector<std::vector<std::uint32_t>> postDominators;
+    if (reuse && inPlaceIntersections()) {
+        std::vector<BlockSet> sets(count, BlockSet::all(count));
+        sets[join] = BlockSet::only(count, join);
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                const auto& block = graph.blocks[blockId];
+                if (!joins[block.id] || block.id == join) continue;
+                bool seeded = false;
+                auto next = BlockSet::none(count);
+                for (const auto successor : block.successors) {
+                    if (!joins[successor]) continue;
                     if (!seeded) {
-                        next = postDominators[successor];
+                        next = sets[successor];
                         seeded = true;
-                    } else if (reuse) {
-                        intersectAnalysisSet(next, postDominators[successor]);
                     } else {
-                        next = intersectSorted(next, postDominators[successor]);
+                        next.intersect(sets[successor]);
                     }
                 }
+                if (!seeded) next = BlockSet::all(count);
+                next.add(block.id);
+                changed = replaceSet(sets[block.id], std::move(next)) || changed;
             }
-            if (!seeded) next = allBlockIds(count);
-            if (reuse) {
-                addSortedUnique(next, block.id);
-            } else {
-                addUnique(next, block.id);
-                sortUnique(next);
-            }
-            if (next != postDominators[block.id]) {
-                if (reuse) replaceAnalysisSet(postDominators[block.id], std::move(next));
-                else postDominators[block.id] = std::move(next);
-                changed = true;
+        }
+        postDominators = analysisVectors(sets);
+    } else {
+        postDominators.assign(count, allBlockIds(count));
+        postDominators[join] = {join};
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const auto blockId : order) {
+                const auto& block = graph.blocks[blockId];
+                if (!joins[block.id] || block.id == join) continue;
+                bool seeded = !reuse;
+                auto next = seeded ? allBlockIds(count) : std::vector<std::uint32_t>{};
+                for (const auto successor : block.successors) {
+                    if (joins[successor]) {
+                        if (!seeded) {
+                            next = postDominators[successor];
+                            seeded = true;
+                        } else if (reuse) {
+                            intersectAnalysisSet(next, postDominators[successor]);
+                        } else {
+                            next = intersectSorted(next, postDominators[successor]);
+                        }
+                    }
+                }
+                if (!seeded) next = allBlockIds(count);
+                if (reuse) addSortedUnique(next, block.id);
+                else {
+                    addUnique(next, block.id);
+                    sortUnique(next);
+                }
+                if (next != postDominators[block.id]) {
+                    if (reuse) replaceAnalysisSet(postDominators[block.id], std::move(next));
+                    else postDominators[block.id] = std::move(next);
+                    changed = true;
+                }
             }
         }
     }
@@ -2000,33 +2143,45 @@ void Structurizer::structurize(ControlFlowGraph& graph, bool privatizeReturns, b
 
 void Structurizer::computeDominatorTree(ControlFlowGraph& graph) const {
     const auto count = static_cast<std::uint32_t>(graph.blocks.size());
-    const auto all = allBlockIds(count);
-
-    for (auto& block : graph.blocks) {
-        block.dominators = block.id == graph.entryBlock ? std::vector<std::uint32_t>{block.id} : all;
+    const auto order = analysisOrder(graph, false);
+    if (inPlaceIntersections()) {
+        std::vector<BlockSet> sets;
+        sets.reserve(count);
+        for (const auto& block : graph.blocks) sets.push_back(block.id == graph.entryBlock ? BlockSet::only(count, block.id) : BlockSet::all(count));
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto id : order) {
+                auto& block = graph.blocks[id];
+                if (block.id == graph.entryBlock) continue;
+                BlockSet next = block.predecessors.empty() ? BlockSet::only(count, block.id) : sets[block.predecessors.front()];
+                if (!block.predecessors.empty()) {
+                    for (std::size_t i = 1; i < block.predecessors.size(); ++i) next.intersect(sets[block.predecessors[i]]);
+                    next.add(block.id);
+                }
+                changed = replaceSet(sets[id], std::move(next)) || changed;
+            }
+        }
+        for (std::uint32_t id = 0; id < count; ++id) graph.blocks[id].dominators = sets[id].ids();
+        return;
     }
 
-    const auto order = analysisOrder(graph, false);
+    const auto all = allBlockIds(count);
+    for (auto& block : graph.blocks) block.dominators = block.id == graph.entryBlock ? std::vector<std::uint32_t>{block.id} : all;
     bool changed = true;
     while (changed) {
         changed = false;
         for (const auto id : order) {
             auto& block = graph.blocks[id];
-            if (block.id == graph.entryBlock) {
-                continue;
-            }
-
+            if (block.id == graph.entryBlock) continue;
             std::vector<std::uint32_t> next;
             if (block.predecessors.empty()) {
                 next = {block.id};
             } else {
                 next = graph.blocks[block.predecessors.front()].dominators;
-                for (std::size_t i = 1; i < block.predecessors.size(); ++i) {
-                    intersectAnalysisSet(next, graph.blocks[block.predecessors[i]].dominators);
-                }
+                for (std::size_t i = 1; i < block.predecessors.size(); ++i) intersectAnalysisSet(next, graph.blocks[block.predecessors[i]].dominators);
                 addSortedUnique(next, block.id);
             }
-
             if (next != block.dominators) {
                 replaceAnalysisSet(block.dominators, std::move(next));
                 changed = true;
@@ -2072,14 +2227,30 @@ void Structurizer::detectNaturalLoops(ControlFlowGraph& graph) const {
 
 void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
     const auto count = static_cast<std::uint32_t>(graph.blocks.size());
-    const auto all = allBlockIds(count);
-
-    for (auto& block : graph.blocks) {
-        block.postDominators = block.successors.empty() ? std::vector<std::uint32_t>{block.id} : all;
+    const auto order = analysisOrder(graph, true);
+    if (inPlaceIntersections()) {
+        std::vector<BlockSet> sets;
+        sets.reserve(count);
+        for (const auto& block : graph.blocks) sets.push_back(block.successors.empty() ? BlockSet::only(count, block.id) : BlockSet::all(count));
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto id : order) {
+                auto& block = graph.blocks[id];
+                BlockSet next = block.successors.empty() ? BlockSet::only(count, block.id) : sets[block.successors.front()];
+                if (!block.successors.empty()) {
+                    for (std::size_t i = 1; i < block.successors.size(); ++i) next.intersect(sets[block.successors[i]]);
+                    next.add(block.id);
+                }
+                changed = replaceSet(sets[id], std::move(next)) || changed;
+            }
+        }
+        for (std::uint32_t id = 0; id < count; ++id) graph.blocks[id].postDominators = sets[id].ids();
+        return;
     }
 
-    const auto order = analysisOrder(graph, true);
-
+    const auto all = allBlockIds(count);
+    for (auto& block : graph.blocks) block.postDominators = block.successors.empty() ? std::vector<std::uint32_t>{block.id} : all;
     bool changed = true;
     while (changed) {
         changed = false;
@@ -2090,12 +2261,9 @@ void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
                 next = {block.id};
             } else {
                 next = graph.blocks[block.successors.front()].postDominators;
-                for (std::size_t i = 1; i < block.successors.size(); ++i) {
-                    intersectAnalysisSet(next, graph.blocks[block.successors[i]].postDominators);
-                }
+                for (std::size_t i = 1; i < block.successors.size(); ++i) intersectAnalysisSet(next, graph.blocks[block.successors[i]].postDominators);
                 addSortedUnique(next, block.id);
             }
-
             if (next != block.postDominators) {
                 replaceAnalysisSet(block.postDominators, std::move(next));
                 changed = true;

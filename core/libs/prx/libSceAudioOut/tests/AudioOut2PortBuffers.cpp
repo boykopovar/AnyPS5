@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -21,6 +22,7 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
 int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
 int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle);
+int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle, std::uint32_t*, std::uint32_t*);
 int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
@@ -54,7 +56,7 @@ void SetData(AudioOut2PortHandle port, const void* data) {
     Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
 }
 
-std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOut2PortHandle)>& feed, bool advanced = false) {
+std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOut2PortHandle)>& feed, bool advanced = false, std::uint32_t queueDepth = 1) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_buffers-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
@@ -62,7 +64,7 @@ std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOu
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
     params.num_grains = grain;
-    params.queue_depth = 1;
+    params.queue_depth = queueDepth;
     AudioOut2ContextHandle context = 0;
     Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
     AudioOut2PortParam portParams{};
@@ -207,6 +209,26 @@ void TestAdvanceRetainsVolume() {
     RequirePlayed(played, {&buffer, &reduced});
 }
 
+void TestAdvanceBurstRetainsEveryGrain() {
+    std::vector<std::vector<float>> expected;
+    for (std::uint32_t index = 0; index < 64; ++index) expected.push_back(Grain(0.001f * static_cast<float>(index + 1)));
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        std::thread producer([&] {
+            auto buffer = Grain(0.0f);
+            for (const auto& data : expected) {
+                buffer = data;
+                SetData(port, buffer.data());
+                Require(sceAudioOut2ContextAdvance(context) == 0);
+            }
+        });
+        producer.join();
+        for (std::size_t index = 0; index < expected.size(); ++index) Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    std::vector<const std::vector<float>*> grains;
+    for (const auto& data : expected) grains.push_back(&data);
+    RequirePlayed(played, grains);
+}
+
 void TestPushingThreadWaitsForAdvance() {
     const auto first = Grain(0.01f);
     const auto second = Grain(0.02f);
@@ -232,16 +254,50 @@ void TestPushingThreadWaitsForAdvance() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestRenderingSizedByLevelStaysWithinQueueDepth() {
+    constexpr std::uint32_t queueDepth = 4;
+    constexpr std::uint32_t grains = 48;
+    std::vector<std::vector<float>> expected;
+    for (std::uint32_t index = 0; index < grains; index++) expected.push_back(Grain(0.001f * static_cast<float>(index + 1)));
+    std::uint32_t mostAwaiting = 0;
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        std::uint32_t advanced = 0;
+        std::uint32_t pushed = 0;
+        while (pushed < grains) {
+            std::uint32_t available = 0;
+            Require(sceAudioOut2ContextGetQueueLevel(context, nullptr, &available) == 0);
+            for (std::uint32_t index = 0; index < available && advanced < grains; index++) {
+                SetData(port, expected[advanced].data());
+                Require(sceAudioOut2ContextAdvance(context) == 0);
+                advanced++;
+            }
+            mostAwaiting = std::max(mostAwaiting, advanced - pushed);
+            if (advanced == pushed) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            Require(sceAudioOut2ContextPush(context, 1) == 0);
+            pushed++;
+        }
+    }, true, queueDepth);
+    Require(mostAwaiting <= queueDepth);
+    std::vector<const std::vector<float>*> order;
+    for (const auto& data : expected) order.push_back(&data);
+    RequirePlayed(played, order);
+}
+
 }
 
 int main() {
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
+    TestAdvanceBurstRetainsEveryGrain();
     TestPushingThreadWaitsForAdvance();
     TestBuffersSetBeforeOnePushPlayInOrder();
     TestBurstThenGapKeepsEveryBuffer();
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
+    TestRenderingSizedByLevelStaysWithinQueueDepth();
     return 0;
 }

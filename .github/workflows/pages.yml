@@ -3,6 +3,18 @@ name: Pages
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/pages.yml
+      - CMakeLists.txt
+      - core/relinker/**
+      - demo/web/**
+      - tools/build_web.py
+      - tools/package_release.py
+      - tools/nid_names.py
+      - tools/progress.py
+      - tools/progress_history.py
+      - tools/rdna_isa.txt
+      - tools/test_web.py
   workflow_dispatch:
   release:
     types: [published]
@@ -31,21 +43,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Build web converter
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
-          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.3
-          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.3
-          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
-          emcmake cmake -S . -B build-wasm -DANYPS5_BUILD_WASM=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-wasm --target relinker_web --parallel 2
-      - name: Test web converter
-        run: python3 tools/test_web.py --build build-wasm
-      - name: Download latest release libraries
+      - name: Download matching release converter and libraries
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/build_web.py --build build-wasm --libraries
+        run: python3 tools/build_web.py --build build-wasm --release
       - run: python3 tools/progress.py build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5

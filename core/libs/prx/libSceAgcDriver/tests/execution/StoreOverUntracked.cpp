@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -58,6 +59,10 @@ alignas(256) constexpr std::array<std::uint32_t, 7> StoreAgainCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 9> FillCode{
     0xd7460004, 0x04010c08, 0x7e000204, 0x7e020205, 0x7e040206, 0x7e060207, 0xe01c2000, 0x80000004, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> ReadCode{
+    0x7e020280, 0x7e04020c, 0xf0001108, 0x00010300, 0xbf8c3f70, 0x34080082, 0xe0701000, 0x80000304, 0xbf810000,
 };
 
 std::uint64_t AddressOf(const void* data) {
@@ -118,6 +123,20 @@ void Fill(const std::uint32_t* texels) {
         Filled,
     };
     Dispatch(FillCode, 64, (static_cast<std::uint32_t>(userData.size()) << 1u) | 0x80u, userData, static_cast<std::uint32_t>(SurfaceBytes / 1024u));
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::size_t bytes) {
+    const auto address = AddressOf(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(bytes), 0x31016facu};
+}
+
+void ReadImage(const std::uint32_t* texels, std::uint32_t* output) {
+    std::array<std::uint32_t, 13> userData{};
+    const auto buffer = BufferDescriptor(output, SurfaceBytes);
+    const auto texture = TextureDescriptor(texels);
+    std::copy(buffer.begin(), buffer.end(), userData.begin());
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    Dispatch(ReadCode, 32, static_cast<std::uint32_t>(userData.size()) << 1u, userData, 1);
 }
 
 class Surface {
@@ -202,7 +221,8 @@ bool HoldPending(THold& hold, const Surface& surface, std::uint32_t result) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (true) {
         hold.lock();
-        if (StorageTexture::AnyPending()) return true;
+        const auto live = StorageTexture::FindLive(surface.Address(), SurfaceBytes);
+        if (live != nullptr && StorageTexture::FindPending(surface.Address(), SurfaceBytes) == live) return true;
         hold.unlock();
         if (Holds(surface.Texels(), result)) return false;
         Require(std::chrono::steady_clock::now() < deadline, "store over untracked: the result neither became pending nor reached guest memory");
@@ -217,7 +237,35 @@ void Settle(THold& hold, const Surface& surface, std::uint32_t result) {
     hold.unlock();
 }
 
-enum class Kind { ReadAfter, ReadBefore, Filled, Copied, LeftWatch, WrittenThenLeftWatch, ImportLeftWatch, NeighbourCopied, NeighbourLeftWatch };
+void PendingIdentity() {
+    Surface pending;
+    Surface completed;
+    std::shared_ptr<StorageTexture> image;
+    struct WaitForWork {
+        ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
+    } waitForWork;
+    Store(pending.Texels());
+    AgcDriverWaitIdle_nid_postfix();
+    std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex());
+    image = StorageTexture::FindLive(pending.Address(), SurfaceBytes);
+    Require(image != nullptr, "store over untracked: the identity test has no live image");
+    StorageTexture::FlushAllPending("pending identity fixture");
+    image->MarkDirty();
+    Require(StorageTexture::FindPending(pending.Address(), SurfaceBytes) == image, "store over untracked: the identity test did not make its image pending");
+    Require(StorageTexture::FindLive(completed.Address(), SurfaceBytes) == nullptr && StorageTexture::FindPending(completed.Address(), SurfaceBytes) == nullptr, "store over untracked: the completed surface unexpectedly has an image");
+    hold.unlock();
+    Require(HoldPending(hold, pending, Stored), "store over untracked: the wait ignored its own pending image");
+    Require(hold.owns_lock(), "store over untracked: the pending image was not held under the GPU mutex");
+    std::fill(completed.Texels(), completed.Texels() + SurfaceBytes / 4u, Stored);
+    hold.unlock();
+    const bool held = HoldPending(hold, completed, Stored);
+    if (!hold.owns_lock()) hold.lock();
+    StorageTexture::FlushAllPending("pending identity fixture cleanup");
+    hold.unlock();
+    Require(!held, "store over untracked: the wait accepted another surface's pending image");
+}
+
+enum class Kind { ReadAfter, ReadBefore, Filled, Copied, LeftWatch, WrittenThenLeftWatch, ImportLeftWatch, NeighbourCopied, NeighbourLeftWatch, UntrackedRepeat };
 
 // One 64 KiB block of the surface: the image of its last block, and the source copied into it.
 constexpr std::uint32_t BlockSide = 128;
@@ -252,8 +300,8 @@ Outcome RunSecondStore(const char* name) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (true) {
             hold.lock();
-            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + SurfaceBytes}}};
-            if (StorageTexture::FindLive(address, SurfaceBytes) != nullptr && StorageTexture::AnyPendingOverlaps(range)) return true;
+            const auto image = StorageTexture::FindLive(address, SurfaceBytes);
+            if (image != nullptr && StorageTexture::FindPending(address, SurfaceBytes) == image) return true;
             hold.unlock();
             if (Holds(surface.Texels(), result)) return false;
             Require(std::chrono::steady_clock::now() < deadline, "store over untracked: the result neither became pending nor reached guest memory");
@@ -294,6 +342,7 @@ Outcome RunSecondStore(const char* name) {
 }
 
 Outcome Run(const Case& test) {
+    std::optional<Surface> output;
     std::optional<Surface> source;
     if (test.kind == Kind::Copied || test.kind == Kind::NeighbourCopied) source.emplace();
     const bool neighbour = test.kind == Kind::NeighbourLeftWatch;
@@ -313,6 +362,16 @@ Outcome Run(const Case& test) {
         Settle(hold, *source, Filled);
     }
     Store(surface.Texels());
+    if (test.kind == Kind::UntrackedRepeat) {
+        Settle(hold, surface, Stored);
+        output.emplace();
+        ReadImage(surface.Texels(), output->Texels());
+        hold.lock();
+        const auto image = StorageTexture::FindLive(surface.Address(), SurfaceBytes);
+        Require(image != nullptr, "store over untracked: the sampled surface has no live storage image");
+        image->MarkDirty();
+        hold.unlock();
+    }
     if (test.kind == Kind::Filled || leaves) {
         Settle(hold, surface, Stored);
         if (leaves) {
@@ -355,16 +414,14 @@ Outcome Run(const Case& test) {
         std::fill(surface.Texels(), surface.Texels() + SurfaceBytes / 4u, Untouched);
         Store(surface.Texels());
         // Pending results are the surface image's alone once it exists.
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + SurfaceBytes}}};
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (true) {
             hold.lock();
-            if (StorageTexture::FindLive(address, SurfaceBytes) != nullptr) {
-                if (StorageTexture::AnyPending()) break;
-                hold.unlock();
-                return Outcome::Missed;
-            }
+            if (StorageTexture::FindLive(address, SurfaceBytes) != nullptr && StorageTexture::AnyPendingOverlaps(range)) break;
             hold.unlock();
-            Require(std::chrono::steady_clock::now() < deadline, "store over untracked: the surface's storage image was never created");
+            if (Holds(surface.Texels(), Stored)) return Outcome::Missed;
+            Require(std::chrono::steady_clock::now() < deadline, "store over untracked: the surface's result neither became pending nor reached guest memory");
             std::this_thread::yield();
         }
         const auto from = StorageTexture::FindLive(source->Address(), Block);
@@ -415,8 +472,9 @@ Outcome Run(const Case& test) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--pending-identity"), "store over untracked: unknown test argument");
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
@@ -424,11 +482,17 @@ int main() {
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
+        if (argc == 2) {
+            PendingIdentity();
+            AgcDriverShutdown_nid_postfix();
+            std::puts("pending surface identity tests passed");
+            return 0;
+        }
         {
             Surface probe;
             Require(AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(probe.Texels()))).guestBytes == SurfaceBytes, "store over untracked: unexpected surface size");
         }
-        constexpr std::array<Case, 9> cases{{
+        constexpr std::array<Case, 10> cases{{
             {"another block read after the CPU write", Kind::ReadAfter, Block + Page},
             {"another block read before the CPU write", Kind::ReadBefore, 0xe000},
             {"a fill of the surface", Kind::Filled, 0xe000},
@@ -438,6 +502,7 @@ int main() {
             {"a surface whose import left the write watch", Kind::ImportLeftWatch, 0xe000},
             {"an image copy into another block of the surface", Kind::NeighbourCopied, 0xe000},
             {"a surface whose first block left the write watch with the page before it", Kind::NeighbourLeftWatch, 0xe000},
+            {"untracked storage results written again after an image read", Kind::UntrackedRepeat, 0xe000},
         }};
         bool kept = true;
         for (const auto& test : cases) {

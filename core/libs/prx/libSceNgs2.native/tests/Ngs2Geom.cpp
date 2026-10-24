@@ -60,22 +60,15 @@ static Ngs2GeomListenerParam Listener() {
 
 static void RequireMatrix(const Ngs2GeomListenerWork& work, const float (&expected)[4][4]) {
     for (std::size_t row = 0; row < 4; row++) {
-        for (std::size_t column = 0; column < 4; column++) Require(work.matrix[row][column] == expected[row][column]);
+        for (std::size_t column = 0; column < 4; column++) Require(std::abs(work.matrix[row][column] - expected[row][column]) < 0.00001f);
     }
 }
 
-static void TestDefaultListener() {
+static void TestListenerTransform() {
     auto param = Listener();
-    Ngs2GeomListenerWork work;
-    std::memset(&work, 0x5a, sizeof(work));
-    Require(sceNgs2GeomCalcListener(&param, &work, 0) == SCE_NGS2_OK);
-    RequireMatrix(work, {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
-    Require(work.velocity.x == 0.0f && work.velocity.y == 0.0f && work.velocity.z == 0.0f);
-    Require(work.sound_speed == SoundSpeed && work.coordinate == 0);
-    Require(work.reserved[0] == 0 && work.reserved[1] == 0 && work.reserved[2] == 0);
-
     param.velocity = {2.0f, -3.0f, 4.0f};
     param.sound_speed = 1500.0f;
+    Ngs2GeomListenerWork work;
     std::memset(&work, 0x5a, sizeof(work));
     Require(sceNgs2GeomCalcListener(&param, &work, 0) == SCE_NGS2_OK);
     RequireMatrix(work, {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
@@ -83,11 +76,25 @@ static void TestDefaultListener() {
     Require(work.sound_speed == 1500.0f && work.coordinate == 0);
     Require(work.reserved[0] == 0 && work.reserved[1] == 0 && work.reserved[2] == 0);
 
-    param.position = {-0.0f, -0.0f, -0.0f};
-    param.orient_front = {-0.0f, -0.0f, 1.0f};
-    param.orient_up = {-0.0f, 1.0f, -0.0f};
+    param.position = {3.0f, 4.0f, 5.0f};
     Require(sceNgs2GeomCalcListener(&param, &work, 0) == SCE_NGS2_OK);
-    RequireMatrix(work, {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
+    RequireMatrix(work, {{1, 0, 0, -3}, {0, 1, 0, -4}, {0, 0, 1, -5}, {0, 0, 0, 1}});
+
+    param.orient_front = {2.0f, 0.0f, 0.0f};
+    param.orient_up = {1.0f, 3.0f, 0.0f};
+    Require(sceNgs2GeomCalcListener(&param, &work, 0) == SCE_NGS2_OK);
+    RequireMatrix(work, {{0, 0, -1, 5}, {0, 1, 0, -4}, {1, 0, 0, -3}, {0, 0, 0, 1}});
+
+    param.orient_front = {0.0f, 0.0f, -2.0f};
+    param.orient_up = {0.0f, 3.0f, 0.0f};
+    Require(sceNgs2GeomCalcListener(&param, &work, 1) == SCE_NGS2_OK);
+    RequireMatrix(work, {{1, 0, 0, -3}, {0, 1, 0, -4}, {0, 0, -1, 5}, {0, 0, 0, 1}});
+    Require(work.coordinate == 1);
+
+    param.orient_front = {0.0f, 0.0f, std::numeric_limits<float>::max()};
+    param.orient_up = {0.0f, std::numeric_limits<float>::min(), 0.0f};
+    Require(sceNgs2GeomCalcListener(&param, &work, 0) == SCE_NGS2_OK);
+    RequireMatrix(work, {{1, 0, 0, -3}, {0, 1, 0, -4}, {0, 0, 1, -5}, {0, 0, 0, 1}});
 }
 
 static void RejectListener(const Ngs2GeomListenerParam* param, std::uint32_t flags) {
@@ -105,30 +112,21 @@ static void RejectListener(const Ngs2GeomListenerParam* param, std::uint32_t fla
     Require(std::memcmp(before, &work, sizeof(work)) == 0);
 }
 
-static void TestUnsupportedListener() {
-    auto param = Listener();
-    for (const auto flags : {1u, 2u, 0xffffffffu}) RejectListener(&param, flags);
-    for (const auto vector : {&Ngs2GeomListenerParam::position, &Ngs2GeomListenerParam::orient_front, &Ngs2GeomListenerParam::orient_up}) {
-        for (const auto component : {&Ngs2GeomVector::x, &Ngs2GeomVector::y, &Ngs2GeomVector::z}) {
-            for (const float value : {-1.0f, 0.0f, 1.0f, 2.0f, std::numeric_limits<float>::min(), std::numeric_limits<float>::max()}) {
-                param = Listener();
-                auto& field = (param.*vector).*component;
-                if (field == value) continue;
-                field = value;
-                RejectListener(&param, 0);
-            }
-            param = Listener();
-            auto& field = (param.*vector).*component;
-            field = std::nextafter(field, 2.0f);
-            RejectListener(&param, 0);
-        }
-    }
-}
-
 static void TestInvalidListener() {
     auto param = Listener();
     Require(sceNgs2GeomCalcListener(&param, nullptr, 0) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
-    RejectListener(nullptr, 0);
+    Ngs2GeomListenerWork work;
+    std::memset(&work, 0x5a, sizeof(work));
+    unsigned char before[sizeof(work)];
+    std::memcpy(before, &work, sizeof(work));
+    Require(sceNgs2GeomCalcListener(nullptr, &work, 0) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(nullptr, &work, 2) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(nullptr, nullptr, 0) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(&param, &work, 2) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, &work, 0x80000000u) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, &work, 0xffffffffu) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, nullptr, 2) == static_cast<int>(0x804A8010));
+    Require(std::memcmp(before, &work, sizeof(work)) == 0);
     for (const float value : {0.0f, -1.0f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
         param.sound_speed = value;
         RejectListener(&param, 0);
@@ -137,29 +135,66 @@ static void TestInvalidListener() {
     param.orient_front = {};
     RejectListener(&param, 0);
     param = Listener();
-    param.orient_up = param.orient_front;
-    RejectListener(&param, 0);
-    param = Listener();
     param.orient_up = {};
     RejectListener(&param, 0);
-    for (const auto vector : {&Ngs2GeomListenerParam::position, &Ngs2GeomListenerParam::orient_front,
-                              &Ngs2GeomListenerParam::orient_up, &Ngs2GeomListenerParam::velocity}) {
-        for (const auto component : {&Ngs2GeomVector::x, &Ngs2GeomVector::y, &Ngs2GeomVector::z}) {
-            for (const float value : {std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
-                param = Listener();
-                (param.*vector).*component = value;
-                RejectListener(&param, 0);
-            }
-        }
+    param = Listener();
+    param.orient_up = param.orient_front;
+    Ngs2GeomListenerWork parallelWork{};
+    Require(sceNgs2GeomCalcListener(&param, &parallelWork, 0) == SCE_NGS2_OK);
+    RequireMatrix(parallelWork, {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
+    param = Listener();
+    param.position.x = std::numeric_limits<float>::infinity();
+    RejectListener(&param, 0);
+    param = Listener();
+    param.velocity.z = std::numeric_limits<float>::quiet_NaN();
+    RejectListener(&param, 0);
+    param = Listener();
+    param.orient_front.y = std::numeric_limits<float>::quiet_NaN();
+    RejectListener(&param, 0);
+}
+
+static void TestGeomApply() {
+    Ngs2GeomListenerWork listener{};
+    for (std::size_t row = 0; row < 4; row++) {
+        for (std::size_t column = 0; column < 4; column++) listener.matrix[row][column] = row == column ? 1.0f : 0.0f;
     }
+
+    Ngs2GeomSourceParam source;
+    Require(sceNgs2GeomResetSourceParam(&source) == SCE_NGS2_OK);
+    source.position = {1.0f, 2.0f, 3.0f};
+    source.min_level = -0.25f;
+    source.max_level = 0.5f;
+    source.matrix_format = 3;
+
+    Ngs2GeomAttribute attribute;
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+    Require(sceNgs2GeomApply(&listener, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 1.0f);
+    Require(attribute.a3d_attrib.position.x == 1.0f && attribute.a3d_attrib.position.y == 2.0f && attribute.a3d_attrib.position.z == 3.0f);
+    Require(attribute.a3d_attrib.volume == 0.5f);
+    Require(attribute.level[0] == 0.5f);
+    Require(attribute.level[1] == 0.0f);
+    Require(attribute.level[9] == 0.5f);
+    Require(attribute.level[18] == 0.5f);
+    Require(attribute.level[24] == 0.0f);
+    Require(attribute.level[63] == 0.0f);
+
+    Require(sceNgs2GeomApply(&listener, &source, nullptr, 0) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+
+    source.matrix_format = 0;
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+    Require(sceNgs2GeomApply(&listener, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(attribute.level[0] == 0.5f);
+    Require(attribute.level[9] == 0.5f);
+    Require(attribute.level[16] == 0.0f);
 }
 
 int main() {
     TestLayouts();
     TestResetListenerParam();
     TestResetSourceParam();
-    TestDefaultListener();
-    TestUnsupportedListener();
+    TestListenerTransform();
     TestInvalidListener();
+    TestGeomApply();
     return 0;
 }

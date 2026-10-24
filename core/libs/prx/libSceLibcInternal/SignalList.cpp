@@ -1,3 +1,8 @@
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
 extern "C" {
 
 extern const char* const sys_siglist_nid_postfix[32] = {
@@ -36,5 +41,52 @@ extern const char* const sys_siglist_nid_postfix[32] = {
 };
 
 extern const int sys_nsig_nid_postfix = sizeof(sys_siglist_nid_postfix) / sizeof(sys_siglist_nid_postfix[0]);
+
+extern const char* const sys_signame_nid_postfix[32] = {
+    "Signal 0",
+    "HUP",
+    "INT",
+    "QUIT",
+    "ILL",
+    "TRAP",
+    "ABRT",
+    "EMT",
+    "FPE",
+    "KILL",
+    "BUS",
+    "SEGV",
+    "SYS",
+    "PIPE",
+    "ALRM",
+    "TERM",
+    "URG",
+    "STOP",
+    "TSTP",
+    "CONT",
+    "CHLD",
+    "TTIN",
+    "TTOU",
+    "IO",
+    "XCPU",
+    "XFSZ",
+    "VTALRM",
+    "PROF",
+    "WINCH",
+    "INFO",
+    "USR1",
+    "USR2",
+};
+
+std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, std::size_t count);
+
+void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix) {
+    const char* const message = signal < 32 ? sys_siglist_nid_postfix[signal] : "Unknown signal";
+    if (prefix != nullptr && prefix[0] != 0) {
+        _write_nid_postfix(2, prefix, std::strlen(prefix));
+        _write_nid_postfix(2, ": ", 2);
+    }
+    _write_nid_postfix(2, message, std::strlen(message));
+    _write_nid_postfix(2, "\n", 1);
+}
 
 }

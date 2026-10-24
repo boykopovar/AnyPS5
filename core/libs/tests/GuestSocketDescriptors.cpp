@@ -42,6 +42,8 @@ int APS5_VABI close_nid_postfix(int);
 int APS5_VABI sceKernelClose(int);
 std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
 int APS5_VABI dup_nid_postfix(int);
+int APS5_VABI dup2_nid_postfix(int, int);
+int APS5_VABI fcntl_nid_postfix(int, int, ...);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
 int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
@@ -58,6 +60,8 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 constexpr int DescriptorSetSize = 1024;
+constexpr int DuplicateCommand = 0;
+constexpr int DuplicateCloseOnExec = 17;
 constexpr int Inet = 2;
 constexpr int Datagram = 2;
 constexpr short In = 0x1;
@@ -156,7 +160,7 @@ static void CloseReleasesNumber() {
     unsigned char bytes[4]{};
     Require(read_nid_postfix(socket, bytes, sizeof(bytes)) == sizeof(bytes));
     PollDescriptor entry{socket, In, 0};
-    Require(Throws([&] { poll_nid_postfix(&entry, 1, 0); }));
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == In);
     for (const int file : files) Require(close_nid_postfix(file) == 0);
     const int kernelClosed = Socket();
     Require(sceKernelClose(kernelClosed) == 0);
@@ -181,9 +185,50 @@ static void DuplicateKeepsSocket() {
     Require(close_nid_postfix(sender) == 0);
 }
 
+static void SocketNumbersStayInDescriptorSet() {
+    const int socket = Socket();
+    std::vector<int> files;
+    for (;;) {
+        const int file = open_nid_postfix("/dev/urandom", 0, 0);
+        Require(file >= 0);
+        if (file >= DescriptorSetSize) {
+            Require(close_nid_postfix(file) == 0);
+            break;
+        }
+        files.push_back(file);
+    }
+    Require(dup_nid_postfix(socket) == -1 && *__error_nid_postfix() == 24);
+    Require(fcntl_nid_postfix(socket, DuplicateCommand, 0) == -1 && *__error_nid_postfix() == 24);
+    Require(fcntl_nid_postfix(socket, DuplicateCommand, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
+    Require(fcntl_nid_postfix(socket, DuplicateCloseOnExec, 0) == -1 && *__error_nid_postfix() == 24);
+    Require(fcntl_nid_postfix(socket, DuplicateCloseOnExec, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
+    Require(socket_nid_postfix(Inet, Datagram, 0) == -1 && *__error_nid_postfix() == 24);
+    Require(dup2_nid_postfix(socket, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
+    for (const int file : files) Require(close_nid_postfix(file) == 0);
+    Require(close_nid_postfix(socket) == 0);
+}
+
+static void SocketTypeErrors() {
+    constexpr int PrototypeError = 41;
+    constexpr int ProtocolError = 43;
+    constexpr int FamilyError = 47;
+    constexpr int Inet6 = 28;
+    for (const int family : {Inet, Inet6}) {
+        Require(socket_nid_postfix(family, 99, 0) == -1 && *__error_nid_postfix() == PrototypeError);
+        Require(socket_nid_postfix(family, 4, 0) == -1 && *__error_nid_postfix() == PrototypeError);
+        Require(socket_nid_postfix(family, 0, 0) == -1 && *__error_nid_postfix() == ProtocolError);
+        Require(socket_nid_postfix(family, 99, 6) == -1 && *__error_nid_postfix() == ProtocolError);
+        Require(socket_nid_postfix(family, 1, 17) == -1 && *__error_nid_postfix() == ProtocolError);
+        Require(socket_nid_postfix(family, 2, 6) == -1 && *__error_nid_postfix() == ProtocolError);
+    }
+    Require(socket_nid_postfix(99, 1, 0) == -1 && *__error_nid_postfix() == FamilyError);
+}
+
 int main() {
+    SocketTypeErrors();
     SelectSocketAndFile();
     CloseReleasesNumber();
     DuplicateKeepsSocket();
+    SocketNumbersStayInDescriptorSet();
     return 0;
 }

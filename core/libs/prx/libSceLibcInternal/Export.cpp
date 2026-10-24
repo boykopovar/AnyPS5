@@ -7,7 +7,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-#include <cmath>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -110,6 +109,10 @@ const char* APS5_VABI getprogname_nid_postfix() {
     return __progname_nid_postfix;
 }
 
+const char* APS5_VABI _getprogname_nid_postfix() {
+    return getprogname_nid_postfix();
+}
+
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
@@ -140,15 +143,5 @@ unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds);
 
 unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
     return GuestAlarm_nid_no_patch(seconds);
-}
-
-float APS5_VABI fminf_nid_postfix(float x, float y) {
-    if (std::isnan(x))
-        return y;
-    if (std::isnan(y))
-        return x;
-    if (std::signbit(x) != std::signbit(y))
-        return std::signbit(x) ? x : y;
-    return x < y ? x : y;
 }
 }

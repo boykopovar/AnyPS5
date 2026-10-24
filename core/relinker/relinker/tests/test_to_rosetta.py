@@ -16,17 +16,17 @@ SITES = RDSEED + CLWB + b"\xc3"
 LOWERED = RDRAND + NOP4 + b"\xc3"
 
 
-def executable():
+def executable(code=SITES):
     image = fixture()
     struct.pack_into("<Q", image, 24, 0x10)
-    image[0x4010:0x4010 + len(SITES)] = SITES
+    image[0x4010:0x4010 + len(code)] = code
     return image
 
 
-def relink(relinker, directory, name, *options):
+def relink(relinker, directory, name, *options, code=SITES):
     source = Path(directory) / f"{name}.elf"
     output = Path(directory) / f"{name}.out"
-    source.write_bytes(bytes(executable()))
+    source.write_bytes(bytes(executable(code)))
     result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)], capture_output=True, text=True, timeout=30)
     return result, output
 
@@ -52,6 +52,16 @@ def main():
             assert (LOWERED in data and SITES not in data) if lowered else (SITES in data and LOWERED not in data), f"{options} {'did not lower' if lowered else 'changed'} RDSEED and CLWB"
         result, _ = relink(relinker, directory, "windows", "--to-rosetta", "--windows")
         assert result.returncode != 0 and "--to-rosetta conflicts with --windows" in result.stdout + result.stderr, "--to-rosetta together with --windows was accepted"
+        andn = bytes.fromhex("c4e2f0f2c6c3")
+        for target in ((), ("--macos",)):
+            for conversion in ((), ("--to-intel",), ("--to-rosetta",)):
+                options = target + conversion
+                result, output = relink(relinker, directory, "andn" + "".join(options), *options, code=andn)
+                assert result.returncode == 0, (options, result.stdout, result.stderr)
+                lowered = conversion == ("--to-rosetta",)
+                assert (andn not in output.read_bytes()) == lowered, f"{options} {'did not lower' if lowered else 'changed'} ANDN"
+                if lowered:
+                    assert "ANDN" in result.stdout, result.stdout
     print("--to-rosetta integration tests passed")
 
 

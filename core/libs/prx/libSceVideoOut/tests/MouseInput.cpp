@@ -67,7 +67,14 @@ void CaptureApplied(MouseInput& input) {
     input.UpdateCapture(true);
     const bool applied = SDL_GetRelativeMouseMode() == SDL_TRUE;
     input.UpdateCapture(false);
-    Require(SDL_GetRelativeMouseMode() == SDL_FALSE, "the capture was not released");
+    if (applied) {
+        Require(SDL_GetRelativeMouseMode() == SDL_TRUE, "mouse-to-stick mode lost relative mouse mode");
+        Require(SDL_SetRelativeMouseMode(SDL_FALSE) == 0, "mouse-to-stick mode could not release relative mode");
+        input.UpdateCapture(true);
+        Require(SDL_GetRelativeMouseMode() == SDL_TRUE, "guest mouse capture was not restored after mouse-to-stick mode");
+        input.UpdateCapture(false);
+        Require(SDL_SetRelativeMouseMode(SDL_FALSE) == 0, "relative mouse mode could not be reset");
+    }
     std::printf("mouse input: SDL %s relative mode under the %s driver\n", applied ? "applied" : "refused", SDL_GetCurrentVideoDriver());
     SDL_Quit();
 }

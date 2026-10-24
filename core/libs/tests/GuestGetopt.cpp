@@ -17,6 +17,7 @@ struct GuestOption {
 extern "C" {
 int APS5_VABI getopt_nid_postfix(int, char* const*, const char*);
 int APS5_VABI getopt_long_nid_postfix(int, char* const*, const char*, const GuestOption*, int*);
+int APS5_VABI getopt_long_only_nid_postfix(int, char* const*, const char*, const GuestOption*, int*);
 int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
 int APS5_VABI unsetenv_nid_postfix(const char*);
 extern int opterr_nid_postfix;
@@ -244,6 +245,71 @@ void ShortOptions() {
     ExpectText(RunGetopt("bc", permuted), "|3", "getopt does not permute");
 }
 
+void LongOnlyOptions() {
+    int flag = 0;
+    const GuestOption options[] = {
+        {"alpha", 0, nullptr, 100},
+        {"alpine", 0, nullptr, 100},
+        {"b", 0, nullptr, 101},
+        {"required", 1, nullptr, 102},
+        {"optional", 2, nullptr, 103},
+        {"flag", 0, &flag, 7},
+        {nullptr, 0, nullptr, 0},
+    };
+    struct Case {
+        const char* arguments;
+        const char* shortOptions;
+        std::vector<int> results;
+        std::vector<std::string> values;
+        int finalIndex;
+    };
+    const Case cases[] = {
+        {"foo -alpha --alpha -b", "ab", {100, 100, 101}, {"", "", ""}, 4},
+        {"foo -a -acvalue", "ac:", {'a', 'a', 'c'}, {"", "", "value"}, 3},
+        {"foo -required=one -req two -optional=three -optional four", "", {102, 102, 103, 103}, {"one", "two", "three", ""}, 6},
+        {"foo operand -alpha tail -b", "ab", {100, 101}, {"", ""}, 3},
+        {"foo -al --al", "a", {'?', '?'}, {"", ""}, 3},
+        {"foo -unknown", "", {'?'}, {""}, 2},
+        {"foo -required", ":", {':'}, {""}, 2},
+        {"foo -alpha=yes", "", {'?'}, {""}, 2},
+        {"foo -flag", "", {0}, {""}, 2},
+        {"foo -- -alpha", "", {}, {}, 2},
+        {"foo operand -alpha", "+", {}, {}, 1},
+        {"foo operand -alpha", "-", {1, 100}, {"operand", ""}, 3},
+        {"foo -W alpha", "W;", {100}, {""}, 3},
+    };
+    for (const auto& test : cases) {
+        ArgumentVector arguments(test.arguments);
+        Reset();
+        opterr_nid_postfix = 0;
+        for (std::size_t i = 0; i < test.results.size(); ++i) {
+            const int result = getopt_long_only_nid_postfix(arguments.Count(), arguments.Values(), test.shortOptions, options, nullptr);
+            Expect(result == test.results[i], std::string("getopt_long_only result: ") + test.arguments);
+            ExpectText(optarg_nid_postfix ? optarg_nid_postfix : "", test.values[i], "getopt_long_only argument");
+        }
+        Expect(getopt_long_only_nid_postfix(arguments.Count(), arguments.Values(), test.shortOptions, options, nullptr) == -1,
+               std::string("getopt_long_only termination: ") + test.arguments);
+        Expect(optind_nid_postfix == test.finalIndex, std::string("getopt_long_only optind: ") + test.arguments);
+    }
+    Expect(flag == 7, "getopt_long_only flag pointer");
+    {
+        ArgumentVector arguments("foo -al");
+        StderrCapture capture;
+        Reset();
+        int index = -1;
+        Expect(getopt_long_only_nid_postfix(arguments.Count(), arguments.Values(), "a", options, &index) == '?' &&
+               optopt_nid_postfix == 0 && index == -1, "ambiguous aliases keep index unchanged");
+        ExpectText(capture.Text(), "eboot.bin: option `-al' is ambiguous\n", "single dash diagnostic");
+    }
+    ArgumentVector arguments("foo -alpha");
+    Reset();
+    int index = -1;
+    Expect(getopt_long_only_nid_postfix(arguments.Count(), arguments.Values(), "a", options, &index) == 100 && index == 0,
+           "long-only index");
+    optind_nid_postfix = 0;
+    Expect(getopt_long_only_nid_postfix(arguments.Count(), arguments.Values(), "a", options, nullptr) == 100, "long-only restart");
+}
+
 void LongOptions() {
     int flag = 0;
     const GuestOption options[] = {
@@ -364,4 +430,5 @@ int main() {
     FreeBsdGetoptLongCases();
     ShortOptions();
     LongOptions();
+    LongOnlyOptions();
 }

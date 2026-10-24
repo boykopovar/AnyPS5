@@ -31,9 +31,14 @@ namespace {
 using AgcDriver::DriverDetail::Driver;
 using AgcDriver::Graphics::Require;
 
+constexpr std::size_t HostStackContextBytes = 16 * 1024;
 constexpr std::size_t ContextBytes = 64 * 1024;
 constexpr std::size_t MappingBytes = 4 * 65536;
+#ifdef ANYPS5_ENABLE_ASAN
+constexpr std::size_t FiberStackLimit = 16 * 1024;
+#else
 constexpr std::size_t FiberStackLimit = 8 * 1024;
+#endif
 constexpr std::uint64_t Fill = 0x5aa5c33c5aa5c33cull;
 
 alignas(16) std::array<std::uint64_t, ContextBytes / sizeof(std::uint64_t)> FiberContext;
@@ -84,10 +89,28 @@ void ReleaseMapping() {
     Mapping = nullptr;
 }
 
-std::size_t FiberStackUsed() {
+std::size_t FiberStackUsed(std::size_t contextBytes) {
+    const std::size_t words = contextBytes / sizeof(std::uint64_t);
     std::size_t untouched = 0;
-    while (untouched < FiberContext.size() && FiberContext[untouched] == Fill) ++untouched;
-    return (FiberContext.size() - untouched) * sizeof(std::uint64_t);
+    while (untouched < words && FiberContext[untouched] == Fill) ++untouched;
+    return (words - untouched) * sizeof(std::uint64_t);
+}
+
+struct FiberMapping {
+    std::uint64_t threads = 0;
+    std::size_t used = 0;
+};
+
+FiberMapping MapOnFiberWithContext(std::size_t contextBytes) {
+    FiberContext.fill(Fill);
+    auto* fiber = reinterpret_cast<FiberObject*>(&FiberObjectStorage);
+    Require(_sceFiberInitializeImpl_nid_postfix(fiber, "gpu map", MapOnFiber, 0, FiberContext.data(), contextBytes, nullptr, 0) == 0, "GPU mapping on a fiber: the fiber was not initialized");
+    const auto before = Driver::GpuMapImportThreads();
+    Require(sceFiberRun_nid_postfix(fiber, 0, nullptr) == 0, "GPU mapping on a fiber: the fiber did not run");
+    const auto threads = Driver::GpuMapImportThreads() - before;
+    Require(sceFiberFinalize(fiber) == 0, "GPU mapping on a fiber: the fiber was not finalized");
+    GuestAllocations::Mutation().Remove(Mapping);
+    return {threads, FiberStackUsed(contextBytes)};
 }
 
 }
@@ -103,29 +126,24 @@ int main() {
 #endif
         Require(Mapping != nullptr, "GPU mapping on a fiber: cannot allocate the mapped memory");
         std::memset(Mapping, 0, MappingBytes);
-        FiberContext.fill(Fill);
-        auto* fiber = reinterpret_cast<FiberObject*>(&FiberObjectStorage);
-        Require(_sceFiberInitializeImpl_nid_postfix(fiber, "gpu map", MapOnFiber, 0, FiberContext.data(), ContextBytes, nullptr, 0) == 0, "GPU mapping on a fiber: the fiber was not initialized");
-        const auto beforeFiber = Driver::GpuMapImportThreads();
-        Require(sceFiberRun_nid_postfix(fiber, 0, nullptr) == 0, "GPU mapping on a fiber: the fiber did not run");
-        const auto onFiber = Driver::GpuMapImportThreads() - beforeFiber;
-        Require(sceFiberFinalize(fiber) == 0, "GPU mapping on a fiber: the fiber was not finalized");
-        const auto used = FiberStackUsed();
-        GuestAllocations::Mutation().Remove(Mapping);
+        const auto onHostStack = MapOnFiberWithContext(HostStackContextBytes);
+        const auto onContext = MapOnFiberWithContext(ContextBytes);
         const auto beforeThread = Driver::GpuMapImportThreads();
         MapForGpu();
         const auto onThread = Driver::GpuMapImportThreads() - beforeThread;
         GuestAllocations::Mutation().Remove(Mapping);
         AgcDriverShutdown_nid_postfix();
         ReleaseMapping();
-        Require(used <= FiberStackLimit, "GPU mapping on a fiber used " + std::to_string(used) + " bytes of the fiber's stack, more than " + std::to_string(FiberStackLimit) + ": the import of the mapped memory ran on it");
+        Require(onHostStack.used <= FiberStackLimit, "GPU mapping on a fiber with a host stack used " + std::to_string(onHostStack.used) + " bytes of the fiber's context, more than " + std::to_string(FiberStackLimit) + ": the import of the mapped memory ran on it");
+        Require(onContext.used <= FiberStackLimit, "GPU mapping on a fiber running on its context used " + std::to_string(onContext.used) + " bytes of it, more than " + std::to_string(FiberStackLimit) + ": the import of the mapped memory ran on it");
 #ifdef _WIN32
-        Require(onFiber == 0, "GPU mapping on a fiber started " + std::to_string(onFiber) + " host threads for its import instead of importing on the fiber's host stack");
+        Require(onHostStack.threads == 0, "GPU mapping on a fiber with a host stack started " + std::to_string(onHostStack.threads) + " host threads for its import instead of importing on the fiber's host stack");
 #else
-        Require(onFiber == 1, "GPU mapping on a fiber started " + std::to_string(onFiber) + " host threads for its import instead of one");
+        Require(onHostStack.threads == 1, "GPU mapping on a fiber with a host stack started " + std::to_string(onHostStack.threads) + " host threads for its import instead of one");
 #endif
+        Require(onContext.threads == 1, "GPU mapping on a fiber running on its context started " + std::to_string(onContext.threads) + " host threads for its import instead of one");
         Require(onThread == 0, "GPU mapping on an ordinary thread started " + std::to_string(onThread) + " host threads for its import instead of importing on its own stack");
-        std::cout << "A GPU mapping made on a fiber used " << used << " bytes of its stack\n";
+        std::cout << "A GPU mapping made on a fiber used " << onHostStack.used << " bytes of its context with a host stack and " << onContext.used << " running on the context\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

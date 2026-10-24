@@ -84,6 +84,7 @@ int APS5_VABI sem_trywait_nid_postfix(void* sem) {
 int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    ThreadCancel::Check();
     {
         std::lock_guard lock(semaphore->lock);
         if (semaphore->count > 0) {

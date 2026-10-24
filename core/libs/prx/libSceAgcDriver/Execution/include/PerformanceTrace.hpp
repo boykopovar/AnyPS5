@@ -10,6 +10,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <condition_variable>
+#include <exception>
+#include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -18,8 +22,16 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
+
+namespace AgcDriver {
+class TraceThread;
+}
+
+extern "C" bool AgcDriverTraceRecording_nid_postfix();
+extern "C" AgcDriver::TraceThread* AgcDriverTraceThread_nid_postfix();
 
 namespace AgcDriver {
 
@@ -260,6 +272,18 @@ private:
     Clock::duration folded{};
 };
 
+struct TraceHost {
+    std::string cpu;
+    std::uint32_t threads = 0;
+    std::uint64_t memoryMiB = 0;
+};
+
+struct TraceTitle {
+    std::string id;
+    std::string name;
+    std::string contentVersion;
+};
+
 struct TraceSummary {
     std::string commit;
     std::optional<bool> dirty;
@@ -274,6 +298,135 @@ struct TraceSummary {
     double gpuBusyMs = 0;
     std::string trace;
     std::optional<std::pair<double, double>> interval;
+    std::optional<TraceHost> host;
+    std::optional<TraceTitle> title;
+};
+
+struct TraceBenchInterval {
+    double startS = 0;
+    double endS = 0;
+    std::uint64_t firstPresent = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    double gpuBusyMs = 0;
+    std::vector<std::uint32_t> frameUs;
+};
+
+using TraceBenchIntervals = std::vector<std::shared_ptr<const TraceBenchInterval>>;
+
+class TraceBench {
+public:
+    static constexpr std::size_t MaximumIntervals = 240;
+
+    static void Keep(TraceBenchIntervals& kept, std::shared_ptr<const TraceBenchInterval> interval, std::uint64_t& dropped) {
+        kept.push_back(std::move(interval));
+        if (kept.size() <= MaximumIntervals) return;
+        const auto excess = kept.size() - MaximumIntervals;
+        kept.erase(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(excess));
+        dropped += excess;
+    }
+
+    static bool Parse(const char* bench, bool summaryEvery) {
+        if (bench == nullptr) return false;
+        if (std::string_view(bench) != "1") throw std::invalid_argument("APS5_TRACE_BENCH=" + std::string(bench) + " is not 1");
+        if (!summaryEvery) throw std::invalid_argument("APS5_TRACE_BENCH=1 needs APS5_TRACE_SUMMARY_EVERY");
+        return true;
+    }
+};
+
+struct TraceBenchSnapshot {
+    TraceSummary summary;
+    TraceBenchIntervals intervals;
+    std::uint64_t dropped = 0;
+};
+
+class TraceBenchWriter {
+public:
+    explicit TraceBenchWriter(std::function<void(const TraceBenchSnapshot&)> writer) : writer(std::move(writer)) {
+        if (!this->writer) throw std::invalid_argument("invalid benchmark writer");
+        worker = std::thread([this] { run(); });
+    }
+
+    TraceBenchWriter(const TraceBenchWriter&) = delete;
+    TraceBenchWriter& operator=(const TraceBenchWriter&) = delete;
+
+    ~TraceBenchWriter() {
+        Stop();
+    }
+
+    void Stop() {
+        std::lock_guard stopLock(stopMutex);
+        {
+            std::lock_guard lock(mutex);
+            stopping = true;
+        }
+        changed.notify_one();
+        if (worker.joinable()) worker.join();
+    }
+
+    void Write(TraceBenchSnapshot snapshot) {
+        {
+            std::lock_guard lock(mutex);
+            if (failure) std::rethrow_exception(failure);
+            if (stopping) throw std::runtime_error("benchmark writer is stopping");
+            if (pending) ++superseded;
+            pending = std::move(snapshot);
+        }
+        changed.notify_one();
+    }
+
+    void Flush() {
+        std::unique_lock lock(mutex);
+        idle.wait(lock, [&] { return failure || (!pending && !writing); });
+        if (failure) std::rethrow_exception(failure);
+    }
+
+    std::uint64_t Superseded() {
+        std::lock_guard lock(mutex);
+        return superseded;
+    }
+
+private:
+    void run() noexcept {
+        try {
+            for (;;) {
+                TraceBenchSnapshot snapshot;
+                {
+                    std::unique_lock lock(mutex);
+                    changed.wait(lock, [&] { return stopping || pending.has_value(); });
+                    if (!pending) return;
+                    snapshot = std::move(*pending);
+                    pending.reset();
+                    writing = true;
+                }
+                writer(snapshot);
+                {
+                    std::lock_guard lock(mutex);
+                    writing = false;
+                }
+                idle.notify_all();
+            }
+        } catch (...) {
+            {
+                std::lock_guard lock(mutex);
+                failure = std::current_exception();
+                writing = false;
+            }
+            idle.notify_all();
+        }
+    }
+
+    std::function<void(const TraceBenchSnapshot&)> writer;
+    std::mutex stopMutex;
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::condition_variable idle;
+    std::optional<TraceBenchSnapshot> pending;
+    std::uint64_t superseded = 0;
+    bool writing = false;
+    bool stopping = false;
+    std::exception_ptr failure;
+    std::thread worker;
 };
 
 struct TraceGpuRange {
@@ -422,6 +575,7 @@ public:
         AppendString(output, summary.driver);
         output += ",\"os\":";
         AppendString(output, summary.os);
+        AppendMachine(output, summary);
         output += ",\"resolution\":";
         AppendString(output, std::to_string(summary.width) + "x" + std::to_string(summary.height));
         output += ",\"window\":{\"spec\":";
@@ -495,7 +649,71 @@ public:
         return output;
     }
 
+    static std::vector<std::uint32_t> FrameMicroseconds(std::span<const Clock::time_point> presents) {
+        std::vector<std::uint32_t> frames;
+        for (std::size_t index = 1; index < presents.size(); ++index) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(presents[index] - presents[index - 1]).count();
+            frames.push_back(static_cast<std::uint32_t>(std::clamp<std::int64_t>(elapsed, 0, std::numeric_limits<std::uint32_t>::max())));
+        }
+        return frames;
+    }
+
+    static std::string Bench(const TraceSummary& summary, std::span<const std::shared_ptr<const TraceBenchInterval>> intervals, std::uint64_t intervalsDropped) {
+        std::string output = "{\"format\":\"aps5-bench/1\",\"commit\":";
+        AppendString(output, summary.commit);
+        output += ",\"dirty\":";
+        output += summary.dirty.has_value() ? (*summary.dirty ? "true" : "false") : "null";
+        output += ",\"env\":{";
+        for (std::size_t index = 0; index < summary.environment.size(); ++index) {
+            if (index != 0) output += ',';
+            AppendString(output, summary.environment[index].first);
+            output += ':';
+            AppendString(output, summary.environment[index].second);
+        }
+        output += "},\"gpu\":";
+        AppendString(output, summary.gpu);
+        output += ",\"driver\":";
+        AppendString(output, summary.driver);
+        output += ",\"os\":";
+        AppendString(output, summary.os);
+        AppendMachine(output, summary);
+        output += ",\"intervals_dropped\":" + std::to_string(intervalsDropped) + ",\"intervals\":[";
+        for (std::size_t index = 0; index < intervals.size(); ++index) {
+            const auto& interval = *intervals[index];
+            if (index != 0) output += ',';
+            output += "\n{\"start_s\":" + number(interval.startS) + ",\"end_s\":" + number(interval.endS);
+            output += ",\"first_present\":" + std::to_string(interval.firstPresent);
+            output += ",\"resolution\":";
+            AppendString(output, std::to_string(interval.width) + "x" + std::to_string(interval.height));
+            output += ",\"gpu_busy_ms\":" + number(interval.gpuBusyMs) + ",\"frame_us\":[";
+            for (std::size_t frame = 0; frame < interval.frameUs.size(); ++frame) {
+                if (frame != 0) output += ',';
+                output += std::to_string(interval.frameUs[frame]);
+            }
+            output += "]}";
+        }
+        output += "\n]}\n";
+        return output;
+    }
+
 private:
+    static void AppendMachine(std::string& output, const TraceSummary& summary) {
+        if (summary.host) {
+            output += ",\"cpu\":";
+            AppendString(output, summary.host->cpu);
+            output += ",\"cpu_threads\":" + std::to_string(summary.host->threads);
+            output += ",\"memory_mib\":" + std::to_string(summary.host->memoryMiB);
+        }
+        if (summary.title) {
+            output += ",\"title_id\":";
+            AppendString(output, summary.title->id);
+            output += ",\"title\":";
+            AppendString(output, summary.title->name);
+            output += ",\"content_version\":";
+            AppendString(output, summary.title->contentVersion);
+        }
+    }
+
     static double microseconds(Clock::duration elapsed) {
         return std::chrono::duration<double, std::micro>(elapsed).count();
     }
@@ -514,7 +732,7 @@ private:
 class PerformanceTrace {
 public:
     static bool Configured() {
-        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr;
+        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
         return configured;
     }
 
@@ -532,23 +750,26 @@ public:
     }
 
     static bool Recording() {
-        return recording.load(std::memory_order_relaxed);
+        return AgcDriverTraceRecording_nid_postfix();
     }
 
     static TraceThread* Thread() {
-        return local;
+        return AgcDriverTraceThread_nid_postfix();
     }
 
     static void StopOutput();
 
 private:
+    friend bool ::AgcDriverTraceRecording_nid_postfix();
+    friend TraceThread* ::AgcDriverTraceThread_nid_postfix();
+
     static void OpenInterval(std::chrono::steady_clock::time_point now, std::uint64_t present);
     static void FlushInterval(std::chrono::steady_clock::time_point now, std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
 
-    inline static std::atomic<bool> recording{false};
+    static std::atomic<bool> recording;
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
-    inline static thread_local TraceThread* local = nullptr;
+    static thread_local TraceThread* local;
     inline static std::mutex gpuMutex;
     inline static std::vector<TraceGpuRange> gpuRanges;
     inline static std::uint64_t gpuLost = 0;

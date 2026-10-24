@@ -23,6 +23,24 @@ bool roundsProductSeparately(const RdnaInstruction& inst) {
 
 }
 
+bool TranslationContext::flushesInHardware(const RdnaInstruction& inst) const {
+    const std::uint32_t declaredRound = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    if (declaredRound != 0u || (rounding.value & 3u) != 0u || (rounding.unknown & 3u) != 0u || inst.family == RdnaInstructionFamily::VOP3P) return false;
+    switch (inst.op) {
+    case RdnaOpcode::VAddF32:
+    case RdnaOpcode::VSubF32:
+    case RdnaOpcode::VSubrevF32:
+    case RdnaOpcode::VMulF32:
+    case RdnaOpcode::VFloorF32:
+    case RdnaOpcode::VCeilF32: return true;
+    case RdnaOpcode::VFmaF32:
+    case RdnaOpcode::VMacF32:
+    case RdnaOpcode::VMadmkF32:
+    case RdnaOpcode::VMadakF32: return !roundsProductSeparately(inst);
+    default: return false;
+    }
+}
+
 std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& inst) const {
     std::uint32_t flush = 0u;
     switch (inst.op) {
@@ -75,6 +93,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VCmpxNleF32:
     case RdnaOpcode::VCmpxNlgF32:
     case RdnaOpcode::VCmpxNltF32:
+        return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VCvtI32F32:
     case RdnaOpcode::VCvtU32F32:
     case RdnaOpcode::VCvtRpiI32F32:
@@ -102,7 +121,8 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     if (denormals == 1u || denormals == 2u) {
         throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " is not implemented");
     }
-    return denormals == 0u ? flush : 0u;
+    if (denormals != 0u) return 0u;
+    return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 0u : flush;
 }
 
 bool TranslationContext::emitVector(const RdnaInstruction& inst) {
@@ -855,7 +875,7 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VPkMadU16:
         return packedInteger16Mad(inst, false);
     case RdnaOpcode::VPkMulLoU16:
-        return packedInteger16Binary(inst, IrOpcode::IMul32, false);
+        return vPkMulLoU16(inst);
     case RdnaOpcode::VPkAddI16:
         return packedInteger16Binary(inst, IrOpcode::IAdd32, true);
     case RdnaOpcode::VPkAddU16:
@@ -946,9 +966,9 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VFmaF64:
         return float64Operation(inst, IrOpcode::FPFma64);
     case RdnaOpcode::VMinF64:
-        return ieeeMode ? float64Operation(inst, IrOpcode::FPMin64) : nonIeeeMinMaxF64(inst, IrOpcode::FPMin64);
+        return minMaxF64(inst, IrOpcode::FPMin64);
     case RdnaOpcode::VMaxF64:
-        return ieeeMode ? float64Operation(inst, IrOpcode::FPMax64) : nonIeeeMinMaxF64(inst, IrOpcode::FPMax64);
+        return minMaxF64(inst, IrOpcode::FPMax64);
     case RdnaOpcode::VLdexpF64:
         return float64Unary(inst, IrOpcode::FPLdexp64);
     case RdnaOpcode::VTruncF64:
@@ -1140,7 +1160,7 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VSubNcI32:
         return vAddSubNcI32(inst, true);
     case RdnaOpcode::VMulLoU16:
-        return integer16Binary(inst, IrOpcode::IMul32, false);
+        return vMulLoU16(inst);
     case RdnaOpcode::VMadU16:
         return integer16Mad(inst, false, false);
     case RdnaOpcode::VMadI16:

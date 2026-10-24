@@ -57,6 +57,10 @@ FileStream _Stderr_nid_postfix{stderr};
 FileStream _Stdout_nid_postfix{stdout};
 FileStream _Stdin_nid_postfix{stdin};
 
+std::FILE* GuestStandardOutputFile_nid_no_patch() {
+    return GetNativeStream(&_Stdout_nid_postfix);
+}
+
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle) {
     std::lock_guard lock(g_exitMutex);
     g_exitDestructors.push_back({func, arg, dsoHandle});
@@ -91,6 +95,15 @@ void APS5_VABI cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
 
+void APS5_VABI _Vacopy_nid_postfix(unsigned char* destination, const unsigned char* source) {
+    std::uint64_t overflowArea;
+    std::memcpy(&overflowArea, source + 16, sizeof(overflowArea));
+    std::memcpy(destination + 16, &overflowArea, sizeof(overflowArea));
+    unsigned char offsets[16];
+    std::memcpy(offsets, source, sizeof(offsets));
+    std::memcpy(destination, offsets, sizeof(offsets));
+}
+
 unsigned int APS5_VABI _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
     return GccAtomicFetchAdd(target, value);
@@ -113,13 +126,13 @@ unsigned int APS5_VABI _Atomic_load_4_nid_postfix(volatile unsigned int* target,
 }
 
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
-    return std::strtoimax(str, endptr, base);
+    if (RejectIntegerBase_nid_no_patch(str, endptr, base, false) || StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
+    return ParseInteger<std::intmax_t>(str, endptr, base, std::strtoimax);
 }
 
 std::uintmax_t APS5_VABI strtoumax_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
-    return std::strtoumax(str, endptr, base);
+    if (RejectIntegerBase_nid_no_patch(str, endptr, base, false) || StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
+    return ParseInteger<std::uintmax_t>(str, endptr, base, std::strtoumax);
 }
 
 unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix() {
@@ -135,18 +148,18 @@ unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix() {
 void APS5_VABI _Lockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Lockfilelock: null stream");
 #ifdef _WIN32
-    _lock_file(GetNativeStream(stream));
+    _lock_file(GetStreamHandle(stream));
 #else
-    flockfile(GetNativeStream(stream));
+    flockfile(GetStreamHandle(stream));
 #endif
 }
 
 void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Unlockfilelock: null stream");
 #ifdef _WIN32
-    _unlock_file(GetNativeStream(stream));
+    _unlock_file(GetStreamHandle(stream));
 #else
-    funlockfile(GetNativeStream(stream));
+    funlockfile(GetStreamHandle(stream));
 #endif
 }
 
@@ -161,15 +174,15 @@ void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("ftrylockfile: null stream");
 #ifdef _WIN32
-    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(GetNativeStream(stream))->lock) ? 0 : -1;
+    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(GetStreamHandle(stream))->lock) ? 0 : -1;
 #else
-    return ftrylockfile(GetNativeStream(stream)) == 0 ? 0 : -1;
+    return ftrylockfile(GetStreamHandle(stream)) == 0 ? 0 : -1;
 #endif
 }
 
 std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
-    return std::strtoull(str, endptr, base);
+    if (RejectIntegerBase_nid_no_patch(str, endptr, base, false) || StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
+    return ParseInteger<unsigned long long>(str, endptr, base, std::strtoull);
 }
 
 void APS5_VABI _Locksyslock_nid_postfix() {
@@ -192,8 +205,8 @@ unsigned __int128 APS5_VABI __umodti3_nid_postfix(unsigned __int128 dividend, un
     return SonyUmodti3(dividend, divisor);
 }
 
-void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void*) {
-    NotImplemented_nid_no_patch(__func__);
+__int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor) {
+    return SonyModti3(dividend, divisor);
 }
 
 }

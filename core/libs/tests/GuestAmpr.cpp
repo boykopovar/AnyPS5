@@ -37,6 +37,10 @@ int APS5_VABI sceAmprCommandBufferSetMarkerWithColor(Apr::CommandBufferObject*, 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*, std::uint32_t);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion();
+void* APS5_VABI sceAmprCommandBufferGetBufferBaseAddress(const Apr::CommandBufferObject*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char*, std::uint32_t);
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
@@ -73,6 +77,7 @@ int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char**, std::u
 int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, int*);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint32_t, void*, std::uint64_t, std::uint64_t);
+std::uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile();
 int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint64_t, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileGatherScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t, std::uint64_t);
@@ -156,7 +161,8 @@ static void RequireAt(bool value, int line) {
 namespace {
 
 constexpr int invalidArgument = static_cast<int>(0x80020016);
-constexpr int bufferFull = static_cast<int>(0x8002001C);
+constexpr int permissionDenied = static_cast<int>(0x80020001);
+constexpr int busy = static_cast<int>(0x80020010);
 constexpr std::uint32_t color = 0xFF8040u;
 
 struct Recorder {
@@ -241,6 +247,16 @@ void TestRejectedArguments() {
     Require(sceAmprMeasureCommandSizePushMarkerWithColor(nullptr, color) == rejected);
     Require(sceAmprMeasureCommandSizeSetMarker(nullptr) == rejected);
     Require(sceAmprMeasureCommandSizeSetMarkerWithColor(nullptr, color) == rejected);
+
+    std::uint64_t gatherState = 0;
+    std::uint64_t scatterState = 0;
+    std::array<std::uint8_t, 64> memory{};
+    Require(sceAmprCommandBufferConstructor(nullptr) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(nullptr, &gatherState, &scatterState) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, nullptr, &scatterState) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
 }
 
 void TestFullBuffer() {
@@ -249,19 +265,36 @@ void TestFullBuffer() {
     Recorder exact(measured);
     Require(sceAmprCommandBufferPushMarker(&exact.buffer, marker) == 0);
     Require(exact.Offset() == measured && exact.Commands() == 1);
-    Require(sceAmprCommandBufferPopMarker(&exact.buffer) == bufferFull);
-    Require(sceAmprCommandBufferSetMarker(&exact.buffer, "") == bufferFull);
+    Require(sceAmprCommandBufferPopMarker(&exact.buffer) == busy);
+    Require(sceAmprCommandBufferSetMarker(&exact.buffer, "") == busy);
     Require(exact.Offset() == measured && exact.Commands() == 1);
 
     Recorder small(measured - 4);
-    Require(sceAmprCommandBufferPushMarker(&small.buffer, marker) == bufferFull);
-    Require(sceAmprCommandBufferSetMarkerWithColor(&small.buffer, marker, &color) == bufferFull);
+    Require(sceAmprCommandBufferPushMarker(&small.buffer, marker) == busy);
+    Require(sceAmprCommandBufferSetMarkerWithColor(&small.buffer, marker, &color) == busy);
     Require(small.Offset() == 0 && small.Commands() == 0);
 
+    std::array<std::uint8_t, 16> destination{};
+    volatile std::uint64_t done = 0;
+    const auto read = sceAmprMeasureCommandSizeReadFile();
+    Recorder reads(read);
+    Require(sceAmprAprCommandBufferReadFile(&reads.buffer, &reads.gatherState, &reads.scatterState, 1, destination.data(), destination.size(), 0) == 0);
+    Require(sceAmprAprCommandBufferReadFile(&reads.buffer, &reads.gatherState, &reads.scatterState, 1, destination.data(), destination.size(), 0) == busy);
+    Require(sceAmprCommandBufferNop(&reads.buffer, 1) == busy);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&reads.buffer, &done, 1) == busy);
+    Require(reads.Offset() == read && reads.Commands() == 1);
+
     Apr::CommandBufferObject unbound{};
+    std::uint64_t gatherState = 0;
+    std::uint64_t scatterState = 0;
     Require(sceAmprCommandBufferConstructor(&unbound) == 0);
-    Require(sceAmprCommandBufferPushMarker(&unbound, marker) == bufferFull);
-    Require(sceAmprCommandBufferPopMarker(&unbound) == bufferFull);
+    Require(sceAmprAprCommandBufferConstructor(&unbound, &gatherState, &scatterState) == 0);
+    Require(sceAmprCommandBufferPushMarker(&unbound, marker) == permissionDenied);
+    Require(sceAmprCommandBufferPopMarker(&unbound) == permissionDenied);
+    Require(sceAmprAprCommandBufferReadFile(&unbound, &gatherState, &scatterState, 1, destination.data(), destination.size(), 0) == permissionDenied);
+    Require(sceAmprCommandBufferNop(&unbound, 1) == permissionDenied);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&unbound, &done, 1) == permissionDenied);
+    Require(unbound.offset == 0 && unbound.numCommands == 0);
 }
 
 void TestOffsetPastBuffer() {
@@ -441,6 +474,10 @@ void TestNops() {
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(4));
     Require(std::memcmp(recorder.memory.data() + offset + sizeof(Apr::CommandHeader), data, sizeof(data)) == 0);
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, nullptr) == 0);
+    const auto emptyPayloadOffset = recorder.Offset();
+    std::memset(recorder.memory.data() + emptyPayloadOffset, 0x5A, sceAmprMeasureCommandSizeNopWithData(4));
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, nullptr) == 0);
+    for (std::size_t index = 0; index < 12; ++index) Require(recorder.memory[emptyPayloadOffset + sizeof(Apr::CommandHeader) + index] == 0x5A);
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
@@ -549,6 +586,10 @@ void TestVersionedCounters() {
 
 void TestClearBuffer() {
     Recorder recorder;
+    Require(sceAmprMeasureCommandSizeWriteAddressOnCompletion() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteCounterOnCompletion() == sizeof(Apr::WriteCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&recorder.buffer) == recorder.buffer.base);
     Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == 0);
     Require(recorder.Offset() != 0 && recorder.Commands() == 1);
     Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == recorder.memory.data());
@@ -878,8 +919,6 @@ void TestGatherScatter() {
 }
 
 constexpr std::uint64_t page = 0x4000;
-constexpr int permissionDenied = static_cast<int>(0x80020001);
-constexpr int busy = static_cast<int>(0x80020010);
 constexpr int noSuchSubmission = static_cast<int>(0x80020003);
 constexpr std::int32_t cpuReadWrite = 0x03;
 constexpr std::int32_t cpuGpuReadWrite = 0x33;

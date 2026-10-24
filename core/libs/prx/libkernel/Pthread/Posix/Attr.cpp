@@ -13,7 +13,12 @@ int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
 int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, std::size_t size);
 int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched);
+int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
+int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
 }
+
+static constexpr int GuestSchedFifo = 1;
+static constexpr int GuestSchedRr = 3;
 
 static bool Valid(const PthreadAttr* attr) {
     return attr && *attr;
@@ -33,6 +38,7 @@ int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr)
     p->stackAddress = thread->stackAddress;
     p->_detachstate = thread->_detached ? 1 : 0;
     p->_schedpriority = thread->priority.load(std::memory_order_relaxed);
+    p->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
     p->_affinity = thread->affinity.load(std::memory_order_relaxed);
     p->_affinityExplicit = true;
     p->_scope = thread->scope;
@@ -120,13 +126,19 @@ int APS5_VABI pthread_attr_setinheritsched_nid_postfix(PthreadAttr* attr, int in
 }
 
 int APS5_VABI pthread_attr_setschedparam_nid_postfix(PthreadAttr* attr, const KernelSchedParam* param) {
-    if (!Valid(attr) || !param) return PosixThread::GUEST_EINVAL;
+    if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
+    if (!param) return PosixThread::GUEST_ENOTSUP;
+    const int policy = (*attr)->_schedpolicy;
+    if ((policy == GuestSchedFifo || policy == GuestSchedRr) &&
+        (param->sched_priority < sched_get_priority_min_nid_postfix(policy) || param->sched_priority > sched_get_priority_max_nid_postfix(policy)))
+        return PosixThread::GUEST_ENOTSUP;
     (*attr)->_schedpriority = param->sched_priority;
     return 0;
 }
 
 int APS5_VABI pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int policy) {
     if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
+    if (policy < GuestSchedFifo || policy > GuestSchedRr) return PosixThread::GUEST_ENOTSUP;
     (*attr)->_schedpolicy = policy;
     return 0;
 }

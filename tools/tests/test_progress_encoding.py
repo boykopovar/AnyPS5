@@ -57,6 +57,31 @@ class ProgressEncodingTests(unittest.TestCase):
         base, head = snapshot(False), snapshot(True)
         self.assertEqual(self.compare(base, head, "utf-8"), self.compare(base, head))
 
+    def test_site_generation_preserves_unicode_with_cp1252_stdout(self):
+        library = "libSce\u6e2c\u8a66\U0001f3ae"
+        with tempfile.TemporaryDirectory(prefix="progress site encoding ") as directory:
+            root = Path(directory) / "source"
+            module = root / "core" / "libs" / "prx" / library
+            module.mkdir(parents=True)
+            (module / "Export.cpp").write_text("int APS5_VABI Ready() { return 0; }\n", encoding="utf-8")
+            opcodes = root / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
+            opcodes.parent.mkdir(parents=True)
+            opcodes.write_text("enum class RdnaOpcode {\n    SEndpgm,\n};\n", encoding="utf-8")
+            output = Path(directory) / "site"
+            env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+            result = subprocess.run(
+                [sys.executable, "-X", "utf8=0", str(PROGRESS), str(output), "--root", str(root),
+                 "--module", library, "--json"], env=env, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            generated = {name: (output / name).read_text(encoding="utf-8") for name in (
+                "progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")}
+            payload = json.loads(generated["progress.json"])
+            self.assertEqual(payload, json.loads(result.stdout.decode("utf-8")))
+            self.assertEqual((payload["libraries"]["done"], payload["libraries"]["total"]), (1, 1))
+            self.assertEqual(payload["libraries"]["groups"][0]["name"], library)
+            for name in ("progress.svg", "progress.html"):
+                self.assertIn(library.removeprefix("libSce"), generated[name])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,6 +90,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blendConstants = {};
     state.samples = Samples;
+    state.perSampleShading = pass.perSample;
     state.quadSampleMask = pass.quadSampleMask;
     state.pixelEarlyZ = AgcDriver::Graphics::PixelEarlyZ(pass.shaderControl);
     if (pass.depth) {
@@ -106,6 +107,8 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     Require(pixel.sampleShading == pass.perSample, "the pixel inputs did not select the requested shading rate");
     pixel.quadPixelMask = AgcDriver::Graphics::QuadPixelMask(state);
     pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state);
+    pixel.iteratesSamples = state.perSampleShading;
+    pixel.sampleLocations = AgcDriver::Graphics::PixelSampleLocations(state, pixel);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
     const auto invocations = BufferDescriptor(Invocations.data(), 0u, static_cast<std::uint32_t>(sizeof(Invocations)));
     std::copy(invocations.begin(), invocations.end(), pixelUserData.begin());

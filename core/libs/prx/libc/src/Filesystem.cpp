@@ -12,8 +12,8 @@
 #endif
 
 extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
-    if (!path) { errno = 14; return -1; }
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
+    if (!path) { errno = 14; return -1; }
     if (!*path) { errno = 2; return -1; }
     try {
         const auto resolved = ResolvePath_nid_no_patch(path);
@@ -21,6 +21,7 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
         const DWORD attributes = GetFileAttributesW(resolved.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES) {
             errno = FilesystemError(std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+            if (errno == 2) errno = NotFoundError_nid_no_patch(resolved);
             return -1;
         }
         if (mode == 0) return 0;
@@ -110,6 +111,7 @@ extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
 #endif
         if (error || !removed) {
             errno = error ? FilesystemError(error) : 2;
+            if (errno == 2) errno = NotFoundError_nid_no_patch(resolved);
             return -1;
         }
         RecordWrittenPath_nid_no_patch(resolved);

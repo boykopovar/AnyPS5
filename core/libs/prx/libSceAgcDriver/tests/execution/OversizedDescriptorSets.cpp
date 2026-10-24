@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #include <array>
 #include <cstdint>
@@ -50,15 +51,7 @@ public:
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             const auto properties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
-            context.physical = devices.front();
-            for (const auto candidate : devices) {
-                VkPhysicalDeviceProperties described{};
-                properties(candidate, &described);
-                if (described.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                    context.physical = candidate;
-                    break;
-                }
-            }
+            context.physical = SelectFixturePhysicalDevice(devices, properties);
             VkPhysicalDeviceProperties selected{};
             properties(context.physical, &selected);
             context.limits = selected.limits;
@@ -84,6 +77,7 @@ public:
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {

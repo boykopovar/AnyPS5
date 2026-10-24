@@ -1,3 +1,5 @@
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -6,6 +8,102 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
+
+
+class ProgressSnapshotTests(unittest.TestCase):
+    def snapshot(self):
+        return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
+
+    def assert_rejected(self, snapshot, message):
+        for position in (0, 1):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "base snapshot.json", Path(directory) / "head snapshot.json"]
+                snapshots = [self.snapshot(), self.snapshot()]
+                snapshots[position] = snapshot
+                for path, data in zip(paths, snapshots):
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", *map(str, paths)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn(str(paths[position]), stderr.getvalue())
+                self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_non_object_snapshots_are_usage_errors(self):
+        for snapshot in (None, [], "progress", 7, True):
+            with self.subTest(snapshot=snapshot):
+                self.assert_rejected(snapshot, "snapshot must be an object")
+
+    def test_sections_must_be_present_objects(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, [], "progress", 7):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section] = value
+                    self.assert_rejected(snapshot, section + " must be an object")
+            snapshot = self.snapshot()
+            del snapshot[section]
+            self.assert_rejected(snapshot, section + " must be an object")
+
+    def test_groups_must_be_lists_of_named_objects(self):
+        for section in ("libraries", "shaders"):
+            for groups in (None, {}, "groups", [None], ["group"], [{}], [{"name": []}]):
+                with self.subTest(section=section, groups=groups):
+                    snapshot = self.snapshot()
+                    snapshot[section]["groups"] = groups
+                    self.assert_rejected(snapshot, section + ".groups")
+            snapshot = self.snapshot()
+            del snapshot[section]["groups"]
+            self.assert_rejected(snapshot, section + ".groups")
+
+    def test_symbol_lists_cannot_be_strings_or_unhashable_values(self):
+        for field in ("done_names", "todo_names", "inert_names"):
+            for value in ("Ready", None, {}, [7], [["Ready"]]):
+                with self.subTest(field=field, value=value):
+                    snapshot = self.snapshot()
+                    snapshot["libraries"]["groups"] = [{"name": "libSceExample", field: value}]
+                    self.assert_rejected(snapshot, "." + field + " must be a list of strings")
+
+    def test_shared_source_owners_must_be_strings(self):
+        for value in (None, [], {}, 7, True):
+            with self.subTest(value=value):
+                snapshot = self.snapshot()
+                snapshot["libraries"]["groups"] = [{"name": "libSceExample.native", "shared_sources": value}]
+                self.assert_rejected(snapshot, ".shared_sources must be a string")
+
+    def test_percentages_must_be_finite_numbers_in_range(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, "0", True, [], {}, -1, 101, float("nan"), float("inf"), -float("inf")):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section]["percent"] = value
+                    self.assert_rejected(snapshot, section + ".percent")
+            snapshot = self.snapshot()
+            del snapshot[section]["percent"]
+            self.assert_rejected(snapshot, section + ".percent")
+
+    def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
+        base, head = self.snapshot(), self.snapshot()
+        base["libraries"]["groups"] = [{"name": "libSceExample", "todo_names": ["Ready"]}, {"name": "libEmpty"}]
+        head["libraries"]["groups"] = [{"name": "libSceExample", "done_names": ["Ready"], "future_field": True},
+                                       {"name": "libEmpty"}, {"name": "libSceExample.native", "shared_sources": "libSceExample"}]
+        head["libraries"]["percent"] = 100
+        expected = progress.report(base, head)
+        self.assertIn("Ready", expected)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / "base.json", Path(directory) / "head.json"]
+            for path, snapshot in zip(paths, (base, head)):
+                path.write_text(json.dumps(snapshot), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", *map(str, paths)]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", str(paths[0]), str(paths[0])]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
 
 
 class ProgressTests(unittest.TestCase):
@@ -293,6 +391,137 @@ class ProgressTests(unittest.TestCase):
                 group = progress.scan_library(library)
                 self.assertEqual(group[expected + "_names"], ["Run"])
 
+    def library_snapshot(self):
+        libraries = progress.summarize([
+            {"name": "libScePad", "label": "Pad", "done": 1, "todo": 1,
+             "done_names": ["Ready"], "todo_names": ["Pending"], "inert_names": []},
+            {"name": "libSceVideoOut", "label": "VideoOut", "done": 3, "todo": 1,
+             "done_names": ["A", "B", "C"], "todo_names": ["D"], "inert_names": []},
+            {"name": "libScePad.native", "label": "Pad.native", "done": 0, "todo": 0,
+             "done_names": [], "todo_names": [], "inert_names": [], "shared_sources": "libScePad"},
+        ])
+        shaders = {"done": 2, "total": 4, "percent": 50.0, "groups": [], "extra": []}
+        return libraries, shaders
+
+    def run_main(self, argv, libraries, shaders):
+        stdout = io.StringIO()
+        with patch.object(progress, "collect_libraries", return_value=libraries), \
+             patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch("sys.stdout", stdout):
+            code = progress.main(argv)
+        return code, stdout.getvalue()
+
+    def test_module_filter_recomputes_library_totals(self):
+        libraries, shaders = self.library_snapshot()
+        selected = progress.select_libraries(libraries, ["libSceVideoOut", "libScePad", "libScePad"])
+        self.assertEqual([group["name"] for group in selected["groups"]], ["libScePad", "libSceVideoOut"])
+        self.assertEqual((selected["done"], selected["total"], selected["percent"]), (4, 6, 66.67))
+        self.assertEqual(shaders["total"], 4)
+        wrapper = progress.select_libraries(libraries, ["libScePad.native"])
+        self.assertEqual(wrapper["groups"][0]["shared_sources"], "libScePad")
+        self.assertEqual((wrapper["done"], wrapper["total"]), (0, 0))
+        with self.assertRaisesRegex(ValueError, "unknown libraries: libSceNope, libSceMissing"):
+            progress.select_libraries(libraries, ["libScePad", "libSceNope", "libSceMissing", "libSceNope"])
+
+    def test_json_and_module_do_not_require_an_output_directory(self):
+        libraries, shaders = self.library_snapshot()
+        code, output = self.run_main(["--json", "--module", "libScePad"], libraries, shaders)
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["libraries"]["groups"][0]["name"], "libScePad")
+        self.assertEqual((payload["libraries"]["done"], payload["libraries"]["total"]), (1, 2))
+        self.assertEqual(payload["shaders"], shaders)
+        self.assertNotIn("libraries 1/2", output)
+        code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+            progress.main([])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("the output directory is required", stderr.getvalue())
+
+    def test_module_filter_is_what_the_site_writes(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            code, text = self.run_main(["--json", "--module", "libScePad", str(output)], libraries, shaders)
+            self.assertEqual(code, 0)
+            written = json.loads((output / "progress.json").read_text(encoding="utf-8"))
+            self.assertEqual(written, json.loads(text))
+            self.assertEqual(written["libraries"]["groups"][0]["name"], "libScePad")
+            self.assertEqual(written["shaders"]["done"], 2)
+            page = (output / "progress.html").read_text(encoding="utf-8")
+            self.assertIn("libScePad", page)
+            self.assertNotIn("libSceVideoOut", page)
+            for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html"):
+                self.assertTrue((output / name).is_file())
+        original = progress.PRX
+        with tempfile.TemporaryDirectory() as directory:
+            self.run_main(["--root", directory, "--json"], libraries, shaders)
+        self.assertEqual(progress.PRX, original)
+
+    def test_compare_stays_a_report_of_two_snapshots(self):
+        def snapshot(names):
+            return {"libraries": progress.summarize([
+                        {"name": "libScePad", "label": "Pad", "done": len(names), "todo": 0,
+                         "done_names": names, "todo_names": [], "inert_names": []}]),
+                    "shaders": {"done": 0, "total": 0, "percent": 0, "groups": [], "extra": []}}
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.json"
+            head = Path(directory) / "head.json"
+            base.write_text(json.dumps(snapshot([])), encoding="utf-8")
+            head.write_text(json.dumps(snapshot(["Ready"])), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                code = progress.main(["--compare", str(base), str(head)])
+            self.assertEqual(code, 0)
+            self.assertIn("implemented", stdout.getvalue())
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main(["--compare", str(base), str(head), "--json"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("--compare does not combine with --module or --json", stderr.getvalue())
+
+
+    def test_compare_names_a_snapshot_it_cannot_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "good.json"
+            good.write_text("{}", encoding="utf-8")
+            broken = Path(directory) / "broken snapshot.json"
+            broken.write_text("not json", encoding="utf-8")
+            for name, path in (("invalid", broken), ("missing", Path(directory) / "missing snapshot.json")):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", str(good), str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(path), stderr.getvalue())
+
+    def test_output_directory_that_cannot_be_written_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory) / "blocked output"
+            blocked.write_text("a file, not a directory", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main([str(blocked)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(blocked), stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_root_must_be_a_source_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty tree"
+            empty.mkdir()
+            half = Path(directory) / "half tree"
+            (half / "core" / "libs" / "prx").mkdir(parents=True)
+            for name, path in (("missing", Path(directory) / "missing tree"), ("empty", empty), ("no opcodes", half)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
+                    self.assertIn(str(path), stderr.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,10 +22,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Test archive root selection
+        shell: bash
+        run: |
+          zip_url=$(python3 -c 'from pathlib import Path; import re; print(re.search(r"from \"(https://cdn.jsdelivr.net/[^\"]+)\"", Path("demo/web/archive.mjs").read_text(encoding="utf-8")).group(1))')
+          curl -fsSL "$zip_url" -o "$RUNNER_TEMP/zip.mjs"
+          ANYPS5_TEST_ZIP_URL="$zip_url" ANYPS5_TEST_ZIP_PATH="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())' "$RUNNER_TEMP/zip.mjs")" node demo/web/tests/archive-root.test.mjs demo/web
       - name: Check browser module syntax
         run: |
           node --check demo/web/app.mjs
+          node --check demo/web/archive.mjs
+          node --check demo/web/batch.mjs
           node --check demo/web/output-directory.mjs
           node --check demo/web/worker.mjs
-      - name: Test folder output recovery
-        run: node --test demo/web/tests/output-directory.test.mjs
+      - name: Test browser converter helpers
+        run: node --test demo/web/tests/batch.test.mjs demo/web/tests/output-directory.test.mjs

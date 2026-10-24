@@ -27,6 +27,16 @@ static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
+template <typename TFunction>
+static bool ThrowsRuntimeError(TFunction function) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 static std::vector<std::string> Search(std::uint32_t key, std::uint32_t order, std::uint32_t capacity, std::uint32_t* hits) {
     SceSaveDataDirName pattern{};
     std::snprintf(pattern.data, sizeof(pattern.data), "SORT_%%");
@@ -187,7 +197,7 @@ static void SearchAndMount() {
     for (std::size_t i = 0; i < 2; ++i) {
         SaveDataSearchInfo info{};
         std::memcpy(&info, infos.data() + i * 48, sizeof(info));
-        Require(info.blocks == 32768 && info.free_blocks == 32768, "search info must report the save's blocks and free blocks");
+        Require(info.blocks == 16384 && info.free_blocks == 16384, "search info must report the save's blocks and free blocks");
         for (const auto byte : info.reserved) Require(byte == 0, "search info reserved bytes must be zero");
     }
     std::array<bool, 2> found{};
@@ -246,20 +256,9 @@ static std::vector<SaveDataSearchInfo> SizeSearch(std::uint32_t key, std::vector
     return {infos.begin(), infos.end()};
 }
 
-static void SaveSize() {
-    CreateSized("SIZE_A", 200, 0);
-    CreateSized("SIZE_B", 96, 40000);
-    std::vector<std::string> found;
-    auto infos = SizeSearch(0, found);
-    Require(found == std::vector<std::string>{"SIZE_A", "SIZE_B"}, "the sized saves must sort by name");
-    Require(infos[0].blocks == 200 && infos[0].free_blocks == 200, "an empty save must report all its blocks free");
-    Require(infos[1].blocks == 96 && infos[1].free_blocks == 94, "a save must report the blocks it was created with, less those its files take");
-    SizeSearch(2, found);
-    Require(found == std::vector<std::string>{"SIZE_B", "SIZE_A"}, "saves must sort by blocks");
-    infos = SizeSearch(5, found);
-    Require(found == std::vector<std::string>{"SIZE_B", "SIZE_A"} && infos[0].free_blocks < infos[1].free_blocks, "saves must sort by free blocks");
+static SaveDataMountInfo MountInfo(const char* name) {
     SceSaveDataDirName dirName{};
-    std::snprintf(dirName.data, sizeof(dirName.data), "SIZE_B");
+    std::snprintf(dirName.data, sizeof(dirName.data), "%s", name);
     SaveDataMount3 mount{};
     mount.user_id = 1;
     mount.dir_name = &dirName;
@@ -268,8 +267,45 @@ static void SaveSize() {
     Require(sceSaveDataMount3(&mount, &mounted) == 0, "mounting the sized save failed");
     SaveDataMountInfo info{};
     Require(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == 0, "mount info failed");
-    Require(info.blocks == 96 && info.free_blocks == 94, "mount info must report the save's blocks and free blocks");
     Require(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "unmount failed");
+    return info;
+}
+
+static void SaveSize() {
+    CreateSized("SIZE_A", 200, 0);
+    CreateSized("SIZE_B", 96, 40000);
+    std::vector<std::string> found;
+    auto infos = SizeSearch(0, found);
+    Require(found == std::vector<std::string>{"SIZE_A", "SIZE_B"}, "the sized saves must sort by name");
+    Require(infos[0].blocks == 200 && infos[0].free_blocks == 200, "an empty save must report all its blocks free");
+    Require(infos[1].blocks == 96 && infos[1].free_blocks == 95, "a save must report the blocks it was created with, less those its files take");
+    SizeSearch(2, found);
+    Require(found == std::vector<std::string>{"SIZE_B", "SIZE_A"}, "saves must sort by blocks");
+    infos = SizeSearch(5, found);
+    Require(found == std::vector<std::string>{"SIZE_B", "SIZE_A"} && infos[0].free_blocks < infos[1].free_blocks, "saves must sort by free blocks");
+    const auto info = MountInfo("SIZE_B");
+    Require(info.blocks == 96 && info.free_blocks == 95, "mount info must report the save's blocks and free blocks");
+}
+
+static void CheckNullArguments() {
+    SaveDataDirNameSearchCond cond{};
+    cond.user_id = 1;
+    SaveDataDirNameSearchResult result{};
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch2");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch2");
+    cond.order = 2;
+    Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+}
+
+static void BlockSize() {
+    CreateSized("BLOCK_A", 48, 70000);
+    auto info = MountInfo("BLOCK_A");
+    Require(info.blocks == 48 && info.free_blocks == 46, "a file must take whole 64 KiB blocks");
+    CreateSized("BLOCK_B", 32768, 0);
+    info = MountInfo("BLOCK_B");
+    Require(info.blocks == 16384 && info.free_blocks == 16384, "a save must hold at most 16384 blocks");
 }
 
 int main() {
@@ -285,6 +321,8 @@ int main() {
         OtherTitle();
         TrailingWildcards();
         SaveSize();
+        BlockSize();
+        CheckNullArguments();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         status = 1;

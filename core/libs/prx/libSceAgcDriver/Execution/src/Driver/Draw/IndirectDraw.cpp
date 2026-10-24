@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include <cstdlib>
 
@@ -28,10 +29,13 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
     using Path = Graphics::IndirectDrawPath;
     const auto support = localDevice->DrawIndirectSupport();
     const auto fail = [&](Path reason) { if (!indirectCpu) indirectCpu = reason; };
+    if (drawParameters.indexed && !GuestMemory::Accessible(reinterpret_cast<const void*>(drawParameters.indexAddress), static_cast<std::size_t>(drawParameters.indexCount) * drawParameters.indexSize)) fail(Path::IndexRange);
     constexpr std::uint32_t NoLocation = 0x280u;
     const bool meshPath = graphics.stages.mesh.has_value() && !graphics.stages.tessellation && !graphics.rectList;
     const bool meshGpuSide = meshPath && drawParameters.indexed && indirect.count == 1 && !indirect.countIndirect && indirect.baseVertexLocation == NoLocation && indirect.startInstanceLocation == NoLocation && (!indirect.drawIndexEnabled || indirect.drawIndexLocation == NoLocation);
-    if ((graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList) && !meshGpuSide) fail(Path::NonVertexPath);
+    static const bool rectListOnGpu = std::getenv("APS5_NO_RECT_INDIRECT") == nullptr;
+    const bool rectListGpuSide = rectListOnGpu && graphics.rectList && !graphics.stages.mesh && !graphics.stages.tessellation;
+    if ((graphics.stages.path != Graphics::ShaderPath::Vertex || (graphics.rectList && !rectListGpuSide)) && !meshGpuSide) fail(Path::NonVertexPath);
     if (indirect.drawIndexEnabled && indirect.drawIndexSgpr >= 0) fail(Path::DrawIndex);
     if (indirect.countIndirect && !support.count) fail(Path::FeatureGap);
     if (indirect.countIndirect && indirect.count > 1 && !support.multi) fail(Path::FeatureGap);

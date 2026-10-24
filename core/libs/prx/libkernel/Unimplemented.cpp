@@ -10,6 +10,16 @@ int APS5_VABI __tls_get_addr_nid_postfix(void) {
     return 0;
 }
 
+int APS5_VABI physhm_open_nid_postfix(void) {
+    NotImplemented_nid_no_patch("physhm_open");
+    return 0;
+}
+
+int APS5_VABI physhm_unlink_nid_postfix(void) {
+    NotImplemented_nid_no_patch("physhm_unlink");
+    return 0;
+}
+
 APS5_EXPORT("AC1FtjqMCL0", sceKernelUnknown03);
 int APS5_VABI sceKernelUnknown03(void) {
     NotImplemented_nid_no_patch("AC1FtjqMCL0");
@@ -111,4 +121,29 @@ int APS5_VABI sceKernelUnknown19(void) {
     NotImplemented_nid_no_patch("uDGXwUKqi8s");
     return 0;
 }
+
+int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelGetProcessAbiType() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI __Ux86_64_setcontext() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sigreturn() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

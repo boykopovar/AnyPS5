@@ -11,6 +11,7 @@
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 }
 
 namespace {
@@ -61,6 +62,142 @@ int Compare(const GuestLocale::CollateFacet* facet, const std::string& left, con
 
 std::uint64_t Hash(const GuestLocale::CollateFacet* facet, const std::string& text) {
     return static_cast<std::uint64_t>(Vtable(&facet->base).hash(facet, text.data(), text.data() + text.size()));
+}
+
+// collate<wchar_t> hands the vtable pointers to its 16-bit characters, so the tests below pass the
+// characters of a wide string where the vtable declares a range of char and count it in characters.
+const char* Characters(const char16_t* text) {
+    return reinterpret_cast<const char*>(text);
+}
+
+int CompareWide(const GuestLocale::CollateFacet* facet, const std::u16string& left, const std::u16string& right) {
+    return Vtable(&facet->base).compare(facet, Characters(left.data()), Characters(left.data() + left.size()), Characters(right.data()), Characters(right.data() + right.size()));
+}
+
+std::uint64_t HashWide(const GuestLocale::CollateFacet* facet, const std::u16string& text) {
+    return static_cast<std::uint64_t>(Vtable(&facet->base).hash(facet, Characters(text.data()), Characters(text.data() + text.size())));
+}
+
+GuestLocale::String* TransformWide(const GuestLocale::CollateFacet* facet, GuestLocale::String* result, const std::u16string& text) {
+    return Vtable(&facet->base).transform(result, facet, Characters(text.data()), Characters(text.data() + text.size()));
+}
+
+// The wide facet mirrors the narrow one in the facet it allocates and the C-locale validation, but it
+// carries its own vtable, whose entries work on the guest's 16-bit characters.
+void CheckWideGetcat(const GuestLocale::Implementation* const* classic, const GuestLocale::CollateFacet* narrow) {
+    require(_ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, classic) == 1);
+
+    const std::size_t before = allocations;
+    GuestLocale::Facet existing{};
+    GuestLocale::Facet* facet = &existing;
+    require(_ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, classic) == 1);
+    require(facet == &existing && allocations == before);
+
+    GuestLocale::Implementation french = *_ZSt21_sceLibcClassicLocale_nid_postfix;
+    french.name = "fr_FR";
+    const GuestLocale::Implementation* frenchPointer = &french;
+    GuestLocale::Implementation unnamed = *_ZSt21_sceLibcClassicLocale_nid_postfix;
+    unnamed.name = nullptr;
+    const GuestLocale::Implementation* unnamedPointer = &unnamed;
+    const GuestLocale::Implementation* missingPointer = nullptr;
+    for (const GuestLocale::Implementation* const* rejected : {&frenchPointer, &unnamedPointer, &missingPointer}) {
+        GuestLocale::Facet* absent = nullptr;
+        reject([&] { _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&absent, rejected); });
+        require(absent == nullptr && allocations == before);
+    }
+    GuestLocale::Facet* absent = nullptr;
+    reject([&] { _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&absent, nullptr); });
+    require(absent == nullptr && allocations == before);
+
+    facet = nullptr;
+    require(_ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, classic) == 1);
+    require(facet != nullptr && allocations == before + 1 && lastSize == sizeof(GuestLocale::CollateFacet) && lastAllocation == facet);
+    const auto* wide = reinterpret_cast<const GuestLocale::CollateFacet*>(facet);
+    require(facet->references == 0 && facet->vtable != narrow->base.vtable);
+    require(wide->collation == nullptr && wide->wideCollation == nullptr);
+
+    const std::u16string text = u"abc";
+    require(CompareWide(wide, text, u"abd") == -1);
+    require(CompareWide(wide, u"abd", text) == 1);
+    require(CompareWide(wide, text, text) == 0);
+    require(CompareWide(wide, u"ab", text) == -1);
+    require(CompareWide(wide, u"", text) == -1);
+    require(CompareWide(wide, u"", u"") == 0);
+    // Characters above 0xff order by their whole value: 0x0100 and 0x0001 compare the other way round
+    // when the same characters are read as the little-endian bytes 0x00 0x01 and 0x01 0x00.
+    require(CompareWide(wide, u"\u0100", u"\u0001") == 1);
+    require(CompareWide(wide, u"\u0001", u"\u0100") == -1);
+    require(CompareWide(wide, u"\u00ff", u"\u0100") == -1);
+    require(CompareWide(wide, u"\u00e9", u"z") == 1);
+    require(CompareWide(wide, u"a\u0101b", u"a\u0100b") == 1);
+    require(CompareWide(wide, u"a\u0101b", u"a\u0102b") == -1);
+    const std::u16string embeddedWide(u"a\0b", 3);
+    require(CompareWide(wide, embeddedWide, u"a") == 1);
+    require(CompareWide(wide, text, u"abd") == Compare(narrow, "abc", "abd"));
+
+    require(HashWide(wide, u"") == 0xcbf29ce484222325ull);
+    require(HashWide(wide, text) == 0xe71fa2190541574bull);
+    require(HashWide(wide, u"a") == 0xaf63dc4c8601ec8cull);
+    // One round per character, so a wide string of characters below 0x100 hashes like its narrow
+    // spelling and a character above 0xff hashes like one value instead of the two bytes it holds.
+    require(HashWide(wide, u"foobar") == 0x85944171f73967e8ull);
+    require(HashWide(wide, u"foobar") == Hash(narrow, "foobar"));
+    require(HashWide(wide, u"\u0100") == 0x0af62bd4c860004dfull);
+
+    GuestLocale::String result;
+    std::memset(&result, 0xcd, sizeof(result));
+    require(TransformWide(wide, &result, text) == &result);
+    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 3 && result.capacity == 7 && allocations == before + 1);
+    const auto* inlineUnits = reinterpret_cast<const std::uint16_t*>(result.buffer);
+    require(inlineUnits[0] == u'a' && inlineUnits[1] == u'b' && inlineUnits[2] == u'c' && inlineUnits[3] == 0);
+
+    std::memset(&result, 0xcd, sizeof(result));
+    require(Vtable(facet).transform(&result, wide, nullptr, nullptr) == &result);
+    require(result.size == 0 && result.capacity == 7 && reinterpret_cast<const std::uint16_t*>(result.buffer)[0] == 0);
+
+    const std::u16string seven(7, u'q');
+    require(TransformWide(wide, &result, seven) == &result);
+    require(result.size == 7 && result.capacity == 7 && allocations == before + 1);
+    const auto* inlineSeven = reinterpret_cast<const std::uint16_t*>(result.buffer);
+    require(inlineSeven[6] == u'q' && inlineSeven[7] == 0);
+
+    const std::u16string eight(8, u'y');
+    require(TransformWide(wide, &result, eight) == &result);
+    require(allocations == before + 2 && lastSize == 32 && result.size == 8 && result.capacity == 15 && result.pointer == lastAllocation);
+    require(reinterpret_cast<const std::uint16_t*>(result.pointer)[0] == u'y' && reinterpret_cast<const std::uint16_t*>(result.pointer)[8] == 0);
+    std::free(result.pointer);
+
+    for (const std::size_t length : {2039, 2040}) {
+        const std::u16string large(length, u'\u0100');
+        require(TransformWide(wide, &result, large) == &result);
+        require(result.size == length && result.capacity == (length | 7));
+        const auto* units = reinterpret_cast<const char16_t*>(result.pointer);
+        require(std::u16string(units, result.size) == large && units[result.size] == 0);
+        require(lastSize == (length == 2039 ? 4080 : 4096 + 0x27));
+        if (length == 2040) {
+            require(reinterpret_cast<std::uintptr_t>(units) % 0x20 == 0);
+            require(reinterpret_cast<void* const*>(units)[-1] == lastAllocation);
+        } else require(result.pointer == lastAllocation);
+        std::free(lastAllocation);
+    }
+
+    const std::u16string embeddedText(u"a\0b", 3);
+    reject([&] { TransformWide(wide, &result, embeddedText); });
+    reject([&] { Vtable(facet).transform(nullptr, wide, Characters(seven.data()), Characters(seven.data() + seven.size())); });
+    require(allocations == before + 4);
+    reject([&] { Vtable(facet).compare(wide, Characters(text.data() + 2), Characters(text.data()), Characters(text.data()), Characters(text.data() + 1)); });
+    reject([&] { Vtable(facet).compare(wide, nullptr, Characters(text.data() + 1), Characters(text.data()), Characters(text.data() + 1)); });
+    reject([&] { Vtable(facet).hash(wide, Characters(text.data() + 1), Characters(text.data())); });
+
+    Vtable(facet).facet.retain(facet);
+    require(facet->references == 1);
+    require(Vtable(facet).facet.release(facet) == facet && facet->references == 0);
+    const std::size_t freed = frees;
+    Vtable(facet).facet.destroy(facet);
+    require(frees == freed);
+    Vtable(facet).facet.deleteObject(facet);
+    require(frees == freed + 1 && lastFree == wide);
+    require(allocations == before + 4);
 }
 
 }
@@ -155,9 +292,12 @@ int main() {
     require(facet->references == 2);
     require(Vtable(facet).facet.release(facet) == nullptr && facet->references == 1);
     require(Vtable(facet).facet.release(facet) == facet && facet->references == 0);
+    CheckWideGetcat(classic, collate);
+
     Vtable(facet).facet.destroy(facet);
-    require(frees == 0);
+    require(frees == 1);
     Vtable(facet).facet.deleteObject(facet);
-    require(frees == 1 && lastFree == collate);
+    require(frees == 2 && lastFree == collate);
+    require(allocations == 8);
     return 0;
 }

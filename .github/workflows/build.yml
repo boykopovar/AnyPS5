@@ -22,6 +22,11 @@ on:
         required: false
         default: true
         type: boolean
+      select:
+        description: Build and run only the tests whose build inputs the pull requests change (push builds of main always run every test)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -65,23 +70,77 @@ jobs:
             const { owner, repo } = context.repo;
             const workflow = '.github/workflows/build.yml';
             const libc = 'core/libs/prx/libc/';
+            const jobOfLine = (text) => {
+              let inJobs = false;
+              let job = '';
+              return text.split('\n').map((line) => {
+                if (/^\S/.test(line)) {
+                  inJobs = /^jobs:\s*$/.test(line);
+                  job = '';
+                } else if (inJobs) {
+                  job = /^  ([\w-]+):\s*$/.exec(line)?.[1] ?? job;
+                }
+                return job;
+              });
+            };
+            const patchedJobs = (patch, text) => {
+              const jobs = jobOfLine(text);
+              const touched = new Set();
+              let line = 1;
+              for (const row of patch.split('\n')) {
+                const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(row);
+                if (hunk) {
+                  line = Number(hunk[1]);
+                } else if (row.startsWith('+')) {
+                  touched.add(jobs[line - 1] ?? '');
+                  line += 1;
+                } else if (row.startsWith('-')) {
+                  touched.add(jobs[line - 2] ?? '').add(jobs[line - 1] ?? '');
+                } else if (row.startsWith(' ')) {
+                  line += 1;
+                }
+              }
+              return touched;
+            };
+            const workflowJobs = new Set();
+            const readWorkflow = async (files, ref) => {
+              const file = files.find((file) => file.filename === workflow || file.previous_filename === workflow);
+              if (!file) {
+                return;
+              }
+              if (file.filename !== workflow || !file.patch) {
+                workflowJobs.add('*');
+                return;
+              }
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path: workflow, ref });
+                const text = Buffer.from(data.content, 'base64').toString('utf8');
+                patchedJobs(file.patch, text).forEach((job) => workflowJobs.add(job));
+              } catch (error) {
+                core.warning(`Could not read ${workflow} at ${ref}, so every test job runs: ${error.message}`);
+                workflowJobs.add('*');
+              }
+            };
             const select = (paths, all) => {
               const touches = (...prefixes) => all ||
                 paths.some((path) => prefixes.some((prefix) => prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix));
+              const edits = (job) => ['*', '', 'eligibility', job].some((name) => workflowJobs.has(name));
               return {
-                relinker: touches(
+                relinker: edits('relinker') || touches(
                   'core/relinker/', libc, 'core/libs/prx/libkernel/AppMetadata/', 'core/libs/tests/ParamJsonParser.cpp',
                   'core/shader/recompiler/tests/CacheFileReadTests.cpp', 'core/shader/recompiler/ShaderCacheDirectory.hpp',
-                  'tools/', 'cmake/', 'CMakeLists.txt', workflow
+                  'tools/', 'cmake/', 'CMakeLists.txt'
                 ),
-                registerContext: touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc, workflow),
-                writeWatch: touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc, workflow),
+                registerContext: edits('register-context') ||
+                  touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
+                writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc),
               };
             };
             const relinkerHosts = (full, linux) => JSON.stringify([
               ...(full && linux ? [] : [{ os: 'ubuntu-latest', compiler: 'g++' }]),
               ...(full ? [] : [{ os: 'windows-latest', compiler: 'g++' }]),
               { os: 'macos-latest', compiler: 'clang++' },
+              { os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' },
             ]);
             if (context.eventName === 'push') {
               if (context.ref !== 'refs/heads/main') {
@@ -97,6 +156,7 @@ jobs:
                   const files = data.files ?? [];
                   all = files.length >= 300;
                   paths = files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean));
+                  await readWorkflow(files, context.sha);
                 } catch (error) {
                   core.warning(`Could not list the files of this push, so every test job runs: ${error.message}`);
                 }
@@ -162,6 +222,7 @@ jobs:
               const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number, per_page: 100 });
               truncated ||= files.length >= 3000;
               paths.push(...files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)));
+              await readWorkflow(files, pr.head.sha);
               pulls.push({ number: pull_number, head: pr.head.sha });
             }
             const run = select(paths, truncated);
@@ -254,9 +315,40 @@ jobs:
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - if: runner.os == 'Windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
+      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4
+
+  relinker-asan:
+    needs: eligibility
+    if: ${{ needs.eligibility.outputs.relinker == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
+      - run: cmake -S . -B build-relinker-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DANYPS5_RELINKER_ONLY=ON -DANYPS5_ENABLE_ASAN=ON -DBUILD_TESTING=ON
+      - run: cmake --build build-relinker-asan --parallel 4
+      - run: ctest --test-dir build-relinker-asan --output-on-failure --timeout 120 --label-regex '^tls_function_coverage$' --no-tests=error
 
   register-context:
     needs: eligibility
@@ -270,6 +362,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
       - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
       - run: cmake --build build/register-context --parallel
       - run: ctest --test-dir build/register-context --output-on-failure --repeat until-fail:3 --no-tests=error
@@ -285,6 +396,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
       - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/write-watch --parallel
       - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:3 --no-tests=error
@@ -300,8 +430,6 @@ jobs:
       CCACHE_COMPILERCHECK: content
       MESA_SHADER_CACHE_DIR: /var/cache/anyps5/mesa
       MESA_SHADER_CACHE_MAX_SIZE: 4G
-      CMAKE_BUILD_PARALLEL_LEVEL: 1
-      CTEST_PARALLEL_LEVEL: 1
     steps:
       - uses: actions/checkout@v7
         with:
@@ -335,16 +463,87 @@ jobs:
           ccache --show-config
           dpkg-query -W mesa-vulkan-drivers
           grep -m1 '^model name' /proc/cpuinfo
-      - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON
+      - name: Install the wild linker
+        shell: bash
+        env:
+          WILD_VERSION: 0.10.0
+          WILD_SHA256: 641265506a7c06cfb03181b8916ab663ec8407855db6d4db7f8450667d105283
+        run: |
+          tools=$RUNNER_TOOL_CACHE/wild
+          mkdir -p "$tools" 2>/dev/null && test -w "$tools" || { tools=$RUNNER_TEMP/wild; mkdir -p "$tools"; }
+          dir=$tools/$WILD_VERSION
+          tmp=
+          probe=$(mktemp -d "$RUNNER_TEMP/wild-probe.XXXXXX")
+          trap 'rm -rf "$tmp" "$probe"' EXIT
+          if [ ! -x "$dir/bin/ld" ]; then
+            tmp=$(mktemp -d "$tools/.wild.XXXXXX")
+            name=wild-linker-$WILD_VERSION-x86_64-unknown-linux-gnu
+            curl -fsSL --retry 3 -o "$tmp/$name.tar.gz" "https://github.com/davidlattimore/wild/releases/download/$WILD_VERSION/$name.tar.gz"
+            echo "$WILD_SHA256  $tmp/$name.tar.gz" | sha256sum -c -
+            tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+            mkdir -p "$tmp/out/bin"
+            mv "$tmp/$name/wild" "$tmp/out/bin/wild"
+            ln -s wild "$tmp/out/bin/ld"
+            mv -T "$tmp/out" "$dir" 2>/dev/null || test -x "$dir/bin/ld"
+          fi
+          echo 'int main(void) { return 0; }' > "$probe/main.c"
+          gcc "-B$dir/bin" "$probe/main.c" -o "$probe/main"
+          readelf -p .comment "$probe/main" | grep -F "Linker: Wild $WILD_VERSION"
+          echo "LINKER_FLAGS=-B$dir/bin" >> "$GITHUB_ENV"
+      - name: Size parallelism to what the shared host has free
+        run: |
+          cpus=$(nproc)
+          busy=$(awk '{ printf "%d", $1 + 0.5 }' /proc/loadavg)
+          mem_mb=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+          slots=$(( (mem_mb - 2048) / 1024 ))
+          slots=$(( slots < 1 ? 1 : slots ))
+          tests=$(( cpus - busy ))
+          tests=$(( tests < 1 ? 1 : tests ))
+          slot_dir=$CCACHE_DIR/compile-slots
+          mkdir -p -m 1777 "$slot_dir"
+          test -w "$slot_dir"
+          echo "cpus=$cpus load=$busy mem_total_mb=$mem_mb -> build jobs $cpus, cold compiles $slots per host, tests $tests"
+          echo "CMAKE_BUILD_PARALLEL_LEVEL=$cpus" >> "$GITHUB_ENV"
+          echo "CTEST_PARALLEL_LEVEL=$tests" >> "$GITHUB_ENV"
+          echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
+          echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
+          echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
+      - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON "-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_MODULE_LINKER_FLAGS=$LINKER_FLAGS"
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
-      - run: cmake --build build
-      - run: cmake --build build --target libs
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
+      - if: ${{ inputs.select }}
+        uses: actions/cache/restore@v6
+        with:
+          path: test-graph.json
+          key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
+          restore-keys: test-graph-${{ runner.os }}-
+      - name: Select the tests the change reaches
+        if: ${{ inputs.select }}
+        env:
+          BASE: ${{ needs.eligibility.outputs.sha }}
+        run: |
+          git diff --name-only "$BASE" HEAD > changed.txt
+          python3 tools/select_tests.py select build test-graph.json changed.txt
+      - id: build
+        run: |
+          if [ -f build/select.ninja ]; then ninja -C build -f select.ninja -j "$CMAKE_BUILD_PARALLEL_LEVEL" -l "$(nproc)" selected; else cmake --build build -- -l "$(nproc)"; fi
+      - id: libs
+        run: cmake --build build --target libs -- -l "$(nproc)"
+      - run: python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
       - run: python3 tools/check_skips.py build/ctest.xml
+      - name: Write the test graph of main
+        if: ${{ !cancelled() && github.event_name == 'push' && steps.build.outcome == 'success' && steps.libs.outcome == 'success' }}
+        continue-on-error: true
+        run: python3 tools/select_tests.py dump build test-graph.json
+      - if: ${{ !cancelled() && github.event_name == 'push' && hashFiles('test-graph.json') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: test-graph.json
+          key: test-graph-${{ runner.os }}-${{ github.sha }}
       - name: Report compiler cache statistics
         if: ${{ !cancelled() }}
         run: ccache --show-stats
@@ -372,7 +571,6 @@ jobs:
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
-          submodules: recursive
       - name: Merge the pull request into main
         if: ${{ needs.eligibility.outputs.head != '' }}
         shell: bash
@@ -389,7 +587,28 @@ jobs:
             if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
             if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
           done
-          git submodule update --init --recursive
+      - id: submodules
+        name: Key the submodules on their commits
+        run: |
+          echo "key=$(git ls-files -s | awk '$1 == "160000" { print $2, $4 }' | cat - .gitmodules | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "ffmpeg=$(git rev-parse HEAD:3rdparty/ffmpeg-core)" >> "$GITHUB_OUTPUT"
+      - id: submodule-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/submodule-gitdirs.tar
+          key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
+      - name: Check out the submodules
+        run: |
+          if [ -f "$RUNNER_TEMP/submodule-gitdirs.tar" ]; then tar --force-local -xf "$RUNNER_TEMP/submodule-gitdirs.tar"; fi
+          git submodule update --init --recursive --depth 1 --jobs 8
+      - if: steps.submodule-cache.outputs.cache-hit != 'true'
+        run: tar --force-local -cf "$RUNNER_TEMP/submodule-gitdirs.tar" .git/modules
+      - if: steps.submodule-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/submodule-gitdirs.tar
+          key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
       - name: Point the WinLibs CMake at the CA bundle of Git for Windows
         run: |
           for prefix in ucrt64 mingw64; do
@@ -409,21 +628,74 @@ jobs:
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
-          key: windows
-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}
+          restore-keys: ${{ github.event_name == 'workflow_dispatch' && 'windows' || '' }}
+          save: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
           evict-old-files: job
+      - id: ffmpeg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/externals
+          key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+      - id: seed-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: configure-seed.cmake
+          key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', '.github/workflows/build.yml') }}
       - shell: cmd
-        run: cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown"
+        run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
+      - if: steps.seed-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: python tools/configure_seed.py build/CMakeCache.txt configure-seed.cmake
+      - if: steps.seed-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: configure-seed.cmake
+          key: ${{ steps.seed-cache.outputs.cache-primary-key }}
+      - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: build/externals
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       - name: Check that every test executable is registered with ctest
         shell: cmd
         run: python tools/check_test_registration.py build
-      - shell: cmd
-        run: cmake --build build
-      - shell: cmd
+      - if: ${{ inputs.select }}
+        uses: actions/cache/restore@v6
+        with:
+          path: test-graph.json
+          key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
+          restore-keys: test-graph-${{ runner.os }}-
+      - name: Select the tests the change reaches
+        if: ${{ inputs.select }}
+        env:
+          BASE: ${{ needs.eligibility.outputs.sha }}
+        shell: cmd
+        run: |
+          git diff --name-only %BASE% HEAD > changed.txt
+          python tools/select_tests.py select build test-graph.json changed.txt
+      - id: build
+        shell: cmd
+        run: if exist build\select.ninja (ninja -C build -f select.ninja selected) else (cmake --build build)
+      - id: libs
+        shell: cmd
         run: cmake --build build --target libs
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
+        run: python tools/select_tests.py ctest build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
       - run: python tools/check_skips.py build/ctest.xml --job windows
+      - name: Write the test graph of main
+        if: ${{ !cancelled() && github.event_name == 'push' && steps.build.outcome == 'success' && steps.libs.outcome == 'success' }}
+        continue-on-error: true
+        shell: cmd
+        run: python tools/select_tests.py dump build test-graph.json
+      - if: ${{ !cancelled() && github.event_name == 'push' && hashFiles('test-graph.json') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: test-graph.json
+          key: test-graph-${{ runner.os }}-${{ github.sha }}
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash
@@ -431,3 +703,4 @@ jobs:
           [ -f ctest.log ] || exit 0
           awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
             END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log
+

@@ -7,11 +7,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-
-#ifndef _WIN32
-extern char** environ;
-#endif
 
 namespace {
 struct EnvironmentEntry {
@@ -26,20 +23,7 @@ struct EnvironmentEntry {
 };
 std::mutex environmentMutex;
 std::vector<EnvironmentEntry>& Environment() {
-    // Seed once from the host. Guest mutations remain local to the guest runtime.
-    static std::vector<EnvironmentEntry> entries = [] {
-        std::vector<EnvironmentEntry> result;
-#ifdef _WIN32
-        char** source = _environ;
-#else
-        char** source = environ;
-#endif
-        if (source) for (; *source; ++source) {
-            if (**source && **source != '=' && std::strchr(*source, '='))
-                result.push_back({std::make_unique<std::string>(*source), nullptr});
-        }
-        return result;
-    }();
+    static std::vector<EnvironmentEntry> entries;
     return entries;
 }
 bool ValidEnvironmentName(const char* name) {
@@ -49,6 +33,17 @@ int EnvironmentError(int error) { errno = error; return -1; }
 }
 
 extern "C" {
+bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value) {
+    if (!ValidEnvironmentName(name)) return false;
+    std::lock_guard lock(environmentMutex);
+    for (auto& entry : Environment())
+        if (entry.Matches(name)) {
+            value = entry.Data() + std::strlen(name) + 1;
+            return true;
+        }
+    return false;
+}
+
 char* APS5_VABI getenv_nid_postfix(const char* name) {
     if (!ValidEnvironmentName(name)) { errno = 22; return nullptr; }
     try {

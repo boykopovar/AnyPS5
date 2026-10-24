@@ -51,6 +51,7 @@ static void* APS5_VABI Incrementer(void* arg) {
 static void ArgumentErrors() {
     Require(pthread_spin_init_nid_postfix(nullptr, PTHREAD_PROCESS_PRIVATE) == GUEST_EINVAL);
     PthreadSpinlock lock = nullptr;
+    Require(pthread_spin_init_nid_postfix(&lock, PTHREAD_PROCESS_SHARED) == GUEST_EINVAL);
     Require(pthread_spin_init_nid_postfix(&lock, 2) == GUEST_EINVAL);
     Require(pthread_spin_init_nid_postfix(&lock, -1) == GUEST_EINVAL);
     Require(lock == nullptr);
@@ -116,7 +117,6 @@ static void MutualExclusion() {
 int main() {
     ArgumentErrors();
     SingleThread(PTHREAD_PROCESS_PRIVATE);
-    SingleThread(PTHREAD_PROCESS_SHARED);
     HeldByAnotherThread();
     MutualExclusion();
 }

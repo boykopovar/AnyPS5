@@ -1,6 +1,7 @@
 #ifndef ELFPATCHER_DOMAIN_ELFCONSTANTS_HPP
 #define ELFPATCHER_DOMAIN_ELFCONSTANTS_HPP
 
+#include <cstddef>
 #include <cstdint>
 
 namespace Elfpatcher {
@@ -93,6 +94,9 @@ inline constexpr std::int64_t DT_RELASZ = 8;
 inline constexpr std::int64_t DT_RELAENT = 9;
 inline constexpr std::int64_t DT_STRSZ = 10;
 inline constexpr std::int64_t DT_SYMENT = 11;
+inline constexpr std::int64_t DT_REL = 17;
+inline constexpr std::int64_t DT_RELSZ = 18;
+inline constexpr std::int64_t DT_RELENT = 19;
 inline constexpr std::int64_t DT_PLTREL = 20;
 inline constexpr std::int64_t DT_JMPREL = 23;
 inline constexpr std::int64_t DT_INIT = 12;
@@ -105,7 +109,11 @@ inline constexpr std::int64_t DT_RUNPATH = 29;
 inline constexpr std::int64_t DT_FLAGS = 30;
 inline constexpr std::int64_t DT_PREINIT_ARRAY = 32;
 inline constexpr std::int64_t DT_PREINIT_ARRAYSZ = 33;
+inline constexpr std::int64_t DT_RELRSZ = 35;
+inline constexpr std::int64_t DT_RELR = 36;
+inline constexpr std::int64_t DT_RELRENT = 37;
 inline constexpr std::uint64_t DF_BIND_NOW = 0x8;
+inline constexpr std::uint64_t DF_SYMBOLIC = 0x2;
 
 inline constexpr std::int64_t DT_OS_INIT = 0x6000000c;
 inline constexpr std::int64_t DT_OS_FINI = 0x6000000d;
@@ -162,6 +170,7 @@ inline constexpr std::uint32_t SHT_PROGBITS = 1;
 inline constexpr std::uint32_t SHT_SYMTAB = 2;
 inline constexpr std::uint32_t SHT_STRTAB = 3;
 inline constexpr std::uint32_t SHT_DYNAMIC = 6;
+inline constexpr std::uint32_t SHT_NOBITS = 8;
 inline constexpr std::uint32_t SHT_DYNSYM = 11;
 inline constexpr std::uint32_t SHF_WRITE = 0x1;
 inline constexpr std::uint32_t SHF_ALLOC = 0x2;

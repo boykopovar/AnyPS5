@@ -3,6 +3,7 @@
 #include <domain/IProgress.hpp>
 #include <relinker/domain/RelinkResult.hpp>
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/patching/GamePatch.hpp>
 #include <optional>
 
 namespace Relinker {
@@ -22,8 +23,11 @@ struct ConversionOptions {
     std::optional<std::uint64_t> WindowsFixedBase;
     bool WindowsDiagnostics = false;
     std::optional<std::uint64_t> LinuxFixedBase;
+    std::optional<std::uint64_t> MacosFixedBase;
     std::string RunPath = "$ORIGIN/libs";
     std::set<std::string> ExcludedModules;
+    std::vector<GamePatch::PatchEntry> Patches;
+    std::string TargetName;
 };
 
 struct ConversionInput {
@@ -41,6 +45,8 @@ struct ConversionOutput {
     std::vector<GuestArtifact> Modules;
     RelinkResult Analysis;
     std::string WindowsDiagnostics;
+    std::vector<GamePatch::AppliedPatch> AppliedPatches;
+    std::optional<std::uint64_t> LinuxBase;
 };
 
 class Conversion {

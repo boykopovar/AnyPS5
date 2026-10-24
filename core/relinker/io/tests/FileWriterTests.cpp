@@ -51,7 +51,7 @@ void requireRunningReplacement(const std::filesystem::path& directory, const TVa
     const auto output = directory / (leftover ? "leftover" : "running");
     if (leftover)
         std::ofstream(directory / "leftover.tmp", std::ios::binary) << "killed";
-    std::filesystem::copy_file("/bin/sleep", output);
+    std::filesystem::copy_file(std::filesystem::read_symlink("/proc/self/exe"), output);
     const auto permissions = std::filesystem::perms::owner_all | std::filesystem::perms::group_all;
     std::filesystem::permissions(output, permissions);
     const auto previous = readFile(output);
@@ -59,7 +59,7 @@ void requireRunningReplacement(const std::filesystem::path& directory, const TVa
     if (child < 0)
         throw std::runtime_error("Cannot start the previous executable");
     if (child == 0) {
-        execl(output.c_str(), "sleep", "30", nullptr);
+        execl(output.c_str(), output.c_str(), "wait", nullptr);
         _exit(127);
     }
     std::error_code error;
@@ -172,6 +172,10 @@ int main(int argc, char* argv[]) {
     try {
         if (argc != 2) throw std::runtime_error("Expected binary or text");
         const std::string mode = argv[1];
+        if (mode == "wait") {
+            sleep(30);
+            return 0;
+        }
         for (const std::size_t size : {std::size_t{3}, std::size_t{65536}}) {
             if (mode == "binary") {
                 const std::vector<std::uint8_t> data(size, 0x41);

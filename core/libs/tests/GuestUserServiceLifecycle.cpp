@@ -2,9 +2,11 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 extern "C" {
-int APS5_VABI sceUserServiceInitialize(const void* params);
+int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params);
+int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask);
 int APS5_VABI sceUserServiceTerminate(void);
 int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list);
 int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event);
@@ -31,6 +33,36 @@ void RequireLoginOnce() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
 }
 
+int InitializeWithPriority(int priority) {
+    const UserServiceInitParam param{priority};
+    return sceUserServiceInitialize(&param);
+}
+
+void TestThreadPriority() {
+    for (int priority : {0, 0xFF, 0x300, -1}) {
+        Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceInitialize2(priority, 1) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
+    RequireNotInitialized();
+
+    Require(sceUserServiceInitialize2(0x100, 1) == USER_SERVICE_OK);
+    RequireLoginOnce();
+    for (int priority : {0x100, 700, 0x2FF}) {
+        Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_ALREADY_INITIALIZED);
+        Require(sceUserServiceInitialize2(priority, 1) == USER_SERVICE_ERROR_ALREADY_INITIALIZED);
+    }
+    for (int priority : {0, 0xFF, 0x300, -1}) {
+        Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceInitialize2(priority, 1) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_ERROR_ALREADY_INITIALIZED);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+
+    Require(InitializeWithPriority(0x2FF) == USER_SERVICE_OK);
+    RequireLoginOnce();
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+}
+
 }
 
 int main() {
@@ -51,4 +83,6 @@ int main() {
     Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     RequireLoginOnce();
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+
+    TestThreadPriority();
 }

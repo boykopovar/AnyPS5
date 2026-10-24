@@ -1,7 +1,9 @@
 #include "Optimization/RedundantValueEliminator.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -120,10 +122,19 @@ bool Recomputable(IrOpcode opcode) {
         case IrOpcode::FPTrunc32:
         case IrOpcode::FPFract32:
         case IrOpcode::FPRoundEven32:
+        case IrOpcode::GetSrtResource:
+        case IrOpcode::ReadConst:
             return true;
         default:
             return false;
     }
+}
+
+bool ClobbersReadConst(IrOpcode opcode) {
+    const auto buffer = BufferAccessOf(opcode);
+    if (buffer == BufferAccess::Write || buffer == BufferAccess::Atomic) return true;
+    const auto address = AddressOpcodeInfoOf(opcode).access;
+    return address == AddressAccess::Write || address == AddressAccess::Atomic || opcode == IrOpcode::Barrier;
 }
 
 struct Operand {
@@ -134,30 +145,38 @@ struct Operand {
     bool operator==(const Operand& other) const = default;
 };
 
+Operand OperandOf(const IrValue* resolved) {
+    if (resolved->Parent() == nullptr && resolved->HasImmediate()) return {nullptr, resolved->Type(), resolved->ImmediateU64()};
+    return {resolved, resolved->Type(), 0u};
+}
+
 struct ValueKey {
     IrOpcode opcode;
     IrType type;
     std::uint64_t flags;
-    std::vector<Operand> operands;
+    std::uint64_t memoryEpoch = 0;
+    std::array<const IrValue*, 4> operands{};
+    std::size_t operandCount = 0;
 
-    bool operator==(const ValueKey& other) const = default;
+    bool operator==(const ValueKey& other) const {
+        if (opcode != other.opcode || type != other.type || flags != other.flags || memoryEpoch != other.memoryEpoch || operandCount != other.operandCount) return false;
+        for (std::size_t index = 0; index < operandCount; ++index) {
+            if (operands[index] != other.operands[index] && OperandOf(operands[index]) != OperandOf(other.operands[index])) return false;
+        }
+        return true;
+    }
 };
 
 struct ValueKeyHash {
     std::size_t operator()(const ValueKey& key) const {
-        std::size_t hash = static_cast<std::size_t>(key.opcode) * 0x9e3779b97f4a7c15ull ^ static_cast<std::size_t>(key.type) ^ std::hash<std::uint64_t>{}(key.flags) * 31u;
-        for (const auto& operand : key.operands) {
+        std::size_t hash = static_cast<std::size_t>(key.opcode) * 0x9e3779b97f4a7c15ull ^ static_cast<std::size_t>(key.type) ^ std::hash<std::uint64_t>{}(key.flags) * 31u ^ std::hash<std::uint64_t>{}(key.memoryEpoch) * 131u;
+        for (const auto* argument : std::span(key.operands).first(key.operandCount)) {
+            const auto operand = OperandOf(argument);
             hash = hash * 1099511628211ull ^ std::hash<const void*>{}(operand.value) ^ std::hash<std::uint64_t>{}(operand.immediate) * 7u ^ static_cast<std::size_t>(operand.type);
         }
         return hash;
     }
 };
-
-Operand OperandOf(const IrValue* argument) {
-    const IrValue* resolved = argument->Resolve();
-    if (resolved->Parent() == nullptr && resolved->HasImmediate()) return {nullptr, resolved->Type(), resolved->ImmediateU64()};
-    return {resolved, resolved->Type(), 0u};
-}
 
 std::vector<IrBlock*> ReversePostOrder(IrBlock& entry) {
     std::vector<IrBlock*> order;
@@ -213,18 +232,64 @@ std::vector<std::vector<IrBlock*>> DominatorChildren(const std::vector<IrBlock*>
 
 RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& program) const {
     RedundantValueEliminationStats stats;
+    if (program.BlockOrder().empty()) return stats;
+    const auto order = ReversePostOrder(*program.BlockOrder().front());
+    std::unordered_map<const IrBlock*, std::size_t> index;
+    const auto children = DominatorChildren(order, index);
+    for (const auto* block : program.BlockOrder()) {
+        if (!index.contains(block)) throw std::runtime_error("redundant value elimination: block " + std::to_string(block->Id()) + " is unreachable from the entry block");
+    }
+    std::uint64_t nextClobberEpoch = order.size() + 2u;
+    std::vector<std::uint64_t> firstClobber(order.size(), 0u);
+    std::vector<std::uint64_t> lastClobber(order.size(), 0u);
+    for (std::size_t position = 0; position < order.size(); ++position) {
+        firstClobber[position] = nextClobberEpoch;
+        for (const auto* inst : order[position]->Instructions()) {
+            if (ClobbersReadConst(inst->Opcode())) lastClobber[position] = nextClobberEpoch++;
+        }
+    }
+    std::vector<std::uint64_t> entryEpoch(order.size(), 0u);
+    const auto exitEpoch = [&](std::size_t position) -> std::uint64_t {
+        if (entryEpoch[position] == 0u) return 0u;
+        return lastClobber[position] != 0u ? lastClobber[position] : entryEpoch[position];
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (std::size_t position = 0; position < order.size(); ++position) {
+            std::uint64_t candidate = position == 0u ? 1u : 0u;
+            for (const IrBlock* predecessor : order[position]->Predecessors()) {
+                const auto found = index.find(predecessor);
+                if (found == index.end()) continue;
+                const auto incoming = exitEpoch(found->second);
+                if (incoming == 0u) continue;
+                if (candidate == 0u) {
+                    candidate = incoming;
+                } else if (candidate != incoming) {
+                    candidate = position + 2u;
+                }
+            }
+            if (candidate != entryEpoch[position]) {
+                entryEpoch[position] = candidate;
+                changed = true;
+            }
+        }
+    }
     std::unordered_map<ValueKey, IrValue*, ValueKeyHash> available;
     std::vector<const ValueKey*> added;
     std::unordered_map<const IrValue*, IrValue*> replacements;
-    ValueKey key;
-    const auto visit = [&](IrBlock& block) {
-        for (auto* inst : block.Instructions()) {
+    const auto visit = [&](std::size_t position) {
+        std::uint64_t epoch = entryEpoch[position];
+        std::uint64_t nextClobber = firstClobber[position];
+        for (auto* inst : order[position]->Instructions()) {
+            if (ClobbersReadConst(inst->Opcode())) {
+                epoch = nextClobber++;
+                continue;
+            }
             if (!Recomputable(inst->Opcode()) || inst->HasImmediate() || !inst->HasUses()) continue;
-            key.opcode = inst->Opcode();
-            key.type = inst->Type();
-            key.flags = inst->Flags<std::uint64_t>();
-            key.operands.clear();
-            for (std::size_t index = 0; index < inst->ArgumentCount(); ++index) key.operands.push_back(OperandOf(inst->Argument(index)));
+            ValueKey key{inst->Opcode(), inst->Type(), inst->Flags<std::uint64_t>(), inst->Opcode() == IrOpcode::ReadConst ? epoch : 0u};
+            key.operandCount = inst->ArgumentCount();
+            if (key.operandCount > key.operands.size()) continue;
+            for (std::size_t index = 0; index < key.operandCount; ++index) key.operands[index] = inst->Argument(index)->Resolve();
             const auto [found, inserted] = available.try_emplace(key, inst);
             if (inserted) {
                 added.push_back(&found->first);
@@ -235,22 +300,15 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
             ++stats.replacedValues;
         }
     };
-    if (program.BlockOrder().empty()) return stats;
-    const auto order = ReversePostOrder(*program.BlockOrder().front());
-    std::unordered_map<const IrBlock*, std::size_t> index;
-    const auto children = DominatorChildren(order, index);
-    for (const auto* block : program.BlockOrder()) {
-        if (!index.contains(block)) throw std::runtime_error("redundant value elimination: block " + std::to_string(block->Id()) + " is unreachable from the entry block");
-    }
     std::vector<std::pair<std::size_t, std::size_t>> stack{{0u, 0u}};
     std::vector<std::size_t> scopes{added.size()};
-    visit(*order[0]);
+    visit(0u);
     while (!stack.empty()) {
         auto& [position, next] = stack.back();
         if (next < children[position].size()) {
             const auto child = index.at(children[position][next++]);
             scopes.push_back(added.size());
-            visit(*order[child]);
+            visit(child);
             stack.emplace_back(child, 0u);
             continue;
         }

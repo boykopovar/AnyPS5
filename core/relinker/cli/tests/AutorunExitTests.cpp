@@ -1,4 +1,6 @@
 #include <Cli.hpp>
+#include <domain/Types.hpp>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <filesystem>
@@ -42,6 +44,28 @@ int main(int, char* argv[]) {
             }
         }
 #ifndef _WIN32
+        const auto savedHandler = std::signal(SIGCHLD, SIG_IGN);
+        if (savedHandler == SIG_ERR) throw std::runtime_error("Cannot ignore SIGCHLD for the autorun failure test");
+        try {
+            for (const bool windows : {false, true}) {
+                bool rejected = false;
+                try {
+                    Cli::Autorun(child.string(), windows);
+                } catch (const Domain::RelinkerException& error) {
+                    const std::string message = error.what();
+                    if (message.find(child.string()) == std::string::npos ||
+                        message.find("(error " + std::to_string(ECHILD) + ")") == std::string::npos)
+                        throw std::runtime_error("Autorun lost the failed wait's path or ECHILD error: " + message);
+                    rejected = true;
+                }
+                if (!rejected) throw std::runtime_error("Autorun reported success after losing the child exit status");
+            }
+        } catch (...) {
+            std::signal(SIGCHLD, savedHandler);
+            throw;
+        }
+        if (std::signal(SIGCHLD, savedHandler) == SIG_ERR)
+            throw std::runtime_error("Cannot restore SIGCHLD after the autorun failure test");
         std::filesystem::rename(child, signaled);
         const int code = Cli::Autorun(signaled.string(), false);
         if (code != 128 + SIGILL) throw std::runtime_error("Autorun lost the child signal");

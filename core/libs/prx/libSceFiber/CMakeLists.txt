@@ -8,6 +8,7 @@ if(BUILD_TESTING)
     target_include_directories(fiber_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(fiber_tests PRIVATE libSceFiber libc)
     add_test(NAME fiber COMMAND fiber_tests)
+    add_asan_test_options(fiber detect_stack_use_after_return=0)
     if(WIN32)
         set_tests_properties(fiber PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")

@@ -122,35 +122,103 @@ public:
     }
 };
 
+struct AacLayout {
+    std::uint32_t objectType;
+    std::uint32_t samplingIndex;
+    std::uint32_t channelConfiguration;
+    bool operator==(const AacLayout&) const = default;
+};
+
+enum class Sbr {
+    Implicit,
+    Absent,
+    WithoutParametricStereo,
+};
+
+std::vector<std::uint8_t> audioSpecificConfig(const AacLayout& layout, Sbr sbr, std::uint32_t sbrSampleRate) {
+    std::vector<std::uint8_t> bytes;
+    std::size_t bits = 0;
+    const auto put = [&](std::uint32_t value, int width) {
+        for (int bit = width - 1; bit >= 0; --bit, ++bits) {
+            if (bits % 8 == 0) bytes.push_back(0);
+            bytes.back() |= static_cast<std::uint8_t>((value >> bit & 1) << (7 - bits % 8));
+        }
+    };
+    put(layout.objectType, 5);
+    put(layout.samplingIndex, 4);
+    put(layout.channelConfiguration, 4);
+    put(0, 3);
+    if (sbr == Sbr::Implicit) return bytes;
+    put(0x2B7, 11);
+    put(5, 5);
+    put(sbr == Sbr::WithoutParametricStereo, 1);
+    if (sbr == Sbr::WithoutParametricStereo) {
+        const auto* rate = std::find(std::begin(AAC_SAMPLE_RATES), std::end(AAC_SAMPLE_RATES), sbrSampleRate);
+        if (rate == std::end(AAC_SAMPLE_RATES)) {
+            put(15, 4);
+            put(sbrSampleRate, 24);
+        } else {
+            put(static_cast<std::uint32_t>(rate - std::begin(AAC_SAMPLE_RATES)), 4);
+        }
+        put(0x548, 11);
+        put(0, 1);
+    }
+    return bytes;
+}
+
 class AacDecoder final : public FfmpegDecoder {
 public:
-    AacDecoder(std::int32_t wordSize, bool adts, std::vector<std::vector<std::uint8_t>> configs)
-        : FfmpegDecoder(AV_CODEC_ID_AAC, wordSize, configs.empty() ? std::vector<std::uint8_t>{} : configs.front()), adts(adts), configs(std::move(configs)) {}
+    AacDecoder(std::int32_t wordSize, bool adts, bool highEfficiency, std::vector<AacLayout> layouts)
+        : FfmpegDecoder(AV_CODEC_ID_AAC, wordSize, layouts.empty() ? std::vector<std::uint8_t>{} : audioSpecificConfig(layouts.front(), highEfficiency ? Sbr::Implicit : Sbr::Absent, 0)),
+          adts(adts), highEfficiency(highEfficiency), sbr(highEfficiency ? Sbr::Implicit : Sbr::Absent), layouts(std::move(layouts)) {}
 
     DecodeResult Decode(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) override {
-        std::size_t frameBytes = size;
-        if (adts) {
-            if (size < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0) return {DecodeStatus::InvalidData};
-            frameBytes = static_cast<std::size_t>((data[3] & 3) << 11 | data[4] << 3 | data[5] >> 5);
-            if (frameBytes < 7) return {DecodeStatus::InvalidData};
-            if (frameBytes > size) return {DecodeStatus::PartialInput};
-        }
-        if (configs.size() <= 1) return decodePacket(data, frameBytes, pcm, pcmSize);
-        for (std::size_t index = 0; index < configs.size(); ++index) {
-            if (index != 0) reopen(configs[index]);
-            const DecodeResult result = decodePacket(data, frameBytes, pcm, pcmSize);
-            if (result.status != DecodeStatus::InvalidData) {
-                configs = {configs[index]};
-                return result;
+        if (!adts) return decodeAccessUnit(data, size, pcm, pcmSize);
+        if (size < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0) return {DecodeStatus::InvalidData};
+        const auto frameBytes = static_cast<std::size_t>((data[3] & 3) << 11 | data[4] << 3 | data[5] >> 5);
+        const std::size_t headerBytes = (data[1] & 1) != 0 ? 7 : 9;
+        if (frameBytes <= headerBytes) return {DecodeStatus::InvalidData};
+        if (frameBytes > size) return {DecodeStatus::PartialInput};
+        const AacLayout layout{(data[2] >> 6) + 1u, data[2] >> 2 & 15u, (data[2] & 1u) << 2 | data[3] >> 6};
+        if (layout.channelConfiguration == 0) {
+            if (!layouts.empty()) {
+                layouts.clear();
+                reopen({});
             }
+            return decodePacket(data, frameBytes, pcm, pcmSize);
         }
-        reopen(configs.front());
-        return {DecodeStatus::InvalidData};
+        if (layouts.empty() || layouts.front() != layout) {
+            layouts = {layout};
+            sbr = highEfficiency ? Sbr::Implicit : Sbr::Absent;
+            reopen(audioSpecificConfig(layout, sbr, 0));
+        }
+        DecodeResult result = decodeAccessUnit(data + headerBytes, frameBytes - headerBytes, pcm, pcmSize);
+        result.consumed = frameBytes;
+        return result;
     }
 
 private:
+    DecodeResult decodeAccessUnit(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) {
+        for (std::size_t index = 0; index < layouts.size(); ++index) {
+            if (index != 0) reopen(audioSpecificConfig(layouts[index], sbr, 0));
+            DecodeResult result = decodePacket(data, size, pcm, pcmSize);
+            if (result.status == DecodeStatus::InvalidData) continue;
+            layouts = {layouts[index]};
+            if (sbr == Sbr::Implicit && layouts.front().channelConfiguration == 1 && result.channels > 1) {
+                sbr = Sbr::WithoutParametricStereo;
+                reopen(audioSpecificConfig(layouts.front(), sbr, result.sampleRate));
+                result = decodePacket(data, size, pcm, pcmSize);
+            }
+            return result;
+        }
+        if (layouts.size() > 1) reopen(audioSpecificConfig(layouts.front(), sbr, 0));
+        return {DecodeStatus::InvalidData};
+    }
+
     bool adts;
-    std::vector<std::vector<std::uint8_t>> configs;
+    bool highEfficiency;
+    Sbr sbr;
+    std::vector<AacLayout> layouts;
 };
 
 class At9Decoder final : public Decoder {
@@ -239,20 +307,16 @@ std::unique_ptr<Decoder> CreateMp3(std::int32_t wordSize) {
     return std::make_unique<Mp3Decoder>(wordSize);
 }
 
-std::unique_ptr<Decoder> CreateAac(std::int32_t wordSize, bool adts, std::uint32_t samplingFreqIndex, std::uint32_t channels) {
-    std::vector<std::vector<std::uint8_t>> configs;
+std::unique_ptr<Decoder> CreateAac(std::int32_t wordSize, bool adts, std::uint32_t samplingFreqIndex, std::uint32_t channels, bool highEfficiency) {
+    std::vector<AacLayout> layouts;
     if (!adts) {
         const std::uint32_t lowComplexity = 2;
-        const auto config = [&](std::uint32_t channelConfiguration) {
-            return std::vector<std::uint8_t>{static_cast<std::uint8_t>(lowComplexity << 3 | samplingFreqIndex >> 1),
-                                             static_cast<std::uint8_t>((samplingFreqIndex & 1) << 7 | channelConfiguration << 3)};
-        };
-        configs.push_back(config(channels < 2 ? 1 : 2));
+        layouts.push_back({lowComplexity, samplingFreqIndex, channels < 2 ? 1u : 2u});
         for (std::uint32_t channelConfiguration = 3; channelConfiguration <= 7; ++channelConfiguration) {
-            if ((channelConfiguration == 7 ? 8 : channelConfiguration) <= channels) configs.push_back(config(channelConfiguration));
+            if ((channelConfiguration == 7 ? 8 : channelConfiguration) <= channels) layouts.push_back({lowComplexity, samplingFreqIndex, channelConfiguration});
         }
     }
-    return std::make_unique<AacDecoder>(wordSize, adts, std::move(configs));
+    return std::make_unique<AacDecoder>(wordSize, adts, highEfficiency, std::move(layouts));
 }
 
 std::unique_ptr<Decoder> CreateAt9(std::int32_t wordSize, const std::uint8_t (&config)[4], At9Format& format) {

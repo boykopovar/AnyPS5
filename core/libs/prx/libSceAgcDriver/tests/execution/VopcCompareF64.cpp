@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,11 @@ constexpr std::uint32_t Inputs = 8;
 constexpr std::uint32_t Results = 4;
 constexpr std::uint32_t Compares = 41;
 constexpr std::uint32_t RandomRounds = 4;
+struct Mode {
+    const char* name;
+    std::optional<ShaderRecompiler::ShaderFloatMode> value;
+    bool flushed;
+};
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
@@ -62,11 +68,12 @@ alignas(256) constexpr std::array<std::uint32_t, 271> CompareCode{
     0xd76f000b, 0x042d1114, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xbf810000,
 };
 
-constexpr std::array<std::uint64_t, 20> Edges{
+constexpr std::array<std::uint64_t, 22> Edges{
     0x7ff8000000000000ull, 0x7ff0000000000001ull, 0xfff8000000000001ull, 0x7ff0000100000000ull, 0x7ff0000000000000ull,
     0xfff0000000000000ull, 0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000001ull, 0x0000000000000002ull,
     0x800fffffffffffffull, 0x0010000000000000ull, 0x3ff0000000000000ull, 0x3ff0000000000001ull, 0xbff0000000000000ull,
     0x4008000000000000ull, 0xc008000000000000ull, 0x3fc45f306dc9c882ull, 0x3fc45f3060000000ull, 0x7fefffffffffffffull,
+    0x8000000000000001ull, 0x000fffffffffffffull,
 };
 
 constexpr std::array<std::uint32_t, 16> Masks{
@@ -113,8 +120,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    Output.fill(0xdeadbeefu);
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const Mode& mode) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
@@ -130,9 +136,8 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    device.WaitIdle();
+    request.context.floatMode = mode.value;
+    return ShaderRecompiler::Recompile(request);
 }
 
 std::uint32_t ClassBit(std::uint64_t bits) {
@@ -150,14 +155,18 @@ bool ClassMatch(std::uint64_t bits, std::uint32_t mask) {
     return ((mask >> ClassBit(bits)) & 1u) != 0u;
 }
 
-void Check(std::uint32_t round) {
+void Check(std::uint32_t round, const Mode& mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto* in = &Input[tid * Inputs];
         const std::uint64_t abits = in[0] | (static_cast<std::uint64_t>(in[1]) << 32u);
         const std::uint64_t bbits = in[2] | (static_cast<std::uint64_t>(in[3]) << 32u);
         const std::uint32_t mask = in[4];
-        const double a = std::bit_cast<double>(abits);
-        const double b = std::bit_cast<double>(bbits);
+        const auto value = [&](std::uint64_t bits) {
+            const double result = std::bit_cast<double>(bits);
+            return mode.flushed && std::fpclassify(result) == FP_SUBNORMAL ? std::copysign(0.0, result) : result;
+        };
+        const double a = value(abits);
+        const double b = value(bbits);
         const bool unordered = std::isnan(a) || std::isnan(b);
         const std::array<bool, 17> base{
             false,
@@ -186,13 +195,13 @@ void Check(std::uint32_t round) {
         expected[34] = 3.0 < a;
         expected[35] = 1.0 >= a;
         expected[36] = std::bit_cast<double>(0x3fc45f306dc9c882ull) == a;
-        expected[37] = std::numeric_limits<double>::denorm_min() < a;
+        expected[37] = (mode.flushed ? 0.0 : std::numeric_limits<double>::denorm_min()) < a;
         expected[38] = std::fabs(a) < b;
         expected[39] = ClassMatch(abits & 0x7fffffffffffffffull, mask);
         expected[40] = !(std::fabs(a) > std::fabs(b));
         for (std::uint32_t k = 0; k < expected.size(); ++k) {
             const bool actual = ((Output[tid * Results + k / 32u] >> (k % 32u)) & 1u) != 0u;
-            Require(actual == expected[k], "vopc f64 compares: round " + std::to_string(round) + " thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
+            Require(actual == expected[k], "vopc f64 compares: " + std::string(mode.name) + " round " + std::to_string(round) + " thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
         }
     }
 }
@@ -203,10 +212,26 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        for (std::uint32_t round = 0; round < EdgeRounds + RandomRounds; ++round) {
-            FillInput(round);
-            Run(*device);
-            Check(round);
+        const std::array<Mode, 9> modes{{
+            {"unknown mode", std::nullopt, false},
+            {"mode 0, IEEE off", ShaderRecompiler::ShaderFloatMode{0x30u, true, false, false}, true},
+            {"mode 1, IEEE off", ShaderRecompiler::ShaderFloatMode{0x60u, true, false, false}, false},
+            {"mode 2, IEEE off", ShaderRecompiler::ShaderFloatMode{0x90u, true, false, false}, true},
+            {"mode 3, IEEE off", ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, false},
+            {"mode 0, IEEE on", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}, true},
+            {"mode 1, IEEE on", ShaderRecompiler::ShaderFloatMode{0x60u, true, true, false}, false},
+            {"mode 2, IEEE on", ShaderRecompiler::ShaderFloatMode{0x90u, true, true, false}, true},
+            {"mode 3, IEEE on", ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false}, false},
+        }};
+        for (const auto& mode : modes) {
+            const auto result = Compile(*device, mode);
+            for (std::uint32_t round = 0; round < EdgeRounds + RandomRounds; ++round) {
+                FillInput(round);
+                Output.fill(0xdeadbeefu);
+                device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(CompareCode.data()));
+                device->WaitIdle();
+                Check(round, mode);
+            }
         }
         std::puts("vopc f64 compare tests passed");
         return 0;

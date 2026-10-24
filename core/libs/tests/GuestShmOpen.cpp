@@ -10,6 +10,8 @@ int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
 std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
 std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
 int APS5_VABI close_nid_postfix(int);
+void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
+int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
 int* APS5_VABI __error_nid_postfix();
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -37,7 +39,21 @@ int main() {
     Require(pread_nid_postfix(first, &last, 1, 0x3fff) == 1 && last == 0);
     Require(pread_nid_postfix(first, &last, 1, 0x4000) == 0);
     Require(pread_nid_postfix(second, back, sizeof(back), 0) == 0);
+    auto* view = static_cast<volatile char*>(mmap_nid_postfix(nullptr, 0x4000, 3, 0x1, first, 0));
+    Require(view != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(view[0x1000] == 'a' && view[0x3fff] == 0);
+    view[0x2000] = 'm';
+    Require(pread_nid_postfix(first, &last, 1, 0x2000) == 1 && last == 'm');
+    Require(munmap_nid_postfix(const_cast<char*>(view), 0x4000) == 0);
 #ifndef _WIN32
+    const unsigned char code[] = {0xb8, 0x2a, 0, 0, 0, 0xc3};
+    Require(pwrite_nid_disambig1_nid_postfix(first, code, sizeof(code), 0) == static_cast<std::int64_t>(sizeof(code)));
+    void* executable = mmap_nid_postfix(nullptr, 0x4000, 5, 0x1, first, 0);
+    Require(executable != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    int (*function)();
+    std::memcpy(&function, &executable, sizeof(function));
+    Require(function() == 42);
+    Require(munmap_nid_postfix(executable, 0x4000) == 0);
     Require(pwrite_nid_disambig1_nid_postfix(third, text, sizeof(text), 0) == 0);
 #endif
     Require(ftruncate_nid_postfix(third, 0x4000) == 0);

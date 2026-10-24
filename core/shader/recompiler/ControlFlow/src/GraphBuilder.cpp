@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -195,6 +196,8 @@ bool addsImmediate(const RdnaInstruction& instruction, std::uint32_t reg, std::u
          (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) && isImmediate(instruction.source0, immediate)));
 }
 
+bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize = 0u, std::uint32_t skipBranchesPast = 0u);
+
 bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
     if (index < 9u) return false;
     const auto& branch = program.instructions[index];
@@ -223,8 +226,13 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
         const auto& basePc = program.instructions[loadIndex - 3u];
         const auto& baseLow = program.instructions[loadIndex - 2u];
         const auto& baseHigh = program.instructions[loadIndex - 1u];
-        const auto& shift = program.instructions[loadIndex - 4u];
-        const auto& bound = program.instructions[loadIndex - 5u];
+        const auto offsetReg = scalarIndex(load.source1);
+        std::uint32_t shiftIndex = 0, boundIndex = 0;
+        if (offsetReg == NoScalarRegister ||
+            !findLastWriter(program, loadIndex - 3u, {offsetReg}, shiftIndex) ||
+            !findLastWriter(program, shiftIndex, {offsetReg}, boundIndex)) return false;
+        const auto& shift = program.instructions[shiftIndex];
+        const auto& bound = program.instructions[boundIndex];
         const auto baseReg = load.source0.reg;
         std::uint32_t displacement = 0, carry = 0, shiftAmount = 0, maximum = 0;
         if (basePc.op != RdnaOpcode::SGetpcB64 || !isRegister(basePc.destination, RdnaOperandKind::ScalarRegister, baseReg) ||
@@ -294,10 +302,11 @@ bool writesScalar(const RdnaInstruction& instruction, std::uint32_t index, std::
     return covers(instruction.destination) || covers(instruction.destination2);
 }
 
-bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize = 0u) {
+bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize, std::uint32_t skipBranchesPast) {
     for (auto position = end; position-- > 0u;) {
         const auto& instruction = program.instructions[position];
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm) return false;
+        const bool skipped = skipBranchesPast != 0u && IsDirectBranchOpcode(instruction.op) && instruction.op != RdnaOpcode::SBranch && instruction.branchTarget > skipBranchesPast;
+        if ((IsDirectBranchOpcode(instruction.op) && !skipped) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm) return false;
         if (std::ranges::any_of(indices, [&](std::uint32_t index) { return writesScalar(instruction, index, waveSize); })) {
             writer = position;
             return true;
@@ -470,7 +479,7 @@ bool isFetchCall(const RdnaProgram& program, std::uint32_t index, const SwappcIn
     const std::uint32_t targetRegister = scalarIndex(instruction.source0);
     const bool userDataPair = swappc != nullptr && targetRegister != NoScalarRegister &&
         targetRegister >= swappc->userDataBaseRegister && targetRegister + 1u < swappc->userDataBaseRegister + swappc->userDataCount &&
-        std::none_of(program.instructions.begin(), program.instructions.end(), [&](const RdnaInstruction& other) {
+        std::none_of(program.instructions.begin(), GcnGuestShaders() ? program.instructions.begin() + index : program.instructions.end(), [&](const RdnaInstruction& other) {
             return writesScalar(other, targetRegister) || writesScalar(other, targetRegister + 1u);
         });
     return swappc != nullptr && swappc->fetchCallAllowed && positional && (userDataPair || outsideProgram);
@@ -494,11 +503,9 @@ bool overwritesScalar(const RdnaInstruction& instruction, std::uint32_t reg, std
                 case RdnaOpcode::SBitset1B64:
                 case RdnaOpcode::SSwappcB64:
                 case RdnaOpcode::SSetpcB64: return false;
-                case RdnaOpcode::SMovB64:
-                case RdnaOpcode::SGetpcB64: return first != NoScalarRegister && reg >= first && reg - first < 2u;
-                default: return first != NoScalarRegister && reg == first;
+                default: return first != NoScalarRegister && reg >= first && reg - first < std::max(instruction.dataDwordCount, 1u);
             }
-        case RdnaInstructionFamily::SOP2: return first != NoScalarRegister && reg == first;
+        case RdnaInstructionFamily::SOP2: return first != NoScalarRegister && reg >= first && reg - first < std::max(instruction.dataDwordCount, 1u);
         case RdnaInstructionFamily::SOPK: return instruction.op == RdnaOpcode::SMovkI32 && reg == first;
         case RdnaInstructionFamily::VOP1:
         case RdnaInstructionFamily::VOP2:
@@ -699,11 +706,17 @@ bool readsScalarDword(const RdnaInstruction& instruction, std::uint32_t reg, std
     return overlaps(instruction.source0, source0Count) || overlaps(instruction.source1, source1Count) || overlaps(instruction.source2, source2Count) || overlaps(instruction.source3, source3Count);
 }
 
+struct LinkEscape {
+    std::uint32_t waveSize = 0;
+    std::string reason;
+};
+
 template <typename TError>
-void requireReturnAddressesStayInCalls(const RdnaProgram& program, const std::vector<SwappcCall>& calls, const std::vector<std::uint32_t>& unlinked, std::uint32_t waveSize, const TError& escapeError) {
+LinkEscape requireReturnAddressesStayInCalls(const RdnaProgram& program, const std::vector<SwappcCall>& calls, const std::vector<std::uint32_t>& unlinked, std::uint32_t knownWaveSize, const TError& escapeError) {
+    const bool gcn = GcnGuestShaders();
     std::set<std::uint32_t> links;
     for (const auto& call : calls) {
-        if (!call.fetch) links.insert(call.linkRegister);
+        if (!call.fetch || gcn) links.insert(call.linkRegister);
     }
     const auto size = static_cast<std::uint32_t>(program.instructions.size());
     const auto successors = [&](std::uint32_t index) {
@@ -729,45 +742,58 @@ void requireReturnAddressesStayInCalls(const RdnaProgram& program, const std::ve
         std::erase_if(next, [&](std::uint32_t successor) { return successor >= size; });
         return next;
     };
-    for (const auto link : links) {
-        const auto writesLink = [&](std::uint32_t index) {
-            const SwappcCall* call = findCallAt(calls, index);
-            return (call != nullptr && call->linkRegister == link) || (std::ranges::find(unlinked, index) != unlinked.end() && scalarIndex(program.instructions[index].destination) == link);
-        };
-        std::vector<std::uint8_t> holds(size, 0u);
-        std::vector<std::uint32_t> work;
-        for (std::uint32_t index = 0; index < size; ++index) {
-            if (writesLink(index)) work.push_back(index);
-        }
-        const auto after = [&](std::uint32_t index) -> std::uint8_t {
-            if (writesLink(index)) return 3u;
-            std::uint8_t value = holds[index];
-            if (overwritesScalar(program.instructions[index], link, waveSize)) value &= 2u;
-            if (overwritesScalar(program.instructions[index], link + 1u, waveSize)) value &= 1u;
-            return value;
-        };
-        while (!work.empty()) {
-            const auto index = work.back();
-            work.pop_back();
-            const auto value = after(index);
-            for (const auto successor : successors(index)) {
-                if ((holds[successor] | value) == holds[successor]) continue;
-                holds[successor] |= value;
-                work.push_back(successor);
+    const auto escapeAt = [&](std::uint32_t waveSize) -> std::optional<std::invalid_argument> {
+        for (const auto link : links) {
+            const auto writesLink = [&](std::uint32_t index) {
+                const SwappcCall* call = findCallAt(calls, index);
+                return (call != nullptr && call->linkRegister == link) || (std::ranges::find(unlinked, index) != unlinked.end() && scalarIndex(program.instructions[index].destination) == link);
+            };
+            std::vector<std::uint8_t> holds(size, 0u);
+            std::vector<std::uint32_t> work;
+            for (std::uint32_t index = 0; index < size; ++index) {
+                if (writesLink(index)) work.push_back(index);
+            }
+            const auto after = [&](std::uint32_t index) -> std::uint8_t {
+                if (writesLink(index)) return 3u;
+                std::uint8_t value = holds[index];
+                if (overwritesScalar(program.instructions[index], link, waveSize)) value &= 2u;
+                if (overwritesScalar(program.instructions[index], link + 1u, waveSize)) value &= 1u;
+                return value;
+            };
+            while (!work.empty()) {
+                const auto index = work.back();
+                work.pop_back();
+                const auto value = after(index);
+                for (const auto successor : successors(index)) {
+                    if ((holds[successor] | value) == holds[successor]) continue;
+                    holds[successor] |= value;
+                    work.push_back(successor);
+                }
+            }
+            for (std::uint32_t index = 0; index < size; ++index) {
+                const auto& instruction = program.instructions[index];
+                if (holds[index] == 0u || writesLink(index) || instruction.family == RdnaInstructionFamily::SOPC || findReturnAt(calls, index) != nullptr) continue;
+                const bool inside = std::ranges::any_of(calls, [&](const SwappcCall& call) { return !call.fetch && call.linkRegister == link && index >= call.targetIndex && index <= call.returnIndex; });
+                if (inside || !(((holds[index] & 1u) != 0u && readsScalarDword(instruction, link, waveSize)) || ((holds[index] & 2u) != 0u && readsScalarDword(instruction, link + 1u, waveSize)))) continue;
+                const auto owner = std::ranges::find_if(calls, [&](const SwappcCall& call) { return (!call.fetch || gcn) && call.linkRegister == link; });
+                return escapeError(*owner, instruction);
             }
         }
-        for (std::uint32_t index = 0; index < size; ++index) {
-            const auto& instruction = program.instructions[index];
-            if (holds[index] == 0u || writesLink(index) || instruction.family == RdnaInstructionFamily::SOPC || findReturnAt(calls, index) != nullptr) continue;
-            const bool inside = std::ranges::any_of(calls, [&](const SwappcCall& call) { return !call.fetch && call.linkRegister == link && index >= call.targetIndex && index <= call.returnIndex; });
-            if (inside || !(((holds[index] & 1u) != 0u && readsScalarDword(instruction, link, waveSize)) || ((holds[index] & 2u) != 0u && readsScalarDword(instruction, link + 1u, waveSize)))) continue;
-            const auto owner = std::ranges::find_if(calls, [&](const SwappcCall& call) { return !call.fetch && call.linkRegister == link; });
-            throw escapeError(*owner, instruction);
-        }
+        return std::nullopt;
+    };
+    if (knownWaveSize != 0u) {
+        if (const auto escape = escapeAt(knownWaveSize)) throw *escape;
+        return {};
     }
+    const auto narrow = escapeAt(32u);
+    const auto wide = escapeAt(64u);
+    if (narrow && wide) throw *narrow;
+    if (narrow) return {32u, narrow->what()};
+    if (wide) return {64u, wide->what()};
+    return {};
 }
 
-std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const SwappcInfo* swappc, std::vector<std::uint32_t>& unlinked) {
+std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const SwappcInfo* swappc, std::vector<std::uint32_t>& unlinked, LinkEscape& linkEscape) {
     std::vector<SwappcCall> calls;
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
         const auto& instruction = program.instructions[index];
@@ -870,7 +896,7 @@ std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const Swa
                 continue;
             }
             const bool outsideRegion = regionEnd != InvalidControlFlowId && (index < call.targetIndex || index > regionEnd);
-            if (outsideRegion) continue;
+            if (outsideRegion || (call.fetch && GcnGuestShaders())) continue;
             if (touchesLinkRegister(instruction, call.linkRegister)) {
                 throw escapeError(call, instruction);
             }
@@ -910,7 +936,7 @@ std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const Swa
         }
     }
 
-    requireReturnAddressesStayInCalls(program, calls, unlinked, swappc != nullptr ? swappc->waveSize : 0u, escapeError);
+    linkEscape = requireReturnAddressesStayInCalls(program, calls, unlinked, swappc != nullptr ? swappc->waveSize : 0u, escapeError);
 
     for (std::size_t first = 0; first < calls.size(); ++first) {
         if (!calls[first].fetch && calls[first].callIndex >= calls[first].targetIndex && calls[first].callIndex <= calls[first].returnIndex) {
@@ -1265,7 +1291,8 @@ std::set<std::uint32_t> branchLabels(const RdnaProgram& program) {
 
 bool unchangedUntil(const RdnaProgram& program, std::uint32_t reg, std::uint32_t reader, std::uint32_t waveSize) {
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
-        if (!writesScalar(program.instructions[index], reg, waveSize)) continue;
+        const bool readerWritesAfterReading = index == reader && GcnGuestShaders();
+        if (readerWritesAfterReading || !writesScalar(program.instructions[index], reg, waveSize)) continue;
         if (index <= reader) return false;
         for (std::uint32_t later = index; later < program.instructions.size(); ++later) {
             const auto& instruction = program.instructions[later];
@@ -1286,10 +1313,10 @@ bool isScalarBufferLoad(RdnaOpcode op) {
     }
 }
 
-bool loadedDword(const RdnaProgram& program, std::uint32_t reg, std::uint32_t before, std::uint32_t waveSize, std::uint32_t& load, std::uint32_t& dword) {
+bool loadedDword(const RdnaProgram& program, std::uint32_t reg, std::uint32_t before, std::uint32_t waveSize, std::uint32_t skipBranchesPast, std::uint32_t& load, std::uint32_t& dword) {
     for (std::uint32_t copies = 0; copies < 4u; ++copies) {
         std::uint32_t writer = 0;
-        if (!findLastWriter(program, before, {reg}, writer, waveSize)) return false;
+        if (!findLastWriter(program, before, {reg}, writer, waveSize, skipBranchesPast)) return false;
         const auto& instruction = program.instructions[writer];
         const auto destination = scalarIndex(instruction.destination);
         const auto source = scalarIndex(instruction.source0);
@@ -1307,6 +1334,49 @@ bool loadedDword(const RdnaProgram& program, std::uint32_t reg, std::uint32_t be
         before = writer;
     }
     return false;
+}
+
+bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize) {
+    std::multimap<std::uint32_t, std::uint32_t> branches;
+    std::set<std::uint32_t> callTargets;
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        std::uint32_t target = 0;
+        if (IsDirectBranchOpcode(instruction.op)) branches.emplace(instruction.branchTarget, index);
+        else if (instruction.op == RdnaOpcode::SSetpcB64 && resolveSetpcTarget(program, index, target)) branches.emplace(target, index);
+        else if (instruction.op == RdnaOpcode::SCallB64) callTargets.insert(instruction.branchTarget);
+    }
+    std::vector<bool> seen(program.instructions.size());
+    std::vector<std::uint32_t> pending;
+    const auto predecessors = [&](std::uint32_t index) {
+        if (index == 0u || callTargets.contains(program.instructions[index].programCounter)) return false;
+        const auto before = pending.size();
+        const auto op = program.instructions[index - 1u].op;
+        if (op != RdnaOpcode::SBranch && op != RdnaOpcode::SEndpgm && op != RdnaOpcode::SCodeEnd && op != RdnaOpcode::SSetpcB64) pending.push_back(index - 1u);
+        const auto [first, last] = branches.equal_range(program.instructions[index].programCounter);
+        for (auto branch = first; branch != last; ++branch) pending.push_back(branch->second);
+        return pending.size() != before;
+    };
+    if (!predecessors(reader)) return false;
+    std::optional<std::uint32_t> found;
+    while (!pending.empty()) {
+        const auto index = pending.back();
+        pending.pop_back();
+        if (seen[index]) continue;
+        seen[index] = true;
+        const auto& instruction = program.instructions[index];
+        std::uint32_t target = 0;
+        if (instruction.op == RdnaOpcode::SCallB64 || (instruction.op == RdnaOpcode::SSwappcB64 && resolveSetpcTarget(program, index, target))) return false;
+        if (std::ranges::any_of(indices, [&](std::uint32_t reg) { return writesScalar(instruction, reg, waveSize); })) {
+            if (found.has_value() && *found != index) return false;
+            found = index;
+            continue;
+        }
+        if (!predecessors(index)) return false;
+    }
+    if (!found.has_value()) return false;
+    writer = *found;
+    return true;
 }
 
 std::uint32_t branchWord(std::uint32_t opcode, std::size_t from, std::size_t to, const char* what) {
@@ -1332,7 +1402,7 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
         const auto source = scalarIndex(instruction.source0);
         if (link == NoScalarRegister || source == NoScalarRegister || source % 2u != 0u) continue;
         std::uint32_t pair = NoScalarRegister;
-        if (source != link && userData(source) && userData(source + 1u) && unchanged(source, index) && unchanged(source + 1u, index)) {
+        if ((source != link || GcnGuestShaders()) && userData(source) && userData(source + 1u) && unchanged(source, index) && unchanged(source + 1u, index)) {
             pair = source;
         } else {
             std::uint32_t low = 0, high = 0;
@@ -1445,28 +1515,42 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         const auto target = scalarIndex(instruction.source0);
         if (link == NoScalarRegister || link % 2u != 0u || link > 104u || target == NoScalarRegister || target % 2u != 0u || target > 104u) continue;
         std::uint32_t lowLoad = 0, lowDword = 0, highLoad = 0, highDword = 0;
-        if (!loadedDword(program, target, index, swappc.waveSize, lowLoad, lowDword) || !loadedDword(program, target + 1u, index, swappc.waveSize, highLoad, highDword)) continue;
+        const auto reader = instruction.programCounter;
+        if (!loadedDword(program, target, index, swappc.waveSize, reader, lowLoad, lowDword) || !loadedDword(program, target + 1u, index, swappc.waveSize, reader, highLoad, highDword)) continue;
         if (lowLoad != highLoad || highDword != lowDword + 1u || !sameBlock(lowLoad, index)) continue;
         const auto& load = program.instructions[lowLoad];
         const auto descriptor = scalarIndex(load.source0);
         if (load.source0.kind != RdnaOperandKind::ScalarRegister || descriptor % 4u != 0u || load.memoryOffset >= 0x100000u || (load.memoryOffset & 3u) != 0u) continue;
         std::uint32_t descriptorLoad = 0;
-        if (!findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize) || !sameBlock(descriptorLoad, index)) continue;
+        const bool sameBlockWriter = findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize, reader) && sameBlock(descriptorLoad, index);
+        if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
         const auto& table = program.instructions[descriptorLoad];
         const auto pointer = scalarIndex(table.source0);
-        if (table.op != RdnaOpcode::SLoadDwordx4 || !isScalar(table.destination, descriptor) || table.source0.kind != RdnaOperandKind::ScalarRegister || table.source1.kind != RdnaOperandKind::Null ||
-            table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u || !userData(pointer) || !userData(pointer + 1u) ||
-            !unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) || !unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize)) continue;
+        const auto loaded = scalarIndex(table.destination);
+        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || descriptor < loaded ||
+            (descriptor - loaded) % 4u != 0u || descriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
+            table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
+        std::optional<std::uint64_t> constantPointer;
+        if (!(userData(pointer) && userData(pointer + 1u) && unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) && unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize))) {
+            std::uint32_t lowWriter = 0, highWriter = 0, low = 0, high = 0;
+            if (!findLastWriter(program, descriptorLoad, {pointer}, lowWriter, swappc.waveSize, reader) || !findLastWriter(program, descriptorLoad, {pointer + 1u}, highWriter, swappc.waveSize, reader) ||
+                !sameBlock(std::min(lowWriter, highWriter), descriptorLoad)) continue;
+            const auto& lowMove = program.instructions[lowWriter];
+            const auto& highMove = program.instructions[highWriter];
+            if (lowMove.op != RdnaOpcode::SMovB32 || highMove.op != RdnaOpcode::SMovB32 || !isScalar(lowMove.destination, pointer) || !isScalar(highMove.destination, pointer + 1u) ||
+                !isImmediate(lowMove.source0, low) || !isImmediate(highMove.source0, high)) continue;
+            constantPointer = static_cast<std::uint64_t>(high) << 32u | low;
+        }
         std::uint32_t stride = 0;
         if (load.source1.kind != RdnaOperandKind::Null) {
             const auto offset = scalarIndex(load.source1);
             std::uint32_t shift = 0, shiftIndex = 0;
-            if (offset == NoScalarRegister || !findLastWriter(program, lowLoad, {offset}, shiftIndex, swappc.waveSize) || !sameBlock(shiftIndex, index)) continue;
+            if (offset == NoScalarRegister || !findLastWriter(program, lowLoad, {offset}, shiftIndex, swappc.waveSize, reader) || !sameBlock(shiftIndex, index)) continue;
             const auto& shifted = program.instructions[shiftIndex];
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, pointer, table.memoryOffset, load.memoryOffset + lowDword * 4u, stride});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (descriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer});
     }
     return calls;
 }
@@ -1498,6 +1582,7 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         linked[word] = 0xbb000000u | (userDataCalls[call].linkRegister << 16u) | static_cast<std::uint32_t>(offset);
         linked.insert(linked.end(), userDataCallees[call].begin(), userDataCallees[call].end());
     }
+    std::vector<std::pair<std::size_t, std::size_t>> stations;
     for (std::size_t call = 0; call < tableCalls.size(); ++call) {
         const auto& table = tableCalls[call];
         const auto& callees = tableCallees[call];
@@ -1505,41 +1590,50 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         const auto at = "the table callees of the call at program counter " + toHexString(table.programCounter);
         const auto original = linked[word];
         const auto count = callees.size();
-        const auto dispatch = linked.size();
-        const auto zero = dispatch + 1u;
-        const auto one = zero + count * 7u + 2u;
-        const auto calls = one + count * 8u + 2u;
-        const auto fault = calls + count * 2u;
+        const auto relays = 2u * (tableCalls.size() - call - 1u);
+        std::vector<std::size_t> path;
+        for (const auto& [position, block] : stations) path.push_back(position + 2u * (call - block - 1u));
+        const auto station = [&] {
+            if (relays == 0u) return;
+            stations.push_back({linked.size(), call});
+            linked.insert(linked.end(), relays, 0u);
+        };
+        station();
+        const auto start = linked.size();
+        std::vector<std::size_t> segments(count + 1u);
+        segments[0] = start + 1u;
+        for (std::size_t callee = 0; callee < count; ++callee) segments[callee + 1u] = segments[callee] + 16u + callees[callee].code.size() + relays;
+        const auto one = [&](std::size_t callee) { return segments[callee] + (callee < count ? 7u : 2u); };
+        const auto back = [&](std::size_t callee) { return callee != 0u ? segments[callee - 1u] + 15u : path.empty() ? word + 1u : path.back() + 1u; };
+        const auto fault = segments[count] + 3u;
         const auto branch = [&](std::uint32_t opcode, std::size_t target) { linked.push_back(branchWord(opcode, linked.size(), target, at.c_str())); };
-        linked[word] = branchWord(0xbf820000u, word, dispatch, at.c_str());
-        branch(0xbf850000u, one);
-        for (const bool sccOne : {false, true}) {
-            for (std::size_t callee = 0; callee < count; ++callee) {
-                const auto next = linked.size() + (sccOne ? 8u : 7u);
+        for (std::size_t hop = 0; hop < path.size(); ++hop) {
+            linked[path[hop]] = branchWord(0xbf820000u, path[hop], hop + 1u < path.size() ? path[hop + 1u] : start, at.c_str());
+            linked[path[hop] + 1u] = branchWord(0xbf820000u, path[hop] + 1u, hop == 0u ? word + 1u : path[hop - 1u] + 1u, at.c_str());
+        }
+        linked[word] = branchWord(0xbf820000u, word, path.empty() ? start : path.front(), at.c_str());
+        branch(0xbf850000u, one(0u));
+        for (std::size_t callee = 0; callee < count; ++callee) {
+            for (const bool sccOne : {false, true}) {
+                const auto next = sccOne ? one(callee + 1u) : segments[callee + 1u];
                 linked.insert(linked.end(), {0xbf07ff00u | table.targetRegister, static_cast<std::uint32_t>(callees[callee].target)});
                 branch(0xbf850000u, next);
                 linked.insert(linked.end(), {0xbf07ff00u | (table.targetRegister + 1u), static_cast<std::uint32_t>(callees[callee].target >> 32u)});
                 branch(0xbf850000u, next);
                 if (sccOne) linked.push_back(0xbf068080u);
-                branch(0xbf820000u, calls + callee * 2u);
+                else branch(0xbf820000u, segments[callee] + 14u);
             }
-            linked.push_back(sccOne ? 0xbf068080u : 0xbf078080u);
-            branch(0xbf820000u, fault);
+            linked.push_back(0xbb000001u | (table.linkRegister << 16u));
+            branch(0xbf820000u, back(callee));
+            linked.insert(linked.end(), callees[callee].code.begin(), callees[callee].code.end());
+            station();
         }
-        for (std::size_t callee = 0; callee < count; ++callee) {
-            linked.push_back(0u);
-            branch(0xbf820000u, word + 1u);
-        }
+        linked.push_back(0xbf078080u);
+        branch(0xbf820000u, fault);
+        linked.push_back(0xbf068080u);
         fallbacks.push_back(static_cast<std::uint32_t>(linked.size() * 4u));
         linked.push_back(original);
-        branch(0xbf820000u, word + 1u);
-        for (std::size_t callee = 0; callee < count; ++callee) {
-            const auto site = calls + callee * 2u;
-            const auto offset = static_cast<std::int64_t>(linked.size()) - static_cast<std::int64_t>(site) - 1;
-            if (offset > 0x7fff) throw std::invalid_argument(at + " land out of s_call_b64 range");
-            linked[site] = 0xbb000000u | (table.linkRegister << 16u) | static_cast<std::uint32_t>(offset);
-            linked.insert(linked.end(), callees[callee].code.begin(), callees[callee].code.end());
-        }
+        branch(0xbf820000u, back(count));
     }
     linked.push_back(0xbf9f0000u);
     return {std::move(linked), std::move(fallbacks)};
@@ -1547,9 +1641,12 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
 
 ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {
     std::vector<std::uint32_t> unlinked;
-    const std::vector<SwappcCall> calls = analyzeSwappcCalls(program, swappc, unlinked);
+    LinkEscape linkEscape;
+    const std::vector<SwappcCall> calls = analyzeSwappcCalls(program, swappc, unlinked, linkEscape);
     ControlFlowGraph graph;
     for (const auto index : unlinked) graph.unlinkedCallProgramCounters.push_back(program.instructions[index].programCounter);
+    graph.linkEscapeWaveSize = linkEscape.waveSize;
+    graph.linkEscapeReason = std::move(linkEscape.reason);
     graph.blocks = splitIntoBlocks(program, calls);
     linkBlocks(graph.blocks, program, calls);
     for (const auto& call : calls) {

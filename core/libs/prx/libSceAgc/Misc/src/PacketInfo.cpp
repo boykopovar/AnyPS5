@@ -28,6 +28,10 @@ int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(uint32_t** addr, uint32_t* 
     return 0;
 }
 
+int APS5_VABI sceAgcGetDataPacketPayloadAddress(uint32_t** addr, uint32_t* cmd, int type) {
+    return sceAgcGetDataPacketPayloadAddress_0090(addr, cmd, type);
+}
+
 int APS5_VABI sceAgcGetDataPacketPayloadRange(SceAgcMemoryRange* range, uint32_t* cmd, int type) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(range), alignof(SceAgcMemoryRange), __func__);
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), alignof(uint32_t), __func__);

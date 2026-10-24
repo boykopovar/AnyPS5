@@ -112,6 +112,9 @@ int main() {
     stream = Open(file, In | Noreplace);
     Require(stream != nullptr);
     fclose_nid_postfix(stream);
+    stream = Open(file, In | Binary | Noreplace);
+    Require(stream != nullptr);
+    fclose_nid_postfix(stream);
 
     Require(Open(missing, Out | Nocreate) == nullptr);
     Require(!Exists(missing));
@@ -149,7 +152,7 @@ int main() {
     Require(stream != nullptr && std::fgetc(stream->GetHandle()) == 'k');
     fclose_nid_postfix(stream);
 
-#ifndef _WIN32
+#ifdef __linux__
     auto* full = std::fopen("/dev/full", "wb");
     Require(full != nullptr);
     auto* fullStream = new FileStream(full, true);

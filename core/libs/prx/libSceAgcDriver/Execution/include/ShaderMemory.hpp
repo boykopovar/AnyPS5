@@ -16,6 +16,8 @@
 namespace ShaderRecompiler {
 struct SourceHandle;
 class PreparedShaderInvocation;
+struct SrtWriteStamp;
+struct SrtGuestWords;
 }
 
 namespace AgcDriver {
@@ -56,7 +58,7 @@ public:
     // by the driver: the [capture] line charges the waits made inside a capture to it.
     using WaitedMsProvider = double (*)();
     static void SetWaitedMsProvider(WaitedMsProvider provider);
-    explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr);
+    explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr, PendingWriteQuery pendingSpan = nullptr);
     ~ShaderMemory();
     ShaderMemory(const ShaderMemory&) = delete;
     ShaderMemory& operator=(const ShaderMemory&) = delete;
@@ -74,6 +76,16 @@ public:
     [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> TakeRecentRegions();
     // The driver's source handle memo outcomes, for the [capture] line (APS5_PROFILE_DRAW).
     static void CountHandleMemo(bool hit);
+    struct SupplyCounts {
+        std::uint64_t shared, copied, spilled;
+    };
+    static SupplyCounts Supplies();
+    [[nodiscard]] std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> SuppliedBlocks() const;
+    struct VouchCounts {
+        std::uint64_t calls, blocks, refused, words;
+    };
+    static VouchCounts Vouches();
+    static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
@@ -83,6 +95,10 @@ private:
     class WordMask {
     public:
         [[nodiscard]] bool Test(std::size_t index) const { return (bits[index / 64u] >> (index % 64u) & 1u) != 0u; }
+        [[nodiscard]] bool TestBlock(std::size_t index) const {
+            const auto block = ((std::uint64_t{1} << BlockWords) - 1u) << (index % 64u / BlockWords * BlockWords);
+            return (bits[index / 64u] & block) == block;
+        }
         void Set(std::size_t index) { bits[index / 64u] |= std::uint64_t{1} << (index % 64u); }
         void SetAll() { bits.fill(~std::uint64_t{0}); }
         void SetBlock(std::size_t index) { bits[index / 64u] |= ((std::uint64_t{1} << BlockWords) - 1u) << (index % 64u / BlockWords * BlockWords); }
@@ -107,22 +123,41 @@ private:
         bool lazy = false;
     };
 
+    struct Supplied {
+        std::shared_ptr<const ShaderRecompiler::SrtGuestWords> words;
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        bool recent = true;
+    };
+
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
     static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
+    static ShaderRecompiler::SrtWriteStamp stampWrites(void* context, std::uint64_t address, std::uint64_t bytes);
+    static bool unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
+    static bool supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words);
     Page& page(std::uint64_t base);
+    [[nodiscard]] std::size_t pageAtOrAfter(std::uint64_t base) const;
+    Page& addPage(std::size_t position, std::uint64_t base);
     [[nodiscard]] bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
+    bool place(std::uint64_t address, const std::uint32_t* values, std::uint64_t count, bool overwrite, bool recent);
+    void spill(std::size_t index);
+    void spillTouching(std::uint64_t begin, std::uint64_t end);
+    [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> collect(bool recentOnly) const;
 
     // Regions given at construction (the registered shader's code and header), referenced as given:
     // the caller keeps them alive for as long as the capture is used.
-    std::map<std::uint64_t, std::span<const std::byte>> initial;
+    std::vector<std::pair<std::uint64_t, std::span<const std::byte>>> initial;
     std::vector<std::pair<std::uint64_t, Page*>> pages;
     std::uint64_t lastBase = ~std::uint64_t{0};
     Page* lastPage = nullptr;
+    std::vector<Supplied> supplied;
+    std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> spilled;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;
+    PendingWriteQuery pendingSpan = nullptr;
 };
 
 // The positions, among a dispatch-cache variant's stored words, of the pure flat-SRT leaves a
@@ -139,6 +174,25 @@ struct DataWordPositionCounts {
     std::uint64_t aliased = 0;
 };
 DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves, std::span<const std::uint64_t> otherReads, std::span<const std::uint32_t> words, std::span<const std::uint32_t> flattenedSrt, std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots);
+
+struct SharedWords {
+    std::size_t first = 0;
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    std::weak_ptr<const ShaderRecompiler::SrtGuestWords> block;
+    std::size_t region = 0;
+    std::size_t regions = 0;
+};
+void AppendSharedWords(std::vector<SharedWords>& shared, std::size_t region, std::size_t first, std::span<const std::byte> bytes, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> blocks);
+bool SameCapturedWords(std::span<const std::uint32_t> left, std::span<const SharedWords> leftShared, std::span<const std::uint32_t> right, std::span<const SharedWords> rightShared, std::size_t* compared = nullptr);
+struct VouchedRegions {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::size_t words = 0;
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+};
+std::size_t VouchSharedRegions(std::span<const SharedWords> shared, std::size_t regions, ShaderMemory::PendingWriteQuery pending, std::vector<VouchedRegions>& vouched);
 
 }
 

@@ -1,8 +1,20 @@
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+Uds::Owned<NpUniversalDataSystemEventPropertyArray>& arrays() {
+    static Uds::Owned<NpUniversalDataSystemEventPropertyArray> registry;
+    return registry;
+}
+
+}
 
 extern "C" {
 
@@ -10,12 +22,12 @@ int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyArray(NpUniversalDataSy
     if (new_array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    *new_array = new NpUniversalDataSystemEventPropertyArray;
+    *new_array = arrays().Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyArray(NpUniversalDataSystemEventPropertyArray* array) {
-    delete array;
+    arrays().Release(array);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -25,6 +37,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(
     if (array == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(std::string(value));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -34,6 +47,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt32(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -43,6 +57,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt32(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -52,6 +67,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt64(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -61,6 +77,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt64(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -70,6 +87,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat32(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -79,6 +97,7 @@ NpUniversalDataSystemEventPropertyArray* array, double value)
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -88,6 +107,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBool(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -97,6 +117,8 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBinary(
     if (array == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    const auto* bytes = static_cast<const std::uint8_t*>(value);
+    array->Add(Uds::Binary(bytes, bytes + value_size));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -108,11 +130,11 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetObject(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyObject{});
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyObject*>(value)
-            : new NpUniversalDataSystemEventPropertyObject);
+        *value_ptr = child.get();
     }
+    array->Add(std::move(child));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -124,11 +146,11 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetArray(
     if (array == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyArray{});
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyArray*>(value)
-            : new NpUniversalDataSystemEventPropertyArray);
+        *value_ptr = child.get();
     }
+    array->Add(std::move(child));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 

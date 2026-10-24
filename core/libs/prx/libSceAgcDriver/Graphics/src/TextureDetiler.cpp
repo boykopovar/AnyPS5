@@ -4,7 +4,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetile_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/CmaskClear_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/DepthSampleMultisample_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/DepthSampleSingle_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TextureRepack_spv.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -88,10 +91,7 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+        module = CreateShaderModule(context, TEXTURE_DETILE_SPV, sizeof(TEXTURE_DETILE_SPV), "vkCreateShaderModule");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
         pipelineLayoutInfo.pSetLayouts = &imageDescriptorLayout;
@@ -107,6 +107,12 @@ TextureDetiler::~TextureDetiler() {
 }
 
 void TextureDetiler::release() noexcept {
+    for (const auto pool : readbackDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
+    for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
+    if (multisampleUploadModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, multisampleUploadModule, nullptr);
+    if (readbackPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, readbackPipelineLayout, nullptr);
+    if (readbackDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, readbackDescriptorLayout, nullptr);
     for (const auto pool : cmaskDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     if (cmaskPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, cmaskPipeline, nullptr);
     if (cmaskPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, cmaskPipelineLayout, nullptr);
@@ -114,7 +120,14 @@ void TextureDetiler::release() noexcept {
     cmaskErrors.reset();
     for (const auto pool : descriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto pool : imageDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    for (const auto pool : depthSampleSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    for (const auto pipeline : depthSamplePipelines) if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+    if (depthSamplePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, depthSamplePipelineLayout, nullptr);
+    if (depthSampleLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, depthSampleLayout, nullptr);
+    if (depthSampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, depthSampler, nullptr);
     if (imageModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, imageModule, nullptr);
+    if (repackPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, repackPipeline, nullptr);
+    if (repackModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, repackModule, nullptr);
     if (imagePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, imagePipelineLayout, nullptr);
     if (imageDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, imageDescriptorLayout, nullptr);
     for (const auto& entry : pipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
@@ -144,8 +157,8 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
     std::array<std::uint32_t, 22> values{elementBytes, BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (thick) {
-        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : tileMode == TextureTileMode::kD64KBX ? 0x11au : 0u;
-        Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_64KB_S, SW_64KB_S_X or SW_64KB_D_X");
+        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kS4KBX ? 0x115u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : tileMode == TextureTileMode::kD64KBX ? 0x11au : 0u;
+        Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_4KB_S_X, SW_64KB_S, SW_64KB_S_X or SW_64KB_D_X");
         const auto* equation = FindTextureSwizzleEquation(thickMode, elementBytes);
         Require(equation != nullptr, "no thick swizzle equation for the element size");
         values[2] = 2u;
@@ -160,10 +173,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
     if (image && imageModule == VK_NULL_HANDLE) {
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_IMAGE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_IMAGE_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &imageModule), "vkCreateShaderModule");
+        imageModule = CreateShaderModule(context, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV), "vkCreateShaderModule");
     }
     std::array<VkSpecializationMapEntry, 22> entries{};
     for (std::uint32_t index = 0; index < entries.size(); ++index) entries[index] = {index, index * 4u, 4};
@@ -261,6 +271,51 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, groupsY, 1);
 }
 
+void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes) {
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel repack needs a command buffer and its buffers");
+    Require(bytes != 0 && bytes % 4u == 0 && sourceOffset % 4u == 0 && destinationOffset % 4u == 0, "a texel repack needs whole aligned words");
+    if (repackPipeline == VK_NULL_HANDLE) {
+        repackModule = CreateShaderModule(context, TEXTURE_REPACK_SPV, sizeof(TEXTURE_REPACK_SPV), "vkCreateShaderModule repack");
+        VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        stage.module = repackModule;
+        stage.pName = "main";
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = stage;
+        createInfo.layout = pipelineLayout;
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &repackPipeline), "vkCreateComputePipelines repack");
+    }
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
+    const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
+    const auto sourceRange = sourceOffset - sourceDescriptorOffset + bytes;
+    const auto destinationRange = destinationOffset - destinationDescriptorOffset + bytes;
+    Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "a texel repack exceeds the device's storage buffer range");
+    const auto words = bytes / 4u;
+    constexpr std::uint64_t rowWords = 64u * 1024u;
+    const auto rows = (words + rowWords - 1u) / rowWords;
+    Require(words <= UINT32_MAX && rows <= context.limits.maxComputeWorkGroupCount[1], "a texel repack exceeds the device's dispatch limits");
+    const auto set = allocateSet();
+    const VkDescriptorBufferInfo sourceInfo{source, sourceDescriptorOffset, sourceRange};
+    const VkDescriptorBufferInfo destinationInfo{destination, destinationDescriptorOffset, destinationRange};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[index].pBufferInfo = index == 0 ? &sourceInfo : &destinationInfo;
+    }
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, repackPipeline);
+    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+    const std::array<std::uint32_t, 4> push{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords))};
+    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
+}
+
 std::uint32_t TextureDetiler::CmaskErrors() {
     if (cmaskErrors == nullptr) return 0;
     std::uint32_t codes = 0;
@@ -291,11 +346,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &cmaskPipelineLayout), "vkCreatePipelineLayout CMASK clear");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(CMASK_CLEAR_SPV);
-        moduleInfo.pCode = CMASK_CLEAR_SPV;
-        VkShaderModule cmaskModule = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &cmaskModule), "vkCreateShaderModule CMASK clear");
+        VkShaderModule cmaskModule = CreateShaderModule(context, CMASK_CLEAR_SPV, sizeof(CMASK_CLEAR_SPV), "vkCreateShaderModule CMASK clear");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -339,16 +390,89 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
     };
     constexpr VkAccessFlags anyWrite = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT;
     constexpr VkAccessFlags anyAccess = anyWrite | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_HOST_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-    barrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    barrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipeline);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipelineLayout, 0, 1, &set, 0, nullptr);
     const std::uint32_t mask = elementBytes >= 4 ? 0xffffffffu : (1u << (elementBytes * 8u)) - 1u;
     const std::array<std::uint32_t, 7> push{static_cast<std::uint32_t>(base), width, height, (width + 1023u) / 1024u, clearWords[0] & mask, elementBytes == 8 ? clearWords[1] : 0u, write ? 1u : 0u};
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, cmaskPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
-    barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
+    barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
     context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, cmask, cmaskOffset, cmaskBytes, 0xffffffffu);
     barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);
+}
+
+void TextureDetiler::DispatchDepthSample(VkCommandBuffer commands, VkImageView depth, bool multisampled, VkImageView target, std::uint32_t width, std::uint32_t height, std::uint32_t sample) {
+    Require(commands != VK_NULL_HANDLE && depth != VK_NULL_HANDLE && target != VK_NULL_HANDLE, "a depth sample copy needs a command buffer, the depth view and the target view");
+    if (depthSamplePipelineLayout == VK_NULL_HANDLE) {
+        VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &samplerInfo, nullptr, &depthSampler), "vkCreateSampler depth sample copy");
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+        bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, &depthSampler};
+        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &depthSampleLayout), "vkCreateDescriptorSetLayout depth sample copy");
+        const VkPushConstantRange pushRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, 3 * sizeof(std::uint32_t)};
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &depthSampleLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &depthSamplePipelineLayout), "vkCreatePipelineLayout depth sample copy");
+    }
+    auto& depthSamplePipeline = depthSamplePipelines[multisampled ? 1u : 0u];
+    if (depthSamplePipeline == VK_NULL_HANDLE) {
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = multisampled ? sizeof(DEPTH_SAMPLE_MULTISAMPLE_SPV) : sizeof(DEPTH_SAMPLE_SINGLE_SPV);
+        moduleInfo.pCode = multisampled ? DEPTH_SAMPLE_MULTISAMPLE_SPV : DEPTH_SAMPLE_SINGLE_SPV;
+        VkShaderModule depthModule = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &depthModule), "vkCreateShaderModule depth sample copy");
+        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        pipelineInfo.stage.module = depthModule;
+        pipelineInfo.stage.pName = "main";
+        pipelineInfo.layout = depthSamplePipelineLayout;
+        const auto created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &depthSamplePipeline);
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, depthModule, nullptr);
+        Check(created, "vkCreateComputePipelines depth sample copy");
+    }
+    const auto set = allocateFrom(depthSampleSets, depthSampleLayout, {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}, "vkCreateDescriptorPool depth sample copy", "vkAllocateDescriptorSets depth sample copy", "vkResetDescriptorPool depth sample copy");
+    const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, depth, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo targetInfo{VK_NULL_HANDLE, target, VK_IMAGE_LAYOUT_GENERAL};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = index == 0 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    }
+    writes[0].pImageInfo = &depthInfo;
+    writes[1].pImageInfo = &targetInfo;
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    const auto barrier = [&](VkPipelineStageFlags source, VkPipelineStageFlags destination, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
+        VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        memory.srcAccessMask = sourceAccess;
+        memory.dstAccessMask = destinationAccess;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, source, destination, 0, 1, &memory, 0, nullptr, 0, nullptr);
+    };
+    constexpr VkAccessFlags anyWrite = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT;
+    constexpr VkAccessFlags anyAccess = anyWrite | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+    barrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, depthSamplePipeline);
+    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, depthSamplePipelineLayout, 0, 1, &set, 0, nullptr);
+    const std::array<std::uint32_t, 3> push{width, height, sample};
+    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, depthSamplePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
+    barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, anyAccess);
 }
 
 void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile, std::uint32_t slice, const DetileWindow& window) {

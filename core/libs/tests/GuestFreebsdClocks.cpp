@@ -79,6 +79,21 @@ static void UnsupportedResolutionStillThrows() {
     Require(sceKernelClockGetres(3, nullptr) == fault);
 }
 
+static void OmittedTimeIsFaultAfterClockValidation() {
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
+    }
+    bool rejected = false;
+    try {
+        clock_gettime_nid_postfix(3, nullptr);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 static KernelTimespec Read(int clockId) {
     KernelTimespec time{-1, -1};
     Require(clock_gettime_nid_postfix(clockId, &time) == SCE_OK);
@@ -297,6 +312,7 @@ static void CalendarConversionsFollowTheHostZone() {
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
     UnsupportedResolutionStillThrows();
+    OmittedTimeIsFaultAfterClockValidation();
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();

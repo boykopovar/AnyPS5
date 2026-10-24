@@ -32,7 +32,23 @@ std::optional<ScalarCompareOperands> DecodeScalarCompare(const std::uint8_t* dat
             return std::nullopt;
         modRmOffset = pos + 4;
     } else {
-        return std::nullopt;
+        bool singlePrecision = false;
+        bool doublePrecision = false;
+        for (; pos < length; ++pos) {
+            if (data[pos] == PrefixRep)
+                singlePrecision = true;
+            else if (data[pos] == PrefixRepne)
+                doublePrecision = true;
+            else if (!_segmentPrefix(data[pos]))
+                break;
+        }
+        if (singlePrecision == doublePrecision)
+            return std::nullopt;
+        if (pos < length && data[pos] >= RexMin && data[pos] <= RexMax)
+            ++pos;
+        if (pos + 3 > length || data[pos] != TwoByteOpcodeEscape || data[pos + 1] != kCompareOpcode)
+            return std::nullopt;
+        modRmOffset = pos + 2;
     }
     const auto modrm = data[modRmOffset];
     const auto mod = static_cast<std::uint8_t>((modrm >> ModRmModShift) & ModRmModMask);

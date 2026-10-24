@@ -328,6 +328,16 @@ int main(int argc, char** argv) {
     Check(sceKernelAioSubmitWriteCommandsMultiple(writeBatch, 0, 0, writeIds) == SCE_KERNEL_ERROR_EINVAL);
     KernelAioRwRequest noResult{0, 1, readBack.data(), nullptr, batchFd};
     Check(sceKernelAioSubmitWriteCommandsMultiple(&noResult, 1, 0, writeIds) == SCE_KERNEL_ERROR_EFAULT);
+    std::array<KernelAioRwRequest, 129> unread{};
+    std::array<std::int32_t, 129> unreadIds{};
+    for (const auto submit : {sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
+        bool limited = false;
+        try { submit(unread.data(), 129, 0, unreadIds.data()); } catch (const std::runtime_error&) { limited = true; }
+        Check(limited);
+    }
+    std::int32_t unreadId = 0;
+    Check(sceKernelAioSubmitReadCommands(unread.data(), 129, 0, &unreadId) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioSubmitWriteCommands(unread.data(), 129, 0, &unreadId) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioWaitRequests(readIds, 2, nullptr, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioWaitRequests(nullptr, 2, readStates, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioWaitRequests(readIds, -1, readStates, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
@@ -385,5 +395,21 @@ int main(int argc, char** argv) {
     for (auto& reader : readers) reader.join();
     Check(!misread);
     Check(sceKernelClose(sharedFd) == 0);
+    const auto appendFile = root / "append.bin";
+    { std::ofstream stream(appendFile, std::ios::binary); stream << seed; }
+    const int appendFd = sceKernelOpen(appendFile.string().c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_APPEND, 0);
+    Check(appendFd >= 0);
+    std::array<char, 4> appendBuffer = {'T', 'A', 'I', 'L'};
+    KernelAioResult appendResult{-1, 0};
+    KernelAioRwRequest appendRequest{0, appendBuffer.size(), appendBuffer.data(), &appendResult, appendFd};
+    std::int32_t appendId = 0;
+    Check(sceKernelAioSubmitWriteCommands(&appendRequest, 1, 0, &appendId) == 0);
+    std::int32_t appendState = 0;
+    Check(sceKernelAioWaitRequest(appendId, &appendState, nullptr) == 0);
+    Check(appendState == 3 && appendResult.state == 3 && appendResult.return_value == 4);
+    Check(sceKernelClose(appendFd) == 0);
+    { std::ifstream stream(appendFile, std::ios::binary);
+      std::string contents{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+      Check(contents == seed + "TAIL"); }
     Check(std::filesystem::remove_all(root) > 0);
 }

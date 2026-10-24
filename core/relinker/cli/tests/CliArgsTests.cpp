@@ -241,6 +241,24 @@ void linuxFixedBase() {
     expectThrows({"--lazy-binding", "--linux-fixed-base", "0x400000", "input.elf", "output.elf"}, "--linux-fixed-base conflicts with --lazy-binding");
 }
 
+void macosFixedBase() {
+    require(!parse({"--macos", "input.elf", "output"}).macosFixedBase, "fixed base was enabled by default");
+    for (const auto& value : {"0x400000", "0X400000", "4194304"})
+        require(parse({"--macos-fixed-base", value, "--macos", "input.elf", "output"}).macosFixedBase == 0x400000, "fixed base was parsed incorrectly");
+    require(parse({"--macos", "input.elf", "--macos-fixed-base", "0x20000", "output"}).macosFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x7fffffff0000", "input.elf", "output"}).macosFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x400000000", "input.elf", "output"}).macosFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
+    const std::string range = "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000";
+    for (const auto& value : {"0", "0x10000", "0x400001", "0x408000", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
+        expectThrows({"--macos", "--macos-fixed-base", value, "input.elf", "output"}, range);
+    expectThrows({"--macos-fixed-base"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos", "--macos-fixed-base", "0x400000", "--macos-fixed-base", "0x400000", "input.elf", "output"}, "--macos-fixed-base cannot be repeated");
+    expectThrows({"--macos-fixed-base", "0x400000", "input.elf", "output.elf"}, "--macos-fixed-base requires --macos");
+    expectThrows({"--windows", "--macos-fixed-base", "0x400000", "input.elf", "output.exe"}, "--macos-fixed-base requires --macos");
+}
+
 }
 
 void moduleDirectories() {
@@ -278,6 +296,44 @@ void targetSelection() {
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
 }
 
+void patchOptions() {
+    auto args = parse({"--patches", "p.toml", "in.elf", "out.elf"});
+    require(args.patchesPath == "p.toml" && !args.noPatches, "--patches value");
+    args = parse({"--no-patches", "in.elf", "out.elf"});
+    require(args.noPatches && args.patchesPath.empty(), "--no-patches");
+    expectThrows({"--patches", "p.toml", "--no-patches", "in.elf", "out.elf"}, "--patches conflicts with --no-patches");
+    expectThrows({"--patches", "p.toml", "--patches", "q.toml", "in.elf", "out.elf"}, "--patches cannot be repeated");
+    expectThrows({"in.elf", "out.elf", "--patches"}, "--patches requires a file");
+}
+
+void verifyMode() {
+    auto args = parse({"--verify-patches", "p.toml", "in.elf"});
+    require(args.verifyPatchesPath == "p.toml" && args.inputPath == "in.elf" && args.outputPath.empty() && !args.verifyOutput, "verify positional");
+    require(!args.sceModulePath.empty(), "input mode keeps the default module path");
+    args = parse({"in.elf", "--verify-patches", "p.toml", "--sce-module-path", "m", "--module-dir", "d", "--exclude-sce-module", "x.prx", "--executable", "a/b.bin"});
+    require(args.sceModulePath == "m" && args.executables.size() == 1, "input mode options");
+    args = parse({"--verify-patches", "p.toml", "--skip-sce-module", "in.elf"});
+    require(args.skipSceModule, "input mode --skip-sce-module");
+    args = parse({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--executable", "a/b.bin"});
+    require(args.verifyOutput && args.sceModulePath.empty() && args.executables.size() == 1, "output mode accepts --executable");
+    const std::string noEffect = "module discovery options have no effect with --verify-output";
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--sce-module-path", "m"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--module-dir", "d"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+        expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "unused-filter=1", "in.elf"}, "unused-filter= cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--linux-fixed-base", "0x10000", "in.elf"}, "--linux-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--macos-fixed-base", "0x20000", "in.elf"}, "--macos-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-output", "in.elf", "out.elf"}, "--verify-output requires --verify-patches");
+    expectThrows({"--verify-patches"}, "--verify-patches requires a file");
+    expectUsage({"--verify-patches", "p.toml"});
+}
+
 int main() {
     try {
         defaults();
@@ -308,6 +364,9 @@ int main() {
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();
+        patchOptions();
+        verifyMode();
+        macosFixedBase();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

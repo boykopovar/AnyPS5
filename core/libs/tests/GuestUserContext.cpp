@@ -149,6 +149,7 @@ Stack g_jobStack;
 Stack g_exitStack;
 std::uint64_t g_arguments[6] = {};
 int g_entries = 0;
+bool g_contextChainEnded = false;
 Fibre g_dispatcher = {};
 Fibre g_job = {};
 int g_jobRuns = 0;
@@ -191,6 +192,23 @@ void ThrowAndCatch() {
         caught = true;
     }
     Require(caught, "a host exception is caught on a context stack");
+}
+
+[[gnu::noinline]] void WalkContextChain() {
+    auto* frame = static_cast<std::uintptr_t*>(__builtin_frame_address(0));
+    const auto low = reinterpret_cast<std::uintptr_t>(g_contextStack.bytes);
+    const auto high = low + StackBytes;
+    for (int depth = 0; depth < 100; ++depth) {
+        const auto address = reinterpret_cast<std::uintptr_t>(frame);
+        if (address < low || address + 2 * sizeof(std::uintptr_t) > high) return;
+        if (frame[1] == 0) {
+            g_contextChainEnded = frame[0] == 0;
+            return;
+        }
+        auto* next = reinterpret_cast<std::uintptr_t*>(frame[0]);
+        if (reinterpret_cast<std::uintptr_t>(next) <= address) return;
+        frame = next;
+    }
 }
 
 [[gnu::noinline]] void GrowStack(int depth) {
@@ -341,6 +359,7 @@ extern "C" void APS5_VABI ContextBody(std::uint64_t first, std::uint64_t second,
     g_arguments[4] = fifth;
     g_arguments[5] = sixth;
     CheckStackBounds(&g_contextStack, "the stack bounds follow setcontext onto the context stack");
+    WalkContextChain();
     ThrowAndCatch();
     ++g_entries;
 }
@@ -401,6 +420,7 @@ void CheckMakecontext() {
         Require(false, "setcontext into the made context returned");
     }
     Require(g_entries == 1, "the made context runs once and resumes uc_link");
+    Require(g_contextChainEnded, "the frame chain of a made context ends on its stack at a frame whose saved frame pointer and return address are 0");
     for (unsigned index = 0; index < 6; ++index) Require(g_arguments[index] == 0x8000000000000001ull + index, "makecontext passes six 64-bit arguments");
     const auto stackLow = reinterpret_cast<std::uint64_t>(g_contextStack.bytes);
     Require(EntryStackPointer > stackLow && EntryStackPointer < stackLow + StackBytes, "the made context runs on its own stack");

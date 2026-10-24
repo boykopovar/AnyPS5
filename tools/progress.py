@@ -165,7 +165,7 @@ def scan_library(path):
     for source in path.rglob("*.cpp"):
         if "tests" in source.relative_to(path).parts:
             continue
-        text = code(source.read_text(errors="ignore"))
+        text = code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
         for match in DEFINITION.finditer(text):
@@ -186,7 +186,7 @@ def scan_library(path):
     if not (done or todo):
         cmake = path / "CMakeLists.txt"
         texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
-        texts += [(SOURCE_SHARED, source.read_text(errors="ignore")) for source in sorted(path.glob("*.cpp"))]
+        texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
         owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
         owners = [o for o in owners if o != path.name and (path.parent / o).is_dir()]
         if owners:
@@ -202,6 +202,21 @@ def summarize(groups):
 
 def collect_libraries():
     return summarize([scan_library(p) for p in sorted(PRX.iterdir()) if p.is_dir()])
+
+
+def select_libraries(libraries, modules):
+    if not modules:
+        return libraries
+    known = {group["name"] for group in libraries["groups"]}
+    missing = []
+    for name in modules:
+        if name not in known and name not in missing:
+            missing.append(name)
+    if missing:
+        label = "library" if len(missing) == 1 else "libraries"
+        raise ValueError(f"unknown {label}: {', '.join(missing)}")
+    chosen = set(modules)
+    return summarize([group for group in libraries["groups"] if group["name"] in chosen])
 
 
 def camel(name):
@@ -306,7 +321,8 @@ def treemap(title, data, left):
         for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
             parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
-        label = group["label"][:int((w - 10) / 7)]
+        label_length = int((w - 10) / 7)
+        label = group["label"][:label_length] if label_length > 0 else ""
         if (label == group["label"] or len(label) >= 3) and h > 22:
             parts.append(text(x + 5, y + 16, label, 12))
         parts.append("</g>")
@@ -431,31 +447,100 @@ def report(base, head):
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+def write_site(output, libraries, shaders):
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
+    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
+    (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
+    (output / "progress.svg").write_text(render(libraries, shaders), encoding="utf-8")
+    (output / "progress.html").write_text(summary(libraries, shaders), encoding="utf-8")
+
+
+def validate_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        raise ValueError("snapshot must be an object")
+    for section in ("libraries", "shaders"):
+        data = snapshot.get(section)
+        if not isinstance(data, dict):
+            raise ValueError(f"{section} must be an object")
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            raise ValueError(f"{section}.groups must be a list")
+        percent = data.get("percent")
+        if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
+            raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        for index, group in enumerate(groups):
+            location = f"{section}.groups[{index}]"
+            if not isinstance(group, dict) or not isinstance(group.get("name"), str):
+                raise ValueError(f"{location} must be an object with a string name")
+            if "shared_sources" in group and not isinstance(group["shared_sources"], str):
+                raise ValueError(f"{location}.shared_sources must be a string")
+            for field in ("done_names", "todo_names", "inert_names"):
+                values = group.get(field, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError(f"{location}.{field} must be a list of strings")
+
+
+def main(argv=None):
+    global PRX, OPCODES
+    previous = PRX, OPCODES
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--root", type=Path, help="source tree to measure instead of the one containing this script")
     parser.add_argument("--compare", type=Path, nargs=2, metavar=("BASE", "HEAD"),
                         help="print a markdown report of the changes between two progress.json files")
-    args = parser.parse_args()
-    if args.compare:
-        base, head = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
-        print(report(base, head), end="")
-        raise SystemExit
-    if not args.output:
-        parser.error("the output directory is required")
-    if args.root:
-        PRX = args.root / "core" / "libs" / "prx"
-        OPCODES = args.root / OPCODES.relative_to(ROOT)
-    output = args.output
-    output.mkdir(parents=True, exist_ok=True)
-    libraries, shaders = collect_libraries(), collect_shaders()
-    (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
-    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries))
-    (output / "badge-shaders.svg").write_text(badge("shaders", shaders))
-    (output / "progress.svg").write_text(render(libraries, shaders))
-    (output / "progress.html").write_text(summary(libraries, shaders))
-    print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
-    print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
+    parser.add_argument("--module", action="append", metavar="NAME",
+                        help="limit library counts to these core/libs/prx directories; repeat to include several. Shader counts stay complete")
+    parser.add_argument("--json", action="store_true",
+                        help="print the progress.json object to stdout instead of the summary lines")
+    try:
+        args = parser.parse_args(argv)
+        if args.compare:
+            if args.module or args.json:
+                parser.error("--compare does not combine with --module or --json")
+            snapshots = []
+            for path in args.compare:
+                try:
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, ValueError) as error:
+                    parser.error(f"{path}: {error}")
+            for path, snapshot in zip(args.compare, snapshots):
+                try:
+                    validate_snapshot(snapshot)
+                except ValueError as error:
+                    parser.error(f"{path}: {error}")
+            base, head = snapshots
+            print(report(base, head), end="")
+            return 0
+        if not args.output and not (args.module or args.json):
+            parser.error("the output directory is required")
+        if args.root:
+            PRX = args.root / "core" / "libs" / "prx"
+            OPCODES = args.root / previous[1].relative_to(ROOT)
+        try:
+            libraries, shaders = collect_libraries(), collect_shaders()
+        except FileNotFoundError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        try:
+            libraries = select_libraries(libraries, args.module or [])
+        except ValueError as error:
+            parser.error(str(error))
+        if args.output:
+            try:
+                write_site(args.output, libraries, shaders)
+            except OSError as error:
+                parser.error(f"{args.output}: {error.strerror or error}")
+        if args.json:
+            print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
+        else:
+            print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
+            print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
+        return 0
+    finally:
+        PRX, OPCODES = previous
+
+
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    raise SystemExit(main())

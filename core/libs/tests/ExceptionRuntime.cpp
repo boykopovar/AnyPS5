@@ -10,10 +10,15 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <variant>
+#include <optional>
 #include <csignal>
 #include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <unwind.h>
 
 extern "C" unsigned __cxa_uncaught_exceptions_nid_postfix();
@@ -26,6 +31,8 @@ extern "C" [[noreturn]] void _ZSt13_Xrange_errorPKc_nid_postfix(const char*);
 extern "C" [[noreturn]] void _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 extern "C" [[noreturn]] void __cxa_bad_cast_nid_postfix();
 extern "C" [[noreturn]] void _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
+extern "C" [[noreturn]] void _ZSt26__throw_bad_variant_accessv_nid_postfix();
+extern "C" [[noreturn]] void _ZSt26_Throw_bad_optional_accessv_nid_postfix();
 extern "C" [[noreturn]] void _ZNKSt9exception6_RaiseEv_nid_postfix(const void*);
 extern "C" void* __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, void(*)(void*), void(*)(void*), void*(*)(std::size_t), void(*)(void*, std::size_t));
 extern "C" void __cxa_vec_delete3_nid_postfix(void*, std::size_t, std::size_t, void(*)(void*), void(*)(void*, std::size_t));
@@ -172,6 +179,9 @@ void CheckDefaultTerminateMessage() {
     if (child == 0) {
         close(channel[0]);
         dup2(channel[1], 2);
+#ifdef __linux__
+        assert(prctl(PR_SET_DUMPABLE, 0) == 0);
+#endif
         throw std::runtime_error(message);
     }
     close(channel[1]);
@@ -244,6 +254,10 @@ int main() {
     catch (const std::exception& value) { assert(value.what() != nullptr); }
     try { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); std::abort(); }
     catch (const std::bad_weak_ptr& value) { if (std::strcmp(value.what(), "bad_weak_ptr") != 0) std::abort(); }
+    try { _ZSt26__throw_bad_variant_accessv_nid_postfix(); std::abort(); }
+    catch (const std::bad_variant_access& value) { if (std::strcmp(value.what(), "bad_variant_access") != 0) std::abort(); }
+    try { _ZSt26_Throw_bad_optional_accessv_nid_postfix(); std::abort(); }
+    catch (const std::bad_optional_access& value) { if (std::strcmp(value.what(), "bad_optional_access") != 0) std::abort(); }
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); assert(false); }
     catch (const std::invalid_argument&) {}
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); assert(false); }

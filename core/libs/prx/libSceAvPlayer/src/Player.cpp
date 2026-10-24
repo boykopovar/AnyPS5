@@ -61,8 +61,8 @@ std::uint32_t DetectSourceType(std::string_view path) {
     return SourceTypeUnknown;
 }
 
-Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
-    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), videoBuffers(bufferCount) {
+Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount, bool ps5Layout)
+    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), ps5Layout(ps5Layout), videoBuffers(bufferCount) {
     if (init.file_replacement.open && init.file_replacement.close && init.file_replacement.read_offset && init.file_replacement.size) {
         file = init.file_replacement;
     }
@@ -70,7 +70,7 @@ Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
     if (init.default_language) {
         for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index) language[index] = init.default_language[index];
     }
-    controller = std::thread([this] { controllerLoop(); });
+    controller = std::thread([this, closed = controllerClosed] { controllerLoop(*closed); });
 }
 
 Player::~Player() {
@@ -79,7 +79,12 @@ Player::~Player() {
         quit = true;
     }
     eventCondition.NotifyAll();
-    controller.join();
+    if (controller.get_id() == std::this_thread::get_id()) {
+        *controllerClosed = true;
+        controller.detach();
+    } else {
+        controller.join();
+    }
     std::lock_guard lock(mutex);
     source.reset();
 }
@@ -100,7 +105,7 @@ void Player::OnError() {
     queue({0, 0, false, true});
 }
 
-void Player::controllerLoop() {
+void Player::controllerLoop(const bool& closed) {
     for (;;) {
         Event event{};
         bool pending = false;
@@ -119,6 +124,7 @@ void Player::controllerLoop() {
         } else {
             checkEndOfFile();
         }
+        if (closed) return;
     }
 }
 
@@ -163,7 +169,7 @@ void Player::autoStart() {
             return;
         }
         if (info.type == StreamTypeVideo && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
-        if (info.type == StreamTypeAudio && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
+        if (info.type == (ps5Layout ? Ps5StreamTypeAudio : StreamTypeAudio) && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
     }
     if (video != -1) EnableStream(static_cast<std::uint32_t>(video));
     if (audio != -1) EnableStream(static_cast<std::uint32_t>(audio));
@@ -227,6 +233,7 @@ int Player::StreamCount() {
 int Player::GetStreamInfo(std::uint32_t index, AvPlayerStreamInfo& info) {
     std::lock_guard lock(mutex);
     if (!source || !source->GetStreamInfo(index, info)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (ps5Layout && info.type == StreamTypeAudio) info.type = Ps5StreamTypeAudio;
     return SCE_OK;
 }
 
@@ -234,6 +241,7 @@ int Player::GetStreamInfoEx(std::uint32_t index, AvPlayerStreamInfoEx& info) {
     std::lock_guard lock(mutex);
     AvPlayerStreamInfoEx described{};
     if (!source || !source->GetStreamInfoEx(index, described)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (ps5Layout && described.type == StreamTypeAudio) described.type = Ps5StreamTypeAudio;
     described.this_size = info.this_size;
     info = described;
     return SCE_OK;
@@ -257,15 +265,15 @@ int Player::ChangeStream(std::uint32_t from, std::uint32_t to) {
     return SCE_OK;
 }
 
-int Player::Start() {
+int Player::Start(std::uint64_t startTime) {
     std::lock_guard lock(mutex);
-    return startLocked();
+    return startLocked(startTime);
 }
 
-int Player::startLocked() {
+int Player::startLocked(std::uint64_t startTime) {
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    const int result = source->Start();
+    const int result = source->Start(startTime);
     if (result != SCE_OK) {
         previous = state;
         state = State::Error;
@@ -376,6 +384,11 @@ bool Player::IsActive() {
 std::uint64_t Player::CurrentTime() {
     std::lock_guard lock(mutex);
     return source ? source->CurrentTime() : 0;
+}
+
+void Player::SetClockTimeForTest(double milliseconds) {
+    std::lock_guard lock(mutex);
+    if (source) source->SetClockTimeForTest(milliseconds);
 }
 
 }

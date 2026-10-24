@@ -175,7 +175,7 @@ std::vector<std::byte> copyDataSource(std::span<const std::uint32_t> packet, con
 
 }
 
-std::string Name(std::uint32_t header) {
+std::string_view KnownName(std::uint32_t header) {
     if (FillerPacket(header)) return "PM4_FILLER";
     const auto opcode = (header >> 8u) & 0xffu;
     if (opcode == 0x10 && (header & 0xfcu) != 0) {
@@ -194,9 +194,14 @@ std::string Name(std::uint32_t header) {
             default: return "UNKNOWN_CUSTOM";
         }
     }
-    for (const auto& entry : Opcodes) if (entry.value == opcode) return std::string(entry.name);
+    for (const auto& entry : Opcodes) if (entry.value == opcode) return entry.name;
+    return {};
+}
+
+std::string Name(std::uint32_t header) {
+    if (const auto known = KnownName(header); !known.empty()) return std::string(known);
     char text[24]{};
-    std::snprintf(text, sizeof(text), "UNKNOWN_0x%02x", opcode);
+    std::snprintf(text, sizeof(text), "UNKNOWN_0x%02x", (header >> 8u) & 0xffu);
     return text;
 }
 
@@ -271,7 +276,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 break;
             }
             case 0x0c: break;
-            case 0x17: graphics(); size(6); break;
+            case 0x17: size(6); break;
             case 0x1a:
                 graphics();
                 require(packet.size() == 3 || packet.size() == 5, "invalid context-state packet size");
@@ -373,9 +378,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & 0x7fffffffu) == 0 && (packet[2] & 0x7fffffffu) == 0, "CONTEXT_CONTROL register loading and shadowing are not implemented");
             break;
         case 0x46: {
-            require((packet[1] & ~0x73fu) == 0, "unsupported EVENT_WRITE flags or reserved bits");
             const auto eventType = packet[1] & 0x3fu;
-            const auto eventIndex = (packet[1] >> 8u) & 7u;
+            const auto eventIndex = (packet[1] >> 8u) & 0xfu;
+            const auto streamOutStatistics = (eventType >= 0x01u && eventType <= 0x03u) || eventType == 0x20u;
+            require(!streamOutStatistics || (eventIndex != 3 && (eventIndex < 8 || eventIndex > 11)), "stream-out statistics sampling to memory is not implemented");
+            require((packet[1] & ~0x73fu) == 0, "unsupported EVENT_WRITE flags or reserved bits");
             switch (eventType) {
                 case 0x07: case 0x0f: case 0x10:
                     size(2);
@@ -395,6 +402,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     graphics();
                     size(2);
                     require(eventIndex == 0, "invalid VGT_FLUSH event index");
+                    break;
+                case 0x01: case 0x02: case 0x03: case 0x20:
+                    graphics();
+                    size(2);
+                    require(eventIndex == 0, "invalid stream-out statistics event index");
                     break;
                 case 0x39:
                     graphics();
@@ -438,13 +450,12 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x59:
             size(2);
-            require((packet[1] & 0x7fffffffu) == 0, "unsupported REWIND payload bits");
+            require((packet[1] & ~(RewindValid | RewindOffloadEnable)) == 0, "unsupported REWIND payload bits");
             break;
         case 0x3c: case 0x93: {
             size(opcode == 0x3c ? 7 : 9);
             require((packet[1] & 0x10u) != 0, "register-space WAIT_REG_MEM is not implemented");
             require((packet[1] & 7u) <= 6u, "invalid WAIT_REG_MEM compare function");
-            require((packet[2] & (opcode == 0x3c ? 3u : 7u)) == 0, "misaligned WAIT_REG_MEM address");
             break;
         }
         case 0x45: {
@@ -459,6 +470,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x49: {
             size(8);
             const auto dataSelect = packet[2] >> 29u;
+            require(dataSelect != 4, "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
+            require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
             require(dataSelect <= 3, "GDS RELEASE_MEM data is not implemented");
             require(dataSelect == 0 || address(packet[3], packet[4]) == 0 || (packet[3] & (dataSelect == 1 ? 3u : 7u)) == 0, "misaligned RELEASE_MEM destination");
             break;
@@ -541,31 +554,33 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
 
 }
 
+std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet) {
+    const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
+    return wide && (packet.size() < 8 || packet[7] != 0) ? 8 : 4;
+}
+
 bool WaitSatisfied(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-    const auto source = address(packet[2], packet[3]);
+    const auto awaitedBytes = WaitAwaitedBytes(packet);
+    const auto source = address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]);
     std::uint64_t value = 0;
     // Named for the [hooksync] attribution (the read goes through the flush hook).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
-    GuestMemory::Read(source, std::as_writable_bytes(std::span(&value, 1)).first(wide ? 8 : 4), wide ? 8 : 4);
+    GuestMemory::Read(source, std::as_writable_bytes(std::span(&value, 1)).first(awaitedBytes), awaitedBytes);
     return waitCompares(packet, wide, value);
 }
 
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-    const auto source = address(packet[2], packet[3]);
-    const std::uint64_t value = wide ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
+    const auto awaitedBytes = WaitAwaitedBytes(packet);
+    const auto source = address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]);
+    const std::uint64_t value = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
     return waitCompares(packet, wide, value);
 }
 
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
     return waitCompares(packet, wide, value);
-}
-
-std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet) {
-    const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-    return wide && (packet.size() < 8 || packet[7] != 0) ? 8 : 4;
 }
 
 std::size_t ConditionalWords(std::span<const std::uint32_t> packet) {
@@ -664,7 +679,8 @@ WaitFields DecodeWait(std::span<const std::uint32_t> packet) {
     const auto opcode = packet.empty() ? 0u : (packet[0] >> 8u) & 0xffu;
     require((opcode == 0x3cu && packet.size() == 7) || (opcode == 0x93u && packet.size() == 9), "expected WAIT_REG_MEM or WAIT_REG_MEM_64 packet");
     const bool wide = opcode == 0x93u;
-    return {packet[1] & 7u, address(packet[2], packet[3]), wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], wide ? packet[8] : packet[6], WaitAwaitedBytes(packet)};
+    const auto awaitedBytes = WaitAwaitedBytes(packet);
+    return {packet[1] & 7u, address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]), wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], wide ? packet[8] : packet[6], awaitedBytes};
 }
 
 ConditionalWrite DecodeConditionalWrite(std::span<const std::uint32_t> packet) {
@@ -830,7 +846,7 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
     indirect.drawIndexLocation = multi ? location(packet[4] & 0xffffu) : 0x280u;
     indirect.drawIndexEnabled = multi && (packet[4] >> 31u) != 0;
     indirect.indxOffset = 0;
-    require(indirect.count <= (std::numeric_limits<std::uint64_t>::max() - indirect.arguments - indirect.recordBytes) / indirect.stride, "indirect draw record range overflow");
+    require(indirect.RangeBytes() <= std::numeric_limits<std::uint64_t>::max() - indirect.arguments, "indirect draw record range overflow");
     // The counts are unknown here (the CP takes them from the record; NUM_INSTANCES is ignored).
     DrawParameters draw{0, 0, 0, 0, packet.back() & 0x20u, indexed, 0, 0};
     if (!indexed) {
@@ -839,13 +855,10 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
         draw.firstVertex = offset->second;
         indirect.indxOffset = offset->second;
     } else {
-        // The CP clamps firstIndex + indexCount to INDEX_BUFFER_SIZE: the declared range is the
-        // hardware's view of the index buffer, so that is what gets bound.
         const auto indexSize = indexSizeOf(queue);
         require(queue.indexBufferSize != 0, "INDEX_BUFFER_SIZE has not been set");
         const auto bytes = static_cast<std::uint64_t>(queue.indexBufferSize) * indexSize;
         require(bytes <= std::numeric_limits<std::size_t>::max() && bytes <= std::numeric_limits<std::uint64_t>::max() - queue.indexBase, "index range size overflow");
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(queue.indexBase), static_cast<std::size_t>(bytes), indexSize);
         draw.indexAddress = queue.indexBase;
         draw.indexCount = queue.indexBufferSize;
         draw.indexSize = indexSize;
@@ -932,15 +945,29 @@ void NoteDispatchRegisters(std::span<const std::uint32_t> packet, QueueState& qu
     }
 }
 
-void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue) {
+bool IndirectRegistersValid(std::span<const std::uint32_t> pairs) {
+    for (std::size_t i = 0; i < pairs.size(); i += 2) {
+        if (pairs[i] == 0xffffffffu || (pairs[i] & ~0x70000000u) > 0xffffu) return false;
+    }
+    return true;
+}
+
+void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue, bool skipInvalid) {
     const auto opcode = (packet[0] >> 8u) & 0xffu;
     require(packet.size() == 5 && IndirectRegisterOpcode(opcode), "expected indirect register packet");
     require(pairs.size() == static_cast<std::size_t>(packet[4]) * 2, "indirect register list does not match its packet");
-    for (std::size_t i = 0; i < pairs.size(); i += 2) registerOffset(pairs[i]);
-    for (std::size_t i = 0; i < pairs.size(); i += 2) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
+    const auto usable = [&](std::uint32_t value) { return !skipInvalid || IndirectRegistersValid(std::span(&value, 1)); };
+    for (std::size_t i = 0; i < pairs.size(); i += 2) {
+        if (usable(pairs[i])) registerOffset(pairs[i]);
+    }
+    for (std::size_t i = 0; i < pairs.size(); i += 2) {
+        if (usable(pairs[i])) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
+    }
     if (queue.savedContext.has_value() && TraceContextState()) {
         std::fprintf(stderr, "[context]   indirect 0x%x:", opcode);
-        for (std::size_t i = 0; i < pairs.size(); i += 2) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
+        for (std::size_t i = 0; i < pairs.size(); i += 2) {
+            if (usable(pairs[i])) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
+        }
         std::fprintf(stderr, "\n");
     }
 }
@@ -1040,7 +1067,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
                     warned = true;
                     std::fprintf(stderr, "[gpu] WAIT_REG_MEM at 0x%llx still waiting after 5s (function %u ref 0x%x mask 0x%x)\n",
-                                 static_cast<unsigned long long>(address(packet[2], packet[3])), packet[1] & 7u, packet[4], packet[5]);
+                                 static_cast<unsigned long long>(address(packet[2] & (WaitAwaitedBytes(packet) == 8 ? ~7u : ~3u), packet[3])), packet[1] & 7u, packet[4], packet[5]);
                 }
             }
             return;

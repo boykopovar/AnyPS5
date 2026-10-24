@@ -1,5 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -14,6 +17,12 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -54,18 +63,67 @@ constexpr int mutexRecursive = 0x100;
 constexpr std::uint64_t mutexTag = 0x5854'4D5F'4D54'5844ull;
 constexpr std::uint64_t conditionTag = 0x5854'4E43'5F44'4E43ull;
 
+#ifdef _WIN32
+struct DinkumwareNativeMutex {
+    CRITICAL_SECTION value;
+
+    DinkumwareNativeMutex() {
+        if (!InitializeCriticalSectionAndSpinCount(&value, 0))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Mtx_init: initializing critical section failed");
+    }
+
+    ~DinkumwareNativeMutex() { DeleteCriticalSection(&value); }
+    void lock() { EnterCriticalSection(&value); }
+    void unlock() { LeaveCriticalSection(&value); }
+    bool try_lock() { return TryEnterCriticalSection(&value) != FALSE; }
+};
+
+struct DinkumwareNativeCondition {
+    CONDITION_VARIABLE value = CONDITION_VARIABLE_INIT;
+};
+#else
+using DinkumwareNativeMutex = std::mutex;
+using DinkumwareNativeCondition = std::condition_variable;
+#endif
+
 struct DinkumwareMutex {
     std::uint64_t tag = mutexTag;
     int type = 0;
     int count = 0;
     std::atomic<std::thread::id> owner{};
-    std::mutex native;
+    DinkumwareNativeMutex native;
 };
 
 struct DinkumwareCondition {
     std::uint64_t tag = conditionTag;
-    std::condition_variable native;
+    DinkumwareNativeCondition native;
 };
+
+#ifdef _WIN32
+DWORD WaitMillisecondsUntil(std::chrono::system_clock::time_point deadline) {
+    const auto now = std::chrono::system_clock::now();
+    if (now >= deadline)
+        return 0;
+    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+    constexpr auto largest = static_cast<std::int64_t>(std::numeric_limits<DWORD>::max() - 1U);
+    return static_cast<DWORD>(std::min<std::int64_t>(remaining, largest));
+}
+
+bool WaitUntil(DinkumwareCondition* condition, DinkumwareMutex* mutex, std::chrono::system_clock::time_point deadline) {
+    for (;;) {
+        const DWORD milliseconds = WaitMillisecondsUntil(deadline);
+        if (milliseconds == 0)
+            return false;
+        if (SleepConditionVariableCS(&condition->native.value, &mutex->native.value, milliseconds) != FALSE)
+            return true;
+        const DWORD error = GetLastError();
+        if (error != ERROR_TIMEOUT)
+            throw std::system_error(static_cast<int>(error), std::system_category(), "_Cnd_timedwait: condition wait failed");
+        if (std::chrono::system_clock::now() >= deadline)
+            return false;
+    }
+}
+#endif
 
 DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
     if (!handle)
@@ -187,6 +245,10 @@ int APS5_VABI _Cnd_init_nid_postfix(void** handle) {
     return threadSuccess;
 }
 
+int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, const char*) {
+    return _Cnd_init_nid_postfix(handle);
+}
+
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");
@@ -209,7 +271,12 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
     mutex->owner.store(std::thread::id{}, std::memory_order_release);
     std::unique_lock lock(mutex->native, std::adopt_lock);
     try {
+#ifdef _WIN32
+        if (SleepConditionVariableCS(&condition->native.value, &mutex->native.value, INFINITE) == FALSE)
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Cnd_wait: condition wait failed");
+#else
         condition->native.wait(lock);
+#endif
     } catch (const std::system_error&) {
         lock.release();
         mutex->owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -246,8 +313,13 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
     bool timeout = false;
     try {
         const auto deadlineTime = std::chrono::system_clock::time_point(
-            std::chrono::seconds(deadline.tv_sec) + std::chrono::nanoseconds(deadline.tv_nsec));
+            std::chrono::seconds(deadline.tv_sec) +
+            std::chrono::ceil<std::chrono::system_clock::duration>(std::chrono::nanoseconds(deadline.tv_nsec)));
+#ifdef _WIN32
+        timeout = !WaitUntil(condition, mutex, deadlineTime);
+#else
         timeout = (condition->native.wait_until(lock, deadlineTime) == std::cv_status::timeout);
+#endif
     } catch (const std::system_error&) {
         lock.release();
         mutex->owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -261,12 +333,20 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
 }
 
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle) {
+#ifdef _WIN32
+    WakeAllConditionVariable(&ResolveCondition(handle, "_Cnd_broadcast")->native.value);
+#else
     ResolveCondition(handle, "_Cnd_broadcast")->native.notify_all();
+#endif
     return threadSuccess;
 }
 
 int SignalCondition_nid_no_patch(void** handle) {
+#ifdef _WIN32
+    WakeConditionVariable(&ResolveCondition(handle, "_Cnd_signal")->native.value);
+#else
     ResolveCondition(handle, "_Cnd_signal")->native.notify_one();
+#endif
     return threadSuccess;
 }
 
@@ -286,17 +366,188 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
             --remaining.tv_sec;
         }
         remaining.tv_sec = std::min<time_t>(remaining.tv_sec, longestSleepSeconds);
+#ifdef _WIN32
+        PreciseSleepHundredNanos(static_cast<unsigned long long>(remaining.tv_sec) * 10000000ULL +
+            (static_cast<unsigned long long>(remaining.tv_nsec) + 99ULL) / 100ULL);
+#else
         if (nanosleep(&remaining, nullptr) != 0) {
             if (errno == EINTR)
                 continue;
             throw std::runtime_error("_Thrd_sleep: nanosleep failed");
         }
+#endif
     }
 }
 
+int APS5_VABI _Thrd_yield_nid_postfix() {
+    std::this_thread::yield();
+    return threadSuccess;
+}
 
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
+}
+
+struct GuestPad {
+    unsigned (APS5_VABI* const* vtable)(GuestPad*);
+    void* condition;
+    void* mutex;
+    bool started;
+};
+
+static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) == 0x10 && offsetof(GuestPad, started) == 0x18 && sizeof(GuestPad) == 0x20);
+
+[[noreturn]] void ThrowCppError_nid_no_patch(int code);
+
+static void RequireThrd(int result, const char* what) {
+    switch (result) {
+    case threadSuccess:
+        return;
+    case threadNomem:
+    case threadTimedout:
+        ThrowCppError_nid_no_patch(6);
+    case threadBusy:
+        ThrowCppError_nid_no_patch(0);
+    case threadError:
+        ThrowCppError_nid_no_patch(1);
+    }
+    throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
+}
+
+static std::atomic<PthreadCreateFn_nid_no_patch> registeredPthreadCreate{nullptr};
+static std::atomic<PthreadJoinFn_nid_no_patch> registeredPthreadJoin{nullptr};
+static std::atomic<PthreadDetachFn_nid_no_patch> registeredPthreadDetach{nullptr};
+
+void RegisterPthreadCreate_nid_no_patch(PthreadCreateFn_nid_no_patch fn) {
+    registeredPthreadCreate.store(fn, std::memory_order_release);
+}
+
+void RegisterPthreadJoin_nid_no_patch(PthreadJoinFn_nid_no_patch fn) {
+    registeredPthreadJoin.store(fn, std::memory_order_release);
+}
+
+void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn) {
+    registeredPthreadDetach.store(fn, std::memory_order_release);
+}
+
+static void* APS5_VABI PadEntry_nid_no_patch(void* argument) {
+    auto* pad = static_cast<GuestPad*>(argument);
+    const auto go = pad->vtable[0];
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(go(pad)));
+}
+
+void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Cnd_init_nid_postfix(&pad->condition), "_Pad::_Pad: _Cnd_init");
+    const int created = _Mtx_init_nid_postfix(&pad->mutex, 1);
+    if (created != threadSuccess) {
+        _Cnd_destroy_nid_postfix(&pad->condition);
+        RequireThrd(created, "_Pad::_Pad: _Mtx_init");
+    }
+    pad->started = false;
+    const int locked = _Mtx_lock_nid_postfix(&pad->mutex);
+    if (locked != threadSuccess) {
+        _Mtx_destroy_nid_postfix(&pad->mutex);
+        _Cnd_destroy_nid_postfix(&pad->condition);
+        RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
+    }
+}
+
+void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::~_Pad: _Mtx_unlock");
+    _Mtx_destroy_nid_postfix(&pad->mutex);
+    _Cnd_destroy_nid_postfix(&pad->condition);
+}
+
+void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Mtx_lock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_lock");
+    pad->started = true;
+    RequireThrd(_Cnd_signal_nid_postfix(&pad->condition), "_Pad::_Release: _Cnd_signal");
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_unlock");
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+    if (!pad || !thread) APS5_INVALID_ARG_EX;
+    const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
+    if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
+    const int created = create(thread, nullptr, PadEntry_nid_no_patch, pad);
+    if (created != 0) ThrowCppError_nid_no_patch(6);
+    while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
+}
+
+int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {
+    const auto join = registeredPthreadJoin.load(std::memory_order_acquire);
+    if (!join) throw std::runtime_error("_Thrd_join: pthread_join is not registered");
+    void* result = nullptr;
+    if (join(thread, &result) != 0) return threadError;
+    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    return threadSuccess;
+}
+
+int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
+    const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
+    if (!detach) throw std::runtime_error("_Thrd_detach: pthread_detach is not registered");
+    return detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+int APS5_VABI _Thrd_id_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+[[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
+    ThrowCppError_nid_no_patch(code);
+}
+
+static std::atomic<const ThreadForwards_nid_no_patch*> registeredThreadForwards{nullptr};
+
+void RegisterThreadForwards_nid_no_patch(const ThreadForwards_nid_no_patch* forwards) {
+    registeredThreadForwards.store(forwards, std::memory_order_release);
+}
+
+static const ThreadForwards_nid_no_patch& ThreadForwards(const char* function) {
+    const auto* forwards = registeredThreadForwards.load(std::memory_order_acquire);
+    if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel threads are not registered");
+    return *forwards;
+}
+
+void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void)) {
+    ThreadForwards(__func__).once(flag, function);
+}
+
+int APS5_VABI _Tss_create_nid_postfix(int* key, void (APS5_VABI* destructor)(void*)) {
+    return ThreadForwards(__func__).keyCreate(key, destructor);
+}
+
+int APS5_VABI _Tss_delete_nid_postfix(int key) {
+    return ThreadForwards(__func__).keyDelete(key);
+}
+
+void* APS5_VABI _Tss_get_nid_postfix(int key) {
+    return ThreadForwards(__func__).getSpecific(key);
+}
+
+int APS5_VABI _Tss_set_nid_postfix(int key, void* value) {
+    return ThreadForwards(__func__).setSpecific(key, value);
+}
+
+int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
+    return ThreadForwards(__func__).equal(first, second);
+}
+
+void* APS5_VABI _Thrd_current_nid_postfix(void) {
+    return ThreadForwards(__func__).self();
+}
+
+[[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code) {
+    ThreadForwards(__func__).exit(reinterpret_cast<void*>(static_cast<std::uintptr_t>(static_cast<unsigned int>(code))));
+    std::abort();
+}
+
+int APS5_VABI _Mtx_current_owns_nid_postfix(void**) {
+    return 1;
 }
 
 }

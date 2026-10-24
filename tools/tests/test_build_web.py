@@ -1,8 +1,10 @@
+import os
 import contextlib
 import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +26,44 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_expanded_limit_is_checked_before_decompression(self):
+        payload = library_zip([("libs/libc.prx", b"a" * 4097)])
+        with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True), \
+                patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+            with self.assertRaisesRegex(ValueError, "expanded size"):
+                self.publish(payload, payload)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+
+    def test_expanded_limit_boundary_can_be_published(self):
+        payload = library_zip([("libs/libc.prx", b"a" * 4096)])
+        with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True):
+            self.publish(payload, payload)
+        report = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertTrue(all(asset["expandedBytes"] == 4096 for asset in report["platforms"].values()))
+
+    def test_file_ancestors_are_rejected_before_publication(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for entries in (("libs/nested", "libs/nested/libc.prx"),
+                        ("libs/NESTED/libc.prx", "libs/nested")):
+            with self.subTest(entries=entries):
+                invalid = library_zip([(name, b"content") for name in entries])
+                with self.assertRaisesRegex(ValueError, "file is also used as a directory"):
+                    self.publish(invalid, valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+
+    def test_explicit_and_implicit_archive_directories_are_valid(self):
+        for entries in ([('libs/sub/libc.prx', b'content')],
+                        [('libs/sub/', b''), ('libs/sub/libc.prx', b'content')]):
+            with self.subTest(entries=entries):
+                payload = library_zip(entries)
+                self.publish(payload, payload)
+                self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -85,6 +125,56 @@ class LibraryPublicationTests(unittest.TestCase):
             self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
         self.assertEqual(self.existing.read_bytes(), b"previous archive")
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+
+class BuildWebCliTests(unittest.TestCase):
+    def test_missing_relinker_wasm_reports_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            result = subprocess.run([sys.executable, str(Path(build_web.__file__)), "--build", str(build)],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Build relinker_wasm first: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_main_with_explicit_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            native = build / "web" / "native"
+            native.mkdir(parents=True)
+            (native / "relinker_wasm.mjs").touch()
+            (native / "relinker_wasm.wasm").touch()
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = build_web.main(["--build", str(build)])
+            self.assertEqual(code, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(build_web.sys, "stdout", out), patch.object(build_web.sys, "stderr", err):
+            try:
+                build_web.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

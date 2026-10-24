@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
 #include <thread>
 
 struct GuestItimerval {
@@ -62,16 +61,14 @@ int main() {
         Require(getitimer_nid_postfix(invalid, nullptr) == -1 && *__error_nid_postfix() == 22, "invalid timer validation order changed");
     }
     Require(getitimer_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == 14, "null output did not report EFAULT");
-    for (int unsupported : {1, 2}) {
+    for (int disarmed : {1, 2}) {
         GuestItimerval output{{11, 22}, {33, 44}};
-        const auto saved = output;
-        bool threw = false;
-        try {
-            getitimer_nid_postfix(unsupported, &output);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw && std::memcmp(&output, &saved, sizeof(output)) == 0, "unsupported CPU timer reported fabricated state");
+        *__error_nid_postfix() = 12345;
+        Require(getitimer_nid_postfix(disarmed, &output) == 0, "CPU timer read failed");
+        Require(*__error_nid_postfix() == 12345, "CPU timer read changed errno");
+        Require(output.interval.tv_sec == 0 && output.interval.tv_usec == 0 && output.value.tv_sec == 0 && output.value.tv_usec == 0,
+            "a CPU timer that cannot be armed did not read as disarmed");
+        Require(getitimer_nid_postfix(disarmed, nullptr) == -1 && *__error_nid_postfix() == 14, "null CPU timer output did not report EFAULT");
     }
 
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});
@@ -89,9 +86,18 @@ int main() {
     Require(GuestAlarm_nid_no_patch(0) > 0, "getitimer cancelled the alarm");
     Require(ReadRemaining() == 0, "cancelled alarm is not zero");
 
-    GuestAlarm_nid_no_patch(std::numeric_limits<unsigned int>::max());
-    Require(ReadRemaining() > static_cast<std::int64_t>(std::numeric_limits<int>::max()) * 1000000,
-        "long alarm was truncated to signed 32 bits");
+    constexpr unsigned int longestAlarm = std::numeric_limits<int>::max() / 2;
+    Require(GuestAlarm_nid_no_patch(longestAlarm) == 0, "alarm was already active");
+    Require(ReadRemaining() > static_cast<std::int64_t>(longestAlarm - 1) * 1000000,
+        "long alarm was truncated");
+    for (unsigned int invalid : {longestAlarm + 1, static_cast<unsigned int>(std::numeric_limits<int>::max()), std::numeric_limits<unsigned int>::max()}) {
+        *__error_nid_postfix() = 0;
+        Require(GuestAlarm_nid_no_patch(invalid) == std::numeric_limits<unsigned int>::max() && *__error_nid_postfix() == 22,
+            "an alarm beyond the itimer range did not fail with EINVAL");
+        Require(ReadRemaining() > static_cast<std::int64_t>(longestAlarm - 1) * 1000000,
+            "a rejected alarm replaced the pending one");
+    }
+    Require(GuestAlarm_nid_no_patch(0) == longestAlarm, "a rejected alarm changed the remaining time");
     GuestAlarm_nid_no_patch(1);
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     Require(ReadRemaining() == 0, "expired alarm is not zero");

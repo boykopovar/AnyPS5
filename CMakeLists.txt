@@ -6,10 +6,21 @@ endif()
 project(Relinker CXX)
 
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+set(ANYPS5_WINDOWS_TEST_EXIT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsTestExit.cpp")
 
 function(add_test_executable target)
     add_executable(${target} ${ARGN})
     set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    if(MINGW)
+        target_sources(${target} PRIVATE "${ANYPS5_WINDOWS_TEST_EXIT}")
+        target_link_options(${target} PRIVATE LINKER:--wrap=main)
+    endif()
+endfunction()
+
+function(add_asan_test_options test options)
+    if(ANYPS5_ENABLE_ASAN)
+        set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::${options}")
+    endif()
 endfunction()
 
 option(BUILD_TESTING "Build and register relinker tests" OFF)
@@ -33,6 +44,9 @@ if(BUILD_TESTING)
         get_filename_component(testCompilerDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
         foreach(runtimeName IN ITEMS libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll)
             if(NOT EXISTS "${testCompilerDirectory}/${runtimeName}")
+                if(ANYPS5_RELINKER_ONLY)
+                    continue()
+                endif()
                 message(FATAL_ERROR "Cannot locate MinGW runtime: ${runtimeName}")
             endif()
             file(COPY "${testCompilerDirectory}/${runtimeName}" DESTINATION "${ANYPS5_TEST_OUTPUT_DIRECTORY}")
@@ -50,6 +64,18 @@ include(cmake/SystemDeps.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(CheckCXXSourceCompiles)
+function(anyps5_check_cxx_links_standard_library)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
+    check_cxx_source_compiles("#include <string>\nint main(int argc, char**) { try { throw std::string(static_cast<std::size_t>(argc), 'x'); } catch (const std::string& text) { return static_cast<int>(text.size()) - argc; } }" ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
+endfunction()
+anyps5_check_cxx_links_standard_library()
+if(NOT ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
+    message(FATAL_ERROR "The C++ compiler ${CMAKE_CXX_COMPILER} cannot link a program that uses the C++ standard library. "
+        "Set CMAKE_CXX_COMPILER to the C++ driver (g++ or clang++, not gcc or clang) in a new build directory. "
+        "Supported toolchains are listed in docs/dev/BUILD.md.")
+endif()
 
 if(ANYPS5_ENABLE_ASAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -81,22 +107,44 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/RequestSerializerTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp)
     target_include_directories(request_serializer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/libs
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
     add_test(NAME request_serializer COMMAND request_serializer_tests)
     set_tests_properties(request_serializer PROPERTIES TIMEOUT 20)
     find_package(Python3 QUIET COMPONENTS Interpreter)
+    add_test_executable(shader_ir_use_rewrite_tests
+        core/shader/recompiler/IntermediateRepresentation/tests/UseRewrite.cpp
+        core/shader/recompiler/IntermediateRepresentation/tests/UseRewriteAllocation.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_ir_use_rewrite_tests PRIVATE
+        core/shader/recompiler/IntermediateRepresentation/include)
+    add_test(NAME shader_ir_use_rewrite COMMAND shader_ir_use_rewrite_tests)
+    set_tests_properties(shader_ir_use_rewrite PROPERTIES TIMEOUT 20)
+    add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
+    target_include_directories(pad_command_file_tests PRIVATE core/libs)
+    add_test(NAME pad_command_file COMMAND pad_command_file_tests)
+    set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
         set_tests_properties(shader_cache_native_paths PROPERTIES TIMEOUT 20)
+        add_test(NAME shader_cache_runtime_sources COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_cache_runtime_sources.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler ${CMAKE_COMMAND})
+        set_tests_properties(shader_cache_runtime_sources PROPERTIES TIMEOUT 180)
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
         add_test(NAME pr_overlap_dependencies COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_dependencies.py)
         add_test(NAME pr_overlap_tools COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
+        add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
@@ -113,30 +161,48 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
-        foreach(shard RANGE 0 5)
+        foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
             else()
                 set(conventions_test_name conventions_function_bodies_shard_${shard})
             endif()
             add_test(NAME ${conventions_test_name} COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/6)
-            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 30)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
+            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 120)
         endforeach()
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_links.py)
+        add_test(NAME conventions_unknown_nids COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_unknown_nids.py)
+        add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
+        add_test(NAME test_script_registration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
         add_test(NAME build_eligibility COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_eligibility.py)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py)
+        add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
+        add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
+        add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
+        add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
@@ -147,28 +213,42 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
-        set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 20)
+        set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
         add_test(NAME pr_overlap_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_exports.py)
         add_test(NAME pr_overlap_wrapped_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_wrapped_exports.py)
         add_test(NAME pr_overlap_own_branch COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_own_branch.py)
+        add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
+        add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_web_release.py)
+        set_tests_properties(web_release PROPERTIES TIMEOUT 20)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_web.py)
         set_tests_properties(web_library_assets PROPERTIES TIMEOUT 20)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
+        add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
+        set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
+        add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
+        set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_env_reference COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py)
+        set_tests_properties(conventions_env_reference PROPERTIES TIMEOUT 60)
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}
@@ -266,6 +346,25 @@ set(LIBUSB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LIBUSB_ENABLE_UDEV OFF CACHE BOOL "" FORCE)
 add_subdirectory(3rdparty/libusb-cmake EXCLUDE_FROM_ALL)
 set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+include(cmake/ZArchive.cmake)
+include(cmake/Opus.cmake)
+if(WIN32)
+    set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
+    set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+    set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+    set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(MI_OVERRIDE ON CACHE BOOL "" FORCE)
+    set(MI_WIN_REDIRECT ON CACHE BOOL "" FORCE)
+    set(MI_FREE_IS_CHECKED SHARED CACHE STRING "" FORCE)
+    add_subdirectory(3rdparty/mimalloc EXCLUDE_FROM_ALL)
+    if(MINGW)
+        target_compile_definitions(mimalloc PRIVATE MI_MINGW_UCRT64=1)
+        target_link_options(mimalloc PRIVATE -static
+                LINKER:--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=strdup,--wrap=_strdup)
+        target_sources(mimalloc PRIVATE ${CMAKE_SOURCE_DIR}/core/libs/allocator/RuntimeHeap.c)
+    endif()
+endif()
 
 add_subdirectory(core/shader/recompiler)
 add_subdirectory(core/Decoder/Jpeg)

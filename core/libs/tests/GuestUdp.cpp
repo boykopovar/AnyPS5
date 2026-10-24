@@ -99,6 +99,31 @@ static void CheckAddressLengths(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+static void CheckSendToPortZero() {
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    std::array<unsigned char, 16> portZero{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sendto_nid_postfix(sender, "x", 1, 0, portZero.data(), portZero.size()) == -1 && *__error_nid_postfix() == 49);
+    char buffer[4];
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    Require(sendto_nid_postfix(sender, "x", 1, 0, address.data(), address.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0) == 1);
+    const int bound = socket_nid_postfix(2, 2, 0);
+    Require(bound >= 0);
+    std::array<unsigned char, 16> bindAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(bound, bindAddress.data(), bindAddress.size()) == 0);
+    Require(sendto_nid_postfix(bound, "x", 1, 0, portZero.data(), portZero.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    std::array<unsigned char, 16> anyDestination{16, 2, 0, 0, 0, 0, 0, 0};
+    Require(sendto_nid_postfix(bound, "x", 1, 0, anyDestination.data(), anyDestination.size()) == -1 && *__error_nid_postfix() == 49);
+    Require(close_nid_postfix(bound) == 0 && close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
+}
+
 static void CheckDontWait() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -110,12 +135,6 @@ static void CheckDontWait() {
     char buffer[16]{};
     Iovec vector{buffer, sizeof(buffer)};
     Msghdr message{nullptr, 0, &vector, 1, nullptr, 0, 0};
-#ifdef _WIN32
-    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 45);
-    Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0x80, nullptr, nullptr) == -1 && *__error_nid_postfix() == 45);
-    Require(recvmsg_nid_postfix(receiver, &message, 0x80) == -1 && *__error_nid_postfix() == 45);
-    Require(sendto_nid_postfix(sender, "x", 1, 0x80, address.data(), address.size()) == -1 && *__error_nid_postfix() == 45);
-#else
     const auto start = std::chrono::steady_clock::now();
     Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0x80, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
@@ -134,7 +153,6 @@ static void CheckDontWait() {
     std::memset(buffer, 0, sizeof(buffer));
     Require(recvmsg_nid_postfix(receiver, &message, 0) == sizeof(datagram) && std::strcmp(buffer, datagram) == 0);
     Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
-#endif
     Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x1) == -1 && *__error_nid_postfix() == 45);
     Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
@@ -143,6 +161,7 @@ int main() {
     CheckAddressLengths(2);
     CheckAddressLengths(28);
     CheckDontWait();
+    CheckSendToPortZero();
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
     Require(receiver >= 0 && sender >= 0 && receiver != sender);
@@ -199,7 +218,7 @@ int main() {
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);
     Require(*__error_nid_postfix() == 35);
     const char message[] = "guest UDP loopback";
-    Require(sendto_nid_postfix(sender, message, sizeof(message), 0x20000, destination.data(), destination.size()) == sizeof(message));
+    Require(send_nid_postfix(sender, message, sizeof(message), 0x20000) == sizeof(message));
     int queued = 0;
     for (int i = 0; i < 100 && queued == 0; ++i) {
         Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0);
@@ -219,7 +238,7 @@ int main() {
     char head[] = "scatter ";
     char tail[] = "gather";
     Iovec parts[2]{{head, 8}, {tail, 6}};
-    Msghdr outgoing{destination.data(), static_cast<std::uint32_t>(destination.size()), parts, 2, nullptr, 0, 0};
+    Msghdr outgoing{nullptr, 0, parts, 2, nullptr, 0, 0};
     Require(sendmsg_nid_postfix(sender, &outgoing, 0) == 14);
     const auto wait = [&] {
         queued = 0;

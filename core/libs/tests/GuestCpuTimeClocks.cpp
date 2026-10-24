@@ -8,10 +8,19 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
 int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
 int APS5_VABI sceKernelClockGetres(KernelClockid clockId, KernelTimespec* tp);
+#ifdef _WIN32
+int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error);
+#endif
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 }
+
+#ifdef _WIN32
+static constexpr std::uint32_t WINDOWS_ERROR_NOACCESS = 998;
+static constexpr std::uint32_t WINDOWS_ERROR_ACCESS_DENIED = 5;
+static constexpr std::uint32_t WINDOWS_ERROR_INVALID_HANDLE = 6;
+#endif
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
@@ -98,6 +107,11 @@ static void ProcessClockCountsOtherThreads() {
 }
 
 int main() {
+#ifdef _WIN32
+    Require(ClockTimeWin32ErrorToGuestErrno_nid_no_patch(WINDOWS_ERROR_NOACCESS) == 14);
+    Require(ClockTimeWin32ErrorToGuestErrno_nid_no_patch(WINDOWS_ERROR_ACCESS_DENIED) == 1);
+    Require(ClockTimeWin32ErrorToGuestErrno_nid_no_patch(WINDOWS_ERROR_INVALID_HANDLE) == 5);
+#endif
     KernelTimespec time{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_THREAD_CPUTIME_ID, &time) == SCE_OK);
     Require(time.tv_sec >= 0 && time.tv_nsec >= 0 && time.tv_nsec < NANOS_PER_SECOND);
