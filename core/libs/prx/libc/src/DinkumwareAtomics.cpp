@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <atomic>
 
 #include "prx/libc/include/General.hpp"
 
@@ -143,7 +144,8 @@ void APS5_VABI _Atomic_thread_fence_nid_postfix(int order) {
     if (order == MemoryOrderSeqCst) __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
-void APS5_VABI _Atomic_signal_fence_nid_postfix(int) {
+void APS5_VABI _Atomic_signal_fence_nid_postfix(int order) {
+    if (IsValidOrder(order)) std::atomic_signal_fence(static_cast<std::memory_order>(order));
 }
 
 void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, const volatile void* source, int) {

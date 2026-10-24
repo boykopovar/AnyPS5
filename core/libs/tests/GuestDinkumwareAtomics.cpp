@@ -68,7 +68,7 @@ static void CheckFlagsAndFences() {
     _Atomic_flag_clear_nid_postfix(&flag, Release);
     Require(flag == 0);
     _Atomic_thread_fence_nid_postfix(SeqCst);
-    _Atomic_signal_fence_nid_postfix(SeqCst);
+    for (int order = Relaxed; order <= SeqCst; ++order) _Atomic_signal_fence_nid_postfix(order);
 }
 
 struct Wide {
