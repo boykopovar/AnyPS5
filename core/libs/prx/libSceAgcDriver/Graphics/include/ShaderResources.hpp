@@ -620,6 +620,7 @@ private:
     std::vector<std::uint32_t> storageMips;
     std::vector<std::uint64_t> storageKeys;
     std::vector<bool> storageFirstLayer;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> storageLayers;
     std::vector<bool> storageWritten;
     std::vector<bool> storageAtomic;
     std::vector<bool> storageAtomic64;

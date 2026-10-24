@@ -1122,6 +1122,7 @@ struct ExtendedSurfaces {
     AgcDriver::Mutex mutex;
     std::map<std::array<std::uint32_t, 8>, std::uint32_t> levels;
     std::atomic<bool> any{false};
+    std::map<std::array<std::uint32_t, 8>, std::uint32_t> lastLayers;
 };
 
 ExtendedSurfaces& ExtendedChains() {
@@ -1133,10 +1134,46 @@ std::uint32_t AllocatedLevels(const GuestTextureResource& resource) {
     return resource.allocatedMipCount != 0 ? resource.allocatedMipCount : resource.mipCount;
 }
 
+bool WidensToArray(const GuestTextureResource& viewed) {
+    if (viewed.dimension != TextureDimension::k2DArray || viewed.dccAddress != 0 || viewed.fmaskCmaskAddress != 0 || viewed.samples != 1) return false;
+    return !DescribeSurface(viewed).thick;
+}
+
+GuestTextureResource StorageArraySurface(const Context& context, const GuestTextureResource& surface) {
+    if (!WidensToArray(surface)) return surface;
+    auto identity = surface;
+    identity.baseArray = 0;
+    identity.depthOrLastArray = 0;
+    const auto key = SurfaceKey(context, identity);
+    auto& surfaces = ExtendedChains();
+    std::uint32_t last = surface.depthOrLastArray;
+    {
+        std::lock_guard lock(surfaces.mutex);
+        auto& known = surfaces.lastLayers[key];
+        known = std::max(known, last);
+        last = known;
+    }
+    auto widened = surface;
+    widened.baseArray = 0;
+    widened.depthOrLastArray = last;
+    const auto viewedGeometry = DescribeSurface(surface);
+    const auto widenedGeometry = DescribeSurface(widened);
+    if (widenedGeometry.thick || widenedGeometry.layerBytes != viewedGeometry.layerBytes || widenedGeometry.GuestLayerOffset(surface.depthOrLastArray) != viewedGeometry.GuestLayerOffset(surface.depthOrLastArray)) return surface;
+    return widened;
+}
+
+StorageTexture::LayerWindow StorageLayerWindow(const StorageTexture* texture, const GuestTextureResource& resource) {
+    if (texture == nullptr) return {};
+    const auto& own = texture->Descriptor();
+    if (own.baseAddress != resource.baseAddress || own.dimension != TextureDimension::k2DArray || resource.dimension != TextureDimension::k2DArray) return {};
+    if (own.baseArray == resource.baseArray && own.depthOrLastArray == resource.depthOrLastArray) return {};
+    return {resource.baseArray, resource.depthOrLastArray - resource.baseArray + 1u};
+}
+
 GuestTextureResource StorageSurface(const Context& context, const GuestTextureResource& viewed) {
     auto& surfaces = ExtendedChains();
     const bool extended = viewed.mipCount > AllocatedLevels(viewed);
-    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return viewed;
+    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return StorageArraySurface(context, viewed);
     auto surface = viewed;
     surface.mipCount = AllocatedLevels(viewed);
     const auto identity = SurfaceKey(context, surface);
@@ -1151,7 +1188,7 @@ GuestTextureResource StorageSurface(const Context& context, const GuestTextureRe
     } else {
         surface.mipCount = viewed.mipCount;
     }
-    return surface;
+    return StorageArraySurface(context, surface);
 }
 
 struct WrittenStorage {
@@ -1209,6 +1246,10 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto& counters = TextureCounts();
     const auto resource = StorageSurface(context, viewed);
+    if (resource.depthOrLastArray != viewed.depthOrLastArray || resource.baseArray != viewed.baseArray) {
+        guestBytes = 0;
+        if (!layers) layers = std::pair{viewed.baseArray, viewed.depthOrLastArray - viewed.baseArray + 1u};
+    }
     const StorageKey key{context.device, SurfaceKey(context, resource)};
     auto& cache = StorageTextures();
     std::vector<std::shared_ptr<StorageTexture>> evicted;
@@ -2445,7 +2486,7 @@ void ShaderResources::buildComplete() {
                         for (auto element = first; element < last; ++element) {
                             const auto index = binding.imageAllocations[element];
                             if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) images.push_back({samplers[index]->Handle(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
-                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         if (recorded) runs.emplace_back(write.dstArrayElement, write.descriptorCount);
@@ -2490,7 +2531,7 @@ void ShaderResources::buildComplete() {
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
                             else if (storageTextures[index] == nullptr) images.push_back({VK_NULL_HANDLE, multisampleStorageViews[index], VK_IMAGE_LAYOUT_GENERAL});
-                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
                         break;
@@ -4922,6 +4963,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             storageMips.push_back(0);
             storageKeys.push_back(0);
             storageFirstLayer.push_back(false);
+            storageLayers.push_back({});
             storageWritten.push_back(false);
             storageAtomic.push_back(false);
             storageAtomic64.push_back(false);
@@ -4941,6 +4983,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
         storageFirstLayer.push_back(firstLayer);
+        storageLayers.push_back(StorageLayerWindow(storageTextures.back().get(), resource));
         storageWritten.push_back(written);
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
         storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
@@ -5225,6 +5268,7 @@ void ShaderResources::resolveImageTables() {
                 storageMips.push_back(mip);
                 storageKeys.push_back(resource.dccAddress);
                 storageFirstLayer.push_back(firstLayer);
+                storageLayers.push_back(StorageLayerWindow(storageTextures.back().get(), resource));
                 storageWritten.push_back(true);
                 storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
                 storageAtomic64.push_back(false);
@@ -5789,7 +5833,8 @@ void ShaderResources::WriteBack() {
     if (!SkipWriteBack()) {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
-            storageTextures[index]->MarkDirty();
+            if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageLayers[index].second);
+            else storageTextures[index]->MarkDirty();
             static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
         }
     }
@@ -5810,7 +5855,8 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
-        storageTextures[index]->MarkDirty();
+        if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageLayers[index].second);
+        else storageTextures[index]->MarkDirty();
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
     // Written sub-ranges of buffers the GPU copied out of a host import go back into it by the GPU,

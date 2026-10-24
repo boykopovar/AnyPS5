@@ -182,12 +182,13 @@ public:
     VkImageView View() const;
     // The image holds every mip of the surface; one storage view per written mip is made on demand,
     // so successive mip writes of a chain share one image and one write-back.
-    VkImageView View(std::uint32_t mip);
-    VkImageView FirstLayerView(std::uint32_t mip);
-    VkImageView StorageView(std::uint32_t mip, bool firstLayer);
+    using LayerWindow = std::pair<std::uint32_t, std::uint32_t>;
+    VkImageView View(std::uint32_t mip, LayerWindow layers = {});
+    VkImageView FirstLayerView(std::uint32_t mip, LayerWindow layers = {});
+    VkImageView StorageView(std::uint32_t mip, bool firstLayer, LayerWindow layers = {});
     VkImageView ElementView();
-    VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
-    VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
+    VkImageView AtomicView(std::uint32_t mip, bool firstLayer, LayerWindow layers = {});
+    VkImageView Atomic64View(std::uint32_t mip, bool firstLayer, LayerWindow layers = {});
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
@@ -554,7 +555,7 @@ private:
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
-    VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
+    VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format, LayerWindow layers = {}) const;
     bool singlePass();
     VkImageView elementLayerView(std::uint32_t level, std::uint32_t layer);
     void recordDirectUploadBarrier(VkCommandBuffer commands, bool discard);
@@ -626,10 +627,11 @@ private:
     std::uint32_t memoryType = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
-    std::map<std::uint32_t, VkImageView> extraViews;
-    std::map<std::uint32_t, VkImageView> firstLayerViews;
-    std::map<std::pair<std::uint32_t, bool>, VkImageView> atomicViews;
-    std::map<std::pair<std::uint32_t, bool>, VkImageView> uintViews;
+    using ViewKey = std::tuple<std::uint32_t, bool, std::uint32_t, std::uint32_t>;
+    std::map<ViewKey, VkImageView> extraViews;
+    std::map<ViewKey, VkImageView> firstLayerViews;
+    std::map<std::pair<ViewKey, VkFormat>, VkImageView> atomicViews;
+    std::map<ViewKey, VkImageView> uintViews;
     VkImageView elementView = VK_NULL_HANDLE;
     std::map<std::uint32_t, VkImageView> elementLayerViews;
     std::int8_t singlePassState = -1;
