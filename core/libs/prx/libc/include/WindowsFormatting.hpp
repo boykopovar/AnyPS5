@@ -3,6 +3,7 @@
 
 #include "SceTypes.hpp"
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -159,6 +160,85 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
         utf8 += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
         utf8 += static_cast<char>(0x80 | (code & 0x3f));
     }
+}
+
+inline std::string HexFloat(const std::string& spec, char conversion, double value, std::size_t maximumLength = INT_MAX) {
+    bool left = false, plus = false, space = false, alternate = false, zero = false;
+    std::size_t index = 1;
+    for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
+        left |= spec[index] == '-';
+        plus |= spec[index] == '+';
+        space |= spec[index] == ' ';
+        alternate |= spec[index] == '#';
+        zero |= spec[index] == '0';
+    }
+    std::size_t width = 0;
+    for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) {
+        const auto digit = static_cast<std::size_t>(spec[index] - '0');
+        if (width > (static_cast<std::size_t>(INT_MAX) - digit) / 10)
+            throw std::overflow_error("Formatted output exceeds INT_MAX");
+        width = width * 10 + digit;
+    }
+    int precision = -1;
+    if (index < spec.size() && spec[index] == '.') {
+        precision = 0;
+        for (++index; index < spec.size(); ++index) {
+            const int digit = spec[index] - '0';
+            if (precision > (INT_MAX - digit) / 10)
+                throw std::overflow_error("Floating precision exceeds int range");
+            precision = precision * 10 + digit;
+        }
+    }
+    const bool upper = conversion == 'A';
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+    int exponent = static_cast<int>((bits >> 52) & 0x7ff);
+    std::uint64_t fraction = bits & ((std::uint64_t{1} << 52) - 1);
+    std::uint64_t lead = 1;
+    if (exponent != 0) {
+        exponent -= 1023;
+    } else if (fraction == 0) {
+        lead = 0;
+    } else {
+        exponent = -1022;
+        while ((fraction & (std::uint64_t{1} << 52)) == 0) {
+            fraction <<= 1;
+            --exponent;
+        }
+        fraction &= (std::uint64_t{1} << 52) - 1;
+    }
+    int digits = 13;
+    if (precision >= 0 && precision < 13) {
+        const int dropped = (13 - precision) * 4;
+        const std::uint64_t remainder = fraction & ((std::uint64_t{1} << dropped) - 1);
+        fraction >>= dropped;
+        if (remainder >= std::uint64_t{1} << (dropped - 1) && ++fraction >> (precision * 4)) {
+            fraction &= (std::uint64_t{1} << (precision * 4)) - 1;
+            ++lead;
+        }
+        digits = precision;
+    } else if (precision < 0) {
+        for (; digits > 0 && (fraction & 0xf) == 0; --digits) fraction >>= 4;
+    }
+    const char* hex = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    std::string suffix = upper ? "P" : "p";
+    suffix += exponent < 0 ? '-' : '+';
+    suffix += std::to_string(exponent < 0 ? -exponent : exponent);
+    std::string prefix = (bits >> 63) != 0 ? "-" : plus ? "+" : space ? " " : "";
+    prefix += upper ? "0X" : "0x";
+    const auto fractionalDigits = static_cast<std::size_t>(precision > 13 ? precision : digits);
+    const bool point = fractionalDigits != 0 || alternate;
+    const std::size_t length = prefix.size() + 1 + point + fractionalDigits + suffix.size();
+    if (length > maximumLength || width > maximumLength)
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    std::string body(1, hex[lead]);
+    if (point) body += '.';
+    for (int digit = digits - 1; digit >= 0; --digit) body += hex[(fraction >> (digit * 4)) & 0xf];
+    if (precision > 13) body.append(static_cast<std::size_t>(precision - 13), '0');
+    body += suffix;
+    if (length >= width) return prefix + body;
+    const std::string padding(width - length, left || !zero ? ' ' : '0');
+    if (left) return prefix + body + padding;
+    return zero ? prefix + padding + body : padding + prefix + body;
 }
 
 inline std::string NanSpec(const std::string& spec) {
@@ -356,8 +436,14 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
                 const double value = args.Next<double>();
-                if (std::isnan(value)) output.Value(NanSpec(spec), nan);
-                else output.Value(spec + conversion, value);
+                if (std::isnan(value)) {
+                    output.Value(NanSpec(spec), nan);
+                } else if ((conversion == 'a' || conversion == 'A') && std::isfinite(value)) {
+                    const std::string text = HexFloat(spec, conversion, value, static_cast<std::size_t>(INT_MAX - output.Count()));
+                    output.Append(text.data(), text.size());
+                } else {
+                    output.Value(spec + conversion, value);
+                }
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
             output.Value(spec + conversion, args.Next<int>());

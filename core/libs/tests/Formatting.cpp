@@ -404,4 +404,47 @@ static void CheckAllocatingFormat() {
     free_nid_postfix(allocated);
 }
 
-int main() { CheckSizeLimits(); RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+static void RequireHexFloat(const char* format, double value, const char* expected) {
+    char buffer[64];
+    const int written = snprintf_nid_postfix(buffer, sizeof(buffer), format, value);
+    if (written != static_cast<int>(std::strlen(expected)) || std::strcmp(buffer, expected) != 0) {
+        std::fprintf(stderr, "%s of %a gave \"%s\", expected \"%s\"\n", format, value, buffer, expected);
+        Require(false);
+    }
+}
+
+static void CheckHexFloat() {
+    RequireHexFloat("[%-010a]", 1.5, "[0x1.8p+0  ]");
+    RequireHexFloat("[%-0#12A]", 0.75, "[0X1.8P-1    ]");
+    RequireHexFloat("[%0-10.2a]", 1.0, "[0x1.00p+0 ]");
+    RequireHexFloat("[%010a]", -1.5, "[-0x01.8p+0]");
+    RequireHexFloat("[%a]", 0x1p-1074, "[0x1p-1074]");
+    RequireHexFloat("[%a]", 0x0.fffffffffffffp-1022, "[0x1.ffffffffffffep-1023]");
+    RequireHexFloat("[%.3a]", 0x0.fffffffffffffp-1022, "[0x2.000p-1023]");
+    RequireHexFloat("[%A]", 0x0.012688b70e62bp-1022, "[0X1.2688B70E62BP-1030]");
+    RequireHexFloat("[%.0a]", 0x0.012688b70e62bp-1022, "[0x1p-1030]");
+    RequireHexFloat("[%.1a]", 0x1.08p0, "[0x1.1p+0]");
+    RequireHexFloat("[%.0a]", 0x1.8p0, "[0x2p+0]");
+    RequireHexFloat("[%#.0a]", 1.0, "[0x1.p+0]");
+    RequireHexFloat("[%.20a]", 0.1, "[0x1.999999999999a0000000p-4]");
+    RequireHexFloat("[% a]", -0.0, "[-0x0p+0]");
+    char buffer[32];
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%*a]", -12, 1.5) == 14 && std::strcmp(buffer, "[0x1.8p+0    ]") == 0);
+    Require(snprintf_nid_postfix(buffer, 6, "%a", 1.5) == 8 && std::strcmp(buffer, "0x1.8") == 0);
+#ifdef _WIN32
+    for (const char* format : {"%.2147483648a", "%.2147483649A", "%.9999999999a",
+            "%.9999999999999999999999999999999999999999A", "%.0002147483648a", "%-+20.2147483648A",
+            "%2147483648a", "%999999999999999999999999a", "%.2147483647a", "%.2147483641a", "%+.2147483640A",
+            "x%2147483647a", "xx%.2147483640a", "x%+.2147483639A"}) {
+        bool rejected = false;
+        try {
+            snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5);
+        } catch (const std::overflow_error&) {
+            rejected = true;
+        }
+        Require(rejected);
+    }
+#endif
+}
+
+int main() { CheckSizeLimits(); RunChecks(); CheckHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
