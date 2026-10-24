@@ -138,7 +138,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
                 cache.erase(found);
             }
             const auto bytes = result->code.size() * sizeof(std::uint32_t);
-            while (!cache.empty() && (cache.size() >= 64 || cacheBytes + bytes > 8 * 1024 * 1024)) {
+            while (!cache.empty() && (cache.size() >= 4096 || cacheBytes + bytes > 64 * 1024 * 1024)) {
                 cacheBytes -= cache.back()->code.size() * sizeof(std::uint32_t);
                 cache.pop_back();
             }
