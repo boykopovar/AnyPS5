@@ -35,6 +35,7 @@ int APS5_VABI sceCesMbcToUcs2(const void*, const std::uint8_t*, std::uint32_t, s
 int APS5_VABI sceCesMbcToUtf16le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
 int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
 int APS5_VABI sceCesMbcsStrToUtf16Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
+int APS5_VABI sceCesMbcsStrGetUcs2Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
 int APS5_VABI sceCesMbcsStrGetUtf16Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
 int APS5_VABI sceCesUtf16StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
 }
@@ -255,20 +256,26 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
     const std::uint32_t gbSize = revision2005 ? 13 : 15;
     std::uint8_t text[16] = {};
     Require(sceCesUtf8StrToMbcsStr(context, Bytes(utf8Text), 13, &consumed, text, sizeof(text), &produced) == 0 && consumed == 13 && produced == gbSize);
-    Require(std::memcmp(text, gbText, gbSize) == 0);
+    Require(std::memcmp(text, gbText, gbSize) == 0 && text[gbSize] == 0);
     std::uint8_t backUtf8[16] = {};
     Require(sceCesMbcsStrToUtf8Str(context, text, gbSize, &consumed, backUtf8, sizeof(backUtf8), &produced) == 0 && consumed == gbSize && produced == 13);
-    Require(std::memcmp(backUtf8, utf8Text, 13) == 0);
+    Require(std::memcmp(backUtf8, utf8Text, 13) == 0 && backUtf8[13] == 0);
     std::uint16_t backUtf16[8] = {};
     Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == 6);
-    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10);
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 4, &produced) == dstBufferEnd);
+    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10 && backUtf16[6] == 0);
+    std::uint16_t shortUtf16[6] = {0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 4, &produced) == dstBufferEnd && consumed == 7 && produced == 3);
+    Require(shortUtf16[0] == 'A' && shortUtf16[1] == 0x4E2D && shortUtf16[2] == 0x80 && shortUtf16[3] == 0 && shortUtf16[4] == 0xBEEF && shortUtf16[5] == 0xBEEF);
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 5, &produced) == dstBufferEnd && consumed == 7 && produced == 3);
+    Require(shortUtf16[3] == 0 && shortUtf16[4] == 0xBEEF && shortUtf16[5] == 0xBEEF);
     Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == 6);
     std::uint8_t again[16] = {};
     Require(sceCesUtf16StrToMbcsStr(context, backUtf16, 6, &consumed, again, sizeof(again), &produced) == 0 && consumed == 6 && produced == gbSize);
-    Require(std::memcmp(again, gbText, gbSize) == 0);
-    std::uint16_t ucs2Text[8] = {};
-    Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode);
+    Require(std::memcmp(again, gbText, gbSize) == 0 && again[gbSize] == 0);
+    std::uint16_t ucs2Text[8] = {0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF, 0xBEEF};
+    Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode && consumed == 7 && produced == 3);
+    Require(ucs2Text[0] == 'A' && ucs2Text[1] == 0x4E2D && ucs2Text[2] == 0x80 && ucs2Text[3] == 0 && ucs2Text[4] == 0xBEEF);
+    Require(sceCesMbcsStrGetUcs2Len(context, text, gbSize, &consumed, &produced) == unassignedCode && consumed == 7 && produced == 3);
     Require(sceCesUtf8StrToMbcsStr(context, Bytes("\xC2\x80"), 2, &consumed, text, 3, &produced) == dstBufferEnd);
 }
 
