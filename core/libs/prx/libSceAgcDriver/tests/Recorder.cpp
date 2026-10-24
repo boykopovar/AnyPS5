@@ -3323,10 +3323,11 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         return false;
     }
     constexpr std::size_t bytes = 4u << 20u;
+    constexpr std::size_t allocationBytes = bytes + 65536;
 #ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    void* block = VirtualAlloc(nullptr, allocationBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
-    void* block = std::aligned_alloc(65536, bytes);
+    void* block = std::aligned_alloc(65536, allocationBytes);
 #endif
     Require(block != nullptr, "cannot allocate the test block");
     std::memset(block, 0x11, bytes);
@@ -3415,6 +3416,51 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         memory.RecordCopyBacks(recorder);
         recorder.Sync();
         memory.WriteBack();
+    }
+    std::memset(block, 0xff, allocationBytes);
+    {
+        std::cout << "checking a crossing write after an address-based staging candidate\n";
+        GuestBufferMemory memory(context);
+        memory.AllowDeviceStaging();
+        memory.AcquireRegistered();
+        memory.AddWritable(element, elementBytes, false, false);
+        const auto crossing = address + bytes - 16;
+        const auto dissolved = AddressSpaceCounters().dissolvedOverlap;
+        memory.AddWritable(crossing, 32, false, false);
+        Require(AddressSpaceCounters().dissolvedOverlap == dissolved + 1, "the crossing write did not dissolve its cached address space");
+        const auto ordinary = address + bytes + 4096;
+        memory.AddReadable(ordinary, 64);
+        memory.Upload(true);
+        std::uint32_t elementAdjustment = 0;
+        std::uint32_t crossingAdjustment = 0;
+        std::uint32_t ordinaryAdjustment = 0;
+        const auto elementView = memory.Descriptor(element, elementBytes, elementAdjustment);
+        const auto crossingView = memory.Descriptor(crossing, 32, crossingAdjustment);
+        const auto ordinaryView = memory.Descriptor(ordinary, 64, ordinaryAdjustment);
+        auto uploaded = std::make_shared<Buffer>(context, 96, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        auto downloaded = std::make_shared<Buffer>(context, 64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const auto source = uploaded->Bytes();
+        std::fill(source.begin(), source.end(), std::byte{0});
+        TextureDetiler repack(context);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        repack.DispatchRepack(commands, uploaded->Handle(), 0, elementView.buffer, elementView.offset + elementAdjustment, 64);
+        repack.DispatchRepack(commands, uploaded->Handle(), 64, crossingView.buffer, crossingView.offset + crossingAdjustment, 32);
+        repack.DispatchRepack(commands, ordinaryView.buffer, ordinaryView.offset + ordinaryAdjustment, downloaded->Handle(), 0, 64);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        memory.RecordCopyBacks(recorder);
+        recorder.Sync();
+        memory.MarkDirectWrites();
+        memory.WriteBack();
+        const auto contents = downloaded->Bytes().first(64);
+        Require(std::all_of(contents.begin(), contents.end(), [](auto value) { return value == std::byte{0xff}; }), "a plain read lost its GPU owner when a crossing write dissolved the staged address space");
+        for (std::size_t index = 0; index < allocationBytes / 4; ++index) {
+            const auto byte = index * 4;
+            const bool written = (byte >= element - address && byte < element - address + 64) || (byte >= bytes - 16 && byte < bytes + 16);
+            const auto expected = written ? 0u : 0xffffffffu;
+            Require(words[index] == expected, "dissolving a staged address space lost a write or changed bytes outside its views");
+        }
+        std::cout << "a crossing write dissolves the staged space while keeping the heap, written views and ordinary read GPU-backed\n";
     }
     {
         GuestAllocations::Mutation mutation;

@@ -4540,7 +4540,10 @@ void GuestBufferMemory::resolveOverlays() {
         if (regions[index].overlay) members.push_back(index);
     }
     if (members.empty()) return;
-    std::vector<bool> drop(regions.size(), space == nullptr);
+    std::vector<bool> drop(regions.size(), false);
+    if (space == nullptr) {
+        for (const auto member : members) drop[member] = true;
+    }
     std::sort(members.begin(), members.end(), [&](std::size_t left, std::size_t right) { return regions[left].begin < regions[right].begin; });
     for (std::size_t first = 0; space != nullptr && first < members.size();) {
         Region cluster{regions[members[first]].begin, regions[members[first]].end, true, {}, nullptr};
