@@ -1,6 +1,9 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <initializer_list>
+#endif
 #include <stdexcept>
 
 extern "C" {
