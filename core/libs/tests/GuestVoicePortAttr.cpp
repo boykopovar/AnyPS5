@@ -56,7 +56,13 @@ int main() {
         for (const auto attr : {1000, 1001, 1002, 1003, 2000, 2001, 2002}) {
             const auto size = attr == 1003 ? 2 : attr == 1002 || attr == 2001 ? 4 : 1;
             Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size + 1) == invalidArgument);
-            if (type == (attr == 1003 ? 5 : 0)) {
+            if (type == 0 && attr == 1001) {
+                buffer = original;
+                Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == 0);
+                Require(buffer[0] == original[0] && buffer[1] == 0 && buffer[2] == original[2]);
+                Require(buffer[3] == original[3] && buffer[4] == original[4] && buffer[5] == original[5]);
+                buffer = original;
+            } else if (type == (attr == 1003 ? 5 : 0)) {
                 Require(Throws([&] { sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size); }, "device attribute backend"));
             } else {
                 Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == invalidArgument);
