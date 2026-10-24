@@ -1282,6 +1282,10 @@ int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags) {
     return result >= 0 ? result : fail(native_error());
 }
 
+int64_t APS5_VABI GuestNetRecv_nid_no_patch(int s, void* buf, size_t len, int flags) {
+    return sceNetRecv(s, buf, len, flags);
+}
+
 int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* from, uint32_t* fromlen) {
     if (!message_flags_supported(flags, NET_MSG_PEEK | NET_MSG_DONTWAIT)) return fail(NET_EOPNOTSUPP);
     if (!buf && len) return fail(NET_EINVAL);
@@ -1340,6 +1344,10 @@ int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags) {
         return ::send(socket.native->value, offset ? static_cast<const char*>(buf) + offset : static_cast<const char*>(buf), static_cast<int>(len) - offset, NATIVE_SEND_FLAGS | native_message_flags(flags));
     }, true, static_cast<int>(len));
     return result >= 0 ? result : fail(native_error());
+}
+
+int64_t APS5_VABI GuestNetSend_nid_no_patch(int s, const void* buf, size_t len, int flags) {
+    return sceNetSend(s, buf, len, flags);
 }
 
 int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
