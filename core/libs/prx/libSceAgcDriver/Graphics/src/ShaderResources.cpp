@@ -811,6 +811,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
     }
     if (source != nullptr && resource.dccAddress != 0 && (keys.has_value() ? *keys : scanKeys()) == DccKeys::ClearSingle) source.reset();
+    if (source != nullptr && resource.dccAddress != 0 && source->Descriptor().dccAddress != resource.dccAddress && (keys.has_value() ? IsDccClear(*keys) : IsDccClear(scanKeys()))) source.reset();
 
     // Otherwise a surface in host-imported memory is viewed through its cached storage image (made
     // here when there is none): its refresh after a CPU or GPU write is a GPU-direct detile from the
@@ -831,7 +832,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             // (filled and uploaded on the CPU, then replaced by a view once results are pending: two
             // 4K uploads per clear at the movie stage) serves the surface otherwise, as before.
             auto candidate = sampledStorageSource(context, resource, guestBytes);
-            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) source = std::move(candidate);
+            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) {
+                candidate->SupersedeHandedOver();
+                source = std::move(candidate);
+            }
         }
         scanned.reset();
         // The lookup's Refresh may have flushed another image's results over the memory (which
@@ -855,7 +859,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // after them is current at the generation of a second (memoized) collect. The store marks the
     // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && [&] {
+    const bool stagedClear = source != nullptr && source->AnyLayerPending() && resource.dccAddress != 0 && source->Descriptor().dccAddress == resource.dccAddress && [&] {
         const auto observedKeys = keys.has_value() ? *keys : scanKeys();
         return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
     }();
