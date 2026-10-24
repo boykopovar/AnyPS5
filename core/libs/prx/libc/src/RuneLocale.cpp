@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -147,11 +148,16 @@ std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c) {
 }
 
 std::uint32_t APS5_VABI btowc_nid_postfix(int c) {
-    return c == -1 ? GuestRune::Weof : static_cast<unsigned char>(c);
+    const auto byte = static_cast<unsigned char>(c);
+    if (c == -1) return GuestRune::Weof;
+    if (byte < 0x80) return byte;
+    if (byte < 0xc0 || byte >= 0xf0) errno = 86;
+    return GuestRune::Weof;
 }
 
 int APS5_VABI wctob_nid_postfix(std::uint32_t c) {
-    return c < 256 ? static_cast<int>(c) : -1;
+    const auto unit = static_cast<std::uint16_t>(c);
+    return unit < 0x80 ? static_cast<int>(unit) : -1;
 }
 
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc);

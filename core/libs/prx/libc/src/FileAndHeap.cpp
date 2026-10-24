@@ -361,14 +361,12 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     if (!parsed) { errno = 22; return nullptr; }
     try {
         std::filesystem::path path;
-        if (*filename) {
-            if (const int error = ResolvePathError_nid_no_patch(filename, path)) {
-                if (stream->IsHostStandard()) stream->Detach();
-                else stream->Close();
-                if (stream->IsDynamic()) delete stream;
-                errno = error;
-                return nullptr;
-            }
+        if (const int error = *filename ? ResolvePathError_nid_no_patch(filename, path) : 2) {
+            if (stream->IsHostStandard()) stream->Detach();
+            else stream->Close();
+            if (stream->IsDynamic()) delete stream;
+            errno = error;
+            return nullptr;
         }
         if (stream->Reopen(path, parsed->native.c_str(), OpenNative)) {
 #ifdef _WIN32

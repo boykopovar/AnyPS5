@@ -737,6 +737,14 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    if (self == other) return self;
+    Array copy{};
+    CopyArray(copy, *other);
+    Destroy(*self);
+    *self = copy;
+    return self;
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
@@ -762,6 +770,11 @@ const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array* self) {
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
     return &self->items->back();
+}
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
+    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
+    Destroy(self->items->front());
+    self->items->pop_front();
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {

@@ -282,6 +282,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
             checkStopping();
             noteAwaitingTitle(stalled.queue, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1));
             stall.Check("REWIND at", reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1));
+            if (stalled.queue == 0 && completionsPending()) reapCompletionLabels();
             PollSleep();
         }
     }

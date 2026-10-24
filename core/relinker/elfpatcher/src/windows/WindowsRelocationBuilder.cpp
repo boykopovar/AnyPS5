@@ -86,8 +86,6 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
 std::vector<std::uint8_t> WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const {
     std::map<std::uint32_t, std::vector<std::uint16_t>> pages;
     for (const auto target : targets) {
-        if ((target & 0xfffu) > 0x1000u - 8)
-            throw Domain::RelinkerException("Base relocation target crosses a page boundary", target);
         auto& entries = pages[target & ~0xfffu];
         const auto entry = static_cast<std::uint16_t>(0xa000u | (target & 0xfffu));
         if (std::find(entries.begin(), entries.end(), entry) == entries.end())

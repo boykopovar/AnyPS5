@@ -504,6 +504,9 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
     if (previous) *previous = old;
     return 0;
 }
+int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    return sigaction_nid_postfix(guest, action, previous);
+}
 int APS5_VABI raise_nid_postfix(int guest) {
     if (guest == 0) return 0;
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
@@ -647,6 +650,10 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     _sigprocmask_nid_postfix(GuestSigsetmask, &previous, nullptr);
     *__error_nid_postfix() = GuestEintr;
     return -1;
+}
+
+int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
+    return sigsuspend_nid_postfix(set);
 }
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {

@@ -89,7 +89,7 @@ int main() {
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &negative, &sent, 0), 22) && sent == 77);
     Require(Fails(sendfile_nid_postfix(pair[1], pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
     sent = 77;
-    Require(Fails(sendfile_nid_postfix(file, file, 0, 0, nullptr, &sent, 0), 9) && sent == 0);
+    Require(Fails(sendfile_nid_postfix(file, file, 0, 0, nullptr, &sent, 0), 38) && sent == 0);
     const int datagram = socket_nid_postfix(2, 2, 0);
     Require(datagram >= 0);
     sent = 77;
@@ -108,10 +108,13 @@ int main() {
     Require(sent > 0 && sent < static_cast<std::int64_t>(large.size()));
     Require(Receive(pair[1], static_cast<std::size_t>(sent)) == large.substr(0, static_cast<std::size_t>(sent)));
 
+    Require(close_nid_postfix(unconnected) == 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(file, unconnected, 0, 0, nullptr, &sent, 0), 9) && sent == 0);
     Require(close_nid_postfix(largeFile) == 0 && close_nid_postfix(file) == 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, nullptr, &sent, 0), 9) && sent == 77);
-    Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(unconnected) == 0);
+    Require(close_nid_postfix(datagram) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     std::filesystem::remove("sendfile_probe.bin");
     std::filesystem::remove("sendfile_large.bin");

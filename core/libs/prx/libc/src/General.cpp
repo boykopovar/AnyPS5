@@ -255,13 +255,11 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath, 
             const auto result = std::filesystem::path(host).make_preferred();
             return module ? PathOrRelinkedModule(result) : result;
         }
-#ifndef _WIN32
         if (guestPath.back() == '/') {
-            auto result = ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)));
+            auto result = ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1))).make_preferred();
             result /= "";
             return module ? PathOrRelinkedModule(result) : result;
         }
-#endif
         return ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)), module).make_preferred();
     }
     return std::nullopt;
@@ -318,6 +316,14 @@ void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string
 #endif
     throw std::filesystem::filesystem_error("Guest path component is not a directory", host, error);
 }
+void RejectNonDirectory(const std::filesystem::path& host) {
+    auto target = host;
+    while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+    std::error_code error;
+    const auto status = std::filesystem::status(target, error);
+    if (std::filesystem::exists(status) && !std::filesystem::is_directory(status))
+        throw std::filesystem::filesystem_error("Guest path with a trailing slash is not a directory", host, std::make_error_code(std::errc::not_a_directory));
+}
 std::vector<std::string> WithTrailingSeparator(std::vector<std::string> names, bool trailing) {
     if (trailing && !names.empty()) names.emplace_back();
     return names;
@@ -360,7 +366,10 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool mo
         if (!trailing) names.push_back(name);
     }
     if (endsWithDot && !names.empty() && !(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, names)))) RequireHostDirectory(state, names);
-    return HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
+    const bool directory = trailing && !names.empty();
+    auto resolved = HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
+    if (directory) RejectNonDirectory(resolved);
+    return resolved;
 }
 #ifdef _WIN32
 using WriteMark = FILETIME;
@@ -376,7 +385,11 @@ bool NotBefore(const WriteMark& time, const WriteMark& mark) {
 using WriteMark = timespec;
 WriteMark Now() {
     timespec now;
+#ifdef __APPLE__
+    clock_gettime(CLOCK_REALTIME, &now);
+#else
     clock_gettime(CLOCK_REALTIME_COARSE, &now);
+#endif
     return now;
 }
 bool NotBefore(const WriteMark& time, const WriteMark& mark) {
@@ -415,7 +428,11 @@ void FlushPath(const std::filesystem::path& path) {
 #else
 std::optional<WriteMark> WriteTime(const std::filesystem::path& path) {
     struct stat data;
+#ifdef __APPLE__
+    if (::stat(path.c_str(), &data) == 0) return data.st_mtimespec;
+#else
     if (::stat(path.c_str(), &data) == 0) return data.st_mtim;
+#endif
     if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
     throw std::system_error(errno, std::generic_category(), "Reading the write time of " + path.string());
 }

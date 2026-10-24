@@ -6,6 +6,8 @@
 extern "C" {
 int APS5_VABI sceWebBrowserDialogInitialize(void);
 int APS5_VABI sceWebBrowserDialogTerminate(void);
+int APS5_VABI sceWebBrowserDialogSetCookie(const void* param);
+int APS5_VABI sceWebBrowserDialogResetCookie(const void* param);
 int APS5_VABI sceWebBrowserDialogOpen(const void* param);
 int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, const WebBrowserDialogAllowList* allowList);
 int APS5_VABI sceWebBrowserDialogClose(void);
@@ -37,6 +39,8 @@ int main() {
     result.result = 0x5a5a5a5a;
 
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogResetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogClose() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogOpen(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);

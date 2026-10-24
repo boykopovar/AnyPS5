@@ -34,6 +34,8 @@ int APS5_VABI sceVoiceResumePortAll(void);
 int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo*);
 int APS5_VABI sceVoiceEnableChat(void);
 int APS5_VABI sceVoiceDisableChat(void);
+int APS5_VABI sceVoiceInitHQ(const VoiceInitParam*, std::int32_t);
+int APS5_VABI sceVoiceVADSetVersion(std::int32_t);
 int APS5_VABI sceVoiceSetMuteFlagAll(bool);
 int APS5_VABI sceVoiceSetBitRate(std::uint32_t, std::uint32_t);
 int APS5_VABI sceVoiceUpdatePort(std::uint32_t, const VoicePortParam*);
@@ -145,6 +147,24 @@ int main() {
     Require(sceVoiceSetThreadsParams(&threads) == invalidArgument);
     threads.mode = 1;
     RequireThrows([&] { sceVoiceSetThreadsParams(&threads); });
+    VoiceThreadsParams scheduled{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
+    Require(sceVoiceSetThreadsParams(&scheduled) == 0);
+    scheduled = {1, 256, 0x1fff, 767, 0, 1, 512, 0, 0x1000};
+    Require(sceVoiceSetThreadsParams(&scheduled) == 0);
+    for (const auto priority : {255, 768, 0, -1}) {
+        for (int slot = 0; slot < 3; ++slot) {
+            VoiceThreadsParams outside{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
+            (slot == 0 ? outside.firstPriority : slot == 1 ? outside.secondPriority : outside.thirdPriority) = priority;
+            RequireThrows([&] { sceVoiceSetThreadsParams(&outside); });
+        }
+    }
+    for (const std::uint64_t affinity : {std::uint64_t{0}, std::uint64_t{0x2000}, std::uint64_t{0x3fff}, UINT64_MAX}) {
+        for (int slot = 0; slot < 3; ++slot) {
+            VoiceThreadsParams outside{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
+            (slot == 0 ? outside.firstAffinity : slot == 1 ? outside.secondAffinity : outside.thirdAffinity) = affinity;
+            RequireThrows([&] { sceVoiceSetThreadsParams(&outside); });
+        }
+    }
     threads.mode = 0;
     Require(sceVoiceStart(nullptr) == invalidArgument);
     Require(sceVoiceStart(&start) == invalidArgument);
@@ -161,6 +181,8 @@ int main() {
     start.mem_size = 0x40000;
     Require(sceVoiceSetThreadsParams(nullptr) == invalidArgument);
     Require(sceVoiceSetThreadsParams(&threads) == static_cast<std::int32_t>(0x804e080bu));
+    scheduled = {1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
+    Require(sceVoiceSetThreadsParams(&scheduled) == static_cast<std::int32_t>(0x804e080bu));
     Require(sceVoiceGetResourceInfo(nullptr) == invalidArgument);
     struct ResourceOutput {
         VoiceResourceInfo info;
@@ -462,4 +484,17 @@ int main() {
     }
     Require(sceVoiceEnd_nid_postfix() == 0);
 
+    Require(sceVoiceVADSetVersion(0) == 0 && sceVoiceVADSetVersion(1) == 0);
+    Require(sceVoiceVADSetVersion(2) == invalidArgument && sceVoiceVADSetVersion(-1) == invalidArgument);
+    init.app_type = 0x10000000;
+    start.mem_size = 0x40000;
+    Require(sceVoiceInitHQ(nullptr, 100) == invalidArgument && sceVoiceInitHQ(&init, 0) == invalidArgument);
+    Require(sceVoiceInitHQ(&init, 100) == 0);
+    Require(sceVoiceInitHQ(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceInit(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceStart(&start) == 0);
+    Require(sceVoiceEnd_nid_postfix() == 0);
+    Require(sceVoiceInit(&init, 100) == 0);
+    Require(sceVoiceInitHQ(&init, 100) == AlreadyInitialized);
+    Require(sceVoiceEnd_nid_postfix() == 0);
 }

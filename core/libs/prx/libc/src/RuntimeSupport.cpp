@@ -95,6 +95,15 @@ void APS5_VABI cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
 
+void APS5_VABI _Vacopy_nid_postfix(unsigned char* destination, const unsigned char* source) {
+    std::uint64_t overflowArea;
+    std::memcpy(&overflowArea, source + 16, sizeof(overflowArea));
+    std::memcpy(destination + 16, &overflowArea, sizeof(overflowArea));
+    unsigned char offsets[16];
+    std::memcpy(offsets, source, sizeof(offsets));
+    std::memcpy(destination, offsets, sizeof(offsets));
+}
+
 unsigned int APS5_VABI _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
     return GccAtomicFetchAdd(target, value);

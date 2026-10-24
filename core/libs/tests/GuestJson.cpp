@@ -55,11 +55,14 @@ void APS5_VABI _ZN3sce4Json5Array5clearEv(Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const Iterator*);
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
 std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array*);
+bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(Iterator*);
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const Iterator*);
@@ -292,6 +295,32 @@ static void NestingDepth() {
     _ZN3sce4Json5ValueD1Ev(&root);
 }
 
+static void ArrayAssignment() {
+    Array source{}, target{};
+    _ZN3sce4Json5ArrayC1Ev(&source);
+    _ZN3sce4Json5ArrayC1Ev(&target);
+    Value flag{}, real{};
+    _ZN3sce4Json5ValueC1Eb(&flag, true);
+    _ZN3sce4Json5ValueC1Ed(&real, 1.5);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &flag);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &real);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &flag);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&target, &real);
+    Require(_ZN3sce4Json5ArrayaSERKS1_(&target, &source) == &target);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    Require(_ZNK3sce4Json5Array4sizeEv(&source) == 3);
+    _ZN3sce4Json5Array5clearEv(&source);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&target)));
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array4backEv(&target)));
+    Require(_ZN3sce4Json5ArrayaSERKS1_(&target, &target) == &target);
+    Require(_ZNK3sce4Json5Array4sizeEv(&target) == 3);
+    _ZN3sce4Json5ValueD1Ev(&flag);
+    _ZN3sce4Json5ValueD1Ev(&real);
+    _ZN3sce4Json5ArrayD1Ev(&source);
+    _ZN3sce4Json5ArrayD1Ev(&target);
+}
+
 static void ObjectsAndArrays() {
     Object object{};
     _ZN3sce4Json6ObjectC1Ev(&object);
@@ -360,6 +389,18 @@ static void ObjectsAndArrays() {
     Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&copy)));
     Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array4backEv(&copy)) == 2.5);
+    _ZN3sce4Json5Array9pop_frontEv(&copy);
+    Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 1);
+    Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array5frontEv(&copy)) == 2.5);
+    _ZN3sce4Json5Array9pop_frontEv(&copy);
+    Require(_ZNK3sce4Json5Array5emptyEv(&copy));
+    threw = false;
+    try {
+        _ZN3sce4Json5Array9pop_frontEv(&copy);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    Require(threw && _ZNK3sce4Json5Array5emptyEv(&copy));
     _ZN3sce4Json5ArrayD1Ev(&copy);
     _ZN3sce4Json5ArrayD1Ev(&array);
 }
@@ -1452,6 +1493,7 @@ int main(int argc, char** argv) {
     ParseAndRoundTrip();
     NestingDepth();
     ObjectsAndArrays();
+    ArrayAssignment();
     ObjectFind();
     ObjectPair();
     ObjectInsert();

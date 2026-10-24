@@ -425,8 +425,10 @@ static void RecordLocksBelongToTheProcess() {
 static void PipeFlagsRoundTrip() {
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0);
-    Require(fcntl_nid_postfix(pipe[0], GetFlags) == ReadOnly);
-    Require(fcntl_nid_postfix(pipe[1], GetFlags) == WriteOnly);
+    Require(fcntl_nid_postfix(pipe[0], GetFlags) == ReadWrite);
+    Require(fcntl_nid_postfix(pipe[1], GetFlags) == ReadWrite);
+    const int duplicate = fcntl_nid_postfix(pipe[1], DuplicateCommand, 20);
+    Require(duplicate >= 20 && fcntl_nid_postfix(duplicate, GetFlags) == ReadWrite && close_nid_postfix(duplicate) == 0);
     Require(fcntl_nid_postfix(pipe[1], SetDescriptorFlags, 1) == 0);
     Require(fcntl_nid_postfix(pipe[1], GetDescriptorFlags) == 1);
     Require(fcntl_nid_postfix(pipe[0], GetDescriptorFlags) == 0);
@@ -436,7 +438,7 @@ static void PipeFlagsRoundTrip() {
     Require(fcntl_nid_postfix(pipe[1], GetDescriptorFlags) == 0);
 
     Require(fcntl_nid_postfix(pipe[0], SetFlags, fcntl_nid_postfix(pipe[0], GetFlags) | NonBlocking) == 0);
-    Require(fcntl_nid_postfix(pipe[0], GetFlags) == (ReadOnly | NonBlocking));
+    Require(fcntl_nid_postfix(pipe[0], GetFlags) == (ReadWrite | NonBlocking));
     char buffer[8] = {};
     RequireFailure(static_cast<int>(read_nid_postfix(pipe[0], buffer, sizeof(buffer))), GuestEagain);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
@@ -448,10 +450,10 @@ static void PipeFlagsRoundTrip() {
 
     int off = 0;
     Require(ioctl_nid_postfix(pipe[0], NonblockingRequest, &off) == 0);
-    Require(fcntl_nid_postfix(pipe[0], GetFlags) == ReadOnly);
+    Require(fcntl_nid_postfix(pipe[0], GetFlags) == ReadWrite);
     int on = 1;
     Require(ioctl_nid_postfix(pipe[0], NonblockingRequest, &on) == 0);
-    Require(fcntl_nid_postfix(pipe[0], GetFlags) == (ReadOnly | NonBlocking));
+    Require(fcntl_nid_postfix(pipe[0], GetFlags) == (ReadWrite | NonBlocking));
 
     Require(fcntl_nid_postfix(pipe[1], SetFlags, NonBlocking) == 0);
     char block[1024] = {};
