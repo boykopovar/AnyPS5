@@ -791,16 +791,6 @@ int APS5_VABI sceKernelGetAutoUpdateVersion(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetBackupRestoreMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetBackupRestoreModeOfNextBoot(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetBasicProductShape(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1766,11 +1756,6 @@ int APS5_VABI sceKernelSetAppInfo(void) {
 }
 
 int APS5_VABI sceKernelSetAppState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelSetBackupRestoreMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

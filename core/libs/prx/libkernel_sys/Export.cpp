@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <cstdint>
 #include <cstddef>
@@ -923,6 +924,21 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* wor
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    return 0;
+}
+
+static std::atomic<std::int32_t> g_backupRestoreMode{0};
+
+int APS5_VABI sceKernelGetBackupRestoreMode(void) {
+    return g_backupRestoreMode.load(std::memory_order_relaxed);
+}
+
+int APS5_VABI sceKernelGetBackupRestoreModeOfNextBoot(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelSetBackupRestoreMode(std::int32_t mode) {
+    g_backupRestoreMode.store(mode, std::memory_order_relaxed);
     return 0;
 }
 

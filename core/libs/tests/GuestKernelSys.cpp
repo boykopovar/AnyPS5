@@ -49,6 +49,9 @@ char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 int APS5_VABI getpid_nid_postfix();
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const void*, std::int32_t, std::int32_t*);
 int APS5_VABI sceKernelGetProcessType(int);
+int APS5_VABI sceKernelGetBackupRestoreMode(void);
+int APS5_VABI sceKernelGetBackupRestoreModeOfNextBoot(void);
+int APS5_VABI sceKernelSetBackupRestoreMode(std::int32_t);
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelRename(const char*, const char*);
@@ -374,6 +377,15 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void CheckBackupRestoreModeQueries() {
+    Require(sceKernelGetBackupRestoreMode() == 0);
+    Require(sceKernelGetBackupRestoreModeOfNextBoot() == 0);
+    Require(sceKernelSetBackupRestoreMode(1) == 0);
+    Require(sceKernelGetBackupRestoreMode() == 1);
+    Require(sceKernelSetBackupRestoreMode(0) == 0);
+    Require(sceKernelGetBackupRestoreMode() == 0);
+}
+
 static void CheckProcessQueries() {
     struct {
         std::int32_t version;
@@ -448,6 +460,7 @@ int main() {
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
     CheckProcessQueries();
+    CheckBackupRestoreModeQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
