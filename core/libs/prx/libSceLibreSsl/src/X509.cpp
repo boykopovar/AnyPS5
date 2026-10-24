@@ -1,11 +1,12 @@
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
 
 struct LibreSslAsn1Encoding {
     unsigned char* enc;
-    long len;
+    std::int64_t len;
     int modified;
 };
 
