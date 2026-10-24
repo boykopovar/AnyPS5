@@ -354,6 +354,8 @@ int Run(const int argc, char* argv[]) {
             for (const auto& artifact : guestArtifacts)
                 if (SameOutputFile(artifact.SourcePath, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite an input module: " + Io::Utf8Path(path));
+            if (!args.noPatches && std::filesystem::is_regular_file(patchFile) && SameOutputFile(patchFile, path))
+                throw Domain::RelinkerException(std::string(kind) + " output would overwrite the patch file: " + Io::Utf8Path(path));
         };
         for (std::size_t index = 1; index < executables.size(); ++index) checkOutputInputs(Io::NativePath(executables[index].OutputPath), "Executable");
         if (desktopEntry) {
@@ -383,11 +385,7 @@ int Run(const int argc, char* argv[]) {
         }
 
         checkOutputInputs(Io::NativePath(absPath), "Executable");
-        if (!manifestPath.empty()) {
-            checkOutputInputs(manifestPath, "Patch manifest");
-            if (std::filesystem::exists(manifestPath) && std::filesystem::exists(patchFile) && std::filesystem::equivalent(manifestPath, patchFile))
-                throw Domain::RelinkerException("Patch manifest output would overwrite the patch file: " + Io::Utf8Path(manifestPath));
-        }
+        if (!manifestPath.empty()) checkOutputInputs(manifestPath, "Patch manifest");
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
         std::vector<std::filesystem::path> outputPaths;

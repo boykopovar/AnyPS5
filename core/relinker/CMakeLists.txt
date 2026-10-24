@@ -711,6 +711,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_magic.py $<TARGET_FILE:relinker>)
         add_test(NAME input_preservation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_preservation.py $<TARGET_FILE:relinker>)
+        add_test(NAME patch_input_preservation COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_input_preservation.py $<TARGET_FILE:relinker>)
+        set_tests_properties(patch_input_preservation PROPERTIES TIMEOUT 20)
         add_test(NAME output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}
