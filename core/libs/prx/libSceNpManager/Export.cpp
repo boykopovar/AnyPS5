@@ -673,8 +673,8 @@ int APS5_VABI sceNpManagerIntLoginGetAccessToken(void) {
 }
 
 int APS5_VABI sceNpAbortRequest(int req_id) {
-    (void)req_id;
-    return 0;
+    std::lock_guard lock(requestMutex);
+    return liveRequests.count(req_id) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 
 int APS5_VABI sceNpCheckCallback(void) {
@@ -724,6 +724,7 @@ int APS5_VABI sceNpCreateRequest(void) {
 
 int APS5_VABI sceNpDeleteRequest(int req_id) {
     std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     liveRequests.erase(req_id);
     return 0;
 }
@@ -834,8 +835,10 @@ int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
-    (void)req_id;
-    if (result) *result = SCE_NP_ERROR_SIGNED_OUT;
+    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
+    *result = SCE_NP_ERROR_SIGNED_OUT;
     return NP_POLL_ASYNC_FINISHED;
 }
 

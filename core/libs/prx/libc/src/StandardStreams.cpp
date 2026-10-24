@@ -1,4 +1,5 @@
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -28,6 +29,8 @@ const bool standardDescriptorsOpen = [] {
 FileStream input{stdin};
 }
 extern "C" {
+void APS5_VABI flockfile_nid_postfix(FileStream*);
+void APS5_VABI funlockfile_nid_postfix(FileStream*);
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
@@ -100,6 +103,30 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
 }
 int APS5_VABI __srget_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 int APS5_VABI getchar_nid_postfix() { return fgetc_nid_postfix(__stdinp_nid_postfix); }
+char* APS5_VABI gets_nid_postfix(char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("gets: null buffer");
+    auto* stream = __stdinp_nid_postfix;
+    if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
+    flockfile_nid_postfix(stream);
+    struct Unlock {
+        FileStream* stream;
+        ~Unlock() { funlockfile_nid_postfix(stream); }
+    } unlock{stream};
+    char* cursor = buffer;
+    for (;;) {
+        const int value = fgetc_nid_postfix(stream);
+        if (value == EOF) {
+            if (cursor == buffer) return nullptr;
+            *cursor = 0;
+            return buffer;
+        }
+        if (value == '\n') {
+            *cursor = 0;
+            return buffer;
+        }
+        *cursor++ = static_cast<char>(value);
+    }
+}
 std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid_postfix(stream); }
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
@@ -194,7 +221,12 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
         buffer = nullptr;
         size = BUFSIZ;
     }
-    return std::setvbuf(GetStreamHandle(stream), buffer, native, size);
+    auto* handle = GetStreamHandle(stream);
+#ifdef _WIN32
+    if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
+    if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
+#endif
+    return std::setvbuf(handle, buffer, native, size);
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);

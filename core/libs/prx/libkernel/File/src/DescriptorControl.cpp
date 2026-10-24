@@ -22,8 +22,10 @@
 #include <string>
 
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #else
 #include <fcntl.h>
@@ -180,8 +182,33 @@ Entry InitialEntry(int fd) {
     return {false, std::make_shared<int>(status)};
 }
 
+void SetHostAppend(int fd, bool append, const char* function) {
+    const int translation = ::_setmode(fd, _O_BINARY);
+    if (translation == -1 || ::_setmode(fd, translation) == -1)
+        throw std::runtime_error(std::string(function) + ": cannot read the translation mode of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    HANDLE copy = nullptr;
+    if (!::DuplicateHandle(::GetCurrentProcess(), WindowsDescriptorHandle_nid_no_patch(fd), ::GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS))
+        throw std::runtime_error(std::string(function) + ": cannot duplicate the handle of descriptor " + std::to_string(fd) + ", error=" + std::to_string(::GetLastError()));
+    const int replacement = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(copy), (append ? _O_APPEND : 0) | translation);
+    if (replacement < 0) {
+        ::CloseHandle(copy);
+        throw std::runtime_error(std::string(function) + ": cannot open a replacement for descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    }
+    auto* const standard = HostStandardHandle_nid_no_patch(fd);
+    const int moved = ::_dup2(replacement, fd);
+    const int error = errno;
+    ::_close(replacement);
+    KeepStandardHandle_nid_no_patch(fd, standard);
+    if (moved != 0)
+        throw std::runtime_error(std::string(function) + ": cannot replace descriptor " + std::to_string(fd) + ", errno=" + std::to_string(error));
+}
+
 void ApplyHostStatus(int fd, Kind kind, int changed, int next, const char* function) {
-    if ((changed & Append) && kind == Kind::File) Unsupported(function, "changing O_APPEND", kind, fd);
+    if ((changed & Append) && kind == Kind::File) {
+        const auto status = g_entries.at(fd).status;
+        for (const auto& [descriptor, entry] : g_entries)
+            if (entry.status == status && DescriptorIsOpen_nid_no_patch(descriptor)) SetHostAppend(descriptor, (next & Append) != 0, function);
+    }
     if ((changed & Nonblocking) && kind == Kind::Device) Unsupported(function, "changing O_NONBLOCK", kind, fd);
     if ((changed & Nonblocking) && kind == Kind::Pipe) SetPipeNonblocking(fd, (next & Nonblocking) != 0, function);
 }

@@ -60,6 +60,25 @@ VkQueue FakeQueue() {
     return reinterpret_cast<VkQueue>(static_cast<std::uintptr_t>(0x2000));
 }
 
+void Diagnostics() {
+    using AgcDriver::ChooseDeviceDiagnostics;
+    constexpr VkDeviceDiagnosticsConfigFlagsNV all = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV;
+    for (const bool configSupported : {false, true}) {
+        for (const bool checkpointsSupported : {false, true}) {
+            const auto off = ChooseDeviceDiagnostics(false, configSupported, checkpointsSupported);
+            Require(!off.config && !off.checkpoints && off.flags == 0, "diagnostics were chosen without APS5_NV_DIAGNOSTICS");
+        }
+    }
+    for (const bool checkpointsSupported : {false, true}) {
+        const auto unsupported = ChooseDeviceDiagnostics(true, false, checkpointsSupported);
+        Require(!unsupported.config && !unsupported.checkpoints && unsupported.flags == 0, "diagnostics were chosen on a device without VK_NV_device_diagnostics_config");
+    }
+    const auto alone = ChooseDeviceDiagnostics(true, true, false);
+    Require(alone.config && !alone.checkpoints && alone.flags == all, "the diagnostics config without checkpoint support did not enable every crash-dump flag alone");
+    const auto both = ChooseDeviceDiagnostics(true, true, true);
+    Require(both.config && both.checkpoints && both.flags == all, "the diagnostics config did not add the diagnostic checkpoints the device supports");
+}
+
 void FaultInfo() {
     faultCalls = 0;
     faultFails = false;
@@ -139,6 +158,7 @@ void AddressKinds() {
 
 int main() {
     try {
+        Diagnostics();
         FaultInfo();
         FaultInfoFails();
         Checkpoints();

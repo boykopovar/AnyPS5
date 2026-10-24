@@ -97,7 +97,11 @@ float APS5_VABI remquof_nid_postfix(float, float, int*);
 float APS5_VABI fmaf_nid_postfix(float, float, float);
 long double APS5_VABI ceill_nid_postfix(long double);
 long double APS5_VABI floorl_nid_postfix(long double);
+float APS5_VABI cbrtf_nid_postfix(float);
 float APS5_VABI tanf_nid_postfix(float);
+float APS5_VABI sinf_nid_postfix(float);
+float APS5_VABI cosf_nid_postfix(float);
+void APS5_VABI sincosf_nid_postfix(float, float*, float*);
 int APS5_VABI rand_nid_postfix();
 void APS5_VABI srand_nid_postfix(unsigned int);
 int APS5_VABI rand_r_nid_postfix(unsigned int*);
@@ -126,6 +130,7 @@ float APS5_VABI nextafterf_nid_postfix(float, float);
 double APS5_VABI nextafter_nid_postfix(double, double);
 double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
+float APS5_VABI logf_nid_postfix(float);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
 double APS5_VABI sinh_nid_postfix(double);
@@ -681,6 +686,35 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckExpm1ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3c8fffffffffffffull, 0}, {0x3c90000000000000ull, 0x3c90000000000000ull, 0},
+        {0x3fd62e42fefa39efull, 0x3fda827999fcef32ull, 0}, {0x3fd62e4300000000ull, 0x3fda82799b6f2366ull, 0},
+        {0x3ff0a2b1ffffffffull, 0x3ffd413c1a24d411ull, 0}, {0x3ff0a2b200000000ull, 0x3ffd413c1a24d414ull, 0},
+        {0xbfd0000000000000ull, 0xbfcc5041854df7d4ull, 0}, {0xbfe0000000000000ull, 0xbfd92e9a0720d3ecull, 0},
+        {0x3ff0000000000000ull, 0x3ffb7e151628aed2ull, 0}, {0xbff0000000000000ull, 0xbfe43a54e4e98864ull, 0},
+        {0x4043687a00000000ull, 0x436fffd8395c0c41ull, 0}, {0xc043687a00000000ull, 0xbff0000000000000ull, 0},
+        {0x4049000000000000ull, 0x44719103e4080b45ull, 0}, {0x40862e42fefa39efull, 0x7fefffffffffff2aull, 0},
+        {0x40862e42fefa39f0ull, 0x7ff0000000000000ull, ERANGE}, {0xc08f400000000000ull, 0xbff0000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x7ff0000000000000ull, ERANGE}, {0xffefffffffffffffull, 0xbff0000000000000ull, 0},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0}, {0xfff0000000000000ull, 0xbff0000000000000ull, 0},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, 0},
+        {0x3fc78b9e474afed8ull, 0x3fc9d99e60806b35ull, 0}, {0xbf887a99bea50fb1ull, 0xbf88554c5b9d0cbbull, 0},
+        {0x3ff790fb0ae85390ull, 0x400ae5103402894bull, 0}, {0xbf840fe48e07e54dull, 0xbf83f6d1bcda4943ull, 0},
+        {0xbfbb1276066a31c7ull, 0xbfb9b098289dab68ull, 0}, {0x3fc07bc20a0c887eull, 0x3fc197828317c86cull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(expm1_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -713,6 +747,21 @@ static void CheckAsinl() {
         Require(std::isnan(asinl_nid_postfix(input)) && *__error_nid_postfix() == EDOM && std::fetestexcept(FE_INVALID) != 0);
     }
     *__error_nid_postfix() = 0;
+}
+
+static void CheckCbrtfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x00000123u, 0x28059605u}, {0x00400327u, 0x2a4b334bu}, {0x3f000555u, 0x3f4b32c7u}, {0x3fc00778u, 0x3f9287e5u},
+        {0x42000999u, 0x404b3509u}, {0x7e000bbcu, 0x544b362au}, {0xbf400dddu, 0xbf689d01u}, {0x80201002u, 0xaa215ff8u},
+        {0x00000000u, 0x00000000u}, {0x80000000u, 0x80000000u}, {0x00000001u, 0x26a14518u}, {0x007fffffu, 0x2a7fffffu},
+        {0x00800000u, 0x2a800000u}, {0x3f800000u, 0x3f800000u}, {0x41000000u, 0x40000000u}, {0xc1000000u, 0xc0000000u},
+        {0x7f7fffffu, 0x54cb2ff5u}, {0x7f800000u, 0x7f800000u}, {0xff800000u, 0xff800000u}, {0x7fc00001u, 0x7fc00001u},
+        {0xffc00002u, 0xffc00002u},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cbrtf_nid_postfix(std::bit_cast<float>(input))) == expected && errno == 1234);
+    }
 }
 
 static void CheckIntegerConversions() {
@@ -894,6 +943,42 @@ static void CheckAsin() {
     std::feclearexcept(FE_ALL_EXCEPT);
     asin_nid_postfix(nan);
     Require(!std::fetestexcept(FE_INVALID));
+}
+
+static void CheckTrigfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t sine;
+        std::uint32_t cosine;
+        std::uint32_t tangent;
+        int error;
+    } cases[] = {
+        {0x3e801d5au, 0x3e7d9057u, 0x3f780703u, 0x3e82db72u, 0}, {0x3fc00321u, 0x3f7f5c46u, 0x3d90acbbu, 0x4161edb0u, 0},
+        {0x40400556u, 0x3e102d3eu, 0xbf7d7328u, 0xbe11a09du, 0}, {0x40c00781u, 0xbe8e9c41u, 0x3f75de78u, 0xbe947c92u, 0},
+        {0x412009acu, 0xbf0bc6b7u, 0xbf56790du, 0x3f26d71eu, 0}, {0x47000bbbu, 0x3eb0df2fu, 0x3f703d5au, 0x3ebc799eu, 0},
+        {0x4e000de0u, 0xbf664722u, 0x3edfade4u, 0xc003c6abu, 0}, {0x5f001006u, 0xbe0ecf11u, 0x3f7d7f8cu, 0xbe1037deu, 0},
+        {0x7e001112u, 0x3eabd0cbu, 0x3f7127beu, 0x3eb6645du, 0}, {0xc0400556u, 0xbe102d3eu, 0xbf7d7328u, 0x3e11a09du, 0},
+        {0x00000000u, 0x00000000u, 0x3f800000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0},
+        {0x39000000u, 0x39000000u, 0x3f800000u, 0x39000000u, 0}, {0x3f490fdbu, 0x3f3504f3u, 0x3f3504f3u, 0x3f800000u, 0},
+        {0x40490fdbu, 0xb3bbbd2eu, 0xbf800000u, 0x33bbbd2fu, 0}, {0x4dc90fdbu, 0xbf3d5f98u, 0x3f2c42b6u, 0xbf8cb742u, 0},
+        {0x7f7fffffu, 0xbf0599b3u, 0x3f5a5f96u, 0xbf1c9ecau, 0}, {0xff7fffffu, 0x3f0599b3u, 0x3f5a5f96u, 0x3f1c9ecau, 0},
+        {0x7f800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM},
+        {0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0},
+    };
+    for (const auto& item : cases) {
+        const float x = std::bit_cast<float>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(sinf_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cosf_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanf_nid_postfix(x)) == item.tangent && errno == expected);
+        float sine = 0.0f;
+        float cosine = 0.0f;
+        sincosf_nid_postfix(x, &sine, &cosine);
+        Require(std::bit_cast<std::uint32_t>(sine) == item.sine && std::bit_cast<std::uint32_t>(cosine) == item.cosine);
+    }
 }
 
 static void CheckExtendedMath() {
@@ -1181,6 +1266,26 @@ static void RequireBytes(const void* constant, std::initializer_list<unsigned ch
     while (index < 16) Require(bytes[index++] == 0);
 }
 
+static void CheckLogfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x00000983u, 0xc2bef664u, 0}, {0x3e003791u, 0xc004f9cfu, 0}, {0x3f7f0a10u, 0xbb76666fu, 0}, {0x3f81086bu, 0x3c03adacu, 0},
+        {0x40400de0u, 0x3f8ca894u, 0}, {0x5f00a041u, 0x422eb14eu, 0}, {0x3f800000u, 0x00000000u, 0}, {0x40000000u, 0x3f317218u, 0},
+        {0x00000001u, 0xc2ce8ed0u, 0}, {0x00800000u, 0xc2aeac50u, 0}, {0x7f7fffffu, 0x42b17218u, 0}, {0x7f800000u, 0x7f800000u, 0},
+        {0x3f800001u, 0x33ffffffu, 0}, {0x3f7fffffu, 0xb3800000u, 0}, {0x7fc00001u, 0x7fc00001u, 0},
+        {0x00000000u, 0xff800000u, ERANGE}, {0x80000000u, 0xff800000u, ERANGE}, {0x80000001u, 0xffc00000u, EDOM},
+        {0xbf800000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, EDOM}, {0xffc00002u, 0xffc00002u, EDOM},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(logf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckDinkumwareConstants() {
     RequireBytes(&_Inf_nid_postfix, {0, 0, 0, 0, 0, 0, 0xf0, 0x7f});
     RequireBytes(&_Denorm_nid_postfix, {1});
@@ -1446,7 +1551,9 @@ int main() {
     CheckMissingClassificationExports();
     CheckFloatMathExports();
     CheckIntegerConversions();
+    CheckCbrtfConsoleBits();
     CheckExtendedMath();
+    CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
@@ -1601,6 +1708,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
@@ -1727,6 +1835,7 @@ int main() {
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();
+    CheckLogfConsoleBits();
     CheckHypotSpecialValue();
     CheckAtanfConsoleBits();
     CheckFloatUnderflowErrno();

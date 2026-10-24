@@ -329,6 +329,8 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
@@ -441,6 +443,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         libc
         libkernel
         jpeg_turbo
+        libzstd_static
         ${CMAKE_DL_LIBS}
 )
 if(APS5_ENABLE_TRACY)
@@ -505,6 +508,18 @@ if(BUILD_TESTING)
     set_tests_properties(agc_frame_dump_io PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(agc_frame_dump_io PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(agc_frame_capture_tests tests/FrameCapture.cpp Execution/src/FrameCapture.cpp)
+    target_include_directories(agc_frame_capture_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_frame_capture_tests PRIVATE libc libzstd_static)
+    set_target_properties(agc_frame_capture_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_frame_capture_tests)
+    add_test(NAME agc_frame_capture COMMAND agc_frame_capture_tests)
+    set_tests_properties(agc_frame_capture PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_frame_capture PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
@@ -2134,6 +2149,19 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_address_passes_targets_split PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    set_target_properties(agc_driver_rcp_hardware_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_driver_rcp_hardware_exact COMMAND agc_driver_rcp_hardware_tests)
+    set_tests_properties(agc_driver_rcp_hardware_exact PROPERTIES ENVIRONMENT "APS5_EXACT_RCP=1;ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_rcp_hardware_exact PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_depth_plane_sampling_evicting COMMAND agc_driver_depth_plane_sampling_tests --evicting)
+    set_tests_properties(agc_driver_depth_plane_sampling_evicting PROPERTIES ENVIRONMENT "APS5_DEPTH_PLANE_COPY_MIB=1" SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_sampling_evicting PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 foreach(agcExecutionTestName IN LISTS ANYPS5_AGC_EXECUTION_TESTS)
     if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/${agcExecutionTestName}.cpp)
@@ -2431,7 +2459,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_shader_bindless agc_shader_selected_records_image_limit agc_shader_selected_records_pair_limit agc_shader_selected_records_direct_image_limit agc_shader_selected_records_direct_pair_limit agc_shader_srt_read_patching agc_shader_type_zero_image_materialization agc_shader_frontend_pair agc_shader_frontend_pair_off agc_shader_layout_pair agc_shader_layout_pair_off agc_shader_entry_lane_proof_budget PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     foreach(agcTest IN ITEMS agc_vertex_input_tests agc_mesh_output_budget_tests agc_shared_write_tests agc_locks_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_ir_reclaim_tests agc_vector_window_tests agc_constant_bit_test_tests agc_integer_narrowing_tests agc_scalar_select_mask_tests agc_vertex_input_validation_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_pass_hazards_tests agc_barrier_batch_tests agc_shader_disk_cache_tests agc_screenshot_tests agc_shader_device_profile_tests agc_placeholder_images_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests agc_formatted_buffer_once_tests agc_formatted_buffer_byte_stores_tests ${agcExecutionTests} agc_fma_mix_once_tests agc_f16_single_convert_tests)
-        if(agcTest STREQUAL "agc_driver_constant_store_tests" OR agcTest STREQUAL "agc_driver_flat_apertures_tests" OR agcTest STREQUAL "agc_driver_pipeline_optimized_readback_tests")
+        if(agcTest STREQUAL "agc_driver_constant_store_tests" OR agcTest STREQUAL "agc_driver_flat_apertures_tests" OR agcTest STREQUAL "agc_driver_pipeline_optimized_readback_tests" OR agcTest STREQUAL "agc_driver_rcp_hardware_tests")
             continue()
         endif()
         string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
@@ -3210,6 +3238,18 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_executable(agc_frame_replay EXCLUDE_FROM_ALL
+        tools/FrameReplay.cpp
+        Execution/src/FrameCapture.cpp
+)
+target_include_directories(agc_frame_replay PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_frame_replay PRIVATE libSceAgcDriver libkernel libc libzstd_static)
+if(WIN32)
+    target_link_options(agc_frame_replay PRIVATE LINKER:--image-base=0x500000000000)
+endif()
+set_target_properties(agc_frame_replay PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_frame_replay)
+
 add_executable(agc_pm4_replay EXCLUDE_FROM_ALL
         tools/Pm4Replay.cpp
         tools/Pm4Analysis.cpp
@@ -3254,6 +3294,58 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED agc_pm4_replay_capture TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_driver_pm4_replay agc_driver_pm4_replay_tool PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    if(WIN32)
+        add_test_executable(agc_driver_frame_capture_eop_tests tests/FrameCaptureEop.cpp Execution/src/FrameCapture.cpp)
+        target_include_directories(agc_driver_frame_capture_eop_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR} ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR})
+        target_link_libraries(agc_driver_frame_capture_eop_tests PRIVATE libSceAgcDriver libkernel libc libzstd_static)
+        set_target_properties(agc_driver_frame_capture_eop_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(agc_driver_frame_capture_eop_tests)
+        add_test(NAME agc_driver_frame_capture_eop COMMAND agc_driver_frame_capture_eop_tests)
+        set_tests_properties(agc_driver_frame_capture_eop PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-eop;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=3"
+                TIMEOUT 120)
+        set_tests_properties(agc_driver_frame_capture_eop PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(agc_driver_frame_replay_state_tests tests/FrameReplayState.cpp Execution/src/FrameCapture.cpp)
+    target_include_directories(agc_driver_frame_replay_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_driver_frame_replay_state_tests PRIVATE libSceAgcDriver libkernel libc libzstd_static)
+    set_target_properties(agc_driver_frame_replay_state_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_driver_frame_replay_state_tests)
+    set(agcFrameReplayModes order tokens blocking)
+    if(WIN32)
+        list(APPEND agcFrameReplayModes zero shader shader_host)
+    endif()
+    foreach(mode IN LISTS agcFrameReplayModes)
+        set(capture "${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}")
+        add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_state_tests ${mode} "${capture}")
+        set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES TIMEOUT 30)
+        if(mode MATCHES "^shader")
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
+                    "APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1")
+        endif()
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    if(WIN32)
+        add_test_executable(agc_driver_frame_replay_tests tests/FrameReplay.cpp Execution/src/FrameCapture.cpp)
+        target_include_directories(agc_driver_frame_replay_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(agc_driver_frame_replay_tests PRIVATE libSceAgc libSceAgcDriver libkernel libc libzstd_static)
+        set_target_properties(agc_driver_frame_replay_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(agc_driver_frame_replay_tests)
+        add_dependencies(agc_driver_frame_replay_tests agc_frame_replay)
+        add_test(NAME agc_driver_frame_replay COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay>)
+        set_tests_properties(agc_driver_frame_replay PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2"
+                TIMEOUT 120)
+        set_tests_properties(agc_driver_frame_replay PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -3504,6 +3596,14 @@ if(BUILD_TESTING)
     add_test(NAME scalar_call COMMAND scalar_call_tests)
     if(WIN32)
         set_tests_properties(scalar_call PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(ir_dump_memory_tests ${LIBS_INCLUDE_DIR}/tests/IrDumpMemory.cpp)
+    target_link_libraries(ir_dump_memory_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(ir_dump_memory_tests)
+    add_test(NAME ir_dump_memory COMMAND ir_dump_memory_tests)
+    if(WIN32)
+        set_tests_properties(ir_dump_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(image_sample_gather_tests ${LIBS_INCLUDE_DIR}/tests/ImageSampleGather.cpp)

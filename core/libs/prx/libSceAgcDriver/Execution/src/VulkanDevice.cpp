@@ -2033,6 +2033,29 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
         deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
+    const bool diagnosticsRequested = std::getenv("APS5_NV_DIAGNOSTICS") != nullptr;
+    VkPhysicalDeviceDiagnosticsConfigFeaturesNV diagnosticsFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DIAGNOSTICS_CONFIG_FEATURES_NV};
+    if (diagnosticsRequested && hasExtension(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &diagnosticsFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+    }
+    const auto diagnostics = ChooseDeviceDiagnostics(diagnosticsRequested, diagnosticsFeatures.diagnosticsConfig == VK_TRUE, hasExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME));
+    VkDeviceDiagnosticsConfigCreateInfoNV diagnosticsConfig{VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV};
+    if (diagnostics.config) {
+        diagnosticsFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DIAGNOSTICS_CONFIG_FEATURES_NV};
+        diagnosticsFeatures.diagnosticsConfig = VK_TRUE;
+        diagnosticsConfig.flags = diagnostics.flags;
+        deviceExtensions.push_back(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+        if (diagnostics.checkpoints && !checkpoints) deviceExtensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+        deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
+        deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
+        diagnosticsConfig.pNext = byteFeatures.pNext;
+        diagnosticsFeatures.pNext = &diagnosticsConfig;
+        byteFeatures.pNext = &diagnosticsFeatures;
+        std::fprintf(stderr, "[gpu] APS5_NV_DIAGNOSTICS: VK_NV_device_diagnostics_config enabled (shader debug info, resource tracking, automatic checkpoints, shader error reporting)\n");
+    } else if (diagnosticsRequested) {
+        std::fprintf(stderr, "[gpu] APS5_NV_DIAGNOSTICS: the device does not support VK_NV_device_diagnostics_config\n");
+    }
     bdaFeatures.pNext = &byteFeatures;
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
     if (hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {

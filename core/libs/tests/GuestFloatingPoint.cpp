@@ -22,6 +22,7 @@ int APS5_VABI fedisableexcept_nid_postfix(int);
 int APS5_VABI __feenableexcept_nid_postfix(int);
 int APS5_VABI __fedisableexcept_nid_postfix(int);
 int APS5_VABI fegettrapenable_nid_postfix();
+int APS5_VABI fegetexcept_nid_postfix();
 int APS5_VABI fesettrapenable_nid_postfix(int);
 }
 
@@ -58,6 +59,28 @@ Environment SeedFlags(unsigned x87, unsigned sse) {
     state.sse = (state.sse & ~0x3fu) | (0x3fu << 7) | sse;
     WriteEnvironment(state);
     return ReadEnvironment();
+}
+
+void CheckEnabledExceptions() {
+    const auto seeded = SeedFlags(0, 0);
+    for (unsigned x87 = 0; x87 <= 0x3f; ++x87) {
+        for (unsigned sse = 0; sse <= 0x3f; ++sse) {
+            auto state = seeded;
+            state.x87[0] = (state.x87[0] & ~0xc3fu) | 0x800 | x87;
+            state.x87[1] = (state.x87[1] & ~0x3fu) | (x87 & 0x15u);
+            state.sse = (state.sse & ~0x7fbfu) | 0x2000 | (sse << 7) | (sse & 0x2au);
+            WriteEnvironment(state);
+            *__error_nid_postfix() = 123;
+            const int enabled = fegetexcept_nid_postfix();
+            const int error = *__error_nid_postfix();
+            const auto after = ReadEnvironment();
+            WriteEnvironment(seeded);
+            Require(enabled == static_cast<int>(0x3f ^ x87), "enabled exceptions use the x87 masks independently of SSE");
+            Require(after.x87[0] == state.x87[0] && after.x87[1] == state.x87[1] && after.sse == state.sse,
+                    "enabled exception query preserves control modes and flags");
+            Require(error == 123, "enabled exception query preserves errno");
+        }
+    }
 }
 
 void CheckRounding() {
@@ -225,6 +248,7 @@ void CheckTraps() {
 int main() {
     const auto original = ReadEnvironment();
     CheckRounding();
+    CheckEnabledExceptions();
     CheckFlags();
     CheckTraps();
     CheckThreads();

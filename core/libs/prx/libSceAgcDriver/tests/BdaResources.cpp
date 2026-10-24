@@ -880,7 +880,7 @@ private:
 
 void importMappedFailureGenerationTests(const Context& context) {
     ClearHostImports(context.device);
-    WindowedRange range(context, WindowedRange::piece, 1);
+    WindowedRange range(context, 2 * WindowedRange::piece, 1);
     ImportAllocationProbe probe(range.importing);
     probe.failure = VK_ERROR_INVALID_EXTERNAL_HANDLE;
     GuestAllocations::Mapped mapped;
@@ -1081,7 +1081,7 @@ void importNeighbouringEdgesTests(const Context& context) {
 // observer holds no GPU lock, so it must not evict (before, it evicted the least recently used import to fit).
 void importAtMapOverBudgetTests(const Context& context) {
     ClearHostImports(context.device);
-    constexpr std::size_t bytes = 65536;
+    constexpr std::size_t bytes = 2 * 65536;
     auto importing = context;
     importing.hostImportAlignment = bytes;
     void* kept = ::operator new(bytes, std::align_val_t{bytes});
@@ -1142,17 +1142,32 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
     const auto made = [&](ImportRequester requester) { return counted(requester).made; };
     Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment", "an import requester has the wrong name");
-    change(0, true);
-    {
+    const auto mappedRange = [&](std::size_t index) {
         GuestAllocations::Mapped ranges;
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         for (const auto& range : lease) {
-            if (range->address == address(0)) ranges.push_back(range);
+            if (range->address == address(index)) ranges.push_back(range);
         }
         Require(ranges.size() == 1, "the requester test's mapped range is not registered");
+        return ranges;
+    };
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block + 6 * piece, 2 * piece, true, true, true);
+    }
+    {
         const auto before = made(ImportRequester::Map);
-        static_cast<void>(ImportMappedRanges(importing, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
-        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(0), piece), "a range imported at map time was not counted for the map requester");
+        static_cast<void>(ImportMappedRanges(importing, mappedRange(6), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(6), 2 * piece), "a range imported at map time was not counted for the map requester");
+    }
+    change(0, true);
+    {
+        const auto map = made(ImportRequester::Map);
+        const auto access = made(ImportRequester::Access);
+        static_cast<void>(ImportMappedRanges(importing, mappedRange(0), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == map && !HostImportCovers(importing, address(0), 16), "a range of 64 KiB was imported at map time");
+        Require(HostImportFor(importing, address(0), 16) != nullptr && HostImportCovers(importing, address(0), piece) && made(ImportRequester::Access) == access + 1 && made(ImportRequester::Map) == map,
+            "a range of 64 KiB left to its first GPU use was not imported there, or not counted for that use's requester");
     }
     change(1, true);
     {
@@ -1230,6 +1245,10 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     const auto counts = HostImportCounters();
     Require(counts.live >= 4 && counts.liveBytes == HostImportLiveBytes(), "the live import counts disagree with the live bytes");
     for (std::size_t index = 0; index < 6; ++index) change(index, false);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block + 6 * piece);
+    }
     ClearHostImports(importing.device);
     ::operator delete(block, std::align_val_t{piece});
 }

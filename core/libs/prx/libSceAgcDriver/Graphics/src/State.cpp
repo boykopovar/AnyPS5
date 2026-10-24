@@ -1396,7 +1396,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (depthKeepsSampleZero && (read(cx, 0x292) & 1u) == 0) {
         const bool filled = result.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
         const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
-        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f0c0000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA Z interpolation or overrasterization");
+        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f080000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization");
         result.samples = 1;
         result.customSampleLocations = false;
         result.sampleLocations.fill(0);
@@ -1437,7 +1437,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
-    zero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags");
+    zero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
     const auto raster = read(cx, 0x205);
@@ -1492,9 +1492,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         color.uintExport = slotExport == 7;
         if (color.samples == 1 && result.samples > 1 && result.colors.empty() && !result.depth && (read(cx, 0x292) & 1u) == 0) {
             const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
-            Require(!result.perSampleShading && sampleInputs == 0 && (read(cx, 0x203) & 0x100u) == 0, "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with PS_ITER_SAMPLE, a sample index or coverage input, or a sample-mask export");
+            Require(sampleInputs == 0 && (read(cx, 0x203) & 0x100u) == 0, "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export");
             result.samples = 1;
             result.customSampleLocations = false;
+            result.perSampleShading = false;
         }
         if (color.samples > 1 && result.samples == 1 && result.colors.empty() && !result.depth && !result.alphaToCoverage && (read(cx, 0x292) & 1u) == 0) {
             Require(result.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT || (read(cx, 0x1b3) & 0x44u) == 0, "conservative rasterization with centroid interpolation of a draw raised to a multisampled target is unsupported");
@@ -2249,7 +2250,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
     if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
-    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags"); !reason.empty()) return reason;
+    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, ColorWriteMask(cx) != 0)) return colorControlMessage(word);
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;

@@ -143,6 +143,13 @@ def relative(path, root):
     return path[root_len + 1:].replace(os.sep, "/")
 
 
+def paths(arguments):
+    for argument in arguments:
+        value = argument.partition("=")[2] if argument.startswith("-D") else argument
+        if os.path.isabs(value):
+            yield value
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -193,7 +200,7 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in (test.get("command") or [])[1:] if os.path.isabs(a)} - {None})
+        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
@@ -254,7 +261,7 @@ def plan(build, graph, picked):
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     if any(not t.get("command") for t in listed if t["name"] in names):
         return run, build.leaves(), len(listed)
-    keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
+    keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
     return run, [t for t in build.leaves() if t not in skip], len(listed)
 

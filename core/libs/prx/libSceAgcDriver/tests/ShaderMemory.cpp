@@ -1713,6 +1713,41 @@ std::array<std::uint32_t, 8> TableSelected(const ShaderRecompiler::ImageTableSna
     return column.words.at(column.codes[0]).dwords;
 }
 
+void verifyTargetFeatureKey() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64;
+    const std::vector<std::uint32_t> capabilities{1u, 4448u, 5347u};
+    const std::vector<std::string_view> extensions{"SPV_KHR_8bit_storage", "SPV_KHR_physical_storage_buffer"};
+    const auto build = [&](std::span<const std::uint32_t> capabilityList, std::span<const std::string_view> extensionList) {
+        auto keyed = request;
+        keyed.target.supportedCapabilities = capabilityList;
+        keyed.target.supportedExtensions = extensionList;
+        std::vector<std::uint64_t> key;
+        RecompileCacheKey::Build(keyed, key);
+        return key;
+    };
+    const auto base = build(capabilities, extensions);
+    const std::vector<std::uint32_t> capabilityCopy = capabilities;
+    const std::vector<std::string> extensionStorage{"SPV_KHR_8bit_storage", "SPV_KHR_physical_storage_buffer"};
+    const std::vector<std::string_view> extensionCopy{extensionStorage[0], extensionStorage[1]};
+    require(build(capabilityCopy, extensionCopy) == base, "target feature key: equal capability and extension lists in other storage gave another key");
+    auto renamed = extensionStorage;
+    renamed[1].back() = 'X';
+    const std::vector<std::string_view> renamedViews{renamed[0], renamed[1]};
+    require(build(capabilities, renamedViews) != base, "target feature key: an extension name that differs in its last byte gave the same key");
+    const std::vector<std::string_view> moved{"SPV_KHR_8bit_storageS", "PV_KHR_physical_storage_buffer"};
+    require(build(capabilities, moved) != base, "target feature key: a byte moved between two extension names gave the same key");
+    const std::vector<std::uint32_t> more{1u, 4448u, 5347u, 11u};
+    require(build(more, extensions) != base, "target feature key: an added capability gave the same key");
+    std::vector<std::string> many;
+    for (std::uint32_t index = 0; index < 40u; ++index) many.push_back("SPV_EXT_descriptor_indexing_" + std::to_string(index));
+    const std::vector<std::string_view> manyViews(many.begin(), many.end());
+    require(build(capabilities, manyViews).size() == base.size(), "target feature key: the key grows with the device's extension names");
+}
+
 void verifyImageTableKeys() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -8428,6 +8463,7 @@ int main(int argc, char** argv) {
         verifyGuardedDescriptorSources();
         verifyLaneMaskGuardedDescriptorSources();
         verifySrtTape();
+        verifyTargetFeatureKey();
         verifyImageTableKeys();
         verifyImageTables();
         verifyImageTableRegistration();

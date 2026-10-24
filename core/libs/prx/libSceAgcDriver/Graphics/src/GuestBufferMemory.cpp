@@ -3671,10 +3671,11 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
     } else if (state.refreshedGeneration > generation) {
         return true;
     }
-    if (!adopting) current = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     for (const auto& mapped : ranges) {
         const auto range = mapped.lock();
-        if (range == nullptr || leasedRangeOwner(current, range->address) != range) continue;
+        if (range == nullptr || range->bytes <= 0x10000) continue;
+        if (current.empty()) current = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        if (leasedRangeOwner(current, range->address) != range) continue;
         try {
             if (!GuestMemory::GpuMutex().HeldByThisThread()) {
                 const auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));

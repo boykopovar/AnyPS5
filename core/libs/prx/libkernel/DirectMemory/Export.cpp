@@ -218,13 +218,12 @@ int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, in
 }
 
 int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
- if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
  int64_t start = 0;
  size_t size = 0;
  const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
- if (result != 0) { *phys_addr_out = 0; *size_out = 0; return result; }
- *phys_addr_out = start;
- *size_out = size;
+ if (result != 0) return result;
+ if (phys_addr_out) *phys_addr_out = start;
+ if (size_out) *size_out = size;
  return 0;
 }
 

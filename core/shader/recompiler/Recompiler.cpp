@@ -153,6 +153,10 @@ std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
     return bytes + 4u > request.target.maxWorkgroupSharedMemoryBytes ? static_cast<std::uint32_t>(bytes) : 0u;
 }
 
+bool HardwareFloat32Flush(const RecompileRequest& request) {
+    return request.target.float32FlushToZero && (!request.context.floatMode.has_value() || ((request.context.floatMode->floatMode >> 4u) & 3u) == 0u);
+}
+
 std::atomic<std::uint64_t> frontEndBuilds{0};
 
 }
@@ -240,7 +244,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.floatMode = request.context.floatMode;
-    translateOptions.float32FlushToZero = request.target.float32FlushToZero;
+    translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.inputInfo = inputInfo;
 
     constexpr InstructionTranslator translator;
@@ -605,7 +609,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
-    targetOptions.float32FlushToZero = request.target.float32FlushToZero;
+    targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
     targetOptions.largePixelFunctionLdsBuffer = request.target.largePixelFunctionLdsBuffer;
@@ -1087,7 +1091,13 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             formatComponents = 1u;
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 const auto selector = (input.outputMask & (1u << component)) != 0u ? (resource.fields[3] >> (component * 3u)) & 7u : 0u;
-                if (selector == 2u || selector == 3u) throw std::runtime_error("reserved prepared vertex component selector");
+                if (selector == 2u || selector == 3u) {
+                    const auto& fields = resource.fields;
+                    char message[192];
+                    std::snprintf(message, sizeof(message), "reserved prepared vertex component selector %u at location %u component %u (V#=[%08x %08x %08x %08x])",
+                        selector, input.location, component, fields[0], fields[1], fields[2], fields[3]);
+                    throw std::runtime_error(message);
+                }
                 if (selector >= 4u) formatComponents = std::max(formatComponents, selector - 3u);
                 selectors |= selector << (component * 3u);
             }

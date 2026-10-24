@@ -837,6 +837,21 @@ void converterWideStoreWindows() {
     expected.insert(expected.end(), {0xC5, 0xF8, 0x11, 0x0E, 0xC4, 0xE3, 0x7D, 0x19, 0x4E, 0x10, 0x01});
     require(paired.Trampolines.size() == 1 && paired.Trampolines[0].Length == 8 && body(paired.Trampolines[0]) == expected && paired.Reports.size() == 1, "A 256-bit store followed by another was not lowered with it in one stub");
 
+    const auto withRdseed = convert(withStore({}, {0x0F, 0xC7, 0xF8, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0xC7, 0xF0});
+    require(withRdseed.Trampolines.size() == 1 && withRdseed.Trampolines[0].Length == 7 && body(withRdseed.Trampolines[0]) == expected && withRdseed.Reports.size() == 1, "A 256-bit store followed by an in-place site did not move its replacement into the stub");
+
+    const auto withClwb = convert(withStore({}, {0x66, 0x0F, 0xAE, 0x37, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x1F, 0x40, 0x00});
+    require(withClwb.Trampolines.size() == 1 && withClwb.Trampolines[0].Length == 8 && body(withClwb.Trampolines[0]) == expected, "A 256-bit store followed by CLWB did not move its replacement into the stub");
+
+    const auto withRipStore = convert(withStore({}, {0xF3, 0x0F, 0x2B, 0x05, 0x40, 0x00, 0x00, 0x00, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0xF3, 0x0F, 0x11, 0x05, 0x00, 0x00, 0x00, 0x00});
+    require(withRipStore.Trampolines.size() == 1 && withRipStore.Trampolines[0].Length == 12 && body(withRipStore.Trampolines[0]) == expected && withRipStore.Trampolines[0].Relocations.size() == 1 && withRipStore.Trampolines[0].Relocations[0].SiteTarget == 0x4C && withRipStore.Trampolines[0].Relocations[0].InstructionEnd == 19, "A 256-bit store followed by a RIP-relative in-place site did not relocate its replacement");
+
     const Bytes push = {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50, 0x48, 0x8D, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x08, 0x58};
     const auto ripCalled = convert(withStore({}, {0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}));
     expected = halves;

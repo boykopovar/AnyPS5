@@ -633,7 +633,7 @@ private:
                     if (decoded) loaded.indexModules.insert(identity);
                 } else if (record.kind == GraphicsRecord || record.kind == ComputeRecord) {
                     if (decode && !loaded.indexRecords.contains(record.payloadHash)) {
-                        LoadedEntry entry;
+                        LoadedEntry entry{};
                         entry.kind = record.kind;
                         bool decoded = false;
                         if (record.kind == GraphicsRecord) {

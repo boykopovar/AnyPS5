@@ -311,6 +311,10 @@ void APS5_VABI _ZNSt8bad_castD0Ev_nid_postfix(LibcException::ExceptionObject* se
 const char* APS5_VABI _ZNKSt8bad_cast4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
 void APS5_VABI _ZNSt8bad_castC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt8bad_cast_nid_postfix.destroy; }
 void APS5_VABI _ZNSt8bad_castC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt8bad_cast_nid_postfix.destroy; }
+[[noreturn]] void APS5_VABI _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
+    if (!self) throw std::invalid_argument("exception object is null");
+    LibcException::ThrowPlain(_ZTVSt8bad_cast_nid_postfix);
+}
 
 LibcException::TypeRecord _ZTISt10bad_typeid_nid_postfix {LibcException::SingleTypeVtable + 2, "St10bad_typeid", &_ZTISt9exception_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt10bad_typeid_nid_postfix {0, &_ZTISt10bad_typeid_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
