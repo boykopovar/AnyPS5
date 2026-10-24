@@ -2213,7 +2213,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
     const auto commands = start.commands;
-    if (!continued) recorder->PrepareSampleSlot();
+    if (!continued) {
+        recorder->PrepareSampleSlot();
+        PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+    }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
     // continued draw lies inside its pass's range).

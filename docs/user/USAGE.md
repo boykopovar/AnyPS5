@@ -358,7 +358,7 @@ Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/
 
 ### Performance overlay
 
-F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERLAY=1` shows it from the first frame. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
+F10 cycles a performance overlay over the presented image through three states: off, page 1 (the table below), page 2 (a detailed page, the second table), then off again. `ANYPS5_OVERLAY=1` shows page 1 from the first frame and `ANYPS5_OVERLAY=2` page 2; F10 then goes on from there. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
 
 | Line | Meaning |
 |------|---------|
@@ -376,6 +376,28 @@ F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERL
 | `RES` | The display buffer's size, then the window's swapchain size, for example `RES: 1920X1080 / 2560X1440`. Not shown for frames without a display buffer. |
 
 Times are shown with one decimal below 100 and as whole numbers above; anything above 9999 shows as 9999, so `FRAME` and `MIN/AVG/MAX` read 9999 for frames of 10 s or more. `FPS` has the same format, with two decimals below 1. Counts are whole numbers, in thousands (`12K`) from 10000 and in millions (`3M`) from a million. Memory is in GB of 2^30 bytes. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame. Each draw and dispatch packet and each pipeline creation is counted also while the overlay is hidden, with one increment of a counter that belongs to the packet worker or, for pipelines, a shared one; the memory and the counters are read only while the overlay is shown.
+
+Page 2 is wider, 46 characters, and has no graph. It reads its sources once a second while it is shown, so its rates cover the last second; they appear a second after the page does. A line whose source isn't available in the run is left out, and so is a part of a line.
+
+| Line | Meaning |
+|------|---------|
+| `FPS`, `FRAME` | As on page 1. |
+| `BUSY %` | The share of the last second each queue's packet worker (`Q0` for queue 0, `Q1` for queue 1, and so on) spent on packets, suspends, ends of submissions, rewinds and completions, as `worker_busy_pct` of the trace summary counts it. From the trace totals. |
+| phases | The 5 phases with the most CPU time per frame over the last second, in ms, summed over the driver's threads and named as in the trace summary's `top_phases_ms_per_frame`: a timed scope, or a scope and one of its stages. A scope's time includes the scopes and stages within it, and threads that work at once each count, so the phases can add up to more than `FRAME`. From the trace totals. |
+| `Q0 WAIT MS/FRAME` | Time per frame that queue 0's packet worker waited, in ms: `MEM` in packets that wait for guest memory or for rendering to finish, `LOCK` for the GPU lock, `GPU` in the recorder's syncs and serial waits and in command batches' fence waits. A memory wait that syncs the GPU counts in `MEM` and in `GPU`. From the trace totals. |
+| `RENDER PASSES/FRAME` | Render passes begun per frame; a draw that continues the open pass begins none. From the trace totals; not shown while an `APS5_TRACE_*` variable is set. |
+| `PIPELINES` | `COMPILING`: shader preparations and pipeline-library prebuilds queued or running. `NEW/S`: pipelines created in the last second, as `SHADERS` on page 1. |
+| `HIT %` | `DRAW CACHE`: the share of the draw cache's lookups in the last second that found an entry whose stages all matched. `PIPELINES`: the share of the pipeline cache's lookups that found the pipeline. Each is left out for a second without lookups. |
+| `FLIPS/S`, `PRESENTS/S` | The title's flips per second against the frames presented per second. |
+| `DROPPED/S`, `REPEATED/S` | Per second: flips not presented because no swapchain image was free (the `dropped` count of the `[present]` line of `APS5_PROFILE_DRAW=1`), and presents of the same display buffer as the present before. |
+| `COMMIT` | The system's commit charge against its commit limit, in GB: `CommitTotal` and `CommitLimit` of `GetPerformanceInfo` on Windows, `Committed_AS` and `CommitLimit` of `/proc/meminfo` on Linux, where the limit is enforced only with `vm.overcommit_memory=2`. Then `FAULTS/S`, the process's page faults per second, soft ones included: `PageFaultCount` of `GetProcessMemoryInfo` on Windows, minor plus major faults of `getrusage` on Linux. |
+| `HOST IMPORTS` | Host memory imports in use, then their size against the import budget, in GB. Not shown on a device that can't import host memory. |
+| `CPU COPIES` | Guest memory copied per second by address-based resource builds, for the ranges that no host import or mirror serves, in MB of 2^20 bytes. `CAP`: the largest of those builds in the last second against the copy cap, `APS5_ADDRESS_COPY_MAX_MIB` (64 MiB unless set), past which a build stops the game. |
+| `UNIMPLEMENTED` | Calls per second to functions AnyPS5 doesn't implement, then their total since the start. Such a call throws an error, so a count above 0 means the title caught it and went on. |
+| `REFUSED SHADERS` | Shaders whose draws are skipped. Shown only with `APS5_SKIP_REFUSED_DRAWS=1`; without it a refused shader stops the game. |
+| `TITLE`, `PRESENT` | The title ID from the title's `param.json`, and the swapchain's present mode, as `ANYPS5_PRESENT_MODE` names it. |
+
+The busy shares, the phases, the queue 0 waits and the render passes come from the totals the trace keeps per thread. Showing page 2 turns those totals on, without the event buffers of an `APS5_TRACE_FRAMES` trace: while page 2 is shown, each timed scope on the driver's threads reads the clock twice and adds its time to its thread's totals, and each render pass begun is counted there. Leaving page 2 turns the totals off again. A run with an `APS5_TRACE_*` variable keeps its trace as configured; page 2 then shows those lines only while that trace records. While the overlay is hidden or on page 1, page 2 adds a check per render pass begun (the same check each timed scope already makes), a per-thread count of the bytes each address-based build copies, a count of unimplemented-function calls and the display buffer's address per present; its sources are read only while it is shown.
 
 ### Windows crash diagnostics
 

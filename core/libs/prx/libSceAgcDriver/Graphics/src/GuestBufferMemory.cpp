@@ -17,6 +17,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -34,6 +35,7 @@
 #include <functional>
 #include <bit>
 #include <condition_variable>
+#include <deque>
 #include <iterator>
 #include <list>
 #include <map>
@@ -1457,6 +1459,41 @@ std::uint64_t physicalMemoryBytes() {
 
 std::atomic<std::uint64_t> budgetOverride{0};
 std::atomic<std::uint64_t> addressCopyLimitOverride{0};
+
+std::uint64_t addressCopyLimit() {
+    static const std::uint64_t configured = [] {
+        const char* value = std::getenv("APS5_ADDRESS_COPY_MAX_MIB");
+        return (value ? std::strtoull(value, nullptr, 10) : 64ull) << 20u;
+    }();
+    const auto limit = addressCopyLimitOverride.load(std::memory_order_relaxed);
+    return limit != 0 ? limit : configured;
+}
+
+constexpr unsigned AddressCopyEpochShift = 48;
+constexpr std::uint64_t AddressCopyEpochMask = 0xffff;
+constexpr std::uint64_t AddressCopyLargestMask = (std::uint64_t{1} << AddressCopyEpochShift) - 1;
+std::atomic<std::uint64_t> addressCopyEpoch{0};
+
+struct AddressCopyRegistry {
+    std::mutex mutex;
+    std::deque<AddressCopyCounters> counters;
+    std::vector<AddressCopyCounters*> unused;
+};
+
+AddressCopyRegistry& addressCopyRegistry() {
+    static auto* registry = new AddressCopyRegistry;
+    return *registry;
+}
+
+struct AddressCopyLease {
+    AddressCopyCounters* counters = nullptr;
+    ~AddressCopyLease() {
+        if (counters == nullptr) return;
+        auto& registry = addressCopyRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.unused.push_back(counters);
+    }
+};
 
 // Pinned imports count against the driver's system memory heap, which imports, type-3 mirrors, buffers and textures
 // placed in host memory share; past it ordinary host allocations fail. The budget is APS5_HOST_IMPORT_MIB, else
@@ -3600,6 +3637,47 @@ void SetAddressCopyLimit(std::uint64_t bytes) {
     addressCopyLimitOverride.store(bytes, std::memory_order_relaxed);
 }
 
+AddressCopyCounters& AddressCopyCounters::ThisThread() {
+    auto& lease = HostThreadLocal<AddressCopyLease, AddressCopyLease>();
+    if (lease.counters == nullptr) {
+        auto& registry = addressCopyRegistry();
+        std::lock_guard lock(registry.mutex);
+        if (registry.unused.empty()) {
+            lease.counters = &registry.counters.emplace_back();
+        } else {
+            lease.counters = registry.unused.back();
+            registry.unused.pop_back();
+        }
+    }
+    return *lease.counters;
+}
+
+void AddressCopyCounters::Count(std::uint64_t copied) {
+    bytes.store(bytes.load(std::memory_order_relaxed) + copied, std::memory_order_relaxed);
+    const auto epoch = addressCopyEpoch.load(std::memory_order_relaxed) & AddressCopyEpochMask;
+    const auto kept = largest.load(std::memory_order_relaxed);
+    const auto clamped = std::min(copied, AddressCopyLargestMask);
+    if ((kept >> AddressCopyEpochShift) != epoch || (kept & AddressCopyLargestMask) < clamped) largest.store(epoch << AddressCopyEpochShift | clamped, std::memory_order_relaxed);
+}
+
+AddressCopyCounters::Totals AddressCopyCounters::Fold() {
+    auto& registry = addressCopyRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto epoch = addressCopyEpoch.load(std::memory_order_relaxed);
+    Totals totals;
+    for (const auto& counters : registry.counters) {
+        totals.bytes += counters.bytes.load(std::memory_order_relaxed);
+        const auto kept = counters.largest.load(std::memory_order_relaxed);
+        if ((kept >> AddressCopyEpochShift) == (epoch & AddressCopyEpochMask)) totals.largest = std::max(totals.largest, kept & AddressCopyLargestMask);
+    }
+    addressCopyEpoch.store(epoch + 1, std::memory_order_relaxed);
+    return totals;
+}
+
+std::uint64_t AddressCopyCounters::Limit() {
+    return addressCopyLimit();
+}
+
 void SetHostImportDeferredSettles(bool enabled) {
 #ifdef _WIN32
     deferredSettles.store(enabled, std::memory_order_relaxed);
@@ -4017,12 +4095,12 @@ void GuestBufferMemory::AcquireRegistered() {
         }
         releaseImportedMirrors(context, imported);
         regionsSorted = sortedLookup;
-        static const std::uint64_t copyLimit = [] {
-            const char* value = std::getenv("APS5_ADDRESS_COPY_MAX_MIB");
-            return (value ? std::strtoull(value, nullptr, 10) : 64ull) << 20u;
-        }();
-        const auto limit = addressCopyLimitOverride.load(std::memory_order_relaxed);
-        if (const auto overflow = AddressCopyOverflow(std::move(copies), limit != 0 ? limit : copyLimit); !overflow.empty()) {
+        if (!copies.empty()) {
+            std::uint64_t copied = 0;
+            for (const auto& copy : copies) copied += copy.committed;
+            AddressCopyCounters::ThisThread().Count(copied);
+        }
+        if (const auto overflow = AddressCopyOverflow(std::move(copies), addressCopyLimit()); !overflow.empty()) {
             std::fprintf(stderr, "FATAL: %s\n", overflow.c_str());
             std::fflush(stderr);
             std::abort();
