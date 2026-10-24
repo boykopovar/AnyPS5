@@ -218,6 +218,54 @@ int main(int argc, char** argv) {
     std::error_code notEmpty;
     if (createdLibs) std::filesystem::remove("libs", notEmpty);
 
+    const std::filesystem::path nestedRoot = "anyps5-relinked-prx-dir-for-test";
+    const std::filesystem::path nestedGuest = nestedRoot / "Engine.Render.prx";
+    const std::filesystem::path nestedRelinked = nestedRoot / "prx" / "Engine.Render.prx.guest.prx";
+    std::filesystem::create_directories(nestedRelinked.parent_path());
+    {
+        std::ofstream elf(nestedGuest, std::ios::binary);
+        elf.write("\x7f" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], nestedRelinked, std::filesystem::copy_options::overwrite_existing);
+    void* nested = dlopen_nid_postfix(nestedGuest.string().c_str(), 2);
+    Require(nested != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(nested, "GuestModuleAdd"));
+    Require(add && add(20, 22) == 42);
+    Require(dlclose_nid_postfix(nested) == 0);
+    std::filesystem::remove_all(nestedRoot);
+
+    const std::filesystem::path layeredRoot = "anyps5-relinked-prx-layers-for-test";
+    const std::filesystem::path layeredGuest = layeredRoot / "Engine.Layers.prx";
+    std::filesystem::create_directories(layeredRoot / "prx");
+    {
+        std::ofstream elf(layeredGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+        std::ofstream broken(layeredRoot / "prx" / "Engine.Layers.prx.guest.prx", std::ios::binary);
+        broken << "not a module";
+    }
+    std::filesystem::copy_file(argv[1], layeredRoot / "ENGINE.LAYERS.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* layered = dlopen_nid_postfix(layeredGuest.string().c_str(), 2);
+    Require(layered != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(layered, "GuestModuleAdd"));
+    Require(add && add(19, 23) == 42);
+    Require(dlclose_nid_postfix(layered) == 0);
+    std::filesystem::remove_all(layeredRoot);
+
+    const std::filesystem::path foldedRoot = "anyps5-relinked-prx-folded-for-test";
+    const std::filesystem::path foldedGuest = foldedRoot / "Engine.Folded.prx";
+    std::filesystem::create_directories(foldedRoot / "prx");
+    {
+        std::ofstream elf(foldedGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], foldedRoot / "prx" / "ENGINE.FOLDED.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* folded = dlopen_nid_postfix(foldedGuest.string().c_str(), 2);
+    Require(folded != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(folded, "GuestModuleAdd"));
+    Require(add && add(10, 32) == 42);
+    Require(dlclose_nid_postfix(folded) == 0);
+    std::filesystem::remove_all(foldedRoot);
+
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
     Require(add && _sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
