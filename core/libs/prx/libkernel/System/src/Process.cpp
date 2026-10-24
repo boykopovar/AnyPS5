@@ -489,16 +489,30 @@ void ExecCloseHandle(HANDLE value) { CloseHandle(value); }
     }
     if (command.size() >= 32767) throw std::runtime_error("exec: command line is too long");
     std::vector<std::wstring> entries;
-    if (implicitEnvironment) {
-        const std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> inherited(GetEnvironmentStringsW(), FreeEnvironmentStringsW);
-        if (!inherited) throw std::runtime_error("exec: cannot read the process environment");
-        for (const wchar_t* at = inherited.get(); *at;) {
-            const std::wstring entry(at);
-            at += entry.size() + 1;
-            entries.push_back(std::move(entry));
+    const std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> inherited(GetEnvironmentStringsW(), FreeEnvironmentStringsW);
+    if (!inherited) throw std::runtime_error("exec: cannot read the process environment");
+    for (const wchar_t* at = inherited.get(); *at;) {
+        const std::wstring entry(at);
+        at += entry.size() + 1;
+        entries.push_back(std::move(entry));
+    }
+    if (!implicitEnvironment) {
+        const auto name = [](const std::wstring& entry) {
+            const std::size_t separator = entry.find(L'=');
+            return separator == std::wstring::npos ? entry : entry.substr(0, separator);
+        };
+        for (std::size_t index = 0; environment[index] != nullptr; ++index) {
+            std::wstring replaced = ExecWide(environment[index]);
+            const std::wstring replacedName = name(replaced);
+            for (std::size_t existing = 0; existing < entries.size();) {
+                if (name(entries[existing]) == replacedName) {
+                    entries.erase(entries.begin() + existing);
+                    continue;
+                }
+                ++existing;
+            }
+            entries.push_back(std::move(replaced));
         }
-    } else {
-        for (std::size_t index = 0; environment[index] != nullptr; ++index) entries.push_back(ExecWide(environment[index]));
     }
     entries.erase(std::remove_if(entries.begin(), entries.end(),
                                  [parentPrefix, parentPrefixLength, skipPrefix, skipPrefixLength](const std::wstring& entry) {
@@ -808,7 +822,27 @@ int ExecProgram(const char* file, char* const* arguments, char* const* environme
         (header[7] != 0 && header[7] != 3) || header[17] != 0 || (header[16] != 2 && header[16] != 3) || header[18] != 62 ||
         header[19] != 0 || ::access(target.c_str(), X_OK) != 0)
         throw std::runtime_error("exec: target is not an executable x86-64 Linux ELF");
-    fexecve(descriptor, arguments, entries);
+    std::vector<std::string> merged;
+    if (!implicitEnvironment)
+        for (std::size_t index = 0; entries[index] != nullptr; ++index) merged.emplace_back(entries[index]);
+    for (std::size_t index = 0; environ[index] != nullptr; ++index) {
+        const std::string_view entry = environ[index];
+        const std::size_t separator = entry.find('=');
+        const std::string_view name = separator == std::string_view::npos ? entry : entry.substr(0, separator);
+        bool overridden = false;
+        for (const auto& guest : merged) {
+            const std::size_t guestSeparator = guest.find('=');
+            if ((guestSeparator == std::string::npos ? std::string_view(guest) : std::string_view(guest).substr(0, guestSeparator)) == name) {
+                overridden = true;
+                break;
+            }
+        }
+        if (!overridden) merged.emplace_back(environ[index]);
+    }
+    std::vector<char*> replacement;
+    for (auto& entry : merged) replacement.push_back(entry.data());
+    replacement.push_back(nullptr);
+    fexecve(descriptor, arguments, replacement.data());
     const int replaced = errno;
     ::close(descriptor);
     throw std::system_error(replaced, std::generic_category(), "exec: replacing the executable");

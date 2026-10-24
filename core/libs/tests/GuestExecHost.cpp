@@ -187,7 +187,7 @@ extern "C" void APS5_VABI ExecSecond_nid_no_patch(const std::uintptr_t* block) {
     char value[64]{};
     Require(GetEnvironmentVariableA("EXEC_SECOND", value, 64) == 6 && value == std::string("stage2"),
             "execve environment entry reached the replacement");
-    Require(GetEnvironmentVariableA("PATH", value, 64) == 0, "execve environment replaced the inherited variables");
+    Require(GetEnvironmentVariableA("PATH", value, 64) != 0, "execve keeps the inherited host variables");
     Require(GetEnvironmentVariableA("ANYPS5_LOADEXEC_PARENT", value, 64) == 0, "parent wait variable was retained");
     Require(GetEnvironmentVariableA("ANYPS5_LOADEXEC_ARGV_SKIP", value, 64) == 0, "argument marker was retained");
 #else
@@ -199,6 +199,10 @@ extern "C" void APS5_VABI ExecSecond_nid_no_patch(const std::uintptr_t* block) {
             found = found || std::strcmp(environ[index], entry.c_str()) == 0;
         Require(found, "replacement environment entry value");
     }
+    bool hostPath = false;
+    for (std::size_t index = 0; environ[index] != nullptr; ++index)
+        hostPath = hostPath || std::strncmp(environ[index], "PATH=", 5) == 0;
+    Require(hostPath, "exec keeps the inherited host variables");
     Require(!cleaned, "secondary inherited old runtime state");
 #endif
     RecordPid();
