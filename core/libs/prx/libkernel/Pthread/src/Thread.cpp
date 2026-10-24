@@ -549,6 +549,18 @@ bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& ma
     return false;
 }
 
+bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        policy = thread->schedPolicy.load(std::memory_order_relaxed);
+        priority = thread->priority.load(std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
 bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
