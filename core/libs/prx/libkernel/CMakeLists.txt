@@ -46,6 +46,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Spinlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
@@ -213,6 +214,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_process_arguments PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
+        add_test_executable(guest_runtime_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestRuntimeLifecycle.cpp)
+        target_include_directories(guest_runtime_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_runtime_lifecycle_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
+        set_target_properties(guest_runtime_lifecycle_tests PROPERTIES ENABLE_EXPORTS ON)
+        add_dependencies(guest_runtime_lifecycle_tests relinker)
+        add_test(NAME guest_runtime_lifecycle COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_guest_runtime_lifecycle.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_runtime_lifecycle_tests> $<TARGET_FILE_DIR:libkernel>)
+    endif()
     add_library(guest_module_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
     target_include_directories(guest_module_fixture PRIVATE ${LIBS_INCLUDE_DIR})
     add_custom_command(TARGET guest_module_fixture POST_BUILD
@@ -221,7 +233,6 @@ if(BUILD_TESTING)
     add_dependencies(guest_module_fixture nid_patcher)
     configure_windows_unwind(guest_module_fixture)
     set_target_properties(guest_module_fixture PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
-    find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND AND NOT WIN32)
         target_link_options(guest_module_fixture PRIVATE -Wl,--no-as-needed)
         add_test(NAME nid_patcher_dynamic_strings COMMAND ${Python3_EXECUTABLE}
@@ -358,7 +369,8 @@ if(BUILD_TESTING)
         target_link_libraries(guest_host_standard_error_windows_tests PRIVATE libkernel libc)
         configure_windows_unwind(guest_host_standard_error_windows_tests)
         add_test(NAME guest_host_standard_error_windows COMMAND guest_host_standard_error_windows_tests)
-        set_tests_properties(guest_host_standard_error_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_host_standard_buffering_windows COMMAND guest_host_standard_error_windows_tests --buffering)
+        set_tests_properties(guest_host_standard_error_windows guest_host_standard_buffering_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_truncate_tests ${LIBS_INCLUDE_DIR}/tests/GuestTruncate.cpp)

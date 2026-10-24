@@ -113,11 +113,32 @@ static void CheckReleaseFlexibleMemory() {
     Require(sceKernelMapFlexibleMemory(&mapped, length, 3, 0) == 0 && mapped != nullptr);
     static_cast<volatile unsigned char*>(mapped)[length - 1] = 1;
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    Require(sceKernelMprotect(mapped, 0x4000, 1) == 0);
     Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(sceKernelVirtualQuery(static_cast<unsigned char*>(mapped) + length - 1, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(bytes[length - 1] == 1);
+    bytes[length - 2] = 2;
+    Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0) == 0);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(std::uintptr_t{0x7ff000000000}), length) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    Require(sceKernelReleaseFlexibleMemory(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 1, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 0x1000, 0x4000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0x6000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(~std::uintptr_t{0x3fff}), 0x8000) == SCE_KERNEL_ERROR_EINVAL);
     void* again = mapped;
-    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == 0 && again == mapped);
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(bytes[length - 1] == 1 && bytes[length - 2] == 2);
+    again = mapped;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x10) == 0 && again == mapped);
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
     Require(sceKernelMunmap(again, length) == 0);
 }
 

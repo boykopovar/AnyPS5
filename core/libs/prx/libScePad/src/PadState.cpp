@@ -25,6 +25,7 @@ namespace {
     std::array<std::uint8_t, 2> audioHapticRumble{};
     PadAudioHapticQueue legacyHaptics;
     std::uint64_t timestamp = 0;
+    std::uint64_t injectedTimestamp = 0;
 
     struct QueuedInput {
         PadInputState input;
@@ -224,6 +225,7 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
     if (injected != lastInjected) {
         lastInjected = injected;
         timestamp = now;
+        injectedTimestamp = now;
     }
     return injected;
 }
@@ -260,7 +262,7 @@ int Pad::Read(PadData* data, int num) {
     int count = 0;
     while (count < num && !queue.empty()) {
         const QueuedInput& entry = queue.front();
-        data[count++] = BuildData(entry.input, entry.timestamp, now, injected);
+        data[count++] = BuildData(entry.input, std::max(entry.timestamp, injectedTimestamp), now, injected);
         queue.pop_front();
     }
     return count;

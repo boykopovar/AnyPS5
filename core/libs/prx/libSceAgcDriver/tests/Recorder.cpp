@@ -31,6 +31,7 @@
 #include "ResidentPresent.hpp"
 #include "ImageTableAbi.hpp"
 #include "HostImportLifetime.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include "SampleLod_spv.h"
 #include "BufferUpdate_spv.h"
 #include "SampleArray_spv.h"
@@ -2560,7 +2561,7 @@ void remappedImportTests(const Device& device) {
 
 void hostImportRetirementTests(const Device& device) {
     const auto& context = device.GetContext();
-    constexpr std::size_t UnitBytes = 65536;
+    constexpr std::size_t UnitBytes = 2 * 65536;
     constexpr std::size_t AllocationBytes = 4 * UnitBytes;
     constexpr std::size_t CopyBytes = 256;
 #ifdef _WIN32
@@ -5294,6 +5295,11 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     }
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
+        std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
     SetImportWatch(base, ImportWatch::Watch);
 #endif
     struct Restore {
@@ -5429,6 +5435,11 @@ bool completionStoreShadowTests(const Device& device, Recorder& recorder) {
     }
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
+        std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
     SetImportWatch(base, ImportWatch::Watch);
 #endif
     struct Restore {
@@ -9741,6 +9752,109 @@ void pipelineCacheTests(const Device& device, bool benchmark) {
     std::cout << "Pipeline cache key and retained lifetime tests passed\n";
 }
 
+struct PipelineCacheFileProbe {
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    std::atomic<std::uint32_t> creations{0};
+    static inline PipelineCacheFileProbe* active = nullptr;
+    explicit PipelineCacheFileProbe(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "pipeline cache file probe is already active");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~PipelineCacheFileProbe() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    static VKAPI_ATTR VkResult VKAPI_CALL createCache(VkDevice device, const VkPipelineCacheCreateInfo* info, const VkAllocationCallbacks* callbacks, VkPipelineCache* created) {
+        ++active->creations;
+        return reinterpret_cast<PFN_vkCreatePipelineCache>(active->resolver(device, "vkCreatePipelineCache"))(device, info, callbacks, created);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreatePipelineCache") == 0) return reinterpret_cast<PFN_vkVoidFunction>(createCache);
+        return active->resolver(device, name);
+    }
+};
+
+void pipelineCacheHeaderTests(const Device& device) {
+    const auto root = std::filesystem::temp_directory_path() / ("aps5-pipeline-header-test-" + std::to_string(std::random_device{}()));
+    Require(root.native().size() < 225, "the pipeline cache header test requires a temporary root shorter than 225 characters");
+#ifdef _WIN32
+    std::error_code cleanupError;
+    const auto cleanupRoot = ShaderRecompiler::NativeCachePath_nid_no_patch(root, cleanupError);
+    Require(!cleanupError, "the pipeline cache header test could not resolve its cleanup directory");
+#else
+    const auto& cleanupRoot = root;
+#endif
+    struct RemoveDirectory {
+        std::filesystem::path directory;
+        ~RemoveDirectory() {
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } removeDirectory{cleanupRoot};
+    auto directory = root;
+    char version[17];
+    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+    while ((directory / version).native().size() < 220) {
+        const auto length = (directory / version).native().size();
+        const auto remaining = 245 > length ? 245 - length : 1;
+        const auto chunk = std::min<std::size_t>(remaining, 16);
+        directory /= std::string(chunk, 'd');
+    }
+    const auto versionDirectory = directory / version;
+    Require(versionDirectory.native().size() >= 220 && versionDirectory.native().size() <= 249, "the pipeline cache directory is not between 220 and 249 characters");
+#ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+#else
+    setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+    setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
+#endif
+    auto context = device.GetContext();
+    PipelineCacheFileProbe probe(context);
+    PipelineCache cache(context, device.Properties());
+    cache.SaveNow();
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(versionDirectory)) files.push_back(entry.path());
+    Require(files.size() == 1 && files.front().filename().string().starts_with("vk-pipelines-"), "the long pipeline cache directory does not hold exactly one cache file");
+    Require(files.front().native().size() > 260, "the pipeline cache header test did not exceed MAX_PATH");
+    std::vector<std::byte> stored;
+    Require(ShaderRecompiler::ReadWholeFile(files.front(), stored) && !stored.empty(), "the long pipeline cache file was not persisted");
+    const auto creations = probe.creations.load();
+    for (int repeat = 0; repeat < 3; ++repeat) cache.SaveNow();
+    Require(probe.creations.load() == creations, "an unchanged long-path pipeline cache was reloaded for an idle save");
+    std::vector<std::byte> after;
+    Require(ShaderRecompiler::ReadWholeFile(files.front(), after) && after == stored, "an idle save changed the long pipeline cache file");
+#ifdef _WIN32
+    std::error_code lockError;
+    const auto lockNative = ShaderRecompiler::NativeCachePath_nid_no_patch(files.front(), lockError);
+    Require(!lockError, "could not resolve long cache path");
+    struct FileLockGuard {
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        ~FileLockGuard() {
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+        }
+    } lockGuard{CreateFileW(lockNative.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    Require(lockGuard.handle != INVALID_HANDLE_VALUE, "could not lock pipeline cache file");
+    std::string capturedStderr;
+    {
+        StderrCapture capture;
+        PipelineCache lockedCache(context, device.Properties());
+        lockedCache.SaveNow();
+        capturedStderr = capture.Finish();
+    }
+    Require(capturedStderr.find("cannot read") != std::string::npos, "an unreadable long pipeline cache file did not report the cannot read diagnostic");
+    if (lockGuard.handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(lockGuard.handle);
+        lockGuard.handle = INVALID_HANDLE_VALUE;
+    }
+    std::vector<std::byte> retained;
+    Require(ShaderRecompiler::ReadWholeFile(files.front(), retained) && retained == stored, "an unreadable long pipeline cache file was overwritten");
+#endif
+    std::cout << "long-path pipeline cache header reused without reloading\n";
+}
+
 int pipelineCacheFileTests(const Device& device) {
     const auto& context = device.GetContext();
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-pipeline-cache-file-test-" + std::to_string(std::random_device{}()));
@@ -10788,6 +10902,11 @@ int main(int argc, char** argv) {
 
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-cache-file-only") {
             return pipelineCacheFileTests(device);
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-cache-header-only") {
+            pipelineCacheHeaderTests(device);
+            return 0;
         }
 
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-pool-only") {

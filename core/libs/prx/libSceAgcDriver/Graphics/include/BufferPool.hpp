@@ -73,6 +73,7 @@ public:
     std::size_t RetainedImages();
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
+    VkDeviceSize ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now);
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
     static VkDeviceSize SlabBlockBytes(std::size_t capacity);
     SlabSlot TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable);
@@ -168,6 +169,10 @@ private:
     std::uint64_t imageEvictions = 0;
     std::list<Slot*> imageOrder;
     std::uint64_t clock = 0;
+    std::optional<std::chrono::steady_clock::time_point> idleRead;
+    std::uint64_t idleClock = 0;
+    std::uint64_t reclaimBefore = 0;
+    std::uint64_t scannedIdleClock = 0;
     AgcDriver::Mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;
     std::unordered_map<VkDeviceMemory, std::unique_ptr<SlabBlock>> slabBlocks;
