@@ -4,6 +4,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
+        src/VectorPolar.cpp
         src/GuestObjects.cpp
         src/Names.cpp
 )
@@ -65,6 +66,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_freetype_face_info_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_face_info_tests)
     add_test(NAME guest_freetype_face_info COMMAND guest_freetype_face_info_tests)
+    add_test_executable(guest_freetype_vector_polar_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeVectorPolar.cpp)
+    target_include_directories(guest_freetype_vector_polar_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_vector_polar_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_vector_polar_tests)
+    add_test(NAME guest_freetype_vector_polar COMMAND guest_freetype_vector_polar_tests)
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
