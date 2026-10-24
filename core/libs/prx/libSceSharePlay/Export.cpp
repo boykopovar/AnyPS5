@@ -50,8 +50,13 @@ int APS5_VABI sceSharePlayCrashDaemon(void) {
     return 0;
 }
 
-int APS5_VABI sceSharePlayGetCurrentConnectionInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
+    if (info == nullptr) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
+    *info = {};
+    info->hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
+    info->visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
     return 0;
 }
 
