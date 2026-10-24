@@ -68,6 +68,8 @@ int main() {
     for (const auto byte : vrr) Require(byte == std::byte{0xff});
 
     Require(Rejects(handle, nullptr));
+    Require(sceVideoOutGetResolutionStatus(handle, nullptr) == static_cast<int>(0x80290002u));
+    Require(sceVideoOutGetResolutionStatus(-1, nullptr) == static_cast<int>(0x80290002u));
     Require(Rejects(0, &status));
     Require(Rejects(-1, &status));
     Require(Rejects(NEVER_OPENED_HANDLE, &status));
