@@ -1049,6 +1049,19 @@ extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::share
     return KernelFindSocketNative_nid_no_patch(descriptor, owner, native);
 }
 
+extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description) {
+    const auto socket = Find(descriptor);
+    if (!socket) return false;
+    std::lock_guard lock(socket->modeMutex);
+    *description = {socket, static_cast<std::uintptr_t>(socket->value), socket->family, socket->type, socket->options.nonblocking};
+    return true;
+}
+
+extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors) {
+    std::lock_guard lock(socketsMutex);
+    for (const auto& [descriptor, socket] : sockets) descriptors->push_back(descriptor);
+}
+
 extern "C" {
 int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
     const auto type = File::FcntlArgumentOf(command);

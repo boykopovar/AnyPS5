@@ -92,6 +92,7 @@ int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
+int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI close_nid_postfix(int);
 bool GuestSocketIsOpen_nid_no_patch(int);
 int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
@@ -1591,6 +1592,20 @@ static void CheckSockInfo() {
     Require(sceNetGetsockname(client, clientAddress.data(), &size) == 0 && size == 16);
     RequireSockInfo(client, 1, 1, clientAddress, listening);
     RequireSockInfo(accepted, 1, 1, listening, clientAddress);
+    const char queued[] = "queued";
+    constexpr auto queuedLength = static_cast<std::int32_t>(sizeof(queued));
+    Require(sceNetSend(client, queued, sizeof(queued), 0) == queuedLength);
+    std::array<std::uint8_t, 0xa0> pending{};
+    std::int32_t pendingLength = 0;
+    for (int attempt = 0; attempt < 500 && pendingLength != queuedLength; ++attempt) {
+        Require(sceNetGetSockInfo(accepted, pending.data(), 1, 0) == 1);
+        std::memcpy(&pendingLength, pending.data() + 0x2c, sizeof(pendingLength));
+        if (pendingLength != queuedLength) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    Require(pendingLength == queuedLength);
+    char drained[sizeof(queued)] = {};
+    Require(sceNetRecv(accepted, drained, sizeof(drained), 0) == queuedLength && std::memcmp(drained, queued, sizeof(queued)) == 0);
+    RequireSockInfo(accepted, 1, 1, listening, clientAddress);
     Require(sceNetConnect(datagram, listening.data(), listening.size()) == 0);
     RequireSockInfo(datagram, 2, 1, datagramAddress, listening);
     const int nonblocking = 1;
@@ -1612,14 +1627,35 @@ static void CheckSockInfo() {
     const int inet6 = sceNetSocket("sockinfo-inet6", 28, 2, 17);
     Require(inet6 >= 0 ? Failed(sceNetGetSockInfo(inet6, record.data(), 1, 0), 47) : *sceNetErrnoLoc() == 47);
     Require(std::all_of(record.begin(), record.end(), [](auto byte) { return byte == 0xa5; }));
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(kernel >= 0 && bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    size = kernelAddress.size();
+    Require(getsockname_nid_postfix(kernel, kernelAddress.data(), &size) == 0 && size == 16);
+    std::array<std::uint8_t, 0xa0> kernelRecord;
+    kernelRecord.fill(0xa5);
+    Require(sceNetGetSockInfo(kernel, kernelRecord.data(), 1, 0) == 1);
+    std::array<std::uint8_t, 0xa0> kernelExpected{};
+    std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
+    kernelExpected[0x28] = 2;
+    std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
+    std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
+    kernelExpected[0x48] = 1;
+    std::memcpy(kernelExpected.data() + 0x64, kernelRecord.data() + 0x64, 8);
+    Require(std::equal(kernelExpected.begin(), kernelExpected.end(), kernelRecord.begin()));
+    std::int32_t kernelBuffers[2] = {};
+    std::memcpy(kernelBuffers, kernelRecord.data() + 0x64, sizeof(kernelBuffers));
+    Require(kernelBuffers[0] > 0 && kernelBuffers[1] > 0);
     std::vector<int> expected = earlier;
-    expected.insert(expected.end(), {datagram, listener, client, accepted});
+    expected.insert(expected.end(), {datagram, listener, client, accepted, kernel});
     std::sort(expected.begin(), expected.end());
     Require(RequireSockInfoList(0) == expected && RequireSockInfoList(0x40) == expected);
     Require(sceNetGetSockInfo(datagram, record.data(), 1, 0x40) == 1 && std::equal(configured.begin(), configured.end(), record.begin()));
     if (inet6 >= 0) Require(sceNetSocketClose(inet6) == 0);
     for (const int descriptor : {accepted, client, listener, datagram}) Require(sceNetSocketClose(descriptor) == 0);
     Require(Failed(sceNetGetSockInfo(datagram, record.data(), 1, 0), 9));
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetGetSockInfo(kernel, record.data(), 1, 0), 9));
     Require(RequireSockInfoList(0) == earlier);
 }
 
