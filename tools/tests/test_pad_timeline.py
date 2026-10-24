@@ -175,6 +175,15 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), exhausted)
 
+    def test_timeline_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("\ufeff" + json.dumps(self.document), encoding="utf-8")
+            self.assertEqual(self.run_cli(timeline, output).returncode, 0)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
