@@ -34,4 +34,10 @@ std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y) {
     return FT_Atan2(HostValue(x, __func__), HostValue(y, __func__));
 }
 
+std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector* vector) {
+    if (!vector) return FT_Vector_Length(nullptr);
+    FT_Vector native = HostVector(*vector, __func__);
+    return FT_Vector_Length(&native);
+}
+
 }
