@@ -528,3 +528,7 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
 }
 
 }
+
+extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor) {
+    return IsKqueueDescriptor(descriptor);
+}
