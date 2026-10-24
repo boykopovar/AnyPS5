@@ -65,6 +65,80 @@ class PadInputTests(unittest.TestCase):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
 
+    def test_malformed_timeline_bodies_do_not_exhaust_sequence(self):
+        maximum = 2**64 - 1
+        cases = [
+            (1, b""), (2, b"0 100 16384\n"), (1, b"\n"),
+            (1, b"0 100\n"), (1, b"010016384\n"), (1, b"0 100 16384 extra\n"),
+            (1, b"0 0 16384\n"), (1, b"0 5001 16384\n"),
+            (1, b"0 100 1\n"), (1, b"0 100 18446744073709551616\n"),
+            (1, b"18446744073709551616 100 16384\n"),
+            (1, b"0 18446744073709551616 16384\n"),
+            (1, b"-0 100 16384\n"), (1, b"0 1_00 16384\n"),
+            (1, b"0 100 0x4000\n"), (1, b"3599999 2 16384\n"),
+            (1, b"3600000 1 16384\n"), (2, b"0 100 16384\n99 100 64\n"),
+            (2, b"100 100 16384\n0 100 64\n"),
+            (1, b" " * 117 + b"0 100 16384\n"),
+            (1, b" " * 117 + b"0 100 16384"),
+            (1, b"0 100 16384\0" + b" " * 117 + b"\n"),
+            (1, b"0 100 16384\n0 100 64\n"),
+            (1, b"0 100 16384\ntrailing\n"),
+            (1, b"0 100 16384\n" + b" " * 4096 + b"extra"),
+        ]
+        for count, body in cases:
+            with self.subTest(count=count, body=body):
+                self.path.write_bytes(f"APS5_PAD_TIMELINE 1 {maximum} {count}\n".encode() + body)
+                self.assertEqual(self.queue(1, "down"), [1, 64, 300])
+
+    def test_valid_timeline_boundaries_preserve_sequence(self):
+        bodies = [
+            b"+0 +5000 +7405566\n5000 1 0\n3599999 1 16384\n \t\r\n\v\f",
+            b" " * 118 + b"0 1 16384\n1 1 0\n2 1 0",
+            b"0+100+16384\n100 100 64\n200 1 0\n",
+            b"0 100 16384\x00-1\n100 100 64\n200 1 0\n",
+            b"0 100 16384\n100 100 64\n" + b" " * 120 + b"200 1 0",
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                self.path.write_bytes(b"APS5_PAD_TIMELINE +1 +2000 +3\n" + body)
+                self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_timeline_header_numeric_adjacency_preserves_sequence(self):
+        self.path.write_bytes(b"APS5_PAD_TIMELINE 1+2000+1\n0 100 16384\n")
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_timeline_text_end_marker_matches_host_text_mode(self):
+        for body in [b"0 100 16384\n\x1aignored", b"0 100 16384\x1aignored"]:
+            with self.subTest(body=body):
+                self.path.write_bytes(b"APS5_PAD_TIMELINE 1 2000 1\n" + body)
+                expected = 2001 if os.name == "nt" else 1000
+                self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_timeline_header_text_end_marker_prevents_event_reads_on_windows(self):
+        self.path.write_bytes(b"APS5_PAD_TIMELINE 1 2000 1\0\x1a\n0 100 16384\n")
+        expected = 1000 if os.name == "nt" else 2001
+        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_timeline_event_crlf_at_runtime_line_capacity_matches_host_text_mode(self):
+        self.path.write_bytes(b"APS5_PAD_TIMELINE 1 2000 1\r\n" + b" " * 116 + b"0 100 16384\r\n")
+        expected = 2001 if os.name == "nt" else 1000
+        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_timeline_event_count_at_capacity_preserves_sequence(self):
+        body = b"".join(f"{index} 1 0\n".encode() for index in range(4096))
+        self.path.write_bytes(b"APS5_PAD_TIMELINE 1 2000 4096\n" + body)
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_valid_maximum_timeline_sequence_is_exhausted(self):
+        original = f"APS5_PAD_TIMELINE 1 {2**64 - 1} 1\n3599999 1 16384\n"
+        self.path.write_text(original, encoding="utf-8")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            self.queue(1, "down")
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("sequence is exhausted", errors.getvalue())
+        self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+
     def test_equal_clock_still_produces_new_pulses(self):
         first = self.queue(1000, "cross")
         second = self.queue(1000, "down")

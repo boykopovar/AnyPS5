@@ -17,27 +17,60 @@ BUTTONS = {
 }
 
 
+def timeline_sequence(command, header):
+    if len(header.rstrip(b"\n")) > 127 or (os.name == "nt" and b"\x1a" in header):
+        return 0
+    header = header.split(b"\0", 1)[0]
+    fields = re.fullmatch(rb"\s*APS5_PAD_TIMELINE\s+(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", header)
+    if fields is None:
+        return 0
+    version, sequence, count = [int(token) for token in fields.groups()]
+    if version != 1 or not 1 <= sequence <= 2**64 - 1 or not 1 <= count <= 4096:
+        return 0
+    previous_end = 0
+    for _ in range(count):
+        line = command.readline(129)
+        if os.name == "nt":
+            if b"\x1a" in line:
+                line = line.split(b"\x1a", 1)[0]
+                command.seek(0, os.SEEK_END)
+            if line.endswith(b"\r\n"):
+                line = line[:-2] + b"\n"
+        if not line or len(line.rstrip(b"\n")) > 127:
+            return 0
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", line.split(b"\0", 1)[0])
+        if fields is None:
+            return 0
+        start, duration, buttons = [int(token) for token in fields.groups()]
+        if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end or start + duration > 3600000:
+            return 0
+        previous_end = start + duration
+    while tail := command.read(4096):
+        if os.name == "nt" and b"\x1a" in tail:
+            return sequence if not tail.split(b"\x1a", 1)[0].strip() else 0
+        if tail.strip():
+            return 0
+    return sequence
+
+
 def previous_sequence(path):
     try:
         with path.open("rb") as command:
             line = command.readline(129)
+            if os.name == "nt" and line.endswith(b"\r\n"):
+                line = line[:-2] + b"\n"
+            if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
+                return timeline_sequence(command, line)
     except FileNotFoundError:
         return 0
-    if os.name == "nt" and line.endswith(b"\r\n"):
-        line = line[:-2] + b"\n"
     tokens = line.split()
-    timeline = tokens[:1] == [b"APS5_PAD_TIMELINE"]
-    if timeline:
-        tokens = tokens[1:]
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in ((3,) if timeline else (3, 7)):
+    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in (3, 7):
         return 0
     if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
         return 0
     values = [int(token) for token in tokens]
     if any(value > 2**64 - 1 for value in values):
         return 0
-    if timeline:
-        return values[1] if values[0] == 1 and 1 <= values[2] <= 4096 else 0
     if values[0] == 0 or values[1] & ~0x70fffe or not 1 <= values[2] <= 5000:
         return 0
     if any(axis > 255 for axis in values[3:]):
