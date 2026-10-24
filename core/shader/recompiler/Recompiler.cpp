@@ -746,12 +746,19 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
 struct SpecializedModule {
     std::uint64_t specializationId = 0;
-    SharedSpirv spirv;
     std::vector<std::uint32_t> bindings;
     bool pushData = false;
+    SpirvContentHash hash;
+    mutable std::mutex mutex;
+    mutable SharedSpirv::Weak spirv;
 };
 
-std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+struct SpecializedSpirv {
+    std::shared_ptr<const SpecializedModule> module;
+    SharedSpirv spirv;
+};
+
+std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto source = SpecializeVertexInputTypes(artifact, classes);
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) {
@@ -845,6 +852,11 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     materialized = ValidateAndOptimizeSpirv(materialized, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false);
 #endif
+    return materialized;
+}
+
+SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    auto materialized = specializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
     std::unordered_set<std::uint32_t> functionLdsBuffer;
@@ -859,9 +871,20 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         }
         cursor += count;
     }
-    module->spirv = InternSpirv(std::move(materialized));
+    auto spirv = InternSpirv(std::move(materialized));
+    module->hash = spirv.ContentHash();
+    module->spirv = spirv.Weaken();
     module->specializationId = constants.empty() ? 0u : nextVariantId();
-    return module;
+    return {std::move(module), std::move(spirv)};
+}
+
+SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    std::lock_guard lock(module.mutex);
+    if (auto spirv = module.spirv.Lock(); !spirv.empty()) return spirv;
+    auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
+    if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
+    module.spirv = spirv.Weaken();
+    return spirv;
 }
 
 struct SpecializedModuleEntry {
@@ -891,7 +914,12 @@ struct RegistrationModuleEntry {
     std::shared_ptr<const SpecializedModule> module;
 };
 
-std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t variantId, std::span<const std::uint32_t> moduleKey, const std::function<std::shared_ptr<const SpecializedModule>()>& specialize) {
+SharedSpirv lockedWords(const SpecializedModule& module) {
+    std::lock_guard lock(module.mutex);
+    return module.spirv.Lock();
+}
+
+SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std::uint32_t> moduleKey, const std::function<SpecializedSpirv()>& specialize) {
     std::vector<std::uint64_t> key{variantId};
     key.insert(key.end(), moduleKey.begin(), moduleKey.end());
     static PrimedSharedMutex mutex;
@@ -906,15 +934,20 @@ std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t varian
         const auto found = modules.find(key);
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<RegistrationModuleEntry>()).first->second;
     }
+    SharedSpirv built;
     std::call_once(entry->ready, [&] {
         try {
-            entry->module = specialize();
+            auto specialized = specialize();
+            entry->module = std::move(specialized.module);
+            built = std::move(specialized.spirv);
         } catch (...) {
             entry->failure = std::current_exception();
         }
     });
     if (entry->failure) std::rethrow_exception(entry->failure);
-    return entry->module;
+    if (built.empty()) built = lockedWords(*entry->module);
+    if (built.empty()) built = specialize().spirv;
+    return {entry->module, std::move(built)};
 }
 
 std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
@@ -967,7 +1000,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     return plan;
 }
 
-std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     struct ModuleKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, ModuleKeyStorage>();
     key.clear();
@@ -985,15 +1018,19 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
         const auto found = modules.find(key);
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<SpecializedModuleEntry>()).first->second;
     }
+    SharedSpirv built;
     std::call_once(entry->ready, [&] {
         try {
-            entry->module = buildSpecializedModule(artifact, classes, constants, target);
+            auto specialized = buildSpecializedModule(artifact, classes, constants, target);
+            entry->module = std::move(specialized.module);
+            built = std::move(specialized.spirv);
         } catch (...) {
             entry->failure = std::current_exception();
         }
     });
     if (entry->failure) std::rethrow_exception(entry->failure);
-    return entry->module;
+    if (built.empty()) built = specializedWords(*entry->module, artifact, classes, constants, target);
+    return {entry->module, std::move(built)};
 }
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
@@ -1115,7 +1152,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             const auto found = plan->modules.find(moduleKey);
             entry = found != plan->modules.end() ? found->second : plan->modules.emplace(moduleKey, std::make_shared<PreparedModuleEntry>()).first->second;
         }
-        const auto prepare = [&] {
+        const auto specialize = [&] {
             auto constants = plan->bindings.specialization;
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
@@ -1140,11 +1177,17 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                     constants.push_back({first + 5u, kind});
                 }
             }
-            const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
+            return artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
+        };
+        SharedSpirv built;
+        const auto prepare = [&] {
+            auto specialized = specialize();
+            const auto& module = specialized.module;
             if (variant.bindings.layout.UsesPushData() && !module->pushData) throw std::runtime_error("specialization removed the prepared push constant interface");
             auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
             entry->bindings = std::move(selected);
             entry->module = module;
+            built = std::move(specialized.spirv);
         };
         std::call_once(entry->ready, [&] {
             try {
@@ -1155,8 +1198,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         });
         if (entry->failure) std::rethrow_exception(entry->failure);
         const auto& module = entry->module;
+        if (built.empty()) built = lockedWords(*module);
+        if (built.empty()) built = specialize().spirv;
         result.specializationId = module->specializationId;
-        result.spirv = module->spirv;
+        result.spirv = std::move(built);
         bindingPlan = &entry->bindings;
     } else {
         result.spirv = artifact.spirv;
@@ -1214,13 +1259,16 @@ SharedSpirv InternSpirv(std::vector<std::uint32_t> words) {
     SharedSpirv spirv(std::move(words));
     const auto hash = spirv.ContentHash();
     static std::mutex mutex;
-    static std::unordered_map<std::uint64_t, std::vector<SharedSpirv>> interned;
+    static std::unordered_map<std::uint64_t, std::vector<SharedSpirv::Weak>> interned;
     std::lock_guard lock(mutex);
-    auto& candidates = interned[hash.low ^ (hash.high * 0x9e3779b97f4a7c15ull)];
-    for (const auto& candidate : candidates) {
+    const auto bucket = hash.low ^ (hash.high * 0x9e3779b97f4a7c15ull);
+    auto& candidates = interned[bucket];
+    std::erase_if(candidates, [](const SharedSpirv::Weak& candidate) { return candidate.Expired(); });
+    for (const auto& weak : candidates) {
+        const auto candidate = weak.Lock();
         if (candidate.ContentHash() == hash && candidate == spirv) return candidate;
     }
-    candidates.push_back(spirv);
+    candidates.push_back(spirv.Weaken());
     return spirv;
 }
 

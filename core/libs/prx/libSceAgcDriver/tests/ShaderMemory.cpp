@@ -406,6 +406,36 @@ void verifyFrontendPair() {
     }
 }
 
+void verifySpecializedModuleRelease() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> color{0x3f800000u};
+    const std::vector<std::uint32_t> code{0xbf800003u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
+    auto pixel = FrontendRequest(code, color);
+    pixel.shader.stage = ShaderStage::Fragment;
+    pixel.context.compute.reset();
+    pixel.context.pixel = ShaderPixelStageInfo{};
+    pixel.context.pixel->wave32 = true;
+    pixel.context.pixel->targetOutputMode[0] = 9u;
+    pixel.context.waveSize = 32u;
+    pixel.useCache = true;
+    SharedSpirv::Weak released;
+    std::uint64_t specializationId = 0;
+    std::vector<std::uint32_t> words;
+    {
+        const auto first = Recompile(pixel);
+        require(first.specializationId != 0u, "specialized module release: the pixel fixture was not specialized");
+        released = first.spirv.Weaken();
+        specializationId = first.specializationId;
+        words = first.spirv.Copy();
+    }
+    require(released.Expired(), "specialized module release: the module caches kept the words of a module no result uses");
+    const auto again = Recompile(pixel);
+    require(again.specializationId == specializationId, "specialized module release: a module built again from its key got another specialization ID");
+    require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
+    const auto shared = Recompile(pixel);
+    require(shared.spirv.data() == again.spirv.data(), "specialized module release: a second result of a live module copied its words");
+}
+
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
     using namespace ShaderRecompiler;
     auto request = FrontendRequest(code, userData);
@@ -8466,6 +8496,7 @@ int main(int argc, char** argv) {
         verifyTargetFeatureKey();
         verifyImageTableKeys();
         verifyImageTables();
+        verifySpecializedModuleRelease();
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
