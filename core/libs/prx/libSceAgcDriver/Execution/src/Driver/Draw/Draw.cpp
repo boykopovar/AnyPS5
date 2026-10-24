@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
@@ -94,7 +95,7 @@ void noteFinisherHandOff(bool handed) {
     if (!stats) return;
     const auto tenSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
     if (reportedAt.exchange(tenSeconds, std::memory_order_relaxed) == tenSeconds) return;
-    std::fprintf(stderr, "[finisher] draws (10 s): %llu handed to the draw finisher, %llu finished on the worker%s\n", static_cast<unsigned long long>(handedOff.exchange(0)), static_cast<unsigned long long>(kept.exchange(0)), DrawFinisher::DrainText().c_str());
+    AgcDriver::ProfilePrint_nid_no_patch("[finisher] draws (10 s): %llu handed to the draw finisher, %llu finished on the worker%s\n", static_cast<unsigned long long>(handedOff.exchange(0)), static_cast<unsigned long long>(kept.exchange(0)), DrawFinisher::DrainText().c_str());
 }
 
 }

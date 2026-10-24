@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -763,8 +764,8 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     for (std::size_t i = 1; i < profile.recipeMisses.size() && room(); ++i) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", DrawRecipeMissName(static_cast<DrawRecipeMiss>(i)), static_cast<unsigned long long>(profile.recipeMisses[i]));
     }
-    std::fprintf(stderr, "%s\n", line);
-    std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
+    AgcDriver::ProfilePrint_nid_no_patch("%s\n", line);
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
     profile.maxDrawUs = profile.hookWaitUs = profile.maxHookWaitUs = profile.ownSyncUs = 0;
