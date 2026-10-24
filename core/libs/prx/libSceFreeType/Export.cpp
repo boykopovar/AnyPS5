@@ -264,6 +264,24 @@ int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec* face, std::int32_t enc
     return error;
 }
 
+int APS5_VABI FT_Get_SubGlyph_Info_nid_postfix(GuestGlyphSlotRec* slot, std::uint32_t subIndex, std::int32_t* index, std::uint32_t* flags,
+                                              std::int32_t* arg1, std::int32_t* arg2, GuestMatrix* transform) {
+    const GuestFace* owner = FaceOf(slot);
+    FT_Int hostIndex = 0;
+    FT_UInt hostFlags = 0;
+    FT_Int hostArg1 = 0;
+    FT_Int hostArg2 = 0;
+    FT_Matrix hostTransform{};
+    const FT_Error error = FT_Get_SubGlyph_Info(owner ? owner->host->glyph : nullptr, subIndex, &hostIndex, &hostFlags, &hostArg1, &hostArg2, &hostTransform);
+    if (error != 0) return error;
+    *index = hostIndex;
+    *flags = hostFlags;
+    *arg1 = hostArg1;
+    *arg2 = hostArg2;
+    *transform = {hostTransform.xx, hostTransform.xy, hostTransform.yx, hostTransform.yy};
+    return error;
+}
+
 int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec* face, GuestCharMapRec* charmap) {
     GuestFace* owner = FaceOf(face);
     if (!owner || !charmap || owner->charmapPointers.empty()) return FT_Set_Charmap(owner ? owner->host : nullptr, nullptr);
