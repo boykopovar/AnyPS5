@@ -663,6 +663,48 @@ void CheckDrawFeedback() {
     std::puts("Native depth feedback refused through the draw resource path; a written surface refused and a depth-tested one retired on guest read");
 }
 
+void CheckStorageAliasRetirement() {
+    const auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "native depth storage alias requires Vulkan");
+    const auto context = device->graphicsContext();
+    constexpr VkExtent2D extent{5u, 3u};
+    constexpr std::uint32_t samples = 4u;
+    constexpr std::size_t prefix = 65536u;
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    TargetMemory memory(prefix + bytes), metadata(65536u);
+    std::memset(memory.Data(), 0x3c, prefix + bytes);
+    std::memset(metadata.Data(), 0, 65536u);
+    struct Cleanup {
+        AgcDriver::VulkanDevice& device;
+        ~Cleanup() { device.WaitIdle(); ClearCachedTextures(device.Device()); ClearDepthSurfaces(device.Device()); }
+    } cleanup{*device};
+    GuestTextureResource alias{};
+    alias.baseAddress = memory.Address();
+    alias.width = 256u;
+    alias.height = static_cast<std::uint32_t>((prefix + bytes) / 1024u);
+    alias.mipCount = alias.allocatedMipCount = 1u;
+    alias.dimension = TextureDimension::k2D;
+    alias.tileMode = TextureTileMode::kLinear;
+    alias.format = 22u;
+    alias.dstSelX = 0u;
+    alias.dstSelY = alias.dstSelZ = 4u;
+    alias.dstSelW = 5u;
+    auto cached = CachedStorageSurface(context, alias);
+    Require(cached != nullptr, "storage alias was not cached before native depth creation");
+    DepthTarget depth{memory.Address() + prefix, 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, samples};
+    depth.depthSwizzle = 24u;
+    depth.iterate256 = depth.htilePipeAligned = depth.htileDepthOnly = true;
+    Require(DepthSurfaceView(context, depth) != VK_NULL_HANDLE && DepthSurfaceAt(depth.address), "storage alias fixture has no native depth owner");
+    auto disjoint = alias;
+    disjoint.height = static_cast<std::uint32_t>(prefix / 1024u);
+    Require(CachedStorageSurface(context, disjoint) != nullptr, "disjoint storage alias was not created");
+    Require(DepthSurfaceAt(depth.address), "storage access ending at native depth retired a disjoint owner");
+    Require(CachedStorageSurface(context, alias) != nullptr, "overlapping cached storage alias was not returned");
+    Require(!DepthSurfaceAt(depth.address), "a cached storage view kept a native depth owner inside its range");
+    for (std::size_t offset = 0u; offset < prefix + bytes; ++offset) Require(memory.Data()[offset] == std::byte{0x3c}, "retiring unwritten native depth changed guest bytes");
+    std::puts("cached storage span retires only intersecting native depth owners");
+}
+
 enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite };
 
 void CheckClearDispatch() {
@@ -1295,6 +1337,7 @@ int main(int argc, char** argv) {
         }
         CheckDrawFeedback();
         const auto context = device->GetContext();
+        if (argc == 1) CheckStorageAliasRetirement();
         std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
         Require(DepthSupported(context, VK_FORMAT_D32_SFLOAT, 4u), "the native depth regression requires sampled D32 with four samples");
         if (argc == 2 && std::string_view(argv[1]) == "--clear-refusals") {
