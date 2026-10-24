@@ -716,7 +716,8 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
 
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return SceKernelErrorEfault;
-    *tz = {0, 0};
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    *tz = {static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
     return 0;
 }
 
