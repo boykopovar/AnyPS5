@@ -38,6 +38,10 @@
 #include <dlfcn.h>
 #include <link.h>
 #endif // __linux__
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <pthread.h>
+#endif
 #endif
 
 static constexpr int GUEST_EFAULT = 14;
@@ -372,6 +376,18 @@ static std::uint64_t ClockTicksPerSecond() {
     return static_cast<std::uint64_t>(rate);
 }
 
+#ifdef __APPLE__
+static std::uint64_t CurrentThreadCpuNanos() {
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS)
+        throw std::runtime_error("clock_gettime: thread_info failed");
+    const auto microseconds = (static_cast<std::uint64_t>(info.user_time.seconds) + static_cast<std::uint64_t>(info.system_time.seconds)) * 1000000ULL +
+        static_cast<std::uint64_t>(info.user_time.microseconds) + static_cast<std::uint64_t>(info.system_time.microseconds);
+    return microseconds * 1000ULL;
+}
+#endif
+
 static std::uint64_t ProcessCpuNanos(bool countSystem) {
     struct tms usage{};
     errno = 0;
@@ -480,6 +496,14 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         default:
             throw std::runtime_error(std::string("clock_gettime") + ": unsupported clock_id " + std::to_string(clockId));
     }
+#ifdef __APPLE__
+    if (clockId == 14) {
+        const std::uint64_t nanos = CurrentThreadCpuNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
+#endif
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
