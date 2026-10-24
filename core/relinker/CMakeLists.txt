@@ -102,6 +102,16 @@ if(BUILD_TESTING)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
     add_test(NAME relinker_conversion COMMAND relinker_conversion_tests)
     set_tests_properties(relinker_conversion PROPERTIES TIMEOUT 20)
+
+    add_test_executable(native_path_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/NativePathTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
+    target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    add_test(NAME native_path COMMAND native_path_tests)
+    set_tests_properties(native_path PROPERTIES TIMEOUT 20)
+
     add_test_executable(relinker_game_patch_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GamePatchTests.cpp)
     target_link_libraries(relinker_game_patch_tests PRIVATE relinker_core)
     add_test(NAME relinker_game_patch COMMAND relinker_game_patch_tests)
