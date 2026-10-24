@@ -59,4 +59,9 @@ LibreSslSession* APS5_VABI SSL_get_session_nid_postfix(const LibreSslSessionConn
     return Connection(ssl, __func__).session;
 }
 
+const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const LibreSslSessionConnection* ssl) {
+    const LibreSslSession* session = Connection(ssl, __func__).session;
+    return session ? session->cipher : nullptr;
+}
+
 }
