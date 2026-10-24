@@ -1041,6 +1041,7 @@ VkClearColorValue MultisampledDccClear(const ColorTarget& target, std::span<cons
     if (dcc.front() == std::byte{0x10}) return singleClearColor(target);
     DccKeys keys;
     switch (std::to_integer<std::uint32_t>(dcc.front())) {
+        case 0x20u: return fastClearColor(target);
         case 0x00u: keys = DccKeys::Clear0000; break;
         case 0x40u: keys = DccKeys::Clear0001; break;
         case 0x80u: keys = DccKeys::Clear1110; break;

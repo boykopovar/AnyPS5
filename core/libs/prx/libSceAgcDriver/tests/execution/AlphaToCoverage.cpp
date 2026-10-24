@@ -478,7 +478,7 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
     } clearTargets{device};
     for (const auto samples : {2u, 4u, 8u}) {
         if (selectedSamples != 0 && samples != selectedSamples) continue;
-        for (const auto code : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+        for (const auto code : {0x00u, 0x20u, 0x40u, 0x80u, 0xc0u}) {
             for (const auto alphaOnMsb : {false, true}) {
                 for (const auto cmaskMode : {0u, 0xccu, 0xffu}) {
                     blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
@@ -491,6 +491,7 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                     target.dccAddress = metadata.Address();
                     target.dccPipeAligned = true;
                     target.dccAlphaOnMsb = alphaOnMsb;
+                    if (code == 0x20u) target.clearWords = {0x38003000u, 0x3c003a00u};
                     if (cmaskMode != 0) {
                         blocks.push_back(std::make_unique<Block>(BlockBytes));
                         auto& cmask = *blocks.back();
@@ -504,6 +505,7 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                     const bool alphaOne = code == 0x40u || code == 0xc0u;
                     Color initial{};
                     for (std::uint32_t channel = 0; channel < 4; ++channel) initial[channel] = channel == (alphaOnMsb ? 3u : 0u) ? static_cast<float>(alphaOne) : static_cast<float>(colorOne);
+                    if (code == 0x20u) initial = {0.125f, 0.5f, 0.75f, 1.0f};
                     const Color written{0.25f, 0.25f, 0.25f, 0.25f};
                     if (cmaskMode != 0) device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
                     Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
@@ -764,101 +766,107 @@ void DccRefillTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSampl
         if (selectedSamples != 0 && samples != selectedSamples) continue;
         for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
             for (const auto cmasked : {false, true}) {
-                if (mode == 4 && !cmasked) continue;
+                for (const auto code : {0xc0u, 0x20u}) {
+                    if (mode == 4 && !cmasked) continue;
+                    if (code == 0x20u && (mode == 2 || mode == 3 || mode == 4)) continue;
+                    const auto refill = code * 0x01010101u;
 #ifdef _WIN32
-                if (mode == 6) continue;
+                    if (mode == 6) continue;
 #else
-                AgcDriver::Graphics::SetImportWatch(context, mode == 5 ? AgcDriver::Graphics::ImportWatch::Watch : mode == 6 ? AgcDriver::Graphics::ImportWatch::Unwatch : decided);
+                    AgcDriver::Graphics::SetImportWatch(context, mode == 5 ? AgcDriver::Graphics::ImportWatch::Watch : mode == 6 ? AgcDriver::Graphics::ImportWatch::Unwatch : decided);
 #endif
-                blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
-                auto& source = *blocks.back();
-                std::memset(source.data, 0, source.bytes);
-                blocks.push_back(std::make_unique<Block>(BlockBytes));
-                auto& metadata = *blocks.back();
-                std::memset(metadata.data, 0, BlockBytes);
-                auto target = DecodeTarget(source, samples);
-                target.dccAddress = metadata.Address();
-                target.dccPipeAligned = true;
-                target.dccAlphaOnMsb = true;
-                Block* cmask = nullptr;
-                if (cmasked) {
+                    blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+                    auto& source = *blocks.back();
+                    std::memset(source.data, 0, source.bytes);
                     blocks.push_back(std::make_unique<Block>(BlockBytes));
-                    cmask = blocks.back().get();
-                    std::memset(cmask->data, 0xcc, BlockBytes);
-                    target.cmaskAddress = cmask->Address();
-                    target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
-                    target.cmaskFastClear = true;
-                    device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
-                }
-                Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
-                const auto dccBytes = AgcDriver::Graphics::MultisampledDccBytes(target);
-                std::string_view expected;
-                bool rewatchable = false;
-                if (mode == 0) {
-                    fill(metadata, dccBytes, 0xc0c0c0c0u);
-                    if (cmask != nullptr) fill(*cmask, target.cmaskBytes, 0xccccccccu);
-                } else if (mode == 1) {
-                    fill(metadata, dccBytes, 0xc0c0c0c0u);
-                } else if (mode >= 5) {
-                    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-                    const auto record = [&](const Block& block, std::size_t bytes, std::uint32_t value) {
-                        const std::array<std::uint32_t, 4> pattern{value, value, value, value};
-                        Require(device.FillBuffer(block.Address(), bytes, pattern), "the metadata fill was not recorded on the GPU");
-                        AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), bytes, value);
-                    };
-                    record(metadata, dccBytes, 0xc0c0c0c0u);
-                    if (cmask != nullptr) record(*cmask, target.cmaskBytes, 0xccccccccu);
-                    if (!AgcDriver::GuestMemory::Watched(metadata.Address(), dccBytes) || (cmask != nullptr && !AgcDriver::GuestMemory::Watched(cmask->Address(), target.cmaskBytes))) expected = "requires watched guest memory";
+                    auto& metadata = *blocks.back();
+                    std::memset(metadata.data, 0, BlockBytes);
+                    auto target = DecodeTarget(source, samples);
+                    target.dccAddress = metadata.Address();
+                    target.dccPipeAligned = true;
+                    target.dccAlphaOnMsb = true;
+                    if (code == 0x20u) target.clearWords = {0x38003000u, 0x3c003a00u};
+                    const Color cleared = code == 0x20u ? Color{0.125f, 0.5f, 0.75f, 1.0f} : Color{1.0f, 1.0f, 1.0f, 1.0f};
+                    Block* cmask = nullptr;
+                    if (cmasked) {
+                        blocks.push_back(std::make_unique<Block>(BlockBytes));
+                        cmask = blocks.back().get();
+                        std::memset(cmask->data, 0xcc, BlockBytes);
+                        target.cmaskAddress = cmask->Address();
+                        target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
+                        target.cmaskFastClear = true;
+                        device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
+                    }
+                    Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                    const auto dccBytes = AgcDriver::Graphics::MultisampledDccBytes(target);
+                    std::string_view expected;
+                    bool rewatchable = false;
+                    if (mode == 0) {
+                        fill(metadata, dccBytes, refill);
+                        if (cmask != nullptr) fill(*cmask, target.cmaskBytes, 0xccccccccu);
+                    } else if (mode == 1) {
+                        fill(metadata, dccBytes, refill);
+                    } else if (mode >= 5) {
+                        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                        const auto record = [&](const Block& block, std::size_t bytes, std::uint32_t value) {
+                            const std::array<std::uint32_t, 4> pattern{value, value, value, value};
+                            Require(device.FillBuffer(block.Address(), bytes, pattern), "the metadata fill was not recorded on the GPU");
+                            AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), bytes, value);
+                        };
+                        record(metadata, dccBytes, refill);
+                        if (cmask != nullptr) record(*cmask, target.cmaskBytes, 0xccccccccu);
+                        if (!AgcDriver::GuestMemory::Watched(metadata.Address(), dccBytes) || (cmask != nullptr && !AgcDriver::GuestMemory::Watched(cmask->Address(), target.cmaskBytes))) expected = "requires watched guest memory";
 #ifdef _WIN32
-                    rewatchable = !expected.empty();
+                        rewatchable = !expected.empty();
 #else
-                    Require(mode == 6 || expected.empty(), "a GPU fill of multisampled DCC metadata left it unwatched although host imports stay watched");
+                        Require(mode == 6 || expected.empty(), "a GPU fill of multisampled DCC metadata left it unwatched although host imports stay watched");
 #endif
-                } else if (mode == 2) {
-                    fill(metadata, dccBytes / 2u, 0xc0c0c0c0u);
-                    expected = "writes to a resident multisampled DCC";
-                } else if (mode == 3) {
-                    fill(metadata, dccBytes, 0xffffffffu);
-                    expected = "not a supported uniform fast clear";
-                } else {
-                    fill(*cmask, target.cmaskBytes, 0xccccccccu);
-                    expected = "writes to a resident multisampled DCC";
-                }
-                bool drawn = false;
-                if (!expected.empty()) {
-                    bool refused = false;
-                    try {
-                        Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
-                        drawn = true;
-                    } catch (const std::runtime_error& error) {
-                        refused = std::string_view(error.what()).find(expected) != std::string_view::npos;
+                    } else if (mode == 2) {
+                        fill(metadata, dccBytes / 2u, 0xc0c0c0c0u);
+                        expected = "writes to a resident multisampled DCC";
+                    } else if (mode == 3) {
+                        fill(metadata, dccBytes, 0xffffffffu);
+                        expected = "not a supported uniform fast clear";
+                    } else {
+                        fill(*cmask, target.cmaskBytes, 0xccccccccu);
+                        expected = "writes to a resident multisampled DCC";
                     }
-                    Require(refused || (drawn && rewatchable), "a write to resident multisampled DCC metadata that is not a full fast-clear fill was not refused");
-                    if (refused) {
-                        programCount = 0;
-                        continue;
-                    }
-                }
-                if (!drawn) Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
-                blocks.push_back(std::make_unique<Block>(layout.Bytes()));
-                auto& resolved = *blocks.back();
-                std::memset(resolved.data, 0, resolved.bytes);
-                AgcDriver::Graphics::ColorMetadataPass pass{};
-                pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
-                pass.source = target;
-                pass.targets = {DecodeTarget(resolved)};
-                device.ColorMetadataPass(pass);
-                const auto stored = ReadBack(device, resolved);
-                for (std::uint32_t y = 0; y < Height; ++y) {
-                    for (std::uint32_t x = 0; x < Width; ++x) {
-                        for (std::uint32_t channel = 0; channel < 4; ++channel) {
-                            const auto expectedValue = x < ScissorWidth ? 1.0f + (written[channel] - 1.0f) / static_cast<float>(samples) : 1.0f;
-                            const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u + channel]);
-                            Require(actual == expectedValue, "a full DCC fast-clear fill of a resident multisampled target did not clear it to the new color before the next draw");
+                    bool drawn = false;
+                    if (!expected.empty()) {
+                        bool refused = false;
+                        try {
+                            Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                            drawn = true;
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find(expected) != std::string_view::npos;
+                        }
+                        Require(refused || (drawn && rewatchable), "a write to resident multisampled DCC metadata that is not a full fast-clear fill was not refused");
+                        if (refused) {
+                            programCount = 0;
+                            continue;
                         }
                     }
+                    if (!drawn) Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                    blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+                    auto& resolved = *blocks.back();
+                    std::memset(resolved.data, 0, resolved.bytes);
+                    AgcDriver::Graphics::ColorMetadataPass pass{};
+                    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                    pass.source = target;
+                    pass.targets = {DecodeTarget(resolved)};
+                    device.ColorMetadataPass(pass);
+                    const auto stored = ReadBack(device, resolved);
+                    for (std::uint32_t y = 0; y < Height; ++y) {
+                        for (std::uint32_t x = 0; x < Width; ++x) {
+                            for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                                const auto expectedValue = x < ScissorWidth ? cleared[channel] + (written[channel] - cleared[channel]) / static_cast<float>(samples) : cleared[channel];
+                                const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u + channel]);
+                                Require(actual == expectedValue, "a full DCC fast-clear fill of a resident multisampled target did not clear it to the new color before the next draw");
+                            }
+                        }
+                    }
+                    programCount = 0;
                 }
-                programCount = 0;
             }
         }
     }
