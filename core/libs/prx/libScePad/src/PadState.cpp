@@ -19,7 +19,10 @@ namespace {
     std::uint8_t pressedAnalogL2 = 0;
     std::uint8_t pressedAnalogR2 = 0;
     std::uint64_t pressedAt = 0;
+    std::uint64_t lastReadAt = 0;
+    std::uint64_t readInterval = 0;
     constexpr std::uint64_t kLatchExpiry = 100000;
+    constexpr std::uint64_t kLatchExpiryLimit = 500000;
     PadOutputState output;
     std::chrono::steady_clock::time_point audioHapticEnd;
     std::array<std::uint8_t, 2> audioHapticRumble{};
@@ -129,6 +132,8 @@ void Pad::Initialize() {
         lastFuseTime = timestamp;
         queue.clear();
         pressedSinceRead = 0;
+        lastReadAt = 0;
+        readInterval = 0;
     }
     initialized = true;
 }
@@ -229,6 +234,10 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
     }
     return injected;
 }
+
+std::uint64_t LatchExpiry() {
+    return std::clamp(readInterval + readInterval / 2, kLatchExpiry, kLatchExpiryLimit);
+}
 }
 
 PadData Pad::ReadState() {
@@ -238,12 +247,14 @@ PadData Pad::ReadState() {
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = InjectedInput(now);
     PadData data = BuildData(state, timestamp, now, injected);
-    if (pressedSinceRead != 0 && now - pressedAt <= kLatchExpiry) {
+    if (pressedSinceRead != 0 && now - pressedAt <= LatchExpiry()) {
         data.buttons |= pressedSinceRead;
         if (pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, pressedAnalogL2);
         if (pressedSinceRead & 0x200u) data.analog_buttons_r2 = std::max(data.analog_buttons_r2, pressedAnalogR2);
     }
     pressedSinceRead = 0;
+    if (lastReadAt != 0) readInterval = now - lastReadAt;
+    lastReadAt = now;
     return data;
 }
 
@@ -390,7 +401,7 @@ extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
     const std::uint32_t pressed = input.buttons & ~state.buttons;
     timestamp = sceKernelGetProcessTime();
     if (pressed != 0) {
-        if (pressedSinceRead != 0 && timestamp - pressedAt > kLatchExpiry) pressedSinceRead = 0;
+        if (pressedSinceRead != 0 && timestamp - pressedAt > LatchExpiry()) pressedSinceRead = 0;
         pressedSinceRead |= pressed;
         pressedAt = timestamp;
         if (pressed & 0x100u) pressedAnalogL2 = input.analogButtonsL2;

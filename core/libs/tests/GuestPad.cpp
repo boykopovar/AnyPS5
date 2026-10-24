@@ -290,6 +290,7 @@ static void CheckLatchedPressLifetime(int handle) {
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
+    Require(scePadReadState(handle, &data) == PAD_OK);
     pressed.buttons = cross;
     PadPublishInput_nid_postfix(pressed);
     PadPublishInput_nid_postfix(PadInputState{});
@@ -300,6 +301,26 @@ static void CheckLatchedPressLifetime(int handle) {
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
     Require((data.buttons & circle) != 0);
+}
+
+static void CheckLatchedPressAtSlowReads(int handle) {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadInputState pressed;
+    pressed.buttons = cross;
+    PadData data{};
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(170));
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(PadInputState{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    Require((data.buttons & cross) != 0);
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(PadInputState{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    Require((data.buttons & cross) == 0);
 }
 
 static void CheckReadStateHandle(int handle) {
@@ -602,6 +623,7 @@ int main() {
     CheckReadQueue(handle);
     CheckTapBetweenReads();
     CheckLatchedPressLifetime(handle);
+    CheckLatchedPressAtSlowReads(handle);
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
     CheckTrackerDevices(handle);
