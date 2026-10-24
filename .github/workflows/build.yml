@@ -683,6 +683,9 @@ jobs:
         shell: cmd
         run: cmake --build build --target libs
       - shell: cmd
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: python tools/select_tests.py ctest build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
       - run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Write the test graph of main
