@@ -401,6 +401,17 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "C\\+\\+ exception St9bad_alloc raised on thread [0-9]+ cannot be delivered: 0x[0-9a-f]+ undeliverable_host_exception_tests\\.exe\\+0x[0-9a-f]+ has no unwind data")
     endif()
 
+    add_test_executable(guest_kernel_sys_uuid_tests tests/GuestKernelSysUuid.cpp)
+    target_include_directories(guest_kernel_sys_uuid_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_uuid_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_uuid_tests)
+    add_test(NAME guest_kernel_sys_uuid COMMAND guest_kernel_sys_uuid_tests)
+    set_tests_properties(guest_kernel_sys_uuid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_uuid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(crash_text_tests tests/CrashText.cpp)
     target_include_directories(crash_text_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     if(MINGW)
