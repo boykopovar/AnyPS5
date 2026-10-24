@@ -868,6 +868,69 @@ void TestGetInfo(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestBatchBounds(std::uint32_t context) {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(128);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::int32_t result[2] = {-1, -1};
+    Require(sceAjmBatchJobInitialize(&info, 0, parameters, sizeof(parameters), result) == 0);
+    const auto completeBytes = info.offset;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    Require(completeBytes < pageSize);
+    for (std::size_t bytes = 1; bytes < completeBytes; ++bytes) {
+        auto* truncated = pages + pageSize - bytes;
+        std::memcpy(truncated, storage.data(), bytes);
+        AjmBatchInfo partial{truncated, bytes, bytes};
+        std::uint32_t batch = 0xdeadbeef;
+        bool threw = false;
+        try {
+            sceAjmBatchStart(context, &partial, 0, nullptr, &batch);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && batch == 0xdeadbeef && result[0] == -1 && result[1] == -1);
+    }
+    for (std::uint8_t value : {std::uint8_t{0}, std::uint8_t{0xff}}) {
+        std::fill(storage.begin(), storage.end(), value);
+        std::uint32_t batch = 0xdeadbeef;
+        bool threw = false;
+        try {
+            sceAjmBatchStart(context, &info, 0, nullptr, &batch);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && batch == 0xdeadbeef && result[0] == -1 && result[1] == -1);
+    }
+    std::uint32_t batch = 0xdeadbeef;
+    AjmBatchInfo invalid{pages + pageSize, 1, 0};
+    Require(sceAjmBatchStart(context, &invalid, 0, nullptr, &batch) == invalidParameter);
+    invalid = {nullptr, 1, 1};
+    Require(sceAjmBatchStart(context, &invalid, 0, nullptr, &batch) == invalidParameter);
+    Require(batch == 0xdeadbeef);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
 void TestBatchWaitRelease(std::uint32_t context) {
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::vector<std::uint8_t> batch(64);
@@ -2029,6 +2092,7 @@ int main() {
     TestGaplessDecode(context);
     TestCodecInfo(context);
     TestGetInfo(context);
+    TestBatchBounds(context);
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
