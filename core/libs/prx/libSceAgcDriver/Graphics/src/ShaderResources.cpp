@@ -2802,6 +2802,12 @@ void ShaderResources::buildComplete() {
         }
         timing.descriptorsMs += phase(BuildPhase::Descriptors);
         noteReusable();
+        for (const auto& surface : validatedTextures) {
+            const auto& resource = surface.resource;
+            if (!surface.depth || resource.dimension != TextureDimension::k2DMsaa) continue;
+            const auto bytes = MultisampledDepthBytes_nid_no_patch({resource.width, resource.height}, BytesPerElement(resource.format), resource.samples);
+            Require(!guestMemory.WritesOverlap(resource.baseAddress, static_cast<std::size_t>(bytes)) && (resource.dccAddress == 0u || !guestMemory.WritesOverlap(resource.dccAddress, static_cast<std::size_t>(HtileMetadataBytes({resource.width, resource.height})))), "a writable shader buffer overlaps sampled native depth");
+        }
         completed = true;
         if (BuildProfiled()) {
             timing.completeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stageStart).count();
