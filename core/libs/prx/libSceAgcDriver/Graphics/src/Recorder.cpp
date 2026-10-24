@@ -4087,7 +4087,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
             std::uint64_t timelineValue = 0;
             if (timeline != VK_NULL_HANDLE) context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR")(context.device, timeline, &timelineValue);
-            std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (fence status %d, timeline %llu of %llu, %llu submissions)\n", static_cast<unsigned long long>(batch->serial), waited, static_cast<int>(context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, batch->fence)), static_cast<unsigned long long>(timelineValue), static_cast<unsigned long long>(submissions), static_cast<unsigned long long>(submissions));
+            std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (fence status %d, timeline %llu of %llu)\n", static_cast<unsigned long long>(batch->serial), waited, static_cast<int>(context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, batch->fence)), static_cast<unsigned long long>(timelineValue), static_cast<unsigned long long>(submissions));
             result = waitFences(context.device, 1, &batch->fence, VK_TRUE, 5'000'000'000ull);
         }
         if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) {
