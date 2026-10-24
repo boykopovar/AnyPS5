@@ -1288,11 +1288,6 @@ int APS5_VABI SSL_use_certificate_ASN1_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_version_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_want_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
