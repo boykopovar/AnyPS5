@@ -8,6 +8,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp src/VectorPolar.cpp src/PsFontValue.cpp src/OutlineRender.cpp
         src/OutlineBitmap.cpp
         src/SfntTable.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/Variations.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
