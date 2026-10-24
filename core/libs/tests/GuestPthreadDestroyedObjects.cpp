@@ -53,10 +53,19 @@ int main() {
     PthreadCond cond = nullptr;
     Require(scePthreadCondInit(&cond, nullptr, "destroyed") == SCE_OK);
     Require(scePthreadCondDestroy(&cond) == SCE_OK);
+    Require(reinterpret_cast<std::uintptr_t>(cond) == 1);
     Require(scePthreadCondSignal(&cond) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondBroadcast(&cond) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondWait(&cond, &mutex) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_cond_signal_nid_postfix(&cond) == POSIX_EINVAL);
     Require(scePthreadCondDestroy(&cond) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_cond_destroy_nid_postfix(&cond) == POSIX_EINVAL);
+
+    PthreadCond untouched = nullptr;
+    Require(scePthreadCondDestroy(&untouched) == SCE_OK && untouched == nullptr);
+    Require(scePthreadCondSignal(&untouched) == SCE_OK && untouched != nullptr);
+    Require(scePthreadCondDestroy(&untouched) == SCE_OK && reinterpret_cast<std::uintptr_t>(untouched) == 1);
+    untouched = nullptr;
+    Require(scePthreadCondBroadcast(&untouched) == SCE_OK && untouched != nullptr);
+    Require(scePthreadCondDestroy(&untouched) == SCE_OK);
 }

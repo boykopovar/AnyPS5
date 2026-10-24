@@ -25,7 +25,7 @@ std::mutex& InitializationMutex() {
 }
 
 PthreadCond destroyedCond() {
-    return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
+    return reinterpret_cast<PthreadCond>(std::uintptr_t{1});
 }
 
 PthreadMutex destroyedMutex() {
@@ -175,6 +175,8 @@ int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) {
     std::lock_guard lock(InitializationMutex());
     if (*cond == destroyedCond())
         return SCE_KERNEL_ERROR_EINVAL;
+    if (*cond == nullptr)
+        return 0;
     delete *cond;
     std::atomic_ref<PthreadCond>(*cond).store(destroyedCond(), std::memory_order_release);
     return 0;
