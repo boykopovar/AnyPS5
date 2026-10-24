@@ -1803,6 +1803,9 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if (pipe && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
+#ifndef _WIN32
+        if (entry.revents & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
+#endif
         if (entry.revents) ++ready;
     };
 #ifdef _WIN32

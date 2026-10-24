@@ -245,9 +245,36 @@ static void PollsAStreamWhosePeerClosed() {
     for (const int descriptor : {client, server, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+#ifndef _WIN32
+static void PollsAHungUpSocketWithoutPollout() {
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0 && listen_nid_postfix(listener, 1) == 0);
+    const int client = socket_nid_postfix(2, 1, 0);
+    Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
+    const int server = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(server >= 0);
+    Require(close_nid_postfix(client) == 0);
+    char byte = 0;
+    PollDescriptor ended{server, In, 0};
+    Require(poll_nid_postfix(&ended, 1, 1000) == 1);
+    Require(recv_nid_postfix(server, &byte, 1, 0) == 0);
+    Require(shutdown_nid_postfix(server, 1) == 0);
+    PollDescriptor hungUp{server, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&hungUp, 1, 1000) == 1 && hungUp.revents == (In | Hup));
+    Require(close_nid_postfix(server) == 0 && close_nid_postfix(listener) == 0);
+}
+#endif
+
 int main() {
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
+#ifndef _WIN32
+    PollsAHungUpSocketWithoutPollout();
+#endif
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0 && listener < 1024);
     std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
