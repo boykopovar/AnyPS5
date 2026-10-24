@@ -403,19 +403,10 @@ static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) 
 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
 
-static void RequireThrd(int result, const char* what) {
-    switch (result) {
-    case threadSuccess:
-        return;
-    case threadNomem:
-    case threadTimedout:
-        ThrowCppError_nid_no_patch(6);
-    case threadBusy:
-        ThrowCppError_nid_no_patch(0);
-    case threadError:
-        ThrowCppError_nid_no_patch(1);
-    }
-    throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
+void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
+
+static void RequireThrd(int result) {
+    if (result != threadSuccess) _ZSt14_Throw_C_errori_nid_postfix(result);
 }
 
 static std::atomic<PthreadCreateFn_nid_no_patch> registeredPthreadCreate{nullptr};
@@ -442,34 +433,34 @@ static void* APS5_VABI PadEntry_nid_no_patch(void* argument) {
 
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
     if (!pad) APS5_INVALID_ARG_EX;
-    RequireThrd(_Cnd_init_nid_postfix(&pad->condition), "_Pad::_Pad: _Cnd_init");
+    RequireThrd(_Cnd_init_nid_postfix(&pad->condition));
     const int created = _Mtx_init_nid_postfix(&pad->mutex, 1);
     if (created != threadSuccess) {
         _Cnd_destroy_nid_postfix(&pad->condition);
-        RequireThrd(created, "_Pad::_Pad: _Mtx_init");
+        RequireThrd(created);
     }
     pad->started = false;
     const int locked = _Mtx_lock_nid_postfix(&pad->mutex);
     if (locked != threadSuccess) {
         _Mtx_destroy_nid_postfix(&pad->mutex);
         _Cnd_destroy_nid_postfix(&pad->condition);
-        RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
+        RequireThrd(locked);
     }
 }
 
 void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
     if (!pad) APS5_INVALID_ARG_EX;
-    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::~_Pad: _Mtx_unlock");
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex));
     _Mtx_destroy_nid_postfix(&pad->mutex);
     _Cnd_destroy_nid_postfix(&pad->condition);
 }
 
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
     if (!pad) APS5_INVALID_ARG_EX;
-    RequireThrd(_Mtx_lock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_lock");
+    RequireThrd(_Mtx_lock_nid_postfix(&pad->mutex));
     pad->started = true;
-    RequireThrd(_Cnd_signal_nid_postfix(&pad->condition), "_Pad::_Release: _Cnd_signal");
-    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_unlock");
+    RequireThrd(_Cnd_signal_nid_postfix(&pad->condition));
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex));
 }
 
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
@@ -478,7 +469,7 @@ void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** t
     if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
     const int created = create(thread, nullptr, PadEntry_nid_no_patch, pad);
     if (created != 0) ThrowCppError_nid_no_patch(6);
-    while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
+    while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex));
 }
 
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {
