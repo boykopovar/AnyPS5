@@ -113,6 +113,11 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
     std::stable_sort(loads.begin(), loads.end(), [&headers](const std::size_t left, const std::size_t right) {
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
+    for (std::size_t position = 1; position < loads.size(); ++position) {
+        const auto& previous = headers[loads[position - 1]];
+        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+    }
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;

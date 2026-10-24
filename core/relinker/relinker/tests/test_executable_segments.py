@@ -118,15 +118,19 @@ def main():
         result, output = run_case(relinker, work, "strict", ["unused-filter=2"], b"\x90\xc3")
         assert result.returncode == 2 and "multiple executable segments" in result.stderr and not output.exists(), result
 
-        for name, memory_size in (("overlap-past-end", 0x10000000000000), ("overlap-next", 0x1300)):
+        image_targets = ([], ["--lazy-binding"], ["--linux-fixed-base", "0x400000"], ["--windows"], ["--macos"])
+        for name, memory_size, targets in (("overlap-past-end", 0x10000000000000, image_targets[3:]),
+                                           ("overlap-next", 0x1300, image_targets)):
             image = fixture(b"\x90\xc3")
             struct.pack_into("<Q", image, 64 + 40, memory_size)
             source = work / (name + ".elf")
-            output = work / (name + ".exe")
             source.write_bytes(image)
-            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
-            assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr and not output.exists(), (name, result)
+            output = work / (name + ".out")
+            for options in targets:
+                result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
+                assert not output.exists(), (name, options)
     print("Executable segment tests passed")
 
 
