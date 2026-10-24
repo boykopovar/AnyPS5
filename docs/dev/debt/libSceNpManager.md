@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [libSceNpManager pending exports](../../../core/libs/prx/libSceNpManager/PendingExports.cpp) - 189 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpManager.c). Their signatures and behavior are unverified; the no-parameter declarations exist for import resolution and throw through `NotImplemented_nid_no_patch`.
+
 - [libSceNpManager pending exports](../../../core/libs/prx/libSceNpManager/Export.cpp) - 143 named callable exports are present in the local `libSceNpManager.sprx` export table and the public PS5 3.20 symbol list. Their signatures and behavior are unverified; each declaration uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.
 
 - [sceNpGetSandboxInfo](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager, NID `ZVZ++68nNI8`) - the name hashes to the imported NID (found with nidhunt, confirmed with `tools/nid_names.py`). STAR WARS: Galactic Racer (PPSA28416) imports it; its OnlineSubsystemPS5 calls it with one pointer to a 0x50-byte stack buffer and reads the buffer as a string (discussions/3086). The returned string, the exact parameter struct and console errors are unknown, so every call throws without reading or writing caller memory. A working implementation belongs with that title's bring-up.
