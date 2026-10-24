@@ -19,6 +19,7 @@ int APS5_VABI sceUltConditionVariableCreate(void*, const char*, void*, const voi
 int APS5_VABI _sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltConditionVariableWait(void*);
 int APS5_VABI sceUltConditionVariableSignal(void*);
+int APS5_VABI sceUltConditionVariableSignalAll(void*);
 int APS5_VABI sceUltConditionVariableDestroy(void*);
 }
 
@@ -76,6 +77,9 @@ static void Validation() {
     CHECK(sceUltConditionVariableDestroy(&unused) == State);
     CHECK(sceUltConditionVariableSignal(nullptr) == Null);
     CHECK(sceUltConditionVariableSignal(&unused) == State);
+    CHECK(sceUltConditionVariableSignalAll(nullptr) == Null);
+    CHECK(sceUltConditionVariableSignalAll(&unused) == State);
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == 0);
     CHECK(sceUltConditionVariableWait(nullptr) == Null);
     CHECK(sceUltConditionVariableWait(&unused) == State);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, nullptr, nullptr, 0) == Null);
@@ -176,6 +180,45 @@ static void SignalOne() {
     CHECK(finished == 3);
 }
 
+static void SignalAll() {
+    Fixture f;
+    std::atomic<int> entered = 0, finished = 0;
+    std::array<std::future<void>, 3> waiters;
+    for (auto& waiter : waiters) waiter = std::async(std::launch::async, [&] {
+        f.Lock();
+        ++entered;
+        f.Wait();
+        ++finished;
+        f.Unlock();
+    });
+    Await(entered, 3);
+    f.Lock();
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == 0);
+    CHECK(sceUltConditionVariableDestroy(&f.condition) == Busy);
+    f.Unlock();
+    for (auto& waiter : waiters) {
+        CHECK(waiter.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+        waiter.get();
+    }
+    CHECK(finished == 3);
+    std::atomic<int> late = 0;
+    auto after = std::async(std::launch::async, [&] {
+        f.Lock();
+        late = 1;
+        f.Wait();
+        f.Unlock();
+    });
+    Await(late, 1);
+    f.Lock();
+    f.Unlock();
+    CHECK(after.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
+    f.Lock();
+    f.Signal();
+    f.Unlock();
+    CHECK(after.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+    after.get();
+}
+
 static void Stress() {
     Fixture f;
     Object consumed;
@@ -236,6 +279,7 @@ int main(int argc, char** argv) {
     if (test == "validation") Validation();
     else if (test == "handoff") Handoff();
     else if (test == "signal-one") SignalOne();
+    else if (test == "signal-all") SignalAll();
     else if (test == "stress") Stress();
     else if (test == "finalize-queued") Finalize(false);
     else if (test == "finalize-reacquire") Finalize(true);
