@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 struct GuestBarrier;
 struct GuestBarrierattr;
@@ -23,6 +24,7 @@ int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId);
 int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId);
 int APS5_VABI scePthreadGetconcurrency();
 int APS5_VABI pthread_setconcurrency_nid_postfix(int level);
+int APS5_VABI sceKernelMlockall(int flags);
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags);
 }
 
@@ -34,6 +36,8 @@ static constexpr int PROCESS_SHARED = 1;
 static constexpr int BARRIER_SERIAL_THREAD = -1;
 static constexpr int MS_ASYNC = 0x1;
 static constexpr int MS_INVALIDATE = 0x2;
+static constexpr int MCL_CURRENT = 0x1;
+static constexpr int MCL_FUTURE = 0x2;
 static constexpr unsigned WAITERS = 4;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -100,5 +104,14 @@ int main() {
     auto* unmapped = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4000));
     Require(sceKernelMsync(unmapped, 0x4000, 0) == SCE_KERNEL_ERROR_ENOMEM);
     Require(sceKernelMsync(unmapped, 0x4000, MS_ASYNC | MS_INVALIDATE) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(sceKernelMlockall(0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMlockall(0x4) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMlockall(-4) == SCE_KERNEL_ERROR_EINVAL);
+    for (int flags : {MCL_CURRENT, MCL_FUTURE, MCL_CURRENT | MCL_FUTURE}) {
+        bool threw = false;
+        try { sceKernelMlockall(flags); } catch (const std::runtime_error&) { threw = true; }
+        Require(threw);
+    }
     return 0;
 }
