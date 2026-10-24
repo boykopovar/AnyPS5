@@ -1334,6 +1334,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_named_shm_concurrency PROPERTIES TIMEOUT 20)
     endif()
     if(WIN32)
+        add_test_executable(guest_named_shm_windows_tests ${LIBS_INCLUDE_DIR}/tests/GuestNamedShmWindows.cpp)
+        target_include_directories(guest_named_shm_windows_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+        target_link_libraries(guest_named_shm_windows_tests PRIVATE libkernel libc advapi32)
+        configure_windows_unwind(guest_named_shm_windows_tests)
+        add_test(NAME guest_named_shm_windows COMMAND guest_named_shm_windows_tests)
+        set_tests_properties(guest_named_shm_windows PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test(NAME guest_named_shm_windows_short_temp COMMAND guest_named_shm_windows_tests --short-temp)
+        set_tests_properties(guest_named_shm_windows_short_temp PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test(NAME guest_named_shm_windows_long_short_temp COMMAND guest_named_shm_windows_tests --long-short-temp)
+        set_tests_properties(guest_named_shm_windows_long_short_temp PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         set_tests_properties(guest_shm_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()

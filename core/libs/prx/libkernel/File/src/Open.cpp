@@ -87,6 +87,8 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
 static int NativeClose(int fd) {
+    const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(fd);
+    if (shared != -2) return shared;
     const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
     const int result = ::_close(fd);
     _set_thread_local_invalid_parameter_handler(previous);
