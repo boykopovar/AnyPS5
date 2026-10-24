@@ -16,7 +16,7 @@ SCRIPT = re.compile(r"(?:[\w.-]+/)*test_\w+\.py")
 
 def built(build):
     program, generator = None, None
-    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8").splitlines():
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
             program = line.partition("=")[2]
         elif line.startswith("CMAKE_GENERATOR:"):
@@ -81,7 +81,7 @@ def commands(content):
                 argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
-                argument = argument[width:-width]
+                argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
 
@@ -157,21 +157,24 @@ def unrun_scripts(root):
     return scripts, [name for name in scripts if not any(name == path or name.endswith("/" + path) for path in run)]
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.scripts:
         scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
             print(f"{len(unrun)} test script(s) would never run: register each with add_test, or run it from a workflow")
-            raise SystemExit(1)
+            return 1
         print(f"{len(scripts)} test script(s), each run by an add_test or a workflow")
-        raise SystemExit
+        return 0
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
@@ -180,11 +183,11 @@ if __name__ == "__main__":
     if args.list:
         for name in every:
             print(f"{'run' if name in run else 'NOT RUN'}  {name}")
-        raise SystemExit
+        return 0
     unrun = sorted(set(every) - run)
     if not every:
         print(f"no test executables found under {args.build}; is it configured with -DBUILD_TESTING=ON?")
-        raise SystemExit(1)
+        return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
     stale = sorted(KNOWN_UNRUN & run)
@@ -196,5 +199,10 @@ if __name__ == "__main__":
     if fresh:
         print(f"{len(fresh)} test executable(s) would never run: ctest reports a full pass over what it knows, so a test nobody registered is invisible in CI")
     if stale or fresh:
-        raise SystemExit(1)
+        return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

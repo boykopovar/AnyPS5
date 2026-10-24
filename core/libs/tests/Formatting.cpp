@@ -1,8 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -10,23 +12,13 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
 
-extern "C" {
-int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
-int APS5_VABI sprintf_nid_postfix(char*, const char*, ...);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI libc_printf_nid_postfix(const char*, ...);
-int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
-int APS5_VABI vsnprintf_nid_postfix(char*, size_t, const char*, VaList*);
-int APS5_VABI vsnprintf_s_nid_postfix(char*, size_t, const char*, VaList*);
-int APS5_VABI snprintf_s_nid_postfix(char*, size_t, const char*, ...);
-int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, VaList*);
-int APS5_VABI vsscanf_nid_postfix(const char*, const char*, VaList*);
-int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
-int APS5_VABI asprintf_nid_postfix(char**, const char*, ...);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
 
 static void Require(bool condition) {
     if (!condition) throw std::runtime_error("Formatting check failed");
@@ -84,11 +76,39 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
+static void CheckSizeLimits() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+    for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
+        char output[8];
+        for (const std::size_t oversized : {static_cast<std::size_t>(INT_MAX) + 2, static_cast<std::size_t>(SIZE_MAX)}) {
+            for (const bool wide : {false, true}) {
+                std::memset(output, 'Z', sizeof(output));
+                int consumed = -1;
+                *__error_nid_postfix() = 0;
+                const int result = wide ? format(output, oversized, "%ls%n", u"x", &consumed)
+                                        : format(output, oversized, "x%n", &consumed);
+                Require(result == 1 && *__error_nid_postfix() == 0 && std::strcmp(output, "x") == 0 && consumed == 1);
+                Require(std::all_of(output + 2, output + sizeof(output), [](char value) { return value == 'Z'; }));
+            }
+        }
+        for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, static_cast<std::size_t>(INT_MAX), static_cast<std::size_t>(INT_MAX) + 1}) {
+            std::memset(output, 'Z', sizeof(output));
+            *__error_nid_postfix() = 35;
+            Require(format(output, capacity, "x") == 1 && *__error_nid_postfix() == 35);
+            Require(output[0] == (capacity == 0 ? 'Z' : capacity == 1 ? '\0' : 'x'));
+            const std::size_t written = capacity < 2 ? capacity : 2;
+            if (capacity > 1) Require(output[1] == 0);
+            Require(std::all_of(output + written, output + sizeof(output), [](char value) { return value == 'Z'; }));
+        }
+        Require(format(nullptr, 0, "x") == 1);
+    }
+}
+
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
     const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80", "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80Z"};
+        "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd",
+        "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd", "A\xc3\xa9\xe2\x82\xac\xed\xa0\xbd"};
     bool correct = true;
     for (int precision = 0; precision < 12; ++precision) {
         char output[32];
@@ -103,7 +123,8 @@ static bool CheckWidePrecision() {
     char output[32];
     Require(snprintf_nid_postfix(output, sizeof(output), "[%5.1ls]", u"\u00e9") == 7 && std::strcmp(output, "[     ]") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "[%-5.2ls]", u"\u00e9") == 7 && std::strcmp(output, "[\xc3\xa9   ]") == 0);
-    Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 0 && output[0] == 0);
+    Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 3 && std::strcmp(output, "\xed\xa0\xbd") == 0);
+    Require(FormatList(output, sizeof(output), "%ls", u"\U0001f600") == 6 && std::strcmp(output, "\xed\xa0\xbd\xed\xb8\x80") == 0);
     Require(FormatList(output, sizeof(output), "%ls[% u][% 4u][%+ lu][%- 3hhu][% x][%+o]", u"", 5u, 5u, 5ULL, 5u, 255u, 8u) == 25
         && std::strcmp(output, "[5][   5][5][5  ][ff][10]") == 0);
     Require(FormatList(output, sizeof(output), "%.*ls:%d", -1, u"\u00e9", 7) == 4 && std::strcmp(output, "\xc3\xa9:7") == 0);
@@ -116,10 +137,11 @@ static bool CheckWidePrecision() {
     Require(snprintf_nid_postfix(output, sizeof(output), "[%ls]", static_cast<const char16_t*>(nullptr)) == 8 && std::strcmp(output, "[(null)]") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "a%lcb%C", 0, 0) == 4 && std::memcmp(output, "a\0b\0", 5) == 0);
     Require(FormatList(output, sizeof(output), "%%ls:%2$d:%1$d", 3, 7) == 7 && std::strcmp(output, "%ls:7:3") == 0);
-    Require(FormatList(output, sizeof(output), "%ls[%f][%+f][% F][%5.1e]", u"", -NAN, -NAN, NAN, -NAN) == 22
-        && std::strcmp(output, "[nan][nan][NAN][  nan]") == 0);
-    Require(FormatList(output, sizeof(output), "%ls[%-6g][%06a][%LG][%+f]", u"", NAN, -NAN, -static_cast<long double>(NAN), -INFINITY) == 27
-        && std::strcmp(output, "[nan   ][   nan][NAN][-inf]") == 0);
+    Require(FormatList(output, sizeof(output), "%ls[%f][%+f][% F][%5.1e]", u"", -NAN, -NAN, NAN, -NAN) == 25
+        && std::strcmp(output, "[-nan][-nan][ NAN][ -nan]") == 0);
+    Require(FormatList(output, sizeof(output), "%ls[%-6g][%06a][%LG][%+f]", u"", NAN, -NAN, -static_cast<long double>(NAN), -INFINITY) == 28
+        && std::strcmp(output, "[nan   ][  -nan][-NAN][-inf]") == 0);
+    Require(FormatList(output, sizeof(output), "%ls[%+f][%8.3f|]", u"", NAN, -NAN) == 17 && std::strcmp(output, "[+nan][    -nan|]") == 0);
     for (std::size_t capacity = 0; capacity <= 6; ++capacity) {
         std::memset(output, '!', sizeof(output));
         int count = -1;
@@ -171,19 +193,24 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, "Mount requested: 0") == 0);
     for (int index = 0; index < 10000; ++index) {
         snprintf_nid_postfix(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %d", 1, 2, 3, 4, 5, 6, 7, 8);
+
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 8") == 0);
         FormatList(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %d", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11);
         Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11") == 0);
         snprintf_nid_postfix(buffer, sizeof(buffer), "%ld %lu %lld %zu %td %jd", -4294967297LL, 4294967297ULL, -5LL, 7ULL, -8LL, 9LL);
+
         Require(std::strcmp(buffer, "-4294967297 4294967297 -5 7 -8 9") == 0);
         snprintf_nid_postfix(buffer, sizeof(buffer), "%s:%*.*f:%d", "test", -8, 2, 1.25, 7);
+
         Require(std::strcmp(buffer, "test:1.25    :7") == 0);
         FormatList(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %.3Lf %.1f", 1, 2, 3, 4, 5, 6, 7, 1.125L, 2.5);
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 1.125 2.5") == 0);
     }
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10.);
+
     Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.3Lf %d %.1f", 1.125L, 7, 2.5);
+
     Require(std::strcmp(buffer, "1.125 7 2.5") == 0);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%'d|%'u|%'.2f|%'-8ld|%'+05d|%'g", 1234567, 4000000000u, 1234567.891, 1234567LL, 42, 1e6) == 50);
     Require(std::strcmp(buffer, "1234567|4000000000|1234567.89|1234567 |+0042|1e+06") == 0);
@@ -202,20 +229,12 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(FormatList(buffer, sizeof(buffer), "%2$ls|%1$C|%3$d", 0x41, u"\u00e9", 7) == 6 && std::strcmp(buffer, "\xc3\xa9|A|7") == 0);
     Require(FormatList(buffer, sizeof(buffer), "%2$d %d %ls|%*5$d|%1$d", 1, 2, 3, u"x", 4) == 12 && std::strcmp(buffer, "2 3 x|   4|1") == 0);
     Require(FormatList(buffer, sizeof(buffer), "[%*3$d]%ls", 5, u"", 3) == 5 && std::strcmp(buffer, "[  5]") == 0);
-    const char* const invalidPositions[] = {"%0$d%ls", "%100$d%ls", "%*0$d%ls"};
-    for (const char* format : invalidPositions) {
-        bool threw = false;
-        try {
-            FormatList(buffer, sizeof(buffer), format, 1, u"");
-        } catch (const std::invalid_argument&) {
-            threw = true;
-        }
-        Require(threw);
-    }
+    Require(FormatList(buffer, sizeof(buffer), "%100$d %2$d%1$ls", u"", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100) == 4 && std::strcmp(buffer, "99 1") == 0);
     char expected[1024];
     std::snprintf(expected, sizeof(expected), "%#08x %.3e %a %g %llx", 42u, 1.25, 1.25, 1.25,
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(buffer)));
     snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
+
     Require(std::strcmp(buffer, expected) == 0);
     char pointers[128];
     const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
@@ -236,6 +255,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p", address(0xffffffffffffffffull)) == 16 &&
         std::strcmp(pointers, "ffffffffffffffff") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
+
     Require(std::strcmp(buffer, "unlimited") == 0);
     buffer[5] = '!';
     Require(snprintf_nid_postfix(buffer, 5, "%s", "abcdef") == 6);
@@ -329,6 +349,21 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     char narrow[8] = {};
     Require(sscanf_nid_postfix("ab%", "%7[^%ls]", narrow) == 1 && std::strcmp(narrow, "ab") == 0);
 #endif
+#ifdef _WIN32
+    char freebsd[64];
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%qd|%qu|%qx|%qo") == 15 &&
+        std::strcmp(freebsd, "%qd|%qu|%qx|%qo") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%qd|%d", 7) == 5 && std::strcmp(freebsd, "%qd|7") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "%D|%hD|%O|%U|%jD") == 14 &&
+        std::strcmp(freebsd, "%D|%D|%O|%U|%D") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "[%5%][%-5%][%y][%5y][%-3y][%hhz]") == 34 &&
+        std::strcmp(freebsd, "[    %][%    ][%y][   %y][%y ][%z]") == 0);
+    Require(snprintf_nid_postfix(freebsd, sizeof(freebsd), "[%#y][%.2y][%-#4.1y]") == 14 &&
+        std::strcmp(freebsd, "[%y][%y][%y  ]") == 0);
+    bool incomplete = false;
+    try { snprintf_nid_postfix(freebsd, sizeof(freebsd), "100%"); } catch (const std::invalid_argument&) { incomplete = true; }
+    Require(incomplete);
+#endif
     long long count = -1;
     int smallCount = -1;
     Require(snprintf_nid_postfix(buffer, 3, "abcd%lnEF%n", &count, &smallCount) == 6);
@@ -336,11 +371,12 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "a%cb", 0) == 3);
     Require(buffer[0] == 'a' && buffer[1] == 0 && buffer[2] == 'b' && buffer[3] == 0);
     *__error_nid_postfix() = 35;
-    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%m][%.8m][%-10.5m][%d]", 7) == 59);
-    Require(std::strcmp(buffer, "[Resource temporarily unavailable][Resource][Resou     ][7]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%m][%.8m][%-10.5m][%d]", 7) == 23);
+    Require(std::strcmp(buffer, "[%m][%m][%m        ][7]") == 0);
     Require(*__error_nid_postfix() == 35);
-    *__error_nid_postfix() = 63;
-    Require(FormatList(buffer, sizeof(buffer), "%s: %m", "open") == 24 && std::strcmp(buffer, "open: File name too long") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%s: %m", "open") == 8 && std::strcmp(buffer, "open: %m") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%5k][%-3y][%lk][%#.2k][%y%d][%0$d]", 42) == 31);
+    Require(std::strcmp(buffer, "[   %k][%y ][%k][%k][%y42][%$d]") == 0);
     Require(printf_nid_postfix("printf: %d %.1f\n", 7, 2.5) == 14);
     Require(libc_printf_nid_postfix("libc_printf: %s\n", "OK") == 16);
     Require(libc_printf_nid_postfix("%d %d %d %d %d %d %d\n", 1, 22, 333, 4444, 55555, 666666, 7777777) == 35);
@@ -366,6 +402,7 @@ static void CheckAllocatingFormat() {
     char* allocated = nullptr;
     Require(asprintf_nid_postfix(&allocated, "%ls:%S:%lc:%d", u"\u00e9", u"ab", 0x20ac, 7) == 11 && std::strcmp(allocated, "\xc3\xa9:ab:\xe2\x82\xac:7") == 0);
     free_nid_postfix(allocated);
+
 }
 
-int main() { RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckSizeLimits(); RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

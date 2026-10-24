@@ -30,7 +30,10 @@ constexpr std::uint32_t ClampEdge = 2;
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<float, Threads * 8> Output{};
-alignas(65536) std::array<std::uint8_t, 4u << 20u> Texels{};
+constexpr std::size_t TexelBytes = 4u << 20u;
+constexpr std::size_t TexelAlignment = 65536;
+std::array<std::uint8_t, TexelBytes + TexelAlignment - 1> TexelStorage{};
+const std::span<std::uint8_t, TexelBytes> Texels{reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(TexelStorage.data()) + TexelAlignment - 1) & ~(TexelAlignment - 1)), TexelBytes};
 
 alignas(256) constexpr std::array<std::uint32_t, 15> Code{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf09c0f20, 0x00820602, 0xf0001f20, 0x00020a04,
@@ -62,7 +65,7 @@ std::array<std::uint8_t, 4> Texel(std::uint32_t x, std::uint32_t guestLayer) {
 }
 
 void FillTexels() {
-    Texels.fill(0);
+    std::ranges::fill(Texels, std::uint8_t{0});
     const auto surface = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor()));
     const auto& mip = surface.mips.at(0);
     Require(surface.layers == LastArray + 1u && surface.guestBytes <= Texels.size(), "the test array does not fit its storage");
@@ -117,7 +120,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t baseArray = BaseArray) {
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float u = std::bit_cast<float>(Input[tid * 4u + 0u]);
-        const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(Layers - 1u));
+        const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(LastArray - baseArray));
         const auto x = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::floor(u * static_cast<float>(Width))), 0, static_cast<int>(Width) - 1));
         Expect(tid, "image_sample_lz on a window of a 1D array past maxImageArrayLayers", &Output[tid * 8u], Texel(x, baseArray + static_cast<std::uint32_t>(layer)));
         Expect(tid, "image_load on a window of a 1D array past maxImageArrayLayers", &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], baseArray + Input[tid * 4u + 3u]));
@@ -128,6 +131,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t baseArray = BaseArray) {
 
 int main() {
     try {
+        Require(reinterpret_cast<std::uintptr_t>(Texels.data()) % TexelAlignment == 0, "the test array is not 64 KiB aligned");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillTexels();

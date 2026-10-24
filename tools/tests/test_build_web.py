@@ -1,8 +1,10 @@
+import os
 import contextlib
 import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -123,6 +125,56 @@ class LibraryPublicationTests(unittest.TestCase):
             self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
         self.assertEqual(self.existing.read_bytes(), b"previous archive")
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+
+class BuildWebCliTests(unittest.TestCase):
+    def test_missing_relinker_wasm_reports_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            result = subprocess.run([sys.executable, str(Path(build_web.__file__)), "--build", str(build)],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Build relinker_wasm first: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_main_with_explicit_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            native = build / "web" / "native"
+            native.mkdir(parents=True)
+            (native / "relinker_wasm.mjs").touch()
+            (native / "relinker_wasm.wasm").touch()
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = build_web.main(["--build", str(build)])
+            self.assertEqual(code, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(build_web.sys, "stdout", out), patch.object(build_web.sys, "stderr", err):
+            try:
+                build_web.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

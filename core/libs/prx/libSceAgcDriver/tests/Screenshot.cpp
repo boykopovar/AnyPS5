@@ -21,9 +21,9 @@ void require(bool condition, const char* message) {
 
 void setScreenshotDirectory(const std::filesystem::path& directory) {
 #ifdef _WIN32
-    require(_putenv_s("ANYPS5_SCREENSHOTS", directory.string().c_str()) == 0, "set ANYPS5_SCREENSHOTS");
+    require(_wputenv_s(L"ANYPS5_SCREENSHOTS", directory.wstring().c_str()) == 0, "set ANYPS5_SCREENSHOTS");
 #else
-    require(::setenv("ANYPS5_SCREENSHOTS", directory.string().c_str(), 1) == 0, "set ANYPS5_SCREENSHOTS");
+    require(::setenv("ANYPS5_SCREENSHOTS", directory.c_str(), 1) == 0, "set ANYPS5_SCREENSHOTS");
 #endif
 }
 
@@ -73,7 +73,7 @@ void rejectsInvalidFrames() {
 
 int main() try {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_screenshot-" + std::to_string(std::random_device{}()));
-    const auto directory = root / "nested";
+    const auto directory = root / std::filesystem::path(u8"nested-a\u00e7\u00e3o-\u65e5\u672c");
     std::filesystem::remove_all(root);
     setScreenshotDirectory(directory);
     requestsMerge();

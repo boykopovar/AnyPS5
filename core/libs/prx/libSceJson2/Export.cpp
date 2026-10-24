@@ -1,85 +1,33 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include <algorithm>
 #include <bit>
 #include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <list>
+#include <locale>
 #include <mutex>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
-enum ValueType : std::int32_t {
-    TypeNull = 0,
-    TypeBoolean = 1,
-    TypeInteger = 2,
-    TypeUInteger = 3,
-    TypeReal = 4,
-    TypeString = 5,
-    TypeArray = 6,
-    TypeObject = 7,
-};
+using namespace SceJson2;
 
 constexpr int JsonErrorParse = static_cast<int>(0x80848101);
 
-struct Node;
-struct Value { Node* node; };
-struct String { std::string* text; };
-struct Array { std::list<Value>* items; };
-struct Pair;
-struct Object { std::list<Pair>* items; };
-struct ArrayIteratorState {
-    std::list<Value>::iterator position;
-    std::list<Value>::iterator end;
-};
-struct ArrayIterator { ArrayIteratorState* state; };
-struct ObjectIteratorState {
-    std::list<Pair>* owner = nullptr;
-    std::list<Pair>::iterator position{};
-};
-struct ObjectIterator { ObjectIteratorState* state; };
-struct Pair {
-    String key;
-    std::uint64_t reserved;
-    Value value;
-};
 static_assert(sizeof(Value) == 8 && sizeof(String) == 8 && sizeof(Array) == 8 && sizeof(Object) == 8);
 static_assert(sizeof(ArrayIterator) == 8 && sizeof(ObjectIterator) == 8);
 static_assert(offsetof(Pair, value) == 0x10);
-
-using TypeMismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
-using SpecialFloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-using ElementAccessFailureHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-
-struct Handlers {
-    TypeMismatchHandler typeMismatch = nullptr;
-    void* typeMismatchContext = nullptr;
-    SpecialFloatHandler specialFloat = nullptr;
-    void* specialFloatContext = nullptr;
-    ElementAccessFailureHandler elementAccessFailure = nullptr;
-    void* elementAccessFailureContext = nullptr;
-};
-
-struct Node {
-    ValueType type = TypeNull;
-    bool boolean = false;
-    std::int64_t integer = 0;
-    std::uint64_t uinteger = 0;
-    double real = 0;
-    String string{};
-    Array array{};
-    Object object{};
-    Handlers handlers{};
-};
-
-using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 
 struct Globals {
     std::mutex mutex;
@@ -299,8 +247,9 @@ void AppendEscaped(std::string& out, const std::string& text) {
 std::string RealText(double value) {
     if (!std::isfinite(value)) throw std::runtime_error("sce::Json: cannot serialize a non-finite number");
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-    return buffer;
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general, 17);
+    if (result.ec != std::errc{}) throw std::runtime_error("sce::Json: real number formatting failed");
+    return std::string(buffer, result.ptr);
 }
 
 void Serialize(std::string& out, const Node& n) {
@@ -369,8 +318,6 @@ Value& ObjectEntry(Object& object, const std::string& key) {
         throw;
     }
 }
-
-using ParserReadCallback = int (APS5_VABI*)(char&, void*);
 
 class Parser {
 public:
@@ -510,8 +457,16 @@ private:
                 }
             }
         }
-        const double real = std::strtod(text.c_str(), nullptr);
-        if (!std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
+        double real = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), real);
+        bool converted = parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+        if (parsed.ec == std::errc::result_out_of_range) {
+            std::istringstream stream(text);
+            stream.imbue(std::locale::classic());
+            stream >> real;
+            converted = !stream.fail() && stream.eof();
+        }
+        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;
         out.real = real;
         return true;
@@ -609,7 +564,6 @@ void* const JsonMemAllocatorVtable[] = {
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
 };
-
 
 }
 
@@ -713,6 +667,34 @@ String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* s
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return self->text->find(character, position); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return self->text->rfind(character, position); }
+char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t position) {
+    if (position >= self->text->size()) throw std::out_of_range("sce::Json::String::at: position past the end");
+    return (*self->text)[position];
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::find: null other");
+    return self->text->find(*other->text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null other");
+    return self->text->rfind(*other->text, position);
+}
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null text");
     return CompareText(self->text->c_str(), text);
@@ -725,6 +707,14 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    if (self == other) return self;
+    Array copy{};
+    CopyArray(copy, *other);
+    Destroy(*self);
+    *self = copy;
+    return self;
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
@@ -750,6 +740,11 @@ const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array* self) {
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
     return &self->items->back();
+}
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
+    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
+    Destroy(self->items->front());
+    self->items->pop_front();
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
@@ -834,6 +829,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator*
     if (self->state && self->state->owner) {
         while (count) {
             _ZN3sce4Json6Object8iteratorppEv(self);
+
             --count;
         }
     }
@@ -1044,7 +1040,6 @@ int APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Stri
     return 0;
 }
 
-
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
     Parser parser(read, context, NodeOf(*out).handlers);
@@ -1058,26 +1053,12 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     return ParseValue(out, parser);
 }
 
-
-struct InitParameterRtti {
-    void* allocParam;
-    void* userData;
-    std::size_t fileBufferSize;
-};
-
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
     self->allocParam = allocParam;
     self->userData = userData;
     self->fileBufferSize = fileBufferSize;
 }
 
-struct InitParameter2 {
-    void* allocator;
-    void* userData;
-    std::size_t fileBufferSize;
-    std::int32_t specialFloatFormatType;
-    std::uint32_t reserved[3];
-};
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
@@ -1087,6 +1068,7 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
     _ZN3sce4Json14InitParameter2C1Ev(self);
+
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
@@ -1214,6 +1196,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* result, ArrayIterator* self, int) {
     _ZN3sce4Json5Array8iteratorC1ERKS2_(result, self);
     _ZN3sce4Json5Array8iteratorppEv(self);
+
     return result;
 }
 
@@ -1236,6 +1219,7 @@ void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* result, ObjectIterator* self, int) {
     auto state = self->state ? std::make_unique<ObjectIteratorState>(*self->state) : nullptr;
     _ZN3sce4Json6Object8iteratorppEv(self);
+
     result->state = state.release();
     return result;
 }

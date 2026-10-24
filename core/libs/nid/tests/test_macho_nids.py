@@ -271,7 +271,7 @@ def check_refusals(patcher, directory):
 
 def main():
     patcher = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-") as directory:
+    with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
         check_preserved(patcher, directory)

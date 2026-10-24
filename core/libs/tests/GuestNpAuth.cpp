@@ -1,24 +1,9 @@
+#include "prx/libSceNpAuth/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpAuthAbortRequest(int req_id);
-int APS5_VABI sceNpAuthCreateAsyncRequest(const void* param);
-int APS5_VABI sceNpAuthCreateRequest(void);
-int APS5_VABI sceNpAuthDeleteRequest(int req_id);
-int APS5_VABI sceNpAuthGetAuthorizationCode(int req_id, const void* param, void* auth_code);
-int APS5_VABI sceNpAuthGetAuthorizationCodeA(int req_id, const void* param, void* auth_code, int* issuer_id);
-int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, void* auth_code, int* issuer_id);
-int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t, const NpAuthAuthorizedAppCodeParameter*, char*, std::int32_t*, bool*);
-int APS5_VABI sceNpAuthGetIdToken(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthGetIdTokenA(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthGetIdTokenV3(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthPollAsync(int req_id, int* result);
-int APS5_VABI sceNpAuthSetTimeout(int req_id, int resolve_retry, uint32_t resolve_timeout, uint32_t connect_timeout, uint32_t send_timeout, uint32_t receive_timeout);
-int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result);
-}
+#include <initializer_list>
 
 static void Require(bool condition) {
     if (!condition) {
@@ -26,7 +11,43 @@ static void Require(bool condition) {
     }
 }
 
+static void RequireUnstarted(int request) {
+    constexpr int invalidId = static_cast<int>(0x80550307);
+    constexpr int sentinel = 0x13579bdf;
+    for (int attempt = 0; attempt != 3; ++attempt) {
+        int result = sentinel;
+        Require(sceNpAuthPollAsync(request, &result) == invalidId);
+        Require(result == sentinel);
+        Require(sceNpAuthWaitAsync(request, &result) == invalidId);
+        Require(result == sentinel);
+    }
+}
+
+static void CheckUnstartedAborts() {
+    constexpr int aborted = static_cast<int>(0x80550304);
+    alignas(8) char parameter[16]{};
+    alignas(8) char output[16]{};
+    for (const bool async : {false, true}) {
+        const int request = async ? sceNpAuthCreateAsyncRequest(nullptr) : sceNpAuthCreateRequest();
+        Require(request > 0);
+        RequireUnstarted(request);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        RequireUnstarted(request);
+        for (auto getter : {sceNpAuthGetIdToken, sceNpAuthGetIdTokenV3, sceNpAuthGetAuthorizationCode}) {
+            Require(getter(request, parameter, output) == aborted);
+            RequireUnstarted(request);
+        }
+        int issuer = 0x2468ace;
+        Require(sceNpAuthGetAuthorizationCodeV3(request, parameter, output, &issuer) == aborted);
+        Require(issuer == 0x2468ace);
+        RequireUnstarted(request);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+}
+
 int main() {
+    CheckUnstartedAborts();
     constexpr int invalidArgument = static_cast<int>(0x80550301);
     constexpr int signedOut = static_cast<int>(0x80550006);
     constexpr int aborted = static_cast<int>(0x80550304);
@@ -130,8 +151,8 @@ int main() {
     Require(sceNpAuthGetIdTokenV3(abortedReq, param, token) == aborted);
     Require(sceNpAuthGetAuthorizationCodeV3(abortedReq, param, authCode, &issuerId) == aborted);
     int abortedWait = 0;
-    Require(sceNpAuthWaitAsync(abortedReq, &abortedWait) == 0);
-    Require(abortedWait == aborted);
+    Require(sceNpAuthWaitAsync(abortedReq, &abortedWait) == invalidId);
+    Require(abortedWait == 0);
 
     const int syncReqA = sceNpAuthCreateRequest();
     Require(sceNpAuthGetIdTokenA(syncReqA, nullptr, token) == invalidArgument);

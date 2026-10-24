@@ -18,6 +18,8 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/guest/GuestImage.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
+#include <codegen/x86/RedZoneFramer.hpp>
+#include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
@@ -41,6 +43,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
+    if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
     if (input.InputPath.empty() || input.OutputPath.empty()) throw Domain::RelinkerException("Input and output names are required");
     if (input.InputPath.lexically_normal() == input.OutputPath.lexically_normal()) throw Domain::RelinkerException("Executable output would overwrite the input executable");
     if (!input.Modules.empty() && input.ModuleRoot.empty()) throw Domain::RelinkerException("Module root is required");
@@ -105,7 +108,27 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             throw Domain::RelinkerException("Relinker patch exceeds source image", patch.Offset);
         for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
     }
-    GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.RelinkPatches = result.Patches, .RelaData = result.DynamicSection.RelaData, .RelaPltData = result.DynamicSection.RelaPltData});
+    const auto intelSites = trampolines.size();
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    if (options.FrameRedZone) {
+        const auto headers = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
+        std::vector<Domain::ProgramHeader> codeSegments;
+        for (const auto& header : headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeSegments.push_back(header);
+        std::vector<Codegen::RedZoneFunction> functions;
+        for (const auto& region : Relinker::UnusedNidFilter::ReadExceptionFunctions(sourceBytes, headers, {}, {})) functions.push_back({region.Begin, region.End});
+        if (functions.empty()) throw Domain::RelinkerException("Red-zone framing needs function bounds from the executable's .eh_frame, and it has none");
+        Codegen::RedZoneFrameReport report;
+        auto framed = Codegen::FrameRedZoneFunctions(sourceBytes, codeSegments, functions, trampolines, report, displacements);
+        for (const auto& moved : displacements) {
+            if (moved.Offset > sourceBytes.size() || moved.Bytes.size() > sourceBytes.size() - moved.Offset)
+                throw Domain::RelinkerException("Red-zone displacement exceeds source image", moved.Offset);
+            std::copy(moved.Bytes.begin(), moved.Bytes.end(), sourceBytes.begin() + static_cast<std::ptrdiff_t>(moved.Offset));
+        }
+        { std::ostringstream message; message << "Red-zone framing: " << report.Functions << " functions, " << report.RedZoneFunctions << " leaf functions keep values below RSP, " << report.Framed << " framed (" << report.FramedWithoutFramePointer << " without a frame pointer, " << report.MovedOperands << " rsp operands moved, " << report.StubbedOperands << " in " << report.OperandStubs << " operand stubs; " << report.Exits << " exits)\n"; inputProgress.Message(message.str()); }
+        for (const auto& [reason, count] : report.Skipped) { std::ostringstream message; message << "Red-zone framing: skipped " << count << ": " << reason << '\n'; inputProgress.Message(message.str()); }
+        trampolines.insert(trampolines.end(), std::make_move_iterator(framed.begin()), std::make_move_iterator(framed.end()));
+    }
+    GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.RelinkPatches = result.Patches, .RelaData = result.DynamicSection.RelaData, .RelaPltData = result.DynamicSection.RelaPltData, .RedZoneSites = std::span<const Codegen::TrampolineSite>(trampolines).subspan(intelSites), .RedZoneDisplacements = displacements});
 
     if (!options.Patches.empty()) {
         for (auto& module : input.Modules) {
@@ -125,6 +148,11 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
 
+    std::optional<std::uint64_t> linuxBase;
+    if (!windows && !macos)
+        linuxBase = options.LinuxFixedBase || options.LazyBinding ? options.LinuxFixedBase : std::optional<std::uint64_t>(Elfpatcher::Linux::DefaultFixedBase);
+    if (!windows && !macos && options.LazyBinding)
+        inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
         patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); });
@@ -139,7 +167,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
             ),
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
             byteWriter,
-            options.LinuxFixedBase,
+            linuxBase,
             options.TraceImports
         );
     }
@@ -157,7 +185,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::string diagnostics;
     if (windows) diagnostics = std::static_pointer_cast<Elfpatcher::Windows::WindowsPePatcher>(patcher)->GetDiagnostics();
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 1, 1});
-    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics), std::move(appliedPatches)};
+    return {std::move(executableBytes), std::move(guestArtifacts), std::move(result), std::move(diagnostics), std::move(appliedPatches), linuxBase};
 } catch (Domain::RelinkerException& error) {
     if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
     throw;

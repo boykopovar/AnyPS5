@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -48,7 +49,6 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
     return 0;
 }
 
-
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     if (static_cast<std::int32_t>(std::strlen(path)) < 0) return 0;
@@ -68,7 +68,7 @@ int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(std::uint32_t userValue, c
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type) {
-    NotImplemented_nid_no_patch("Uxqkdta7wEg");
+    (void)type;
     return 0;
 }
 

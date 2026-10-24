@@ -1,39 +1,9 @@
+#include "prx/libSceFont/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
-
-struct FontGraphicsDevice;
-struct FontGraphicsDeviceParam;
-struct FontGraphicsService;
-struct FontGraphicsServiceParam;
-struct FontWords;
-struct FontGlyphSupport;
-struct FontOutlineProfile;
-struct FontMetrics;
-struct FontStyleInformation;
-struct FontGlyphExpandBufferState;
-struct FontGraphicsResource;
-struct FontGraphicsFrame;
-struct FontGraphicsDesignResource;
-struct FontGraphicsDesign;
-struct FontGraphicsCanvas;
-struct FontGraphicsCanvasSequence;
-struct FontGraphicsSurface;
-struct FontGraphicsSurfaceTexture;
-struct FontGraphicsFill;
-
-struct FontGraphicsRegion {
-    float x;
-    float y;
-    float width;
-    float height;
-    std::uint32_t flags;
-    std::uint32_t tag;
-    float outerRadius;
-    float innerRadius;
-};
 
 static_assert(sizeof(FontGraphicsRegion) == 32);
 static_assert(offsetof(FontGraphicsRegion, x) == 0);
@@ -45,30 +15,12 @@ static_assert(offsetof(FontGraphicsRegion, tag) == 20);
 static_assert(offsetof(FontGraphicsRegion, outerRadius) == 24);
 static_assert(offsetof(FontGraphicsRegion, innerRadius) == 28);
 
-struct FontGraphicsFillMethod {
-    std::int32_t mode;
-    std::int32_t type;
-    std::uint32_t flags;
-    std::uint32_t tag;
-    std::byte reserved[16];
-};
-
 static_assert(sizeof(FontGraphicsFillMethod) == 32);
 static_assert(offsetof(FontGraphicsFillMethod, mode) == 0);
 static_assert(offsetof(FontGraphicsFillMethod, type) == 4);
 static_assert(offsetof(FontGraphicsFillMethod, flags) == 8);
 static_assert(offsetof(FontGraphicsFillMethod, tag) == 12);
 static_assert(offsetof(FontGraphicsFillMethod, reserved) == 16);
-
-struct FontGraphicsFillPlot {
-    float mapping[4];
-    const FontGraphicsRegion* region;
-    std::uint16_t tag;
-    std::uint16_t reserved26;
-    std::uint16_t layout;
-    std::uint8_t flags;
-    std::byte reserved[33];
-};
 
 static_assert(sizeof(FontGraphicsFillPlot) == 64);
 static_assert(offsetof(FontGraphicsFillPlot, mapping) == 0);
@@ -79,16 +31,6 @@ static_assert(offsetof(FontGraphicsFillPlot, layout) == 28);
 static_assert(offsetof(FontGraphicsFillPlot, flags) == 30);
 static_assert(offsetof(FontGraphicsFillPlot, reserved) == 31);
 
-struct FontGraphicsFillRates {
-    float mapping[4];
-    const FontGraphicsFill* fill;
-    std::uint16_t tag;
-    std::uint16_t effect;
-    std::uint16_t layout;
-    std::uint8_t flags;
-    std::byte reserved[33];
-};
-
 static_assert(sizeof(FontGraphicsFillRates) == 64);
 static_assert(offsetof(FontGraphicsFillRates, mapping) == 0);
 static_assert(offsetof(FontGraphicsFillRates, fill) == 16);
@@ -98,14 +40,6 @@ static_assert(offsetof(FontGraphicsFillRates, layout) == 28);
 static_assert(offsetof(FontGraphicsFillRates, flags) == 30);
 static_assert(offsetof(FontGraphicsFillRates, reserved) == 31);
 
-struct FontGraphicsPoolUsage {
-    std::uint32_t capacity;
-    std::uint32_t used;
-    std::uint32_t available;
-    std::uint32_t peak;
-    std::int32_t change;
-};
-
 static_assert(sizeof(FontGraphicsPoolUsage) == 20);
 static_assert(offsetof(FontGraphicsPoolUsage, capacity) == 0);
 static_assert(offsetof(FontGraphicsPoolUsage, used) == 4);
@@ -113,26 +47,14 @@ static_assert(offsetof(FontGraphicsPoolUsage, available) == 8);
 static_assert(offsetof(FontGraphicsPoolUsage, peak) == 12);
 static_assert(offsetof(FontGraphicsPoolUsage, change) == 16);
 
-struct FontGraphicsMemoryUsage {
-    FontGraphicsPoolUsage storage;
-    FontGraphicsPoolUsage allocations;
-    void* address;
-};
-
 static_assert(sizeof(FontGraphicsMemoryUsage) == 48);
 static_assert(offsetof(FontGraphicsMemoryUsage, storage) == 0);
 static_assert(offsetof(FontGraphicsMemoryUsage, allocations) == 20);
 static_assert(offsetof(FontGraphicsMemoryUsage, address) == 40);
 
-struct FontGraphicsDeviceUsage {
-    FontGraphicsMemoryUsage first;
-    FontGraphicsMemoryUsage second;
-};
-
 static_assert(sizeof(FontGraphicsDeviceUsage) == 96);
 static_assert(offsetof(FontGraphicsDeviceUsage, first) == 0);
 static_assert(offsetof(FontGraphicsDeviceUsage, second) == 48);
-
 
 #pragma GCC visibility push(default)
 
@@ -177,7 +99,6 @@ int APS5_VABI sceFontDestroyWords(FontWords** words) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 
 int APS5_VABI sceFontGetFontGlyphsOutlineProfile(FontHandle font, FontOutlineProfile* profile) {
     NotImplemented_nid_no_patch(__func__);
