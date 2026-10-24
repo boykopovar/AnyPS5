@@ -13,12 +13,15 @@ void Require(bool value) {
     if (!value) std::abort();
 }
 
+constexpr int kErrAlreadySystemInitialized = static_cast<int>(0x80B80002);
+
 }
 
 int main() {
     Require(!sceCommonDialogIsUsed());
     Require(sceCommonDialogInitialize() == COMMON_DIALOG_OK);
     Require(!sceCommonDialogIsUsed());
-    Require(sceCommonDialogInitialize() == COMMON_DIALOG_ERROR_ALREADY_INITIALIZED);
+    Require(sceCommonDialogInitialize() == kErrAlreadySystemInitialized);
+    Require(sceCommonDialogInitialize() == kErrAlreadySystemInitialized);
     Require(!sceCommonDialogIsUsed());
 }

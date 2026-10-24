@@ -50,6 +50,7 @@ void APS5_VABI sceUsbdFillInterruptTransfer(void* transfer, void* deviceHandle, 
 std::int32_t APS5_VABI sceUsbdCancelTransfer(void* transfer);
 std::int32_t APS5_VABI sceUsbdEventHandlingOk();
 void APS5_VABI sceUsbdFreeConfigDescriptor(void* config);
+void APS5_VABI sceUsbdFillControlSetup(std::uint8_t* buffer, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint16_t length);
 }
 
 namespace {
@@ -293,6 +294,13 @@ int main(int argc, char** argv) {
     sceUsbdFreeTransfer(nullptr);
     Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
     sceUsbdFreeConfigDescriptor(nullptr);
+    Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0x80, 6, 0x0100, 0, 18); }), "null control setup buffer accepted");
+    std::uint8_t setupBuffer[8] = {};
+    sceUsbdFillControlSetup(setupBuffer, 0x80, 6, 0x0100, 0x0409, 18);
+    Require(setupBuffer[0] == 0x80 && setupBuffer[1] == 6, "request type or request not filled");
+    Require(setupBuffer[2] == 0x00 && setupBuffer[3] == 0x01, "value not filled little-endian");
+    Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
+    Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
     sceUsbdExit();
     std::puts("USBD tests passed");

@@ -287,6 +287,8 @@ int APS5_VABI isprint_nid_postfix(int c) { return ClassifyCharacter(c, std::ctyp
 int APS5_VABI isgraph_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::graph); }
 int APS5_VABI ispunct_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::punct); }
 int APS5_VABI isxdigit_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::xdigit); }
+int APS5_VABI isascii_nid_postfix(int c) { return (c & ~0x7F) == 0; }
+int APS5_VABI toascii_nid_postfix(int c) { return c & 0x7F; }
 int APS5_VABI toupper_nid_postfix(int c) { return ConvertCharacter(c, true); }
 int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 

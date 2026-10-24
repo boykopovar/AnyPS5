@@ -21,6 +21,7 @@
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -835,6 +836,21 @@ void converterWideStoreWindows() {
     expected = halves;
     expected.insert(expected.end(), {0xC5, 0xF8, 0x11, 0x0E, 0xC4, 0xE3, 0x7D, 0x19, 0x4E, 0x10, 0x01});
     require(paired.Trampolines.size() == 1 && paired.Trampolines[0].Length == 8 && body(paired.Trampolines[0]) == expected && paired.Reports.size() == 1, "A 256-bit store followed by another was not lowered with it in one stub");
+
+    const auto withRdseed = convert(withStore({}, {0x0F, 0xC7, 0xF8, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0xC7, 0xF0});
+    require(withRdseed.Trampolines.size() == 1 && withRdseed.Trampolines[0].Length == 7 && body(withRdseed.Trampolines[0]) == expected && withRdseed.Reports.size() == 1, "A 256-bit store followed by an in-place site did not move its replacement into the stub");
+
+    const auto withClwb = convert(withStore({}, {0x66, 0x0F, 0xAE, 0x37, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x1F, 0x40, 0x00});
+    require(withClwb.Trampolines.size() == 1 && withClwb.Trampolines[0].Length == 8 && body(withClwb.Trampolines[0]) == expected, "A 256-bit store followed by CLWB did not move its replacement into the stub");
+
+    const auto withRipStore = convert(withStore({}, {0xF3, 0x0F, 0x2B, 0x05, 0x40, 0x00, 0x00, 0x00, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0xF3, 0x0F, 0x11, 0x05, 0x00, 0x00, 0x00, 0x00});
+    require(withRipStore.Trampolines.size() == 1 && withRipStore.Trampolines[0].Length == 12 && body(withRipStore.Trampolines[0]) == expected && withRipStore.Trampolines[0].Relocations.size() == 1 && withRipStore.Trampolines[0].Relocations[0].SiteTarget == 0x4C && withRipStore.Trampolines[0].Relocations[0].InstructionEnd == 19, "A 256-bit store followed by a RIP-relative in-place site did not relocate its replacement");
 
     const Bytes push = {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50, 0x48, 0x8D, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x08, 0x58};
     const auto ripCalled = convert(withStore({}, {0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}));
@@ -1958,6 +1974,40 @@ void mcommitExecution() {
     }
     munmap(code, 4096);
 }
+
+void wideStoreExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xC5, 0xFC, 0x11, 0x00};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "256-bit store stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    alignas(32) std::uint8_t source[32];
+    for (std::size_t index = 0; index < sizeof(source); ++index) source[index] = static_cast<std::uint8_t>(index + 1);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(pages != MAP_FAILED, "cannot map the destination pages");
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{1}, std::size_t{4080}}) {
+        std::memset(pages, 0, 8192);
+        auto* destination = pages + offset;
+        asm volatile(
+            "vmovups (%[source]), %%ymm0\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            :
+            : [source] "r"(source), [code] "r"(code), "a"(destination)
+            : "memory", "ymm0");
+        require(std::memcmp(destination, source, sizeof(source)) == 0, "256-bit store stub did not write both halves");
+        require(std::all_of(pages, destination, [](const std::uint8_t value) { return value == 0; }), "256-bit store stub wrote before its operand");
+        require(std::all_of(destination + sizeof(source), pages + 8192, [](const std::uint8_t value) { return value == 0; }),
+                "256-bit store stub wrote past its operand");
+    }
+    munmap(pages, 8192);
+    munmap(code, 4096);
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -2002,6 +2052,7 @@ void rdtscpExecution() {
 }
 #else
 void rdtscpExecution() {}
+void wideStoreExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -2061,6 +2112,7 @@ int main() {
         rosettaLegacyScalarCompares();
         converterRosettaLegacyScalarCompare();
         rdtscpExecution();
+        wideStoreExecution();
         wideStoreSplit();
         converterWideStoreWindows();
         converterClaimedFollower();

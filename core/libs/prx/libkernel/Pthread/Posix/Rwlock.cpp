@@ -93,6 +93,16 @@ int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, cons
     return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
 }
 
+int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    initializeStatic(rwlock, __func__);
+    return toPosix(scePthreadRwlockTimedrdlock(rwlock, usec));
+}
+
+int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    initializeStatic(rwlock, __func__);
+    return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
+}
+
 int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTryrdlock(rwlock));

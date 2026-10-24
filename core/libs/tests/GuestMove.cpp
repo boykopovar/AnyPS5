@@ -102,6 +102,8 @@ int main() {
     Require(sceMoveInit() == kOk);
     Require(sceMoveInit() == kAlreadyInit);
 
+    RequireUnknownHandle(0);
+    RequireUnknownHandle(-1);
     RequireUnknownHandle(kFirstHandle);
 
     const std::int32_t first = sceMoveOpen(kUserId, 0, 0);

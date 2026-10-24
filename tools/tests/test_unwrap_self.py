@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import os
 import struct
@@ -106,6 +107,249 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(source.read_bytes(), container)
                 self.assertEqual(alias.read_bytes(), container)
 
+    def test_main_with_explicit_argv(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(code, 0)
+        self.assertTrue(output.exists())
+
+    def test_write_failure_preserves_output_and_removes_temporary_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return stream
+            writer = mock.MagicMock(wraps=stream)
+            writer.__enter__.return_value = writer
+            writer.__exit__.side_effect = lambda *args: stream.close()
+
+            def fail_after_partial_write(data):
+                stream.write(data[:16])
+                stream.flush()
+                raise OSError(errno.ENOSPC, "simulated write failure")
+
+            writer.write.side_effect = fail_after_partial_write
+            return writer
+
+        for previous in (None, b"previous output"):
+            with self.subTest(previous=previous):
+                output.unlink(missing_ok=True)
+                if previous is not None:
+                    output.write_bytes(previous)
+                before = set(directory.iterdir())
+                errors = io.StringIO()
+                with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+                    status = unwrap_self.main([str(source), str(output)])
+                self.assertEqual(status, 2)
+                self.assertIn("simulated write failure", errors.getvalue())
+                self.assertEqual(set(directory.iterdir()), before)
+                if previous is not None:
+                    self.assertEqual(output.read_bytes(), previous)
+                self.assertEqual(source.read_bytes(), container)
+
+    def test_replace_failure_preserves_output_and_removes_temporary_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        with mock.patch.object(Path, "replace", side_effect=OSError("simulated replacement failure")), \
+                contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated replacement failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(source.read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_successful_conversion_replaces_existing_output_without_temporary_files(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        before = set(Path(self.directory).iterdir())
+        output.write_bytes(b"previous output")
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = unwrap_self.main([str(Path(self.directory) / "input.self"), str(output)])
+        self.assertEqual(status, 0)
+        self.assertEqual(output.read_bytes(), expected)
+        self.assertEqual(set(Path(self.directory).iterdir()), before)
+
+    def test_close_failure_preserves_existing_output(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return stream
+            writer = mock.MagicMock(wraps=stream)
+            writer.__enter__.return_value = writer
+
+            def fail_on_close(*args):
+                stream.close()
+                raise OSError("simulated close failure")
+
+            writer.__exit__.side_effect = fail_on_close
+            return writer
+
+        errors = io.StringIO()
+        with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated close failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_temporary_file_creation_failure_preserves_existing_output(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        real_open = io.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            if "x" in mode:
+                raise OSError("simulated creation failure")
+            return real_open(path, mode, *args, **kwargs)
+
+        with mock.patch("io.open", side_effect=failing_open), contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertIn("simulated creation failure", errors.getvalue())
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(set(directory.iterdir()), before)
+
+    def test_temporary_name_collision_preserves_all_existing_files(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        collision = directory / ".unwrap-self-collision"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+        collision.write_bytes(b"unrelated file")
+        before = set(directory.iterdir())
+        errors = io.StringIO()
+        with mock.patch.object(unwrap_self.secrets, "token_hex", return_value="collision"), \
+                contextlib.redirect_stderr(errors):
+            status = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(status, 2)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(collision.read_bytes(), b"unrelated file")
+        self.assertEqual(source.read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), before)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows ACL inheritance")
+    def test_new_output_inherits_the_destination_directory_acl(self):
+        directory = Path(self.directory)
+        grant = subprocess.run(["icacls.exe", str(directory), "/grant", "*S-1-1-0:(OI)(CI)(RX)"],
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(grant.returncode, 0, grant.stdout + grant.stderr)
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        permissions = directory / "output-acl.txt"
+        saved = subprocess.run(["icacls.exe", str(output), "/save", str(permissions)],
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(saved.returncode, 0, saved.stdout + saved.stderr)
+        self.assertIn(";;;WD)", permissions.read_text(encoding="utf-16-le"))
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual((directory / "input.self").read_bytes(), container)
+        self.assertFalse(any(path.name.startswith(".unwrap-self-") for path in directory.iterdir()))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission bits")
+    def test_new_output_permissions_follow_the_process_umask(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source.write_bytes(container)
+        for mask in (0o000, 0o022, 0o027, 0o077, 0o200, 0o777):
+            with self.subTest(umask=oct(mask)):
+                output = directory / f"output-{mask:o}.elf"
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30, umask=mask)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                mode = output.stat().st_mode & 0o777
+                self.assertEqual(mode, 0o666 & ~mask)
+                output.chmod(mode | 0o400)
+                self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+                self.assertFalse(any(path.name.startswith(".unwrap-self-") for path in directory.iterdir()))
+        self.assertEqual(source.read_bytes(), container)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX group inheritance")
+    def test_new_output_inherits_the_destination_directory_group(self):
+        groups = [group for group in os.getgroups() if group != os.getegid()]
+        if not groups:
+            self.skipTest("requires a supplementary group")
+        directory = Path(self.directory)
+        group = groups[0]
+        try:
+            os.chown(directory, -1, group)
+            directory.chmod(0o2700)
+        except PermissionError as error:
+            self.skipTest(str(error))
+        if not directory.stat().st_mode & 0o2000:
+            self.skipTest("filesystem does not retain the setgid bit")
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.stat().st_gid, group)
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual((directory / "input.self").read_bytes(), container)
+        self.assertEqual(set(directory.iterdir()), {directory / "input.self", output})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission bits")
+    def test_replacing_output_preserves_existing_permissions(self):
+        directory = Path(self.directory)
+        source = directory / "input.self"
+        output = directory / "output.elf"
+        source.write_bytes(build_container(default_segments(), default_records(), default_payloads()))
+        output.write_bytes(b"previous output")
+        output.chmod(0o640)
+        unwrap_self.unwrap(source, output)
+        self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
+        self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+
+    def test_output_symlink_is_kept_and_its_target_is_replaced(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        output.unlink()
+        target = Path(self.directory) / "target.elf"
+        target.write_bytes(b"previous output")
+        try:
+            output.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        before = set(Path(self.directory).iterdir())
+        unwrap_self.unwrap(Path(self.directory) / "input.self", output)
+        self.assertTrue(output.is_symlink())
+        self.assertEqual(target.read_bytes(), expected)
+        self.assertEqual(set(Path(self.directory).iterdir()), before)
+
     def convert(self, container, name="input.self"):
         directory = Path(self.directory)
         source = directory / name
@@ -121,6 +365,27 @@ class UnwrapTest(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_program_table_overlapping_elf_header_preserves_output(self):
+        for offset in (0, 8, 32, 63):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + 0x20, offset)
+                    output = Path(self.directory) / "output.elf"
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    else:
+                        output.unlink(missing_ok=True)
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("ELF program header table overlaps the ELF header", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
 
     def test_record_table_places_the_segments_and_keeps_the_alignment(self):
         container = build_container(default_segments(), default_records(), default_payloads())
@@ -473,7 +738,7 @@ class UnwrapTest(unittest.TestCase):
 
         def allocate(value):
             if isinstance(value, int):
-                self.assertLessEqual(value, len(container) + unwrap_self.MAX_EMPTY_LOAD_PADDING)
+                self.assertLessEqual(value, len(container) + unwrap_self.MAX_ALIGNMENT_PADDING)
             return bytearray(value)
 
         for previous in (None, b"previous output"):
@@ -486,7 +751,7 @@ class UnwrapTest(unittest.TestCase):
                         contextlib.redirect_stderr(io.StringIO()) as stderr:
                     self.assertEqual(unwrap_self.main(), 2)
                 self.assertEqual(stdout.getvalue(), "")
-                self.assertIn("empty load alignment requires more than", stderr.getvalue())
+                self.assertIn("segment alignment requires more than", stderr.getvalue())
                 self.assertNotIn("Traceback", stderr.getvalue())
                 if previous is not None:
                     self.assertEqual(output.read_bytes(), previous)
@@ -494,20 +759,104 @@ class UnwrapTest(unittest.TestCase):
                     self.assertFalse(output.exists())
                 self.assertEqual(source.read_bytes(), container)
 
+    def test_excessive_file_backed_padding_is_refused_before_allocation(self):
+        cases = [
+            ([(PT_LOAD, 5, 0x1234, (1 << 40) - 1, 0x100, 1 << 40)],
+             [(0x2804, 0x800, 0x100)], {0x800: b"x" * 0x100}),
+            ([(PT_LOAD, 5, 0x1234, 0, 0x100, PAGE),
+              (SCE_COMMENT, 0, 0xB00, 0, 0x20, 1 << 40)],
+             [(0x2804, 0x800, 0x100)], {0x800: b"x" * 0x100, 0xB00: pattern(9, 0x20)}),
+        ]
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        for segments, records, payloads in cases:
+            container = build_container(segments, records, payloads)
+            source.write_bytes(container)
+
+            def allocate(value):
+                if isinstance(value, int):
+                    self.assertLessEqual(value, len(container) + 64 * 1024 * 1024)
+                return bytearray(value)
+
+            for previous in (None, b"previous output"):
+                with self.subTest(segments=segments, previous=previous):
+                    output.unlink(missing_ok=True)
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    with mock.patch.object(unwrap_self, "bytearray", side_effect=allocate, create=True), \
+                            mock.patch.object(sys, "argv", ["unwrap_self.py", str(source), str(output)]), \
+                            contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                            contextlib.redirect_stderr(io.StringIO()) as stderr:
+                        self.assertEqual(unwrap_self.main(), 2)
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertIn("alignment requires more than", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(source.read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
+    def test_alignment_padding_limit_is_cumulative(self):
+        for empty in (False, True):
+            with self.subTest(empty=empty):
+                segments = [(PT_LOAD, 5, 0x1234, 0x80, 0x20, 0x100),
+                            (PT_LOAD, 6, 0x5678, 0x580, 0 if empty else 0x10, 0x1000)]
+                records = [(0x800, 0x800, 0x20)]
+                payloads = {0x800: pattern(1, 0x20)}
+                if not empty:
+                    records.append((0x100800, 0xA00, 0x10))
+                    payloads[0xA00] = pattern(9, 0x10)
+                source = Path(self.directory) / "input.self"
+                output = Path(self.directory) / "output.elf"
+                container = build_container(segments, records, payloads)
+                source.write_bytes(container)
+                output.write_bytes(b"previous output")
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x15F):
+                    with self.assertRaisesRegex(unwrap_self.Refused, "alignment requires more than"):
+                        unwrap_self.unwrap(source, output)
+                self.assertEqual(output.read_bytes(), b"previous output")
+                self.assertEqual(source.read_bytes(), container)
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x160):
+                    unwrap_self.unwrap(source, output)
+                data, headers = read_program_headers(output)
+                for header in headers:
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                self.assertEqual(data[headers[0][2]:headers[0][2] + 0x20], payloads[0x800])
+                if not empty:
+                    self.assertEqual(data[headers[1][2]:headers[1][2] + 0x10], payloads[0xA00])
+
+    def test_large_alignment_with_small_padding_remains_supported(self):
+        payload = b"x" * 0x100
+        segments = [(PT_LOAD, 5, 0x1234, FIRST_REGION + 0x10, len(payload), 1 << 40)]
+        container = build_container(segments, [(0x2804, 0x800, len(payload))], {0x800: payload})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x10):
+            unwrap_self.unwrap(source, output)
+        data, headers = read_program_headers(output)
+        load = headers[0]
+        self.assertEqual(load[2] % load[7], load[3] % load[7])
+        self.assertEqual(load[2], FIRST_REGION + 0x10)
+        self.assertEqual(data[load[2]:load[2] + load[5]], payload)
+        self.assertEqual(source.read_bytes(), container)
+
     def test_empty_load_padding_limit_counts_only_added_bytes(self):
-        baseline, output = self.convert(build_container(default_segments(), default_records(), default_payloads()))
+        backed = [(*segment[:5], 1) for segment in default_segments()]
+        baseline, output = self.convert(build_container(backed, default_records(), default_payloads()))
         self.assertEqual(baseline.returncode, 0, baseline.stderr)
         baseline_size = output.stat().st_size
         limit = 0x100
         for extra in (-1, limit, limit + 1):
             with self.subTest(extra=extra):
                 address = 0x10000 + baseline_size + extra
-                segments = default_segments() + [(PT_LOAD, 6, 0, address, 0, 0x10000)]
+                segments = backed + [(PT_LOAD, 6, 0, address, 0, 0x10000)]
                 container = build_container(segments, default_records(), default_payloads())
                 source = Path(self.directory) / "input.self"
                 source.write_bytes(container)
                 previous = output.read_bytes()
-                with mock.patch.object(unwrap_self, "MAX_EMPTY_LOAD_PADDING", limit):
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", limit):
                     if extra <= limit:
                         unwrap_self.unwrap(source, output)
                         data, headers = read_program_headers(output)
@@ -515,7 +864,7 @@ class UnwrapTest(unittest.TestCase):
                         self.assertEqual(headers[3][2], baseline_size + extra)
                         self.assertEqual(headers[3][2] % headers[3][7], address % headers[3][7])
                     else:
-                        with self.assertRaisesRegex(unwrap_self.Refused, "empty load alignment requires more than"):
+                        with self.assertRaisesRegex(unwrap_self.Refused, "segment alignment requires more than"):
                             unwrap_self.unwrap(source, output)
                         self.assertEqual(output.read_bytes(), previous)
 
@@ -662,6 +1011,34 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn(f"wrote {output}", result.stdout.decode("utf-8"))
         self.assertTrue(output.exists())
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(unwrap_self.sys, "stdout", out), mock.patch.object(unwrap_self.sys, "stderr", err):
+            try:
+                unwrap_self.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

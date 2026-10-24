@@ -255,13 +255,11 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath, 
             const auto result = std::filesystem::path(host).make_preferred();
             return module ? PathOrRelinkedModule(result) : result;
         }
-#ifndef _WIN32
         if (guestPath.back() == '/') {
-            auto result = ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)));
+            auto result = ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1))).make_preferred();
             result /= "";
             return module ? PathOrRelinkedModule(result) : result;
         }
-#endif
         return ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)), module).make_preferred();
     }
     return std::nullopt;
@@ -318,6 +316,14 @@ void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string
 #endif
     throw std::filesystem::filesystem_error("Guest path component is not a directory", host, error);
 }
+void RejectNonDirectory(const std::filesystem::path& host) {
+    auto target = host;
+    while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+    std::error_code error;
+    const auto status = std::filesystem::status(target, error);
+    if (std::filesystem::exists(status) && !std::filesystem::is_directory(status))
+        throw std::filesystem::filesystem_error("Guest path with a trailing slash is not a directory", host, std::make_error_code(std::errc::not_a_directory));
+}
 std::vector<std::string> WithTrailingSeparator(std::vector<std::string> names, bool trailing) {
     if (trailing && !names.empty()) names.emplace_back();
     return names;
@@ -360,7 +366,10 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool mo
         if (!trailing) names.push_back(name);
     }
     if (endsWithDot && !names.empty() && !(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, names)))) RequireHostDirectory(state, names);
-    return HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
+    const bool directory = trailing && !names.empty();
+    auto resolved = HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
+    if (directory) RejectNonDirectory(resolved);
+    return resolved;
 }
 #ifdef _WIN32
 using WriteMark = FILETIME;
@@ -376,7 +385,11 @@ bool NotBefore(const WriteMark& time, const WriteMark& mark) {
 using WriteMark = timespec;
 WriteMark Now() {
     timespec now;
+#ifdef __APPLE__
+    clock_gettime(CLOCK_REALTIME, &now);
+#else
     clock_gettime(CLOCK_REALTIME_COARSE, &now);
+#endif
     return now;
 }
 bool NotBefore(const WriteMark& time, const WriteMark& mark) {
@@ -415,7 +428,11 @@ void FlushPath(const std::filesystem::path& path) {
 #else
 std::optional<WriteMark> WriteTime(const std::filesystem::path& path) {
     struct stat data;
+#ifdef __APPLE__
+    if (::stat(path.c_str(), &data) == 0) return data.st_mtimespec;
+#else
     if (::stat(path.c_str(), &data) == 0) return data.st_mtim;
+#endif
     if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
     throw std::system_error(errno, std::generic_category(), "Reading the write time of " + path.string());
 }
@@ -556,6 +573,36 @@ extern "C" std::FILE* HostStandardOutputFile_nid_no_patch() {
 extern "C" std::FILE* HostStandardErrorFile_nid_no_patch() {
     if (std::FILE* kept = g_hostStandardErrorFile.load(std::memory_order_acquire)) return kept;
     return __acrt_iob_func(2);
+}
+
+namespace {
+std::mutex g_hostStandardStreamMutex;
+
+int keepHostStandardStream(int standard) {
+    auto& slot = standard == 1 ? g_hostStandardOutputFile : g_hostStandardErrorFile;
+    if (auto* stream = slot.load(std::memory_order_acquire)) return ::_fileno(stream);
+    const std::unique_ptr<std::FILE, decltype(&::_unlock_file)> unlock(__acrt_iob_func(standard), ::_unlock_file);
+    ::_lock_file(unlock.get());
+    const std::lock_guard lock(g_hostStandardStreamMutex);
+    if (auto* stream = slot.load(std::memory_order_acquire)) return ::_fileno(stream);
+    const int saved = DuplicateHostDescriptor_nid_no_patch(standard);
+    if (saved < 0) return -1;
+    if (!AdoptHostStandardStream_nid_no_patch(standard, saved)) {
+        const int error = errno;
+        ::_close(saved);
+        errno = error;
+        return -1;
+    }
+    return saved;
+}
+}
+
+extern "C" int KeepHostStandardError_nid_no_patch() {
+    return keepHostStandardStream(2);
+}
+
+extern "C" int KeepHostStandardOutput_nid_no_patch() {
+    return keepHostStandardStream(1);
 }
 #endif
 

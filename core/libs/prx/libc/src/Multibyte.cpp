@@ -53,6 +53,64 @@ bool DecodeUtf8Byte(unsigned char byte, std::uint64_t& value, std::int8_t& pendi
     return true;
 }
 
+constexpr auto Invalid = static_cast<std::size_t>(-1);
+constexpr auto Incomplete = static_cast<std::size_t>(-2);
+constexpr std::size_t StateSize = 16;
+constexpr std::size_t LocaleMaxLength = 3;
+
+std::size_t LocaleToWide(std::uint16_t* destination, const char* source, std::size_t count, unsigned char* state) {
+    if (!source) {
+        std::memset(state, 0, StateSize);
+        return 0;
+    }
+    if (!count) return Incomplete;
+    std::uint64_t value = 0;
+    std::memcpy(&value, state, sizeof(value));
+    auto pending = static_cast<std::int8_t>(state[PendingOffset]);
+    for (std::size_t consumed = 0; consumed < count;) {
+        const auto byte = static_cast<unsigned char>(source[consumed++]);
+        if ((pending == 0 && byte >= 0xf0) || !DecodeUtf8Byte(byte, value, pending)) {
+            errno = 86;
+            return Invalid;
+        }
+        if (pending == 0) {
+            if (destination) *destination = static_cast<std::uint16_t>(value);
+            StorePending(state, 0);
+            return value == 0 ? 0 : consumed;
+        }
+    }
+    std::memcpy(state, &value, sizeof(value));
+    StorePending(state, pending);
+    return Incomplete;
+}
+
+std::size_t LocaleStringToWide(std::uint16_t* destination, const char** source, std::size_t capacity, unsigned char* state) {
+    const char* cursor = *source;
+    std::size_t converted = 0;
+    while (!destination || converted < capacity) {
+        std::uint16_t value = 0;
+        const std::size_t length = LocaleToWide(&value, cursor, LocaleMaxLength, state);
+        if (length == Invalid || length == Incomplete) {
+            if (destination) *source = cursor;
+            errno = 86;
+            return Invalid;
+        }
+        if (destination) destination[converted] = value;
+        if (length == 0) {
+            if (destination) *source = nullptr;
+            return converted;
+        }
+        cursor += length;
+        ++converted;
+    }
+    *source = cursor;
+    return converted;
+}
+
+int ToInt(std::size_t result) {
+    return result == Invalid || result == Incomplete ? -1 : static_cast<int>(result);
+}
+
 }
 
 extern "C" {
@@ -63,51 +121,47 @@ int APS5_VABI ___mb_cur_max_nid_postfix() {
     return 1;
 }
 
-int APS5_VABI _Getmbcurmax_nid_postfix() { return ___mb_cur_max_nid_postfix(); }
+int APS5_VABI _Getmbcurmax_nid_postfix() { return static_cast<int>(LocaleMaxLength); }
 
-int APS5_VABI mbsinit_nid_postfix(const void*) {
-    return 1;
+int APS5_VABI mbsinit_nid_postfix(const void* state) {
+    if (!state) return 1;
+    std::int16_t pending = 0;
+    std::memcpy(&pending, static_cast<const unsigned char*>(state) + PendingOffset, sizeof(pending));
+    return pending == 0;
 }
 
-std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void*) {
-    if (!source) return 0;
-    if (!count) return static_cast<std::size_t>(-2);
-    const auto value = static_cast<unsigned char>(*source);
-    if (destination) *destination = value;
-    return value != 0;
+std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
+    thread_local unsigned char internal[StateSize]{};
+    if (!source) {
+        destination = nullptr;
+        source = "";
+    }
+    return LocaleToWide(destination, source, count, state ? static_cast<unsigned char*>(state) : internal);
 }
 
 std::size_t APS5_VABI mbrlen_nid_postfix(const char* source, std::size_t count, void* state) {
-    return mbrtowc_nid_postfix(nullptr, source, count, state);
+    thread_local unsigned char internal[StateSize]{};
+    return LocaleToWide(nullptr, source, count, state ? static_cast<unsigned char*>(state) : internal);
 }
 
 int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count) {
-    const auto result = mbrtowc_nid_postfix(destination, source, count, nullptr);
-    if (result == static_cast<std::size_t>(-2)) {
-        errno = 86;
-        return -1;
-    }
-    return static_cast<int>(result);
+    thread_local unsigned char internal[StateSize]{};
+    return ToInt(LocaleToWide(destination, source, count < LocaleMaxLength ? count : LocaleMaxLength, internal));
 }
 
 std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*) {
     if (!destination) return 1;
-    if (value > 255) {
-        errno = 86;
-        return static_cast<std::size_t>(-1);
-    }
-    *destination = static_cast<char>(value);
-    return 1;
+    return EncodeUtf8(destination, value);
 }
 
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count) {
-    return mbtowc_nid_postfix(nullptr, source, count);
+    unsigned char state[StateSize]{};
+    return ToInt(LocaleToWide(nullptr, source, count, state));
 }
 
 int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value) {
     if (!destination) return 0;
-    const auto result = wcrtomb_nid_postfix(destination, value, nullptr);
-    return result == static_cast<std::size_t>(-1) ? -1 : static_cast<int>(result);
+    return static_cast<int>(EncodeUtf8(destination, value));
 }
 
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*) {
@@ -212,29 +266,30 @@ std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const cha
     return static_cast<std::size_t>(-2);
 }
 
-std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void* state) {
+std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void*) {
     const auto* wide = *source;
-    std::size_t converted = 0;
-    while (!destination || converted < capacity) {
-        char byte;
-        if (wcrtomb_nid_postfix(&byte, wide[converted], state) == static_cast<std::size_t>(-1)) {
-            if (destination) *source = wide + converted;
-            return static_cast<std::size_t>(-1);
+    std::size_t written = 0;
+    for (;; ++wide) {
+        char bytes[LocaleMaxLength];
+        const std::size_t length = EncodeUtf8(bytes, *wide);
+        if (destination) {
+            if (length > capacity - written) {
+                *source = wide;
+                return written;
+            }
+            std::memcpy(destination + written, bytes, length);
         }
-        if (destination) destination[converted] = byte;
-        if (byte == '\0') {
+        if (*wide == 0) {
             if (destination) *source = nullptr;
-            return converted;
+            return written;
         }
-        ++converted;
+        written += length;
     }
-    *source = wide + converted;
-    return converted;
 }
 
-int APS5_VABI wcsrtombs_s_nid_postfix(
+static int WideToLocaleChecked(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit,
-    void* state
+    void* state, bool stopAtLimit
 ) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
@@ -275,6 +330,7 @@ int APS5_VABI wcsrtombs_s_nid_postfix(
             *result = Failed;
             return GuestEilseq;
         }
+        if (length > limit && stopAtLimit) break;
         if (length > limit || length > capacity) {
             *source = wide;
             destination[0] = '\0';
@@ -304,31 +360,30 @@ int APS5_VABI wcsrtombs_s_nid_postfix(
     return 0;
 }
 
+int APS5_VABI wcsrtombs_s_nid_postfix(
+    std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit,
+    void* state
+) {
+    return WideToLocaleChecked(result, destination, capacity, source, limit, state, false);
+}
+
 int APS5_VABI wcstombs_s_nid_postfix(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit
 ) {
     std::array<std::uint64_t, 16> state{};
-    return wcsrtombs_s_nid_postfix(result, destination, capacity, &source, limit, state.data());
+    return WideToLocaleChecked(result, destination, capacity, &source, limit, state.data(), limit < capacity);
 }
 
-std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void*) {
-    if (!destination) return std::strlen(*source);
-    std::size_t converted = 0;
-    while (converted < capacity) {
-        const auto value = static_cast<unsigned char>((*source)[converted]);
-        destination[converted] = value;
-        if (value == 0) {
-            *source = nullptr;
-            return converted;
-        }
-        ++converted;
-    }
-    *source += converted;
-    return converted;
+std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state) {
+    thread_local unsigned char internal[StateSize]{};
+    if (destination) *destination = 0;
+    return LocaleStringToWide(destination, source, capacity, state ? static_cast<unsigned char*>(state) : internal);
 }
 
 std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size) {
-    return SonyMbstowcs(dest, src, size);
+    if (!src) return 0;
+    unsigned char state[StateSize]{};
+    return LocaleStringToWide(dest, &src, size, state);
 }
 
 }

@@ -13,6 +13,7 @@ int APS5_VABI sceKeyboardOpen(int, std::int32_t, std::int32_t, const void*);
 int APS5_VABI sceKeyboardClose(std::int32_t);
 int APS5_VABI sceKeyboardRead(std::int32_t, KeyboardData*, std::int32_t);
 int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
+int APS5_VABI sceKeyboardGetConnection(std::int32_t, bool*);
 int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint8_t, std::uint8_t, std::uint16_t, KeyboardCharData*);
 int APS5_VABI sceKeyboardConnectPort(void);
 int APS5_VABI sceKeyboardDisconnectAll(void);
@@ -44,14 +45,20 @@ static std::uint16_t Jis(std::uint32_t modifierKey, std::uint16_t keyCode, std::
 int main() {
     KeyboardData data[16]{};
     KeyboardCharData charData{};
+    bool connected = false;
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardOpen(1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
+    Require(sceKeyboardGetConnection(42, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
     Require(sceKeyboardRead(42, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
@@ -96,9 +103,11 @@ int main() {
     window.window.event = SDL_WINDOWEVENT_CLOSE;
     input.HandleEvent(window, 7);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && !data[0].connected && data[0].length == 1 && data[0].key_code[0] == 0);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && !connected);
     window.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
     input.HandleEvent(window, 7);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
 
     for (std::uint16_t key = 0x04; key < 0x04 + 20; ++key) {
         KeyboardInputEvent press{};
@@ -143,11 +152,31 @@ int main() {
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].length == 1 && data[0].key_code[0] == 0);
+    Require(data[0].connected);
+    KeyboardInputEvent pressed{};
+    pressed.keyCode = 0x04;
+    pressed.pressed = true;
+    KeyboardPublishInput_nid_postfix(pressed);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].key_code[0] == 0x04);
+    Require(sceKeyboardDisconnectAll() == KEYBOARD_OK);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && !data[0].connected && data[0].length == 1 && data[0].key_code[0] == 0);
+    Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_OK && !data[0].connected && data[0].key_code[0] == 0);
+    Require(sceKeyboardDisconnectAll() == KEYBOARD_OK);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+    pressed.keyCode = 0x05;
+    KeyboardPublishInput_nid_postfix(pressed);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+    window.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+    input.HandleEvent(window, 7);
+    window.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
+    input.HandleEvent(window, 7);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
 
     bool threwConnect = false;
@@ -157,12 +186,4 @@ int main() {
         threwConnect = true;
     }
     Require(threwConnect);
-
-    bool threwDisconnect = false;
-    try {
-        sceKeyboardDisconnectAll();
-    } catch (const std::runtime_error&) {
-        threwDisconnect = true;
-    }
-    Require(threwDisconnect);
 }

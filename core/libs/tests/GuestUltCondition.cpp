@@ -15,6 +15,7 @@ int APS5_VABI sceUltMutexCreate(void*, const char*, void*, const UltMutexOptPara
 int APS5_VABI sceUltMutexLock(void*);
 int APS5_VABI sceUltMutexUnlock(void*);
 int APS5_VABI sceUltMutexDestroy(void*);
+int APS5_VABI sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
 int APS5_VABI _sceUltConditionVariableCreate(void*, const char*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltConditionVariableWait(void*);
 int APS5_VABI sceUltConditionVariableSignal(void*);
@@ -65,6 +66,9 @@ static void Validation() {
     Object unused;
     CHECK(sceUltMutexDestroy(nullptr) == Null);
     CHECK(sceUltMutexDestroy(&unused) == State);
+    CHECK(sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
+    CHECK(sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);
     CHECK(_sceUltConditionVariableCreate(nullptr, nullptr, nullptr, nullptr, 0) == Null);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, &unused, nullptr, 0) == Invalid);
     CHECK(_sceUltConditionVariableCreate(&f.condition, nullptr, &f.mutex, nullptr, 0) == State);

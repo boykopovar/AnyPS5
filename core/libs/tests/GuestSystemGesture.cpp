@@ -31,6 +31,7 @@ int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(std::int32_t, const
 int APS5_VABI sceSystemGestureInitializePrimitiveTouchRecognizer();
 int APS5_VABI sceSystemGestureFinalizePrimitiveTouchRecognizer(void);
 int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(std::int32_t, std::uint16_t, void*);
+int APS5_VABI sceSystemGestureDebugGetVersion(void);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -280,6 +281,7 @@ int main() {
     Require(sceSystemGestureUpdateAllTouchRecognizer(handle + 1) == invalidHandle);
     Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle + 1, nullptr) == invalidArgument);
 
+    Require(sceSystemGestureDebugGetVersion() == 0x6a00);
     TestTouchRecognizerInformation(handle, invalidArgument, invalidHandle);
     TestPrimitiveTouchEvents(handle, invalidArgument, invalidHandle, indexOutOfArray);
     std::array<std::int32_t, 7> otherHandles{};

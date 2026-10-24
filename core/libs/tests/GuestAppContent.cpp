@@ -15,6 +15,7 @@ int APS5_VABI sceAppContentAddcontUnmount(const AppContentMountPoint*);
 int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t, const NpUnifiedEntitlementLabel*);
 int APS5_VABI sceAppContentAddcontDelete(uint32_t, const NpUnifiedEntitlementLabel*);
 int APS5_VABI sceAppContentGetAddcontDownloadProgress(uint32_t, const NpUnifiedEntitlementLabel*, void*);
+int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint*);
 int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t, AppContentMountPoint*);
 int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint*);
 int APS5_VABI sceAppContentTemporaryDataFormat(const AppContentMountPoint*);
@@ -190,6 +191,17 @@ int main() {
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
     Require(sceAppContentTemporaryDataMount2(1, &mountPoint) == 0);
     Require(std::filesystem::is_empty(backing));
+    Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
+    Require(sceAppContentTemporaryDataMount(nullptr) == ErrorParameter);
+    { std::ofstream file(backing / "remove.txt"); file << "format"; }
+    std::memset(&mountPoint, 0x5a, sizeof(mountPoint));
+    Require(sceAppContentTemporaryDataMount(&mountPoint) == 0);
+    Require(std::strcmp(mountPoint.data, "/temp0") == 0);
+    Require(std::filesystem::is_empty(backing));
+    Require(sceAppContentTemporaryDataMount(&second) == ErrorBusy);
+    Require(sceAppContentTemporaryDataMount2(0, &second) == ErrorBusy);
+    Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
+    Require(sceAppContentTemporaryDataMount(&mountPoint) == 0);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
     unsigned char info[24];
     std::memset(info, 0x5a, sizeof(info));
