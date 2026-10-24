@@ -41,6 +41,15 @@ constexpr int GuestNonBlockingState = 0x100;
 constexpr int GuestUnix = 1;
 constexpr int GuestTcpNoDelay = 1;
 constexpr int GuestTcpNoDelayFlag = 4;
+constexpr int GuestTcpMaximumSegment = 2;
+constexpr int GuestTcpKeepIdle = 0x100;
+constexpr int GuestTcpKeepInterval = 0x200;
+constexpr int GuestTcpKeepCount = 0x400;
+constexpr int MinimumSegment = 216;
+constexpr unsigned int TicksPerSecond = 1000;
+constexpr unsigned int DefaultKeepIdle = 7200;
+constexpr unsigned int DefaultKeepInterval = 75;
+constexpr unsigned int DefaultKeepCount = 8;
 constexpr int GuestIpv6Only = 27;
 constexpr int GuestIpTypeOfService = 3;
 constexpr int GuestIpTimeToLive = 4;
@@ -258,19 +267,43 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     return Copy(value, length, &number, sizeof(number));
 }
 
-int SetTcpLevelOption(std::uintptr_t native, bool tcp, int option, const void* value, std::uint32_t length) {
+int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length) {
     if (!tcp) return ErrorInvalid;
-    if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
+    if (option != GuestTcpNoDelay && option != GuestTcpMaximumSegment && option != GuestTcpKeepIdle && option != GuestTcpKeepInterval &&
+        option != GuestTcpKeepCount)
+        return ErrorNoProtocolOption;
     if (length < sizeof(int)) return ErrorInvalid;
     int number;
     std::memcpy(&number, value, sizeof(number));
+    const auto unsignedNumber = static_cast<unsigned int>(number);
+    if (option == GuestTcpMaximumSegment) {
+        if (number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
+        state.tcpMaximumSegment = number;
+        return 0;
+    }
+    if (option == GuestTcpKeepCount) {
+        state.tcpKeepCount = unsignedNumber;
+        return 0;
+    }
+    if (option == GuestTcpKeepIdle || option == GuestTcpKeepInterval) {
+        if (unsignedNumber > UINT32_MAX / TicksPerSecond) return ErrorInvalid;
+        (option == GuestTcpKeepIdle ? state.tcpKeepIdle : state.tcpKeepInterval) = unsignedNumber;
+        return 0;
+    }
     const int enabled = number != 0 ? 1 : 0;
     if (::setsockopt(static_cast<NativeHandle>(native), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
     return 0;
 }
 
-int GetTcpLevelOption(std::uintptr_t native, bool tcp, int option, void* value, std::uint32_t* length) {
+int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, void* value, std::uint32_t* length) {
     if (!tcp) return ErrorInvalid;
+    if (option == GuestTcpMaximumSegment || option == GuestTcpKeepIdle || option == GuestTcpKeepInterval || option == GuestTcpKeepCount) {
+        const unsigned int number = option == GuestTcpMaximumSegment ? static_cast<unsigned int>(state.tcpMaximumSegment)
+            : option == GuestTcpKeepIdle ? (state.tcpKeepIdle != 0 ? state.tcpKeepIdle : DefaultKeepIdle)
+            : option == GuestTcpKeepInterval ? (state.tcpKeepInterval != 0 ? state.tcpKeepInterval : DefaultKeepInterval)
+            : (state.tcpKeepCount != 0 ? state.tcpKeepCount : DefaultKeepCount);
+        return Copy(value, length, &number, sizeof(number));
+    }
     if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
     int enabled = 0;
     socklen_t size = sizeof(enabled);
