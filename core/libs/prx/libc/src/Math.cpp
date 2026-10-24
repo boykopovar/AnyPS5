@@ -1298,12 +1298,21 @@ struct GuestFloatingPointEnvironment {
     unsigned char other[16];
     std::uint32_t mxcsr;
 };
-static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && offsetof(GuestFloatingPointEnvironment, mxcsr) == 28);
+static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && alignof(GuestFloatingPointEnvironment) == 4 && offsetof(GuestFloatingPointEnvironment, mxcsr) == 28);
 
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("fegetenv: null environment");
     asm volatile("fnstenv %0\n\tfldcw %0" : "+m"(*environment));
     environment->mxcsr = _mm_getcsr();
+    return 0;
+}
+
+int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environment) {
+    if (environment == nullptr) throw std::invalid_argument("feholdexcept: null environment");
+    const auto csr = _mm_getcsr();
+    asm volatile("fnstenv %0\n\tfnclex" : "=m"(*environment));
+    environment->mxcsr = csr;
+    _mm_setcsr((csr & ~0x3fu) | 0x1f80u);
     return 0;
 }
 
