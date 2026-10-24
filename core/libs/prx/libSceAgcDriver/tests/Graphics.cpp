@@ -3096,6 +3096,13 @@ void metadataPassTests() {
     auto mipmapped = queue;
     mipmapped.context[0x3b0] |= 1u << 28u;
     expectFailure([&] { DecodeColorMetadataPass(mipmapped); }, "mipmapped DCC");
+    const auto chain = AgcDriver::Graphics::DecodeColorBuffer(mipmapped.context, 0);
+    const auto chainSurface = AgcDriver::Graphics::SurfaceForTarget(chain);
+    Require(chain.dccAddress == 0 && chainSurface.mipCount == 2 && chainSurface.dccAddress == keysAddress, "the surface of a mipmapped DCC color target lost its keys");
+    auto mipmappedArray = mipmapped;
+    mipmappedArray.context[0x3b8] |= 1u;
+    mipmappedArray.context[0x31b] = 1u << 13u;
+    Require(AgcDriver::Graphics::SurfaceForTarget(AgcDriver::Graphics::DecodeColorBuffer(mipmappedArray.context, 0)).dccAddress == 0, "a mipmapped DCC array color target took keys whose layers are not modeled");
     const AgcDriver::Graphics::Context context{};
     const auto texels = [&](std::uint32_t value) {
         for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
