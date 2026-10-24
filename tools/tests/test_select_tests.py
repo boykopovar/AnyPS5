@@ -179,6 +179,30 @@ class SelectTests(unittest.TestCase):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+    def test_script_test_builds_an_excluded_executable_it_gets_as_a_definition(self):
+        cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            script.write_text('execute_process(COMMAND "${TOOL}" RESULT_VARIABLE result)\n'
+                              'if(NOT result STREQUAL "0")\n  message(FATAL_ERROR "tool: ${result}")\nendif()\n',
+                              encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool EXCLUDE_FROM_ALL main.c)\n"
+                                        "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DTOOL=$<TARGET_FILE:alpha_tool>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            graph = self.build / "run-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"alpha_run", "beta", "beta_setup", "script"})
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            output = self.tool("ctest", self.build, "-R", "alpha_run", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
     def test_retargeted_test_does_not_prune_its_previous_executable(self):
         cmake = self.source / "alpha/CMakeLists.txt"
         original = cmake.read_text(encoding="utf-8")

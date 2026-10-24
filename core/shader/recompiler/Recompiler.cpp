@@ -499,11 +499,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
             std::vector<std::byte> planKey;
             if (disk) {
                 ShaderDiskCache::BuildPlanKey(request, HostSubgroupSize(request), planKey);
-                IrResourcePlan loaded;
-                if (ShaderDiskCache::LoadPlan(planKey, loaded)) {
-                    loaded.shaderHash = request.shader.codeAddress;
-                    source->plan = std::make_shared<const IrResourcePlan>(std::move(loaded));
-                }
+                source->plan = ShaderDiskCache::LoadSharedPlan(planKey, request.shader.codeAddress);
             }
             if (source->plan == nullptr) {
                 try {
