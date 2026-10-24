@@ -86,6 +86,21 @@ class CiGateTests(unittest.TestCase):
     def test_paths_of_another_trigger_do_not_count(self):
         self.assertUngated(workflow("  push:\n    paths:\n      - 'core/**'\n  pull_request:\n    branches: [main]\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
 
+    def test_flow_mapping_paths_passes(self):
+        self.assertGated(workflow("  pull_request: {paths: ['core/**']}\n", "  tests:\n    runs-on: ubuntu-latest\n"))
+
+    def test_flow_mapping_paths_ignore_passes(self):
+        self.assertGated(workflow("  pull_request: {paths-ignore: ['docs/**']}\n", "  tests:\n    runs-on: ubuntu-latest\n"))
+
+    def test_flow_mapping_without_paths_fails(self):
+        self.assertUngated(workflow("  pull_request: {branches: [main]}\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
+
+    def test_top_level_flow_mapping_paths_passes(self):
+        self.assertGated(f"name: Test\n\non: {{pull_request: {{paths: ['core/**']}}}}\njobs:\n{GATE}  tests:\n    runs-on: ubuntu-latest\n")
+
+    def test_top_level_flow_paths_of_another_trigger_do_not_count(self):
+        self.assertUngated("name: Test\n\non: {push: {paths: ['core/**']}, pull_request: {branches: [main]}}\njobs:\n" + GATE + "  tests:\n    runs-on: ubuntu-latest\n", "tests")
+
     def test_inline_trigger_list_fails(self):
         self.assertUngated("name: Test\non: [push, pull_request]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n", "tests")
 
