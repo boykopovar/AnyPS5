@@ -69,6 +69,8 @@ struct Ngs2ReverbDeleter {
     void operator()(Ngs2ReverbState* reverb) const;
 };
 
+using Ngs2Reverb = std::unique_ptr<Ngs2ReverbState, Ngs2ReverbDeleter>;
+
 struct Ngs2Voice;
 
 struct Ngs2FilterHistory {
@@ -122,7 +124,8 @@ struct Ngs2Voice {
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
     Ngs2Atrac9 atrac9;
-    std::unique_ptr<Ngs2ReverbState, Ngs2ReverbDeleter> reverb;
+    Ngs2Reverb reverb;
+    std::vector<Ngs2Reverb> customReverb;
     float pitch = 1.0f;
     std::uint64_t phase = 0;
     std::deque<Ngs2Block> blocks;
@@ -245,7 +248,12 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params);
 void Ngs2SetupReverb(Ngs2Voice& voice);
+Ngs2Reverb Ngs2CreateCustomReverb(std::uint32_t size);
+void Ngs2SetCustomReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& params);
+bool Ngs2ProcessCustomReverb(Ngs2Voice& voice, std::size_t module, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2ClearReverb(Ngs2Voice& voice);
+void Ngs2ClearCustomReverb(Ngs2Voice& voice);
+void Ngs2ResetCustomReverb(Ngs2Voice& voice);
 bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);

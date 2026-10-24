@@ -24,6 +24,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
     switch (eventId) {
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
+                Ngs2ClearCustomReverb(*this);
                 state = Ngs2PlayState::Playing;
                 stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_INUSE;
                 if (userFxHandler) userFxFlags = 1;
@@ -50,6 +51,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 void Ngs2Voice::ResetSetup() {
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
+    Ngs2ResetCustomReverb(*this);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
     filters.clear();
