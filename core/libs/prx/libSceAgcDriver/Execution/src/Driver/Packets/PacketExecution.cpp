@@ -29,11 +29,6 @@ bool orderedFills() {
     return ordered;
 }
 
-bool pipelineDma() {
-    static const bool enabled = std::getenv("APS5_PIPELINE_DMA") != nullptr;
-    return enabled;
-}
-
 bool keepsDrawFinisher(std::uint32_t header, std::uint32_t opcode) {
     if (header == FlipPacketHeader || header == RenderingWaitPacketHeader) return false;
     if (Pm4::DrawOpcode(opcode)) return true;
@@ -65,7 +60,6 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
             if (packet.size() < 7) return false;
             const auto destination = Pm4::DmaDestination(packet);
             if (destination == Pm4::DmaDestinationNowhere) return true;
-            if (!pipelineDma()) return false;
             if (destination == Pm4::DmaSelectGds) return true;
             const auto bytes = Pm4::DmaBytes(packet);
             if (bytes == 0) return true;
