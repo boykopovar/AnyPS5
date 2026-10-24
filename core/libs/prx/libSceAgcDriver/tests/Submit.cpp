@@ -889,6 +889,8 @@ void testRegisteredFastLaunchWorkgroupVertex() {
     }};
     const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
     AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    const std::array<ShaderRegister, 2> strip{{{0x242u, 6u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, strip);
 }
 
 void testWorkerFailure() {

@@ -1189,16 +1189,17 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && vertices == 1 && primitives == 1), "fast launch other than one vertex and one primitive per subgroup is unsupported");
+        const auto inputPrimitive = fastLaunch ? 1u : primitive;
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
         validate(outputType == 2 || ((outputType == 0 || outputType == 1) && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
         const auto outputSize = outputType == 0 ? 1u : outputType == 1 ? 2u : 3u;
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
+        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
         const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
         const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
@@ -1211,7 +1212,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        result.mesh = ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
     }
     return result;
 }
