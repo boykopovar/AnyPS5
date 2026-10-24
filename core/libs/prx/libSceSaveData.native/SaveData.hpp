@@ -18,6 +18,7 @@ constexpr int SAVE_DATA_ERROR_MOUNT_FULL = -2137063412;
 constexpr int SAVE_DATA_ERROR_EXISTS = -2137063417;
 constexpr int SAVE_DATA_ERROR_NOT_FOUND = -2137063416;
 constexpr int SAVE_DATA_ERROR_INTERNAL = -2137063413;          // 0x809F000B
+constexpr int SAVE_DATA_ERROR_BAD_MOUNTED = -2137063411;
 constexpr int SAVE_DATA_ERROR_MEMORY_NOT_READY = -2137063406;  // 0x809F0012
 
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDONLY = 1;
@@ -45,6 +46,7 @@ constexpr std::size_t SAVE_DATA_MOUNT_SLOTS = 16;
 
 struct MountSlot {
     bool used = false;
+    bool read_only = false;
     std::string mount_point;
     std::string real_path;
 };

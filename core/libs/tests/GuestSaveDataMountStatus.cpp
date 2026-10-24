@@ -46,6 +46,9 @@ void CheckUnmountedCalls() {
     SaveDataMountInfo info{};
     SaveDataIcon icon{};
     char buf[128]{};
+    icon.buf = buf;
+    icon.buf_size = sizeof(buf);
+    icon.data_size = sizeof(buf);
     std::size_t gotSize = 0;
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataUmount2(0, &point) == SaveDataErrorNotMounted, "umount2 unmounted point is NOT_MOUNTED");
@@ -73,6 +76,9 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     SaveDataMountInfo info{};
     SaveDataIcon icon{};
     char buf[128]{};
+    icon.buf = buf;
+    icon.buf_size = sizeof(buf);
+    icon.data_size = sizeof(buf);
     char smallBuf[64]{};
     std::size_t gotSize = 0;
     SaveDataMountPoint unmounted{};
@@ -81,9 +87,9 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     char readTitle[128]{};
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataLoadIcon(nullptr, &icon) == SaveDataErrorParameter, "loadIcon null point is PARAMETER");
-    Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
     Check(sceSaveDataSaveIcon(nullptr, &icon) == SaveDataErrorParameter, "saveIcon null point is PARAMETER");
     Check(sceSaveDataSaveIcon(point, &icon) == 0, "saveIcon on mounted save succeeds");
+    Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
     Check(sceSaveDataSaveIconByPath(point, "icon.png") == 0, "saveIconByPath on mounted save succeeds");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");
     Check(sceSaveDataGetMountInfo(point, nullptr) == SaveDataErrorParameter, "getMountInfo null info is PARAMETER");

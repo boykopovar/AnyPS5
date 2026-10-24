@@ -590,17 +590,29 @@ int APS5_VABI sceSaveDataInitialize3(const void* init) {
 }
 
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDataIcon* icon) {
-    (void)icon;
-    if (mount_point == nullptr) {
+    if (mount_point == nullptr || icon == nullptr || icon->buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
-    if (find_slot_by_mount_point(mount_point->data) == -1) {
+    const int slot = find_slot_by_mount_point(mount_point->data);
+    if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
     }
-    if (icon != nullptr) {
-        icon->data_size = 0;
+    const auto path = ResolveDiskPath_nid_no_patch((g_slots[slot].mount_point + "/sce_sys/icon0.png").c_str());
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        std::error_code error;
+        const bool exists = std::filesystem::exists(path, error);
+        return !error && !exists ? SAVE_DATA_ERROR_NOT_FOUND : SAVE_DATA_ERROR_INTERNAL;
     }
+    const std::streamoff size = file.tellg();
+    if (size < 0 || static_cast<std::uintmax_t>(size) > std::numeric_limits<std::size_t>::max()) return SAVE_DATA_ERROR_INTERNAL;
+    const auto count = std::min(icon->buf_size, static_cast<std::size_t>(size));
+    if (count > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) return SAVE_DATA_ERROR_INTERNAL;
+    file.seekg(0);
+    if (count != 0) file.read(static_cast<char*>(icon->buf), static_cast<std::streamsize>(count));
+    if (!file) return SAVE_DATA_ERROR_INTERNAL;
+    icon->data_size = static_cast<std::size_t>(size);
     return SAVE_DATA_OK;
 }
 
@@ -647,6 +659,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     AddPathAlias_nid_no_patch(mountPoint.c_str(), std::filesystem::absolute(real_path).string().c_str());
     std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
+    g_slots[slot].read_only = rdonly;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
@@ -672,15 +685,17 @@ int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mount_point, const Sa
 }
 
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const SaveDataIcon* icon) {
-    (void)icon;
-    if (mount_point == nullptr) {
+    if (mount_point == nullptr || icon == nullptr || icon->buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
-    if (find_slot_by_mount_point(mount_point->data) == -1) {
+    const int slot = find_slot_by_mount_point(mount_point->data);
+    if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
     }
-    return SAVE_DATA_OK;
+    if (g_slots[slot].read_only) return SAVE_DATA_ERROR_BAD_MOUNTED;
+    const auto path = ResolveDiskPath_nid_no_patch((g_slots[slot].mount_point + "/sce_sys/icon0.png").c_str());
+    return savedata::replace_file(path, icon->buf, std::min(icon->buf_size, icon->data_size)) ? SAVE_DATA_OK : SAVE_DATA_ERROR_INTERNAL;
 }
 
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, const char* path) {
