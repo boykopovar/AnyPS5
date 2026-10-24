@@ -262,7 +262,7 @@ extern "C" {
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (File::InvalidOpenFlags(flags)) return SCE_KERNEL_ERROR_EINVAL;
     if (path != nullptr && *path == '\0') return SCE_KERNEL_ERROR_ENOENT;
-    APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
+    APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path != nullptr ? path : "(null)", flags, MapFlags(flags), mode);
     if (path != nullptr && File::IsRandomDevicePath(path)) {
         if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
         const int fd = File::OpenRandomDevice();
