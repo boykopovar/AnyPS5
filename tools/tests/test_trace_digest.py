@@ -47,6 +47,86 @@ STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll
 
 
 class TraceDigestTests(unittest.TestCase):
+    def test_summary_jsonl_record_shapes_are_validated(self):
+        path = Path(self.directory.name) / "invalid-summary.jsonl"
+        for record in (None, True, False, 7, 1.5, "", "interval_start_s", [], ["interval_start_s"]):
+            for mode in ("capture", "intervals"):
+                with self.subTest(record=record, mode=mode):
+                    path.write_text("{}\n\n" + json.dumps(record) + "\n", encoding="utf-8")
+                    with self.assertRaises(ValueError) as raised:
+                        if mode == "capture":
+                            trace_digest.load_summary(path, self.trace)
+                        else:
+                            trace_digest.load_intervals(path)
+                    self.assertEqual(str(raised.exception), f"{path}:3: summary record must be an object")
+
+    def test_summary_jsonl_syntax_errors_name_the_source_line(self):
+        path = Path(self.directory.name) / "invalid-summary.jsonl"
+        for record in ("{", '{"trace": }', "{} trailing"):
+            for mode in ("capture", "intervals"):
+                with self.subTest(record=record, mode=mode):
+                    path.write_text("{}\n\n" + record + "\n", encoding="utf-8")
+                    with self.assertRaises(ValueError) as raised:
+                        if mode == "capture":
+                            trace_digest.load_summary(path, self.trace)
+                        else:
+                            trace_digest.load_intervals(path)
+                    self.assertTrue(str(raised.exception).startswith(f"{path}:3: invalid JSON: "), str(raised.exception))
+
+    def test_cli_rejects_invalid_summary_records_without_partial_output(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        explicit = summary.with_name("explicit-\u03a9.jsonl")
+        invalid = [json.dumps(record) for record in (None, True, 7, "interval_start_s", [], ["interval_start_s"])]
+        for record in [*invalid, "{", "{} trailing"]:
+            data = (json.dumps(SUMMARY) + "\n\n" + record + "\n").encode("utf-8")
+            summary.write_bytes(data)
+            explicit.write_bytes(data)
+            for arguments, path in (([str(self.trace)], summary), ([str(self.trace), "--summary", str(explicit)], explicit),
+                                    ([str(summary)], summary)):
+                for output in ([], ["--json"]):
+                    with self.subTest(record=record, arguments=arguments, output=output):
+                        result = subprocess.run([sys.executable, trace_digest.__file__, *arguments, *output],
+                                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertTrue(result.stderr.startswith(f"FAIL: {path}:3: "), result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertEqual(path.read_bytes(), data)
+
+    def test_mixed_summary_jsonl_objects_preserve_selection_and_intervals(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        expected = self.json_output(self.trace)
+        interval = interval_line(0.0, 30.0, 20.0, 5.0)
+        records = [{}, dict(SUMMARY, trace="other.json.gz"), SUMMARY, interval, {"unrelated": "\u03a9"}]
+        text = "\r\n \t\r\n" + "\r\n\r\n".join(json.dumps(record) for record in records) + "\r\n"
+        path.write_text(text, encoding="utf-8-sig")
+        self.assertEqual(self.json_output(self.trace), expected)
+        self.assertEqual(trace_digest.load_intervals(path), [interval])
+        records.extend([dict(SUMMARY, commit="latest"), dict(SUMMARY, trace=self.trace.with_suffix("").name, commit="alternate")])
+        path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        self.assertEqual(trace_digest.load_summary(path, self.trace)["commit"], "latest")
+        self.assertEqual(trace_digest.load_summary(path, self.trace.with_suffix(""))["commit"], "alternate")
+
+    def test_empty_summary_jsonl_files_remain_valid(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        for text in ("", "\n \t\r\n"):
+            for encoding in ("utf-8", "utf-8-sig"):
+                with self.subTest(text=text, encoding=encoding):
+                    path.write_text(text, encoding=encoding)
+                    self.assertIsNone(trace_digest.load_summary(path, self.trace))
+                    self.assertEqual(trace_digest.load_intervals(path), [])
+
+    def test_unicode_separators_inside_summary_strings_are_not_record_boundaries(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=separator):
+                gpu = f"GPU{separator}name"
+                summary = dict(SUMMARY, gpu=gpu)
+                interval = interval_line(0.0, 30.0, 20.0, 5.0, gpu=gpu)
+                path.write_text("\n".join(json.dumps(record, ensure_ascii=False) for record in (summary, interval)), encoding="utf-8")
+                self.assertEqual(trace_digest.load_summary(path, self.trace), summary)
+                self.assertEqual(trace_digest.load_intervals(path), [interval])
+
     def test_cli_rejects_invalid_event_container_shapes_without_partial_output(self):
         cases = [(value, "trace must be an event array or object") for value in (None, True, 7, "trace")]
         cases += [({"traceEvents": value}, "traceEvents must be an array")
