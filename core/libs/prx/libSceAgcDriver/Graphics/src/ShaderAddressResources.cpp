@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
+#include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -65,6 +67,37 @@ bool definesNoPointerValue(std::uint32_t opcode) {
     }
 }
 
+bool referencesNoValue(std::uint32_t opcode) {
+    switch (static_cast<spv::Op>(opcode)) {
+    case spv::OpCapability:
+    case spv::OpExtension:
+    case spv::OpExtInstImport:
+    case spv::OpMemoryModel:
+    case spv::OpEntryPoint:
+    case spv::OpExecutionMode:
+    case spv::OpExecutionModeId:
+    case spv::OpSource:
+    case spv::OpSourceExtension:
+    case spv::OpString:
+    case spv::OpLine:
+    case spv::OpNoLine:
+    case spv::OpModuleProcessed:
+    case spv::OpConstantTrue:
+    case spv::OpConstantFalse:
+    case spv::OpConstant:
+    case spv::OpConstantComposite:
+    case spv::OpConstantNull:
+    case spv::OpSpecConstantTrue:
+    case spv::OpSpecConstantFalse:
+    case spv::OpSpecConstant:
+    case spv::OpSpecConstantComposite:
+    case spv::OpSpecConstantOp:
+        return true;
+    default:
+        return definesNoPointerValue(opcode) || (opcode >= spv::OpTypeVoid && opcode <= spv::OpTypeForwardPointer);
+    }
+}
+
 template<typename TVisit>
 bool forEachInstruction(std::span<const std::uint32_t> words, const TVisit& visit) {
     for (std::size_t at = 5; at < words.size();) {
@@ -89,6 +122,21 @@ bool storesThroughAddressesCached(const ShaderRecompiler::SharedSpirv& spirv) {
     std::lock_guard lock(mutex);
     known.emplace(key, stores);
     return stores;
+}
+
+bool faultReportOnlyCached(const ShaderRecompiler::SharedSpirv& spirv, std::uint32_t set, std::uint32_t binding) {
+    static std::mutex mutex;
+    static std::map<std::tuple<std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t>, bool> known;
+    const auto hash = spirv.ContentHash();
+    const std::tuple key{hash.low, hash.high, set, binding};
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = known.find(key); found != known.end()) return found->second;
+    }
+    const bool reportOnly = SpirvFaultReportOnly(spirv.Words(), set, binding);
+    std::lock_guard lock(mutex);
+    known.emplace(key, reportOnly);
+    return reportOnly;
 }
 
 }
@@ -118,6 +166,45 @@ bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words) {
     return stores;
 }
 
+bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding) {
+    constexpr std::uint32_t reportWords = sizeof(ShaderRecompiler::BdaAbi::Fault) / sizeof(std::uint32_t);
+    if (words.size() < 5 || words[0] != spv::MagicNumber) return false;
+    std::unordered_map<std::uint32_t, std::uint32_t> sets;
+    std::unordered_map<std::uint32_t, std::uint32_t> bindings;
+    std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    const bool readable = forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationDescriptorSet) sets[instruction[1]] = instruction[3];
+        if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationBinding) bindings[instruction[1]] = instruction[3];
+        if (opcode == spv::OpConstant && instruction.size() == 4) constants[instruction[2]] = instruction[3];
+    });
+    if (!readable) return false;
+    std::unordered_set<std::uint32_t> buffers;
+    for (const auto& [id, number] : bindings) {
+        if (const auto found = sets.find(id); number == binding && found != sets.end() && found->second == set) buffers.insert(id);
+    }
+    const auto constantBelow = [&](std::uint32_t id, std::uint32_t limit) {
+        const auto found = constants.find(id);
+        return found != constants.end() && found->second < limit;
+    };
+    const auto chainsBuffer = [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        return (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && instruction.size() > 3 && buffers.contains(instruction[3]);
+    };
+    bool reportOnly = !buffers.empty();
+    std::unordered_set<std::uint32_t> reportPointers;
+    forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (!chainsBuffer(opcode, instruction)) return;
+        reportOnly = reportOnly && instruction.size() == 6 && constantBelow(instruction[4], 1) && constantBelow(instruction[5], reportWords);
+        reportPointers.insert(instruction[2]);
+    });
+    forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (!reportOnly || referencesNoValue(opcode) || chainsBuffer(opcode, instruction) || (opcode == spv::OpVariable && instruction.size() > 2 && buffers.contains(instruction[2]))) return;
+        const auto accessed = opcode == spv::OpLoad || opcode == spv::OpAtomicLoad ? (instruction.size() > 3 ? instruction[3] : 0u) : pointerOperandStored(opcode, instruction);
+        const auto references = std::count_if(instruction.begin() + 1, instruction.end(), [&](std::uint32_t word) { return buffers.contains(word) || reportPointers.contains(word); });
+        reportOnly = references == (reportPointers.contains(accessed) ? 1 : 0);
+    });
+    return reportOnly;
+}
+
 void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots) {
     static const bool loopGuarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
     for (const auto& shader : shaders) {
@@ -127,8 +214,12 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         for (const auto& binding : shader.program->bindings) {
             if (binding.role != ShaderRecompiler::DescriptorRole::BdaPagetable && binding.role != ShaderRecompiler::DescriptorRole::FaultBuffer) continue;
             Require(binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.count == 1 && binding.guestDescriptor.empty() && !binding.readOnly, "invalid BDA descriptor contract");
-            if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable) ++tables;
-            else ++faults;
+            if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable) {
+                ++tables;
+            } else {
+                ++faults;
+                faultReportOnly = faultReportOnly && faultReportOnlyCached(shader.program->spirv, binding.descriptorSet, binding.binding);
+            }
         }
         const bool faultOnly = tables == 0 && faults == 1 && shader.program->bdaAbiVersion == ShaderRecompiler::BdaAbi::Version;
         Require((tables == faults || faultOnly) && tables <= 1 && faults <= 1, "invalid BDA table and fault descriptors");
