@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace AgcDriver {
@@ -220,8 +221,20 @@ bool TwinFormatsShareTheirSamples(AgcDriver::VulkanDevice& device) {
     }
     auto& other = NewBlock();
     const auto unorm = Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R8G8B8A8_UNORM));
-    const auto floating = Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R16G16_SFLOAT));
-    Require(floating.image != unorm.image, "a multisampled surface used in an unrelated format of the same size shares the other format's samples");
+    std::string refusal;
+    try {
+        static_cast<void>(Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R16G16_SFLOAT)));
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find("overlaps multisampled color target") != std::string::npos, "an unrelated-format owner over host-only samples was not refused");
+    const auto unchanged = Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R8G8B8A8_UNORM));
+    Require(unchanged.image == unorm.image && unchanged.view == unorm.view && unchanged.owner == unorm.owner, "refusing an unrelated-format owner changed the resident target");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(UniformTexel(context, unchanged.image, VK_FORMAT_R8G8B8A8_UNORM) == Bytes(0u), "refusing an unrelated-format owner changed the resident samples");
+    }
+    std::cout << "unrelated-format owner refused; resident owner and samples preserved\n";
     return true;
 }
 
