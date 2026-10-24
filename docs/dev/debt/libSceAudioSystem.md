@@ -1,5 +1,5 @@
 # libSceAudioSystem technical debt
 
-### Unknown function info
+### Silent stubs
 
-- [sceAudioSystemSystemResume and sceAudioSystemSystemSuspend](../../../core/libs/prx/libSceAudioSystem/Export.cpp) (libSceAudioSystem) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAudioSystem.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceAudioSystemSystemResume and sceAudioSystemSystemSuspend](../../../core/libs/prx/libSceAudioSystem/Export.cpp) (libSceAudioSystem) - return 0 without touching host audio: ports open their own SDL devices per `sceAudioInOpen`, so there is no central audio server to suspend or resume on the host. The declarations have no parameters solely to resolve known imports; the signatures are unverified host-emulation fallback assumptions, not measured console behaviour
