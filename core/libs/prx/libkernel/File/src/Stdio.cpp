@@ -917,6 +917,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     if (length < 0 || GuestSockets::IsOpen(d)) {
         return PosixFailure(GUEST_EINVAL);
     }
+    if (AppArchiveMaterializedDescriptor_nid_no_patch(d, nullptr)) return PosixFailure(GUEST_EBADF);
     File::RefuseArchivedFile(d, "ftruncate");
 #ifdef _WIN32
     int error = NativeFtruncate(d, length);
@@ -1051,7 +1052,8 @@ int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
     if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     if (const int error = PathError(path)) return PosixFailure(error);
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
+    if (const int error = ResolvePathError_nid_no_patch(path, native, false, true)) return PosixFailure(error);
+    if (File::FillArchivedStat(native, sb)) return 0;
     if (!File::FillLinkStat(native, sb)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
     return 0;
 }

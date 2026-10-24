@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include <cerrno>
 #include <vector>
 #ifdef _WIN32
@@ -17,7 +18,14 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (!path) { errno = 14; return -1; }
     if (!*path) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
+        const auto resolved = ResolveArchivedPath_nid_no_patch(path, false);
+        if (AppArchiveOnly_nid_no_patch(resolved)) {
+            AppArchiveNode node{};
+            if (!AppArchiveLookup_nid_no_patch(resolved, &node)) { errno = 2; return -1; }
+            if (mode & 2) { errno = 30; return -1; }
+            if ((mode & 1) && !node.Directory) { errno = 13; return -1; }
+            return 0;
+        }
 #ifdef _WIN32
         const DWORD attributes = GetFileAttributesW(resolved.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES) {
