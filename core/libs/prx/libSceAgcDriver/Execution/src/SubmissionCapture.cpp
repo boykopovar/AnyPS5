@@ -176,7 +176,7 @@ std::string_view SubmissionCapture::KindName(SubmissionKind kind) {
 std::string_view SubmissionCapture::QueueType(std::uint32_t queue) {
     if (queue == 0) return "graphics";
     if (queue >= 0x20 && queue < DriverDetail::SubmissionQueueEnd) return "compute";
-    char what[96];
+    char what[64];
     std::snprintf(what, sizeof(what), "queue 0x%x is neither the graphics queue nor a compute queue", queue);
     throw std::runtime_error(std::string("submission capture: ") + what);
 }
