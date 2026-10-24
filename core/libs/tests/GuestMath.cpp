@@ -82,6 +82,7 @@ double APS5_VABI fmod_nid_postfix(double, double);
 float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
 double APS5_VABI asin_nid_postfix(double);
+double APS5_VABI acos_nid_postfix(double);
 float APS5_VABI atan2f_nid_postfix(float, float);
 float APS5_VABI atanf_nid_postfix(float);
 float APS5_VABI hypotf_nid_postfix(float, float);
@@ -683,6 +684,49 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckAsinConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t arcsine;
+        std::uint64_t arccosine;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0x3ff921fb54442d18ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0x3ff921fb54442d18ull, 0},
+        {0x3c5fffffffffffffull, 0x3c5fffffffffffffull, 0x3ff921fb54442d18ull, 0},
+        {0x3c60000000000001ull, 0x3c60000000000001ull, 0x3ff921fb54442d18ull, 0},
+        {0x3e4fffffffffffffull, 0x3e4fffffffffffffull, 0x3ff921fb50442d18ull, 0},
+        {0x3fdfffffffffffffull, 0x3fe0c152382d7365ull, 0x3ff0c152382d7366ull, 0},
+        {0x3fe0000000000000ull, 0x3fe0c152382d7366ull, 0x3ff0c152382d7366ull, 0},
+        {0xbfe0000000000000ull, 0xbfe0c152382d7366ull, 0x4000c152382d7366ull, 0},
+        {0x3fef332fffffffffull, 0x3ff58c24298fce5aull, 0x3fccaeb955a2f5f1ull, 0},
+        {0x3fef333300000000ull, 0x3ff58c2ae9ab49eaull, 0x3fccae8354c71975ull, 0},
+        {0x3fefffffffffffffull, 0x3ff921fb50442d18ull, 0x3e50000000000000ull, 0},
+        {0x3ff0000000000000ull, 0x3ff921fb54442d18ull, 0x0000000000000000ull, 0},
+        {0xbff0000000000000ull, 0xbff921fb54442d18ull, 0x400921fb54442d18ull, 0},
+        {0x3ff0000000000001ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x4000000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, EDOM},
+        {0xfff8000000000002ull, 0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3fef4102aaf38ef0ull, 0x3ff5abc7e3600d9dull, 0x3fcbb19b8720fbddull, 0},
+        {0x3fe1d8de839010b5ull, 0x3fe2eeb7b354f40full, 0x3fef553ef5336622ull, 0},
+        {0x3fef65cb5053bcb7ull, 0x3ff605fae8f77005ull, 0x3fc8e0035a65e897ull, 0},
+        {0x3fde7903ac7bb90aull, 0x3fdfc2a6add69bbfull, 0x3ff13151a8ce8628ull, 0},
+        {0xbfdf8699dc276e9cull, 0xbfe07b672130013dull, 0x4000afd7726e16dbull, 0},
+        {0x3fe7a9958a59ff39ull, 0x3feaa1d4c5dfa9c2ull, 0x3fe7a221e2a8b06eull, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(asin_nid_postfix(x)) == item.arcsine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(acos_nid_postfix(x)) == item.arccosine && errno == expected);
+    }
+}
+
 static void CheckExpm1ConsoleBits() {
     constexpr struct {
         std::uint64_t input;
@@ -936,7 +980,7 @@ static void CheckAsin() {
     errno = 0;
     asin_nid_postfix(2.0);
     Require(std::fetestexcept(FE_INVALID));
-    Require(errno == 0);
+    Require(errno == EDOM);
     std::feclearexcept(FE_ALL_EXCEPT);
     asin_nid_postfix(nan);
     Require(!std::fetestexcept(FE_INVALID));
@@ -1668,6 +1712,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckAsinConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);

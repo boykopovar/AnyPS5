@@ -357,14 +357,90 @@ long double APS5_VABI nearbyintl_nid_postfix(long double x) { return std::nearby
 double APS5_VABI nearbyint_nid_postfix(double x) { return std::nearbyint(x); }
 
 double APS5_VABI cbrt_nid_postfix(double x) { return std::cbrt(x); }
-double APS5_VABI asin_nid_postfix(double x) {
-    if (std::isgreater(x, 1.0) || std::isless(x, -1.0)) {
-        std::feraiseexcept(FE_INVALID);
-        return -std::numeric_limits<double>::quiet_NaN();
-    }
-    return std::asin(x);
+static double AsinRational(double t) {
+    const double pS0 = 1.66666666666666657415e-01;
+    const double pS1 = -3.25565818622400915405e-01;
+    const double pS2 = 2.01212532134862925881e-01;
+    const double pS3 = -4.00555345006794114027e-02;
+    const double pS4 = 7.91534994289814532176e-04;
+    const double pS5 = 3.47933107596021167570e-05;
+    const double qS1 = -2.40339491173441421878e+00;
+    const double qS2 = 2.02094576023350569471e+00;
+    const double qS3 = -6.88283971605453293030e-01;
+    const double qS4 = 7.70381505559019352791e-02;
+    const double p = t * (pS0 + t * (pS1 + t * (pS2 + t * (pS3 + t * (pS4 + t * pS5)))));
+    const double q = 1.0 + t * (qS1 + t * (qS2 + t * (qS3 + t * qS4)));
+    return p / q;
 }
-double APS5_VABI acos_nid_postfix(double x) { return std::acos(x); }
+
+double APS5_VABI asin_nid_postfix(double x) {
+    const double pio2_hi = 1.57079632679489655800e+00;
+    const double pio2_lo = 6.12323399573676603587e-17;
+    const double pio4_hi = 7.85398163397448278999e-01;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x3ff00000) {
+        if (((ix - 0x3ff00000) | static_cast<std::uint32_t>(bits)) == 0) {
+            return x * pio2_hi + x * pio2_lo;
+        }
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (ix < 0x3fe00000) {
+        if (ix < 0x3e500000) {
+            return x;
+        }
+        return x + x * AsinRational(x * x);
+    }
+    const double t = (1.0 - std::fabs(x)) * 0.5;
+    const double s = std::sqrt(t);
+    double result;
+    if (ix >= 0x3fef3333) {
+        result = pio2_hi - (2.0 * (s + s * AsinRational(t)) - pio2_lo);
+    } else {
+        const double w = std::bit_cast<double>(std::bit_cast<std::uint64_t>(s) & 0xffffffff00000000ull);
+        const double c = (t - w * w) / (s + w);
+        const double p = 2.0 * s * AsinRational(t) - (pio2_lo - 2.0 * c);
+        const double q = pio4_hi - 2.0 * w;
+        result = pio4_hi - (p - q);
+    }
+    return hx > 0 ? result : -result;
+}
+
+double APS5_VABI acos_nid_postfix(double x) {
+    const double pi = 3.14159265358979311600e+00;
+    const double pio2_hi = 1.57079632679489655800e+00;
+    static volatile double pio2_lo = 6.12323399573676603587e-17;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x3ff00000) {
+        if (((ix - 0x3ff00000) | static_cast<std::uint32_t>(bits)) == 0) {
+            return hx > 0 ? 0.0 : pi + 2.0 * pio2_lo;
+        }
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (ix < 0x3fe00000) {
+        if (ix <= 0x3c600000) {
+            return pio2_hi + pio2_lo;
+        }
+        return pio2_hi - (x - (pio2_lo - x * AsinRational(x * x)));
+    }
+    if (hx < 0) {
+        const double z = (1.0 + x) * 0.5;
+        const double s = std::sqrt(z);
+        const double w = AsinRational(z) * s - pio2_lo;
+        return pi - 2.0 * (s + w);
+    }
+    const double z = (1.0 - x) * 0.5;
+    const double s = std::sqrt(z);
+    const double df = std::bit_cast<double>(std::bit_cast<std::uint64_t>(s) & 0xffffffff00000000ull);
+    const double c = (z - df * df) / (s + df);
+    const double w = AsinRational(z) * s + c;
+    return 2.0 * (df + w);
+}
 double APS5_VABI sqrt_nid_postfix(double x) { return std::sqrt(x); }
 float APS5_VABI sqrtf_nid_postfix(float x) { return std::sqrt(x); }
 double APS5_VABI fabs_nid_postfix(double x) { return std::fabs(x); }
