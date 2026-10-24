@@ -465,6 +465,13 @@ extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers,
     return host.dns.size();
 }
 
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host) || host.gateway.s_addr == 0) return false;
+    *gateway = host.gateway.s_addr;
+    return true;
+}
+
 static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
     std::memcpy(info->opaque, &value, sizeof(value));
 }
