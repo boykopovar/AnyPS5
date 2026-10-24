@@ -276,6 +276,33 @@ int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec* face, GuestCharMapRec* ch
     return FT_Err_Invalid_Argument;
 }
 
+std::uint32_t APS5_VABI FT_Face_GetCharVariantIndex_nid_postfix(GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharVariantIndex(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)),
+                                       static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
+}
+
+int APS5_VABI FT_Face_GetCharVariantIsDefault_nid_postfix(GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharVariantIsDefault(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)),
+                                           static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantSelectors_nid_postfix(GuestFaceRec* face) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetVariantSelectors(owner ? owner->host : nullptr);
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantsOfChar_nid_postfix(GuestFaceRec* face, std::uint64_t charcode) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetVariantsOfChar(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)));
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetCharsOfVariant_nid_postfix(GuestFaceRec* face, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharsOfVariant(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
+}
+
 std::uint64_t APS5_VABI FT_Get_First_Char_nid_postfix(GuestFaceRec* face, std::uint32_t* glyphIndex) {
     const GuestFace* owner = FaceOf(face);
     return FT_Get_First_Char(owner ? owner->host : nullptr, glyphIndex);
