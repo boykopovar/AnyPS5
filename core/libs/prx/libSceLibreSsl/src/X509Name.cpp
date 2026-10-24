@@ -41,4 +41,9 @@ LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX
     return reinterpret_cast<LibreSslX509NameEntry*>(name->entries->data[loc]);
 }
 
+void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const LibreSslX509NameEntry* entry) {
+    if (!entry) return nullptr;
+    return entry->value;
+}
+
 }

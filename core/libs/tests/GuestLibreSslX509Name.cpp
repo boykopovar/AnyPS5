@@ -35,6 +35,7 @@ static_assert(sizeof(TestName) == 40);
 
 extern "C" {
 TestNameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const TestName*, int);
+void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const TestNameEntry*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -73,7 +74,20 @@ static void TestGetEntry() {
     Require(X509_NAME_get_entry_nid_postfix(&name, 3) == nullptr);
 }
 
+static void TestEntryGetData() {
+    int value = 0;
+    TestNameEntry entry {};
+    Require(X509_NAME_ENTRY_get_data_nid_postfix(nullptr) == nullptr);
+    Require(X509_NAME_ENTRY_get_data_nid_postfix(&entry) == nullptr);
+    entry.value = &value;
+    Require(X509_NAME_ENTRY_get_data_nid_postfix(&entry) == &value);
+    entry.object = &entry;
+    entry.set = 7;
+    Require(X509_NAME_ENTRY_get_data_nid_postfix(&entry) == &value);
+}
+
 int main() {
     TestGetEntry();
+    TestEntryGetData();
     return 0;
 }
