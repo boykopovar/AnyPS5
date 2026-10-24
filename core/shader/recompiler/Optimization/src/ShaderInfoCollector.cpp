@@ -564,7 +564,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     image.source = std::numeric_limits<std::uint32_t>::max();
     image.resourceClass = ImageResourceClass::Storage;
     image.numericClass = IrTextureNumericClass::Uint;
-    image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : RdnaImageDimension::Dim2D;
+    image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : pixel.mergeLayered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
     image.read = true;
     image.written = true;
     image.fmaskCompatible = false;
@@ -573,6 +573,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
     AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
+    if (pixel.mergeLayered) AddInput(info, StageInputKind::Layer, 0, 1, "gl_Layer");
 }
 
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {

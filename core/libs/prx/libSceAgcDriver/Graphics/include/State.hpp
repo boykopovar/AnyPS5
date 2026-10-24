@@ -70,7 +70,8 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
-    std::uint16_t partialWriteMask = 0;
+    std::uint32_t partialWriteMask = 0;
+    std::uint32_t mergeBlend = 0;
 };
 
 struct DepthTarget {
@@ -188,7 +189,10 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
-std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedBlendControl(std::uint32_t blendControl);
+std::uint32_t PackedBlendControl(ShaderRecompiler::ColorExportPacking packing, std::uint32_t blendControl);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
@@ -208,6 +212,7 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
 GuestTextureResource SurfaceForTarget(const ColorTarget& color);
+GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color);
 
 struct ColorMetadataPass {
     enum class Mode { EliminateFastClear, DccDecompress, Resolve, FmaskDecompress };

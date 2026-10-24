@@ -1649,15 +1649,27 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
+            const bool wide = color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || color.packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11;
+            if (wide && state.blendEnable) {
+                Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (read(cx, 0x31c + slot * 0xfu) & 0x8000u) != 0, "blending unclamped normalized color into a 10_11_11 unorm color target is not implemented");
+                color.mergeBlend = PackedBlendControl(color.packing, blend);
+                state.blendEnable = VK_FALSE;
+            }
             Require(!state.blendEnable, "blending into " + packed + " color target is unsupported");
             const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
             const std::uint32_t packedMask = nibbles ? 0xfu : 7u;
-            Require(nibbles || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
-            if ((exportedMask & packedMask) != packedMask) {
-                Require(color.mipCount == 1u && color.depth == 1u && color.layers == 1u && color.arrayLastSlice == 0u, "partial writes of a mipmapped, volume or array " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
-                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of more than one packed color target are not implemented");
-                color.partialWriteMask = PackedWriteMask(mapping, exportedMask);
+            if ((exportedMask & packedMask) != packedMask || color.mergeBlend != 0u) {
+                const std::string merged = color.mergeBlend != 0u ? "blending into " : "partial writes of ";
+                if (color.depth != 1u || (color.samples > 1u && (color.mipCount != 1u || color.layers != 1u || color.arrayLastSlice != 0u))) {
+                    char detail[160];
+                    std::snprintf(detail, sizeof(detail), " (%ux%u, %u samples, mip %u of %u%s, depth %u slice %u, layers %u, last slice %u)", color.extent.width, color.extent.height, color.samples, color.mip, color.mipCount, color.mipTail ? " in the tail" : "", color.depth, color.depthSlice, color.layers, color.arrayLastSlice);
+                    Require(false, merged + "a volume " + std::string(PackedColorTargetName(color.packing)) + " color target, or a mipmapped or array multisampled one, are not implemented" + detail);
+                }
+                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), merged + "more than one packed color target are not implemented");
+                color.partialWriteMask = PackedWriteMask(color.packing, mapping, exportedMask & packedMask);
+                Require(color.partialWriteMask != 0u, merged + packed + " color target that writes none of its channels is not implemented");
                 state.colorWriteMask = 0;
+                Require(!wide || color.samples == 1u, merged + "a multisampled " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
                 if (color.samples > 1u) {
                     Require(sampleCoverageSupported(queue, result.samples, true), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
                     if (!result.perSampleShading && !pixelRateInputsKept(queue, result)) {
@@ -1716,21 +1728,54 @@ std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& 
     return packings;
 }
 
-std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask) {
-    std::uint16_t mask = 0;
+std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask) {
+    return PackedWriteMask(ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4, componentMapping, exportedMask);
+}
+
+std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask) {
+    constexpr std::array<std::uint32_t, 4> nibbles{0x000fu, 0x00f0u, 0x0f00u, 0xf000u};
+    constexpr std::array<std::uint32_t, 4> floats{0x000003ffu, 0x001ffc00u, 0xffe00000u, 0u};
+    constexpr std::array<std::uint32_t, 4> unorms{0x000007ffu, 0x003ff800u, 0xffc00000u, 0u};
+    Require(packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11, "a write mask of a packed color target that is not 4_4_4_4 unorm, 11_11_10 float or 10_11_11 unorm");
+    const auto& fields = packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 ? nibbles : packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? floats : unorms;
+    std::uint32_t mask = 0;
     for (std::uint32_t component = 0; component < 4; ++component) {
-        if (((exportedMask >> ((componentMapping >> (2u * component)) & 3u)) & 1u) != 0) mask = static_cast<std::uint16_t>(mask | (0xfu << (4u * component)));
+        if (((exportedMask >> ((componentMapping >> (2u * component)) & 3u)) & 1u) != 0) mask |= fields[component];
     }
     return mask;
 }
 
+std::uint32_t PackedBlendControl(std::uint32_t blendControl) {
+    return PackedBlendControl(ShaderRecompiler::ColorExportPacking::Float11_11_10, blendControl);
+}
+
+std::uint32_t PackedBlendControl(ShaderRecompiler::ColorExportPacking packing, std::uint32_t blendControl) {
+    const std::string target = std::string(packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(packing) + " color target";
+    const auto source = blendControl & 0x1fu;
+    const auto combine = (blendControl >> 5u) & 7u;
+    const auto destination = (blendControl >> 8u) & 0x1fu;
+    char detail[96];
+    std::snprintf(detail, sizeof(detail), " (CB_BLEND_CONTROL 0x%08x)", blendControl);
+    Require(combine <= 4u, "blending into " + target + " with an unknown combine function is not implemented" + detail);
+    const auto factor = [&](std::uint32_t value) {
+        if (value >= 15u && value <= 18u) Require(false, "dual-source blending into " + target + " is not implemented" + detail);
+        if (value == 13u || value == 14u || value == 19u || value == 20u) Require(false, "blending into " + target + " with a constant color factor is not implemented" + detail);
+        Require(value <= 10u, "blending into " + target + " with an unknown blend factor is not implemented" + detail);
+    };
+    factor(source);
+    factor(destination);
+    return 0x40000000u | (destination << 8u) | (combine << 5u) | source;
+}
+
 GuestTextureResource TargetMergeSurface(const ColorTarget& color) {
-    auto surface = SurfaceForTarget(color);
+    auto surface = color.arrayLastSlice != 0u ? ArraySurfaceForTarget(color) : SurfaceForTarget(color);
     if (color.samples > 1u) {
-        Require(surface.baseAddress == color.surfaceAddress, "a merged multisampled color target does not start at its surface");
+        Require(surface.baseAddress == color.surfaceAddress && surface.dimension == TextureDimension::k2D && surface.mipCount == 1u, "a merged multisampled color target does not start at its single-level surface");
         surface.dimension = TextureDimension::k2DMsaa;
         surface.samples = color.samples;
     }
+    surface.baseLevel = color.mip;
+    surface.lastLevel = color.mip;
     return surface;
 }
 
@@ -1753,6 +1798,11 @@ ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
         merge.target = static_cast<std::uint8_t>(color.exportIndex);
         merge.mask = color.partialWriteMask;
         merge.samples = static_cast<std::uint8_t>(color.samples);
+        merge.packing = color.packing;
+        merge.blendControl = color.mergeBlend;
+        merge.layered = color.arrayLastSlice != 0u;
+        merge.firstSlice = merge.layered ? color.arraySlice : 0u;
+        merge.lastSlice = merge.layered ? color.arraySlice + color.layers - 1u : 0u;
         merge.descriptor = EncodeTextureResource(TargetMergeSurface(color));
         merge.depthStencilWrites = DepthStencilWrites(state);
         merge.depthStencilTests = DepthStencilTests(state);
@@ -1867,6 +1917,17 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dccAddress = color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
+    return surface;
+}
+
+GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
+    Require(color.arrayLastSlice != 0, "the color target is not a view of a 2D array");
+    auto surface = SurfaceForTarget(color);
+    surface.baseAddress = color.arrayAddress;
+    surface.width = color.surfaceExtent.width;
+    surface.height = color.surfaceExtent.height;
+    surface.depthOrLastArray = color.arrayLastSlice;
+    surface.dimension = TextureDimension::k2DArray;
     return surface;
 }
 

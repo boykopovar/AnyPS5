@@ -166,8 +166,13 @@ inline constexpr std::uint32_t One = 3u;
 
 struct TargetMerge {
     std::uint8_t target = 0;
-    std::uint16_t mask = 0;
+    std::uint32_t mask = 0;
     std::uint8_t samples = 1;
+    ColorExportPacking packing = ColorExportPacking::None;
+    std::uint32_t blendControl = 0;
+    bool layered = false;
+    std::uint32_t firstSlice = 0;
+    std::uint32_t lastSlice = 0;
     std::array<std::uint32_t, 8> descriptor{};
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
