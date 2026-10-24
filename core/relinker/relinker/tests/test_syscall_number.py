@@ -15,6 +15,9 @@ SYSRET = bytes.fromhex("48c7c009000000") + b"\x0f\x07\xc3"
 CLOBBERED = bytes.fromhex("48c7c009000000") + bytes.fromhex("4883c001") + b"\x0f\x05\xc3"
 PREFIXED_CONSTANT = bytes.fromhex("6648c7c009000000") + bytes.fromhex("f24989ca") + bytes.fromhex("f30f05") + b"\xc3"
 PREFIXED_CLOBBERED = bytes.fromhex("6648c7c009000000") + bytes.fromhex("664883c001") + bytes.fromhex("f30f05") + b"\xc3"
+INTERRUPT_TABLE = bytes.fromhex("cd7ec3cd7fc3cd80c3cd81c3cd82c3")
+INT80_AFTER_ONE_ENTRY = bytes.fromhex("cd7fc3cd80c390c3")
+INTERRUPT_TABLE_INSIDE_IMMEDIATE = bytes.fromhex("b0cd7fc3cd80c3cd81c3")
 
 
 def fixture(code):
@@ -63,6 +66,23 @@ def main():
             stderr = reject(name, code)
             if "syscall number" in stderr:
                 raise AssertionError((name, "reported a number it cannot establish", stderr))
+
+        for name, code in (("int80-after-one-entry", INT80_AFTER_ONE_ENTRY),
+                           ("interrupt-table-inside-immediate", INTERRUPT_TABLE_INSIDE_IMMEDIATE)):
+            reject(name, code)
+
+        for name, prefix in (("interrupt-table", b""), ("interrupt-table-after-nops", b"\x90" * 5)):
+            source = work / (name + ".elf")
+            output = work / (name + ".out")
+            source.write_bytes(fixture(prefix + INTERRUPT_TABLE))
+            result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            entry = 6 + len(prefix)
+            if result.returncode != 0 or \
+                    "Trapping int 0x80 in a software interrupt table at code offset 0x%x" % entry not in result.stdout:
+                raise AssertionError((name, result.returncode, result.stdout, result.stderr))
+            if output.read_bytes()[0x4000 + entry - 3:0x4000 + entry + 6] != bytes.fromhex("cd7fc30f0bc3cd81c3"):
+                raise AssertionError((name, "the table's int 0x80 was not replaced with ud2, or a neighbour changed"))
     print("Syscall number diagnostics tests passed")
 
 
