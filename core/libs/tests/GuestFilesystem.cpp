@@ -333,6 +333,7 @@ static void TestRelinkedModuleNames() {
     const auto relinked = original + ".guest.prx";
     FileStat status{};
     Require(sceKernelStat(original.c_str(), &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix(original.c_str(), &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelCheckReachability(original.c_str()) == static_cast<int>(0x80020002u));
     Require(sceKernelOpen(original.c_str(), 0, 0) == static_cast<int>(0x80020002u));
     const auto missing = (root / "missing-content.pak").string();
@@ -345,6 +346,7 @@ static void TestRelinkedModuleNames() {
     { std::ofstream file(relinked); file << "relinked"; }
     Require(sceKernelStat(original.c_str(), &status) == 0 && status.st_size == 8);
     Require(stat_nid_postfix(original.c_str(), &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix(original.c_str(), &status) == 0 && status.st_size == 8);
     Require(sceKernelCheckReachability(original.c_str()) == 0);
     const int opened = sceKernelOpen(original.c_str(), 0, 0);
     Require(opened >= 0 && sceKernelClose(opened) == 0);
