@@ -327,7 +327,8 @@ public:
         return true;
     }
 
-    int Start() override {
+    int Start(std::uint64_t startTime) override {
+        if (duration != 0 && startTime > duration) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         if (video.stream < 0 && audio.stream < 0) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         for (auto* decoder : {&video, &audio}) {
             if (decoder->stream < 0) continue;
@@ -338,7 +339,7 @@ public:
             }
         }
         addVideoDecodeAheadBuffers();
-        const auto start = startOffset;
+        const auto start = startTime != 0 ? startTime : startOffset;
         startOffset = 0;
         seek(start);
         {

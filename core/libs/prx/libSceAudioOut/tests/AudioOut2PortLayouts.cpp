@@ -77,11 +77,17 @@ void TestUserAttributes() {
         }
         Require(threw && context.value == 0xFFFFFFFFu && port.value == 0xFFFFFFFFu);
     };
-    rejects(first, true, false);
-    rejects(first, false, true);
-    rejects(first, true, true);
-    rejects(0, false, false);
-    rejects(std::numeric_limits<AudioOut2UserHandle>::max(), false, false);
+    context.value = port.value = 0xFFFFFFFFu;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, nullptr, &port.value) == 0);
+    Require(context.value == 0xFFFFFFFFu && port.value == 3);
+    Require(sceAudioOut2UserGetSupportedAttributes(first, &context.value, nullptr) == 0 && context.value == 0);
+    context.value = port.value = 0xFFFFFFFFu;
+    Require(sceAudioOut2UserGetSupportedAttributes(first, nullptr, nullptr) == static_cast<int>(0x80268001));
+    for (const AudioOut2UserHandle handle : {AudioOut2UserHandle{0}, std::numeric_limits<AudioOut2UserHandle>::max()}) {
+        Require(sceAudioOut2UserGetSupportedAttributes(handle, &context.value, &port.value) == static_cast<int>(0x80268010));
+        Require(sceAudioOut2UserGetSupportedAttributes(handle, nullptr, nullptr) == static_cast<int>(0x80268010));
+        Require(context.value == 0xFFFFFFFFu && port.value == 0xFFFFFFFFu);
+    }
     Require(sceAudioOut2UserDestroy(first) == 0);
     rejects(first, false, false);
     std::thread([&] {

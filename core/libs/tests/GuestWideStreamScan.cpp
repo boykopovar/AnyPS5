@@ -101,6 +101,14 @@ static void CheckConsumption() {
     Require(fgetwc_nid_postfix(stream) == u'b', "the mismatching character is pushed back");
     Close(stream);
 
+    stream = Open("");
+    Require(ScanStream(stream, u"x") == 0, "a literal at end of input returns zero");
+    Close(stream);
+
+    stream = Open("");
+    Require(ScanStream(stream, u"%%") == -1, "a percent literal at end of input is an input failure");
+    Close(stream);
+
     stream = Open("x");
     Require(ScanStream(stream, u"%d", &value) == 0, "a letter is not an integer");
     Require(fgetwc_nid_postfix(stream) == u'x', "the rejected letter is pushed back");
@@ -119,6 +127,10 @@ static void CheckConsumption() {
     double real = 0;
     Require(ScanStream(stream, u"%lf", &real) == 1 && real == 2.5, "a float");
     Require(fgetwc_nid_postfix(stream) == u'x', "the character after the float");
+    Close(stream);
+
+    stream = Open("1e+");
+    Require(ScanStream(stream, u"%lf", &real) == 1 && real == 1.0, "an incomplete exponent converts its mantissa");
     Close(stream);
 }
 

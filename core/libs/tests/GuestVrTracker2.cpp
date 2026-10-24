@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "ProcessParametersFixture.hpp"
 
 #include <array>
 #include <cstdint>
@@ -17,10 +18,13 @@ std::int32_t APS5_VABI VrTracker2Accept();
 std::int32_t APS5_VABI VrTracker2FillDefaults(void* output);
 std::int32_t APS5_VABI VrTracker2ClearWord(void* output);
 std::int32_t APS5_VABI sceVrTracker2QueryMemory(const void* parameter, void* requirement);
-std::int32_t APS5_VABI sceVrTracker2Initialize();
+struct VrTracker2InitializeParameter;
+std::int32_t APS5_VABI sceVrTracker2Initialize(const VrTracker2InitializeParameter* parameter);
 }
 
 namespace {
+
+alignas(16) std::array<std::byte, 0x40> process{};
 
 constexpr std::int32_t NotInitialized = static_cast<std::int32_t>(0x8A740001u);
 constexpr std::int32_t InvalidArgument = static_cast<std::int32_t>(0x8A740006u);
@@ -107,9 +111,33 @@ int main() {
         Require(sceVrTracker2QueryMemory(rejected.data(), requirement.data()) == InvalidArgument, "query reserved byte");
         Require(AllEqual(requirement.data(), requirement.data() + 40, 0xAA), "query rejection leaves output");
     }
+    const std::uint64_t processSize = process.size();
+    const std::uint32_t magic = 0x4942524f;
+    std::memcpy(process.data(), &processSize, sizeof(processSize));
+    std::memcpy(process.data() + 8, &magic, sizeof(magic));
+    Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters");
+    for (const std::uint32_t version : {0u, 0xffffffu, 0x1000000u, 0x7000000u}) {
+        std::memcpy(process.data() + 0x10, &version, sizeof(version));
+        for (const std::uint32_t mode : {1000u, 1001u}) {
+            std::memcpy(parameter.data() + 4, &mode, sizeof(mode));
+            requirement.fill(0xAA);
+            const auto result = sceVrTracker2QueryMemory(parameter.data(), requirement.data());
+            if (version < 0x1000000) {
+                Require(result == InvalidArgument, "query SDK restriction");
+                Require(AllEqual(requirement.data(), requirement.data() + requirement.size(), 0xAA), "SDK rejection preserves output");
+            } else {
+                Require(result == 0, "query alternate mode");
+                std::uint32_t memorySize;
+                std::memcpy(&memorySize, requirement.data() + 4, sizeof(memorySize));
+                Require(memorySize == (mode == 1000 ? 7u << 20 : 3u << 20), "query alternate memory size");
+                Require(AllEqual(requirement.data() + 12, requirement.data() + 32, 0), "query alternate reserved fields");
+                Require(AllEqual(requirement.data() + 32, requirement.data() + 40, 0xAA), "query alternate output boundary");
+            }
+        }
+    }
     parameter[0] = 0x21;
     Require(sceVrTracker2QueryMemory(parameter.data(), requirement.data()) == InvalidArgument, "query size");
 
-    Require(Throws([] { sceVrTracker2Initialize(); }), "unknown export");
+    Require(Throws([] { sceVrTracker2Initialize(nullptr); }), "unknown export");
     return 0;
 }

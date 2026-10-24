@@ -91,6 +91,8 @@ int main() {
     GuestBarrier* invalid = nullptr;
     Require(pthread_barrier_init_nid_postfix(nullptr, &attr, 1) == GUEST_EINVAL);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0) == GUEST_EINVAL && invalid == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0x80000000u) == GUEST_EINVAL && invalid == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0xffffffffu) == GUEST_EINVAL && invalid == nullptr);
 
     Context withAttr;
     Require(pthread_barrier_init_nid_postfix(&withAttr.barrier, &attr, WAITERS) == 0 && withAttr.barrier != nullptr);

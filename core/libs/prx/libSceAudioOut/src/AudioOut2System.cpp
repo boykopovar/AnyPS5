@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -15,9 +16,14 @@ int APS5_VABI sceAudioOut2Initialize(void) {
     return 0;
 }
 
+int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
+    (void)param;
+    return sceAudioOut2Initialize();
+}
+
 int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {
-    (void)userId;
     if (output > MAX_SUPPORTED_3D_OUTPUT) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
+    if (userId != 0 && (userId != 0xFF || output == 0)) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
     return 0;
 }
 
@@ -28,7 +34,15 @@ int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
 }
 
 int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStateParam* param) {
-    if (param == nullptr) return static_cast<int>(0x80260502);
+    constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
+    constexpr std::uint32_t DebugStateIdLoudness = 1;
+    constexpr std::uint32_t DebugStateIdUnmodelled = 0x20;
+    constexpr std::size_t LoudnessParamSize = 8;
+    constexpr std::size_t UnmodelledParamSize = 4;
+    if (param == nullptr) return ErrorInvalidPointer;
+    if (param->debug_state_id == DebugStateIdUnmodelled && param->param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
+    if (param->debug_state_id != DebugStateIdLoudness || param->param_size != LoudnessParamSize) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
+    if (param->param == nullptr) NotImplemented_nid_no_patch(__func__);
     AUDIOOUT2_TRACE("t=%.3f SetSystemDebugState: debug state %u recorded; the host has no system mix to apply it to\n", AudioOut2TraceSeconds(), param->debug_state_id);
     return 0;
 }

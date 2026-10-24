@@ -40,7 +40,7 @@ static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 static constexpr int MONITOR_TYPE_HDMI = 1;
 static constexpr std::uint32_t HDMI_MONITOR_INFO_SIZE = 0x180;
-static constexpr std::uint32_t EX_MONITOR_INFO_MIN_SIZE = 0xA0;
+static constexpr std::uint32_t EX_MONITOR_INFO_SIZE = 0x400;
 static constexpr std::uint32_t EX_OPEN_MODE_MAX = 10;
 static constexpr std::uint32_t EX_OPEN_MODES = 0x61F;
 static constexpr std::uint32_t EX_CONFIGURE_MODE_DEFAULT = 0xFF;
@@ -599,7 +599,7 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
     return 0;
 }
 
-int APS5_VABI sceAudioOutDeviceIdOpen() {
+int APS5_VABI sceAudioOutDeviceIdOpen(std::uint64_t deviceId, std::int32_t type, std::int32_t index, std::uint32_t length, std::int32_t frequency, std::uint32_t parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -635,15 +635,10 @@ int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::
 }
 
 int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int type, void* info, std::uint32_t size) {
-    if (type != MONITOR_TYPE_HDMI) {
-        throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type " + std::to_string(type) + " not supported");
-    }
-    if (size != HDMI_MONITOR_INFO_SIZE) {
-        throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: size " + std::to_string(size) + " not supported");
-    }
-    if (info == nullptr) {
-        return -2144993276;
-    }
+    if (info == nullptr) return static_cast<int>(0x80260004);
+    if (size != HDMI_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
+    if (type != MONITOR_TYPE_HDMI && type != 0x10) return static_cast<int>(0x8026000C);
+    if (type == 0x10) throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported");
     std::memset(info, 0, HDMI_MONITOR_INFO_SIZE);
     return 0;
 }
@@ -656,20 +651,17 @@ int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode) {
     return allocatePort(PORT_TYPE_SYS, SYS_PORT_SAMPLES, SYS_PORT_FRAME_RATE, Format::S16_8Ch);
 }
 
-int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, int mixLevel) {
+int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, std::uint32_t mixLevel) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
         return -2144993277;
     }
-    if (port->type != PORT_TYPE_PADSPK) {
-        return -2144993270;
-    }
     if (mixLevel > DEFAULT_VOLUME) {
         return -2144993260;
     }
-    if (mixLevel < 0) {
-        throw std::runtime_error("sceAudioOutSetMixLevelPadSpk: negative mix level not supported");
+    if (port->type != PORT_TYPE_PADSPK) {
+        return -2144993270;
     }
     port->mixLevel = mixLevel;
     return 0;
@@ -706,16 +698,10 @@ int APS5_VABI sceAudioOutExConfigureOutput(int control, std::uint64_t flags, std
 }
 
 int APS5_VABI sceAudioOutExGetMonitorInfo(int type, int index, void* info, std::uint32_t size) {
-    if (type != 0 || index != 0) {
-        throw std::runtime_error("sceAudioOutExGetMonitorInfo: monitor " + std::to_string(type) + ", " + std::to_string(index) + " not supported");
-    }
-    if (size < EX_MONITOR_INFO_MIN_SIZE) {
-        throw std::runtime_error("sceAudioOutExGetMonitorInfo: size " + std::to_string(size) + " not supported");
-    }
-    if (info == nullptr) {
-        return -2144993276;
-    }
-    std::memset(info, 0, size);
+    if (type != 0) return static_cast<int>(0x80260003);
+    if (info == nullptr) return static_cast<int>(0x80260004);
+    if (size != EX_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
+    std::memset(info, 0, EX_MONITOR_INFO_SIZE);
     return 0;
 }
 
@@ -726,6 +712,15 @@ int APS5_VABI sceAudioOutExOpen(int userId, std::uint32_t mode) {
     }
     const bool highRate = mode == 3 || mode == 4 || mode == 10;
     return allocatePort(PORT_TYPE_EX, highRate ? 1024 : 256, highRate ? 192000 : 48000, Format::S16Stereo);
+}
+
+int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
+    if (state == nullptr) {
+        return -2144993276;
+    }
+    *state = {};
+    state->loudness = 0.0f;
+    return 0;
 }
 
 }

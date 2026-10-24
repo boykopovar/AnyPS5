@@ -70,13 +70,23 @@ void WINAPI UnexpectedDetach(PVOID) { TerminateProcess(GetCurrentProcess(), 4); 
 #endif
 constexpr char RelaunchMarker[] = "ANYPS5_TEST_RELAUNCH_MARKER";
 constexpr char MainExecutable[] = "ANYPS5_TEST_MAIN_EXECUTABLE";
-void SetVariable(const char* name, const char* value) {
+void SetVariable(const char* name, const std::filesystem::path& value) {
 #ifdef _WIN32
-    Require(SetEnvironmentVariableA(name, value) != 0);
-    Require(_putenv_s(name, value) == 0);
+    const std::wstring wideName = std::filesystem::path(name).wstring();
+    Require(SetEnvironmentVariableW(wideName.c_str(), value.c_str()) != 0);
+    Require(_wputenv_s(wideName.c_str(), value.c_str()) == 0);
 #else
-    Require(setenv(name, value, 1) == 0);
+    Require(setenv(name, value.c_str(), 1) == 0);
 #endif
+}
+std::filesystem::path PathVariable(const char* name) {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(std::filesystem::path(name).wstring().c_str());
+#else
+    const char* value = std::getenv(name);
+#endif
+    Require(value != nullptr);
+    return value;
 }
 std::filesystem::path OwnExecutable() {
 #ifdef _WIN32
@@ -94,9 +104,7 @@ std::filesystem::path OwnExecutable() {
 #endif
 }
 void AppendMarker(const std::string& line) {
-    const char* marker = std::getenv(RelaunchMarker);
-    Require(marker != nullptr);
-    std::ofstream(marker, std::ios::app) << line << '\n';
+    std::ofstream(PathVariable(RelaunchMarker), std::ios::app) << line << '\n';
 }
 void MainShutdown() {
     AppendMarker("shutdown");
@@ -149,7 +157,7 @@ int RunChild(const std::filesystem::path& self, const char* mode) {
 int DriveNestedExit() {
     const auto self = OwnExecutable();
     const auto marker = std::filesystem::temp_directory_path() / ("anyps5-nested-exit-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
-    SetVariable(RelaunchMarker, marker.string().c_str());
+    SetVariable(RelaunchMarker, marker);
     const int code = RunChild(self, "--nested-exit");
     std::string text;
     {
@@ -166,7 +174,7 @@ int DriveNestedExit() {
 int DriveExitOrder() {
     const auto self = OwnExecutable();
     const auto marker = std::filesystem::temp_directory_path() / ("anyps5-exit-order-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
-    SetVariable(RelaunchMarker, marker.string().c_str());
+    SetVariable(RelaunchMarker, marker);
     const int code = RunChild(self, "--exit-order");
     std::string text;
     {
@@ -185,8 +193,8 @@ int DriveRelaunch() {
     const auto secondary = self.parent_path() / ("picker.picker.bin" + self.extension().string());
     std::filesystem::copy_file(self, secondary, std::filesystem::copy_options::overwrite_existing);
     const auto marker = std::filesystem::temp_directory_path() / ("anyps5-relaunch-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
-    SetVariable(RelaunchMarker, marker.string().c_str());
-    SetVariable(MainExecutable, self.string().c_str());
+    SetVariable(RelaunchMarker, marker);
+    SetVariable(MainExecutable, self);
     Require(RunChild(self, "--relaunch") == 0);
     std::string text;
     for (int attempt = 0; attempt < 200 && text.find("relaunched") == std::string::npos; ++attempt) {
@@ -300,8 +308,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (argc > firstArgument && std::strcmp(argv[firstArgument], "--relaunched") == 0) {
-        const char* main = std::getenv(MainExecutable);
-        Require(main != nullptr && std::filesystem::equivalent(OwnExecutable(), main));
+        Require(std::filesystem::equivalent(OwnExecutable(), PathVariable(MainExecutable)));
         AppendMarker("relaunched");
         return 0;
     }

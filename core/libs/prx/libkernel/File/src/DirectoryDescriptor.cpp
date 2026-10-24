@@ -8,6 +8,7 @@
 
 #ifdef _WIN32
 
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
@@ -62,6 +63,19 @@ void Load(DirectoryState& state, int fd) {
         state.entries.emplace_back(entry.path().filename().string(), entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
     }
 }
+
+int OpenStreamDirectory(const wchar_t* path) {
+    return File::OpenDirectoryDescriptor(path);
+}
+
+struct StreamRegistration {
+    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor); }
+    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr); }
+    StreamRegistration(const StreamRegistration&) = delete;
+    StreamRegistration& operator=(const StreamRegistration&) = delete;
+};
+
+const StreamRegistration g_streamRegistration;
 
 }
 

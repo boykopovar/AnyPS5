@@ -12,6 +12,18 @@ static constexpr int DETACH_JOINABLE = 0;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr int SCHED_FIFO_PS5 = 1;
 
+static std::atomic<std::size_t> defaultStackSize{DEFAULT_STACK_SIZE};
+
+std::size_t GetDefaultStackSize_nid_no_patch() {
+    return defaultStackSize.load(std::memory_order_relaxed);
+}
+
+bool SetDefaultStackSize_nid_no_patch(std::size_t size) {
+    if (size <= MIN_STACK_SIZE) return false;
+    defaultStackSize.store(size, std::memory_order_relaxed);
+    return true;
+}
+
 #ifdef _WIN32
 #include <windows.h>
 #include <limits>
@@ -23,7 +35,7 @@ int APS5_VABI scePthreadAttrInit(PthreadAttr* attr) {
     if (!attr) throw std::runtime_error(std::string(__func__) + ": null attr");
     auto* p = new (std::nothrow) PthreadAttrPrivate{};
     if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    p->_stacksize = DEFAULT_STACK_SIZE;
+    p->_stacksize = GetDefaultStackSize_nid_no_patch();
     p->_detachstate = DETACH_JOINABLE;
     p->_schedpriority = 700;
     p->_schedpolicy = SCHED_FIFO_PS5;

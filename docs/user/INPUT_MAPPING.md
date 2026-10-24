@@ -42,6 +42,7 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `Shake` | X (reports a swinging acceleration and angular velocity while held) |
 | `ToggleMouse` | Middle mouse button, F7 |
 | `ToggleFullscreen` | F11 |
+| `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 
 For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, and keeps all other built-in bindings:

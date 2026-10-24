@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -25,10 +26,22 @@
 #include "LoadExec.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
+
+struct MeasuredParameter {
+    int id;
+    int value;
+};
+
+constexpr MeasuredParameter RegistryParameters[] = {
+    {SYSTEM_SERVICE_PARAM_ID_100, 0}, {101, 1}, {102, 2}, {103, 100}, {104, 0x20202}, {105, 0}, {106, 0}, {107, 100}, {108, 0},
+    {109, 100}, {110, 0x20202}, {111, 0}, {200, 0}, {201, 0}, {202, 0}, {203, 0}, {204, 0}, {205, 0}, {206, 0}, {207, 0},
+    {208, 0}, {209, 1}, {210, 71}, {211, 0}, {212, 0}, {213, 0}, {300, 0},
+};
 
 struct ConsoleTimeZone {
     int minutes;
@@ -231,6 +244,21 @@ HostLaunch PrepareLaunch(const char*, const char* const*) {
 void StartHostExecutable(HostLaunch&) {}
 #endif
 
+constexpr std::size_t TitleIdBufferSize = 10;
+
+std::string RunningTitleId() {
+    const AppTitleId titleId = GetAppTitleId_nid_postfix();
+    return std::string(titleId.value);
+}
+
+void CopyRunningTitleId(const std::string& caller, bool running, char* destination) {
+    if (!running) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
+    if (destination == nullptr) NotImplemented_nid_no_patch((caller + ": null title ID buffer").c_str());
+    const std::string titleId = RunningTitleId();
+    if (titleId.size() >= TitleIdBufferSize) NotImplemented_nid_no_patch((caller + ": title ID that does not fit 10 bytes").c_str());
+    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+}
+
 }
 
 extern "C" {
@@ -309,9 +337,11 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
   case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SYSTEM_SERVICE_PARAM_TIME_FORMAT_24HOUR; break;
   case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: *value = HostTimeZone().minutes; break;
   case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = HostTimeZone().summer ? 1 : 0; break;
-  case SYSTEM_SERVICE_PARAM_ID_GAME_PARENTAL_LEVEL: *value = SYSTEM_SERVICE_PARAM_GAME_PARENTAL_OFF; break;
-  case SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN: *value = SYSTEM_SERVICE_PARAM_ENTER_BUTTON_CROSS; break;
-  default: *value = 0; break;
+  default: {
+   const auto measured = std::ranges::find(RegistryParameters, paramId, &MeasuredParameter::id);
+   if (measured == std::ranges::end(RegistryParameters)) return SYSTEM_SERVICE_ERROR_PARAMETER;
+   *value = measured->value;
+  }
  }
  return SYSTEM_SERVICE_OK;
 }
@@ -323,6 +353,7 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
  constexpr char SystemName[] = "PS5";
  std::memset(buf, 0, bufSize);
  std::memcpy(buf, SystemName, sizeof(SystemName));
+ buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
  return SYSTEM_SERVICE_OK;
 }
 
@@ -366,10 +397,13 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, void* param) {
- (void)uri;
- (void)param;
- return SCE_KERNEL_ERROR_EOPNOTSUPP;
+int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
+    if (!uri) return static_cast<int>(0x80a10003);
+    std::size_t length = 0;
+    while (length < 6016 && uri[length] != 0) ++length;
+    if (length > 6015) return static_cast<int>(0x80a10007);
+    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
+    return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
@@ -388,7 +422,20 @@ int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceOpenTournamentOccurrence(void) {
+struct SystemServiceTournamentOccurrenceParam {
+    std::uint64_t size;
+    const char* occurrenceId;
+    std::int32_t userId;
+    std::uint32_t padding;
+    const char* context;
+};
+
+static_assert(sizeof(SystemServiceTournamentOccurrenceParam) == 32);
+static_assert(offsetof(SystemServiceTournamentOccurrenceParam, occurrenceId) == 8);
+static_assert(offsetof(SystemServiceTournamentOccurrenceParam, userId) == 16);
+static_assert(offsetof(SystemServiceTournamentOccurrenceParam, context) == 24);
+
+int APS5_VABI sceSystemServiceOpenTournamentOccurrence(const SystemServiceTournamentOccurrenceParam* param) {
  return SYSTEM_SERVICE_OK;
 }
 
@@ -412,6 +459,26 @@ int APS5_VABI sceSystemServiceShowControllerSettings(void) {
 
 int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
  return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
+ if (titleId == nullptr) {
+  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: null title ID");
+ }
+ if (RunningTitleId() != titleId) {
+  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: title other than the running title");
+ }
+ return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
+ CopyRunningTitleId("sceSystemServiceGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
+ CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
@@ -828,6 +895,14 @@ int APS5_VABI sceCoredumpSequenceHandlerGetCoredumpStatusByAppId(void) {
 
 int APS5_VABI sceCoredumpSequenceHandlerCancelCoredump(void) {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemServiceIsBgmPlaying(void) {
+    return 0;
+}
+
+int APS5_VABI sceShellCoreUtilIsBgmPlaying(void) {
     return 0;
 }
 

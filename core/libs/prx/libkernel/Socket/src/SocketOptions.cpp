@@ -30,18 +30,29 @@ constexpr int GuestOobInline = 0x100;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
+constexpr int GuestSendLowWater = 0x1003;
+constexpr int GuestReceiveLowWater = 0x1004;
 constexpr int GuestSendTimeout = 0x1005;
 constexpr int GuestReceiveTimeout = 0x1006;
 constexpr int GuestError = 0x1007;
 constexpr int GuestType = 0x1008;
 constexpr int GuestNonBlocking = 0x1200;
+constexpr int GuestNonBlockingState = 0x100;
+constexpr int GuestUnix = 1;
 constexpr int GuestTcpNoDelay = 1;
 constexpr int GuestTcpNoDelayFlag = 4;
 constexpr int GuestIpv6Only = 27;
+constexpr int GuestIpTypeOfService = 3;
+constexpr int GuestIpTimeToLive = 4;
+constexpr int GuestIpMulticastTimeToLive = 10;
+constexpr int GuestIpMulticastLoop = 11;
 
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
+constexpr int ErrorNoBuffers = 55;
+constexpr int MaximumReservation = 5592405;
+constexpr int MaximumBuffer = 524288;
 constexpr int MaximumLinger = 65535;
 constexpr std::int64_t LongestTimeout = 0x7fffffffffffffffLL;
 
@@ -87,9 +98,21 @@ int NativeBoolean(int option) {
     }
 }
 
+void EnsureBuffers(SocketOptionState& state, int family, int type) {
+    if (state.sendBuffer != 0) return;
+    if (family == GuestUnix) {
+        state.sendBuffer = type == 2 ? 2048 : 8192;
+        state.receiveBuffer = type == 2 ? 4096 : 8192;
+    } else {
+        state.sendBuffer = type == 1 ? 32768 : 9216;
+        state.receiveBuffer = type == 1 ? 65536 : 42080;
+    }
+    state.sendLowWater = std::min(2048, state.sendBuffer);
+    state.receiveLowWater = 1;
+}
+
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
-    const std::uint32_t count = std::min(*length, size);
-    if (count != 0 && !output) return ErrorInvalid;
+    const std::uint32_t count = output ? std::min(*length, size) : 0;
     if (count != 0) std::memcpy(output, value, count);
     *length = count;
     return 0;
@@ -97,11 +120,10 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 }
 
-int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int option, const void* value, std::uint32_t length) {
+int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestLinger) {
         if (length < sizeof(GuestLingerValue)) return ErrorInvalid;
-        if (!value) return ErrorInvalid;
         GuestLingerValue guest;
         std::memcpy(&guest, value, sizeof(guest));
         if (guest.seconds < 0 || guest.seconds > MaximumLinger) return ErrorDomain;
@@ -119,7 +141,6 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int op
     }
     if (option == GuestSendTimeout || option == GuestReceiveTimeout) {
         if (length < sizeof(GuestTimeval)) return ErrorInvalid;
-        if (!value) return ErrorInvalid;
         GuestTimeval time;
         std::memcpy(&time, value, sizeof(time));
         if (time.seconds < 0 || time.microseconds < 0 || time.microseconds >= 1000000) return ErrorDomain;
@@ -128,7 +149,6 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int op
     }
     if (option == GuestNoSigpipe || option == GuestNonBlocking) {
         if (length < sizeof(int)) return ErrorInvalid;
-        if (!value) return ErrorInvalid;
         int number;
         std::memcpy(&number, value, sizeof(number));
         if (option == GuestNoSigpipe) {
@@ -146,15 +166,27 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int op
         return 0;
     }
     const bool native_boolean = NativeBoolean(option) != -1;
-    if (native_boolean || option == GuestSendBuffer || option == GuestReceiveBuffer) {
+    const bool buffer = option == GuestSendBuffer || option == GuestReceiveBuffer;
+    const bool lowWater = option == GuestSendLowWater || option == GuestReceiveLowWater;
+    if (native_boolean || buffer || lowWater) {
         if (length < sizeof(int)) return ErrorInvalid;
-        if (!value) return ErrorInvalid;
         int number;
         std::memcpy(&number, value, sizeof(number));
-        if (option == GuestSendBuffer || option == GuestReceiveBuffer) {
+        if (buffer || lowWater) {
             if (number < 1) return ErrorInvalid;
-            const int nativeOption = option == GuestSendBuffer ? SO_SNDBUF : SO_RCVBUF;
+            EnsureBuffers(state, family, type);
+            const bool send = option == GuestSendBuffer || option == GuestSendLowWater;
+            int& size = send ? state.sendBuffer : state.receiveBuffer;
+            int& mark = send ? state.sendLowWater : state.receiveLowWater;
+            if (lowWater) {
+                mark = std::min(number, size);
+                return 0;
+            }
+            if (number > MaximumReservation) return ErrorNoBuffers;
+            const int nativeOption = send ? SO_SNDBUF : SO_RCVBUF;
             if (::setsockopt(handle, SOL_SOCKET, nativeOption, reinterpret_cast<NativeOptionValue>(&number), sizeof(number))) return HostError();
+            size = std::min(number, MaximumBuffer);
+            mark = std::min(mark, size);
             return 0;
         }
         const int enabled = number != 0 ? 1 : 0;
@@ -178,7 +210,7 @@ bool NativeListening(std::uintptr_t native, bool& listening) {
     return true;
 }
 
-int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int type, int option, void* value, std::uint32_t* length) {
+int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, void* value, std::uint32_t* length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestLinger) {
         linger current{};
@@ -206,7 +238,7 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int ty
     } else if (option == GuestNoSigpipe) {
         number = state.noSignal ? GuestNoSigpipe : 0;
     } else if (option == GuestNonBlocking) {
-        number = state.nonblocking ? 1 : 0;
+        number = state.nonblocking ? GuestNonBlockingState : 0;
     } else if (option == GuestError) {
         int pending = 0;
         socklen_t size = sizeof(pending);
@@ -216,9 +248,10 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int ty
         else if (pending != 0) state.reportedError = pending;
 #endif
         number = pending == 0 ? 0 : GuestErrorFromHost(pending);
-    } else if (option == GuestSendBuffer || option == GuestReceiveBuffer) {
-        socklen_t size = sizeof(number);
-        if (::getsockopt(handle, SOL_SOCKET, option == GuestSendBuffer ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<NativeOptionOutput>(&number), &size)) return HostError();
+    } else if (option == GuestSendBuffer || option == GuestReceiveBuffer || option == GuestSendLowWater || option == GuestReceiveLowWater) {
+        EnsureBuffers(state, family, type);
+        number = option == GuestSendBuffer ? state.sendBuffer : option == GuestReceiveBuffer ? state.receiveBuffer
+            : option == GuestSendLowWater ? state.sendLowWater : state.receiveLowWater;
     } else {
         return ErrorNoProtocolOption;
     }
@@ -229,7 +262,6 @@ int SetTcpLevelOption(std::uintptr_t native, bool tcp, int option, const void* v
     if (!tcp) return ErrorInvalid;
     if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
     if (length < sizeof(int)) return ErrorInvalid;
-    if (!value) return ErrorInvalid;
     int number;
     std::memcpy(&number, value, sizeof(number));
     const int enabled = number != 0 ? 1 : 0;
@@ -247,11 +279,62 @@ int GetTcpLevelOption(std::uintptr_t native, bool tcp, int option, void* value, 
     return Copy(value, length, &number, sizeof(number));
 }
 
+int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4, int option, const void* value, std::uint32_t length) {
+    if (!ipv4) return ErrorInvalid;
+    const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestIpTimeToLive || option == GuestIpTypeOfService) {
+        if (length < sizeof(int)) return ErrorInvalid;
+        int number;
+        std::memcpy(&number, value, sizeof(number));
+        const int stored = number & 0xff;
+        if (option == GuestIpTypeOfService) {
+            state.ipTypeOfService = stored;
+            return 0;
+        }
+        if (stored != 0 && ::setsockopt(handle, IPPROTO_IP, IP_TTL, reinterpret_cast<NativeOptionValue>(&stored), sizeof(stored))) return HostError();
+        state.ipTimeToLive = stored;
+        return 0;
+    }
+    if (option == GuestIpMulticastTimeToLive || option == GuestIpMulticastLoop) {
+        unsigned int number;
+        if (length == 1) {
+            unsigned char byte;
+            std::memcpy(&byte, value, 1);
+            number = byte;
+        } else {
+            if (length < sizeof(number)) return ErrorInvalid;
+            std::memcpy(&number, value, sizeof(number));
+            if (option == GuestIpMulticastTimeToLive && number > 255) return ErrorInvalid;
+        }
+        const int host = option == GuestIpMulticastLoop ? ((number & 0xff) != 0 ? 1 : 0) : static_cast<int>(number);
+        const int nativeOption = option == GuestIpMulticastLoop ? IP_MULTICAST_LOOP : IP_MULTICAST_TTL;
+        if (::setsockopt(handle, IPPROTO_IP, nativeOption, reinterpret_cast<NativeOptionValue>(&host), sizeof(host))) return HostError();
+        if (option == GuestIpMulticastLoop) state.multicastLoop = host != 0;
+        else state.multicastTimeToLive = host;
+        return 0;
+    }
+    return ErrorNoProtocolOption;
+}
+
+int GetIpLevelOption(SocketOptionState& state, bool ipv4, int option, void* value, std::uint32_t* length) {
+    if (!ipv4) return ErrorInvalid;
+    int number;
+    if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
+    else if (option == GuestIpTypeOfService) number = state.ipTypeOfService;
+    else if (option == GuestIpMulticastTimeToLive) number = state.multicastTimeToLive;
+    else if (option == GuestIpMulticastLoop) number = state.multicastLoop ? 1 : 0;
+    else return ErrorNoProtocolOption;
+    if ((option == GuestIpMulticastTimeToLive || option == GuestIpMulticastLoop) && *length == 1) {
+        const auto byte = static_cast<unsigned char>(number);
+        return Copy(value, length, &byte, 1);
+    }
+    return Copy(value, length, &number, sizeof(number));
+}
+
 int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length) {
     if (!ipv6) return ErrorInvalid;
     if (option != GuestIpv6Only) return ErrorNoProtocolOption;
     if (length != sizeof(int)) return ErrorInvalid;
-    if (!value) return ErrorInvalid;
     int number;
     std::memcpy(&number, value, sizeof(number));
     const int enabled = number != 0 ? 1 : 0;

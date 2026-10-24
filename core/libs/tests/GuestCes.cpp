@@ -1,5 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <cstdlib>
 #include <cstring>
 
@@ -7,6 +9,33 @@ extern "C" {
 const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
 const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void);
 const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1250(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_1(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_2(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_4(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_5(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_9(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_10(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_13(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_14(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_15(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_16(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp437(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp737(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp775(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp850(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp852(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp855(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp860(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp861(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp862(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp863(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp865(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp866(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileKoi8R(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileKoi8U(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1254(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1256(void);
+const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void);
 int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
 int APS5_VABI sceCesUtf8StrToMbcsStr(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
@@ -46,6 +75,175 @@ static int Utf8ToSbc(const std::uint8_t* profile, const char* utf8, std::uint32_
     return sceCesUtf8ToSbc(reinterpret_cast<const std::uint8_t*>(utf8), utf8max, &length, profile, &sbc);
 }
 
+static void RequireSbcCode(const std::uint8_t* profile, std::uint8_t sbc, std::uint32_t code) {
+    char expected[4] = {};
+    if (code < 0x80) {
+        expected[0] = static_cast<char>(code);
+    } else if (code < 0x800) {
+        expected[0] = static_cast<char>(0xC0 | (code >> 6));
+        expected[1] = static_cast<char>(0x80 | (code & 0x3F));
+    } else {
+        expected[0] = static_cast<char>(0xE0 | (code >> 12));
+        expected[1] = static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+        expected[2] = static_cast<char>(0x80 | (code & 0x3F));
+    }
+    RequireSbcToUtf8(profile, sbc, expected);
+}
+
+static void CheckSingleByteProfiles() {
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    const auto getters = {sceCesRefersUcsProfileIso8859_1, sceCesRefersUcsProfileIso8859_2, sceCesRefersUcsProfileIso8859_4, sceCesRefersUcsProfileIso8859_5, sceCesRefersUcsProfileIso8859_9, sceCesRefersUcsProfileIso8859_10, sceCesRefersUcsProfileIso8859_13, sceCesRefersUcsProfileIso8859_14, sceCesRefersUcsProfileIso8859_15, sceCesRefersUcsProfileIso8859_16, sceCesRefersUcsProfileCp437, sceCesRefersUcsProfileCp737, sceCesRefersUcsProfileCp775, sceCesRefersUcsProfileCp850, sceCesRefersUcsProfileCp852, sceCesRefersUcsProfileCp855, sceCesRefersUcsProfileCp860, sceCesRefersUcsProfileCp861, sceCesRefersUcsProfileCp862, sceCesRefersUcsProfileCp863, sceCesRefersUcsProfileCp865, sceCesRefersUcsProfileCp866, sceCesRefersUcsProfileKoi8R, sceCesRefersUcsProfileKoi8U, sceCesRefersUcsProfileCp1254, sceCesRefersUcsProfileCp1256, sceCesRefersUcsProfileCp1258};
+    const std::uint8_t* existing[] = {sceCesRefersUcsProfileCp1252(), sceCesRefersUcsProfileCp1251(), sceCesRefersUcsProfileCp1250()};
+    std::size_t index = 0;
+    for (const auto getter : getters) {
+        const std::uint8_t* profile = getter();
+        Require(profile != nullptr && profile == getter());
+        for (const std::uint8_t* other : existing) Require(profile != other);
+        std::size_t inner = 0;
+        for (const auto earlier : getters) {
+            if (inner++ == index) break;
+            Require(profile != earlier());
+        }
+        ++index;
+        for (int sbc = 1; sbc < 256; ++sbc) {
+            std::uint8_t cp[4] = {};
+            std::uint32_t cpLength = 0;
+            std::uint8_t back = 0;
+            Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
+            if (sbc < 0x80) Require(cpLength == 1 && cp[0] == sbc);
+            Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, profile, &back) == 0 && back == sbc);
+        }
+        Require(Utf8ToSbc(profile, "\xE3\x81\x82", 3) == unassignedCode);
+    }
+    struct Check {
+        decltype(&sceCesRefersUcsProfileIso8859_1) profile;
+        std::uint8_t sbc;
+        std::uint32_t code;
+    };
+    const Check checks[] = {
+        {sceCesRefersUcsProfileIso8859_1, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_1, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileIso8859_1, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_1, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileIso8859_2, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_2, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileIso8859_2, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_2, 0xFF, 0x02D9},
+        {sceCesRefersUcsProfileIso8859_4, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_4, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileIso8859_4, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_4, 0xFF, 0x02D9},
+        {sceCesRefersUcsProfileIso8859_5, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_5, 0xA4, 0x0404},
+        {sceCesRefersUcsProfileIso8859_5, 0xC1, 0x0421},
+        {sceCesRefersUcsProfileIso8859_5, 0xFF, 0x045F},
+        {sceCesRefersUcsProfileIso8859_9, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_9, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileIso8859_9, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_9, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileIso8859_10, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_10, 0xA4, 0x012A},
+        {sceCesRefersUcsProfileIso8859_10, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_10, 0xFF, 0x0138},
+        {sceCesRefersUcsProfileIso8859_13, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_13, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileIso8859_13, 0xC1, 0x012E},
+        {sceCesRefersUcsProfileIso8859_13, 0xFF, 0x2019},
+        {sceCesRefersUcsProfileIso8859_14, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_14, 0xA4, 0x010A},
+        {sceCesRefersUcsProfileIso8859_14, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_14, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileIso8859_15, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_15, 0xA4, 0x20AC},
+        {sceCesRefersUcsProfileIso8859_15, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_15, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileIso8859_16, 0x80, 0x0080},
+        {sceCesRefersUcsProfileIso8859_16, 0xA4, 0x20AC},
+        {sceCesRefersUcsProfileIso8859_16, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileIso8859_16, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileCp437, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp437, 0xA4, 0x00F1},
+        {sceCesRefersUcsProfileCp437, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp437, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp737, 0x80, 0x0391},
+        {sceCesRefersUcsProfileCp737, 0xA4, 0x03BD},
+        {sceCesRefersUcsProfileCp737, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp737, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp775, 0x80, 0x0106},
+        {sceCesRefersUcsProfileCp775, 0xA4, 0x017C},
+        {sceCesRefersUcsProfileCp775, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp775, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp850, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp850, 0xA4, 0x00F1},
+        {sceCesRefersUcsProfileCp850, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp850, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp852, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp852, 0xA4, 0x0104},
+        {sceCesRefersUcsProfileCp852, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp852, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp855, 0x80, 0x0452},
+        {sceCesRefersUcsProfileCp855, 0xA4, 0x0446},
+        {sceCesRefersUcsProfileCp855, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp855, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp860, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp860, 0xA4, 0x00F1},
+        {sceCesRefersUcsProfileCp860, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp860, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp861, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp861, 0xA4, 0x00C1},
+        {sceCesRefersUcsProfileCp861, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp861, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp862, 0x80, 0x05D0},
+        {sceCesRefersUcsProfileCp862, 0xA4, 0x00F1},
+        {sceCesRefersUcsProfileCp862, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp862, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp863, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp863, 0xA4, 0x00A8},
+        {sceCesRefersUcsProfileCp863, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp863, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp865, 0x80, 0x00C7},
+        {sceCesRefersUcsProfileCp865, 0xA4, 0x00F1},
+        {sceCesRefersUcsProfileCp865, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp865, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileCp866, 0x80, 0x0410},
+        {sceCesRefersUcsProfileCp866, 0xA4, 0x0434},
+        {sceCesRefersUcsProfileCp866, 0xC1, 0x2534},
+        {sceCesRefersUcsProfileCp866, 0xFF, 0x00A0},
+        {sceCesRefersUcsProfileKoi8R, 0x80, 0x2500},
+        {sceCesRefersUcsProfileKoi8R, 0xA4, 0x2553},
+        {sceCesRefersUcsProfileKoi8R, 0xC1, 0x0430},
+        {sceCesRefersUcsProfileKoi8R, 0xFF, 0x042A},
+        {sceCesRefersUcsProfileKoi8U, 0x80, 0x2500},
+        {sceCesRefersUcsProfileKoi8U, 0xA4, 0x0454},
+        {sceCesRefersUcsProfileKoi8U, 0xC1, 0x0430},
+        {sceCesRefersUcsProfileKoi8U, 0xFF, 0x042A},
+        {sceCesRefersUcsProfileCp1254, 0x80, 0x20AC},
+        {sceCesRefersUcsProfileCp1254, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileCp1254, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileCp1254, 0xFF, 0x00FF},
+        {sceCesRefersUcsProfileCp1256, 0x80, 0x20AC},
+        {sceCesRefersUcsProfileCp1256, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileCp1256, 0xC1, 0x0621},
+        {sceCesRefersUcsProfileCp1256, 0xFF, 0x06D2},
+        {sceCesRefersUcsProfileCp1258, 0x80, 0x20AC},
+        {sceCesRefersUcsProfileCp1258, 0xA4, 0x00A4},
+        {sceCesRefersUcsProfileCp1258, 0xC1, 0x00C1},
+        {sceCesRefersUcsProfileCp1258, 0xFF, 0x00FF},
+    };
+    for (const Check& check : checks) RequireSbcCode(check.profile(), check.sbc, check.code);
+
+    char context[256] = {};
+    Require(sceCesMbcsUcsContextInit(context, sceCesRefersUcsProfileKoi8R()) == 0);
+    std::uint8_t koi8[16] = {};
+    std::uint32_t used = 0;
+    std::uint32_t produced = 0;
+    Require(sceCesUtf8StrToMbcsStr(context, reinterpret_cast<const std::uint8_t*>("\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82"), 12, &used, koi8, sizeof(koi8), &produced) == 0);
+    Require(used == 12 && produced == 6 && std::memcmp(koi8, "\xF0\xD2\xC9\xD7\xC5\xD4", 6) == 0);
+    std::uint8_t utf8[32] = {};
+    Require(sceCesMbcsStrToUtf8Str(context, koi8, 6, &used, utf8, sizeof(utf8), &produced) == 0);
+    Require(used == 6 && produced == 12 && std::memcmp(utf8, "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", 12) == 0);
+}
+
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
@@ -57,6 +255,7 @@ int main() {
 
     const std::uint8_t* profile = sceCesRefersUcsProfileCp1252();
     Require(profile != nullptr && profile == sceCesRefersUcsProfileCp1252());
+    CheckSingleByteProfiles();
 
     RequireSbcToUtf8(profile, 'A', "A");
     RequireSbcToUtf8(profile, 0x80, "\xE2\x82\xAC");

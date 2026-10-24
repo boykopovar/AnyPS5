@@ -2,4 +2,4 @@
 
 ### Unknown function info
 
-- [sceOpusCeltEncCreate, sceOpusCeltEncCreateEx, sceOpusCeltEncCtl, sceOpusCeltEncDestroy, sceOpusCeltEncEncode, sceOpusCeltEncEncodeFloat, sceOpusCeltEncEncodeFloatWithPriority, sceOpusCeltEncEncodeWithPriority, sceOpusCeltEncGetSize, sceOpusCeltEncInitialize and sceOpusCeltEncTerminate](../../../core/libs/prx/libSceOpusCeltEnc/Export.cpp) (libSceOpusCeltEnc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltEnc.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceOpusCeltEncTerminate](../../../core/libs/prx/libSceOpusCeltEnc/Export.cpp): the context-ID pointer is confirmed. The null-input path does not define the return register, so an integer return contract is not established. The current integer return declaration is retained because changing it to `void` would require altering the protected stub body, which contains `return 0`.

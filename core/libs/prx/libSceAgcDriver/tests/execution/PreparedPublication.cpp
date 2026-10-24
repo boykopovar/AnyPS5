@@ -371,6 +371,34 @@ void TransactionLock() {
     Require(excluded, "a transaction ran beside one that had read prepared state");
 }
 
+void CommittedLinks() {
+    ShaderSnapshot front{};
+    auto pixel = std::make_shared<ShaderSnapshot>();
+    ResolvePreparedGraphics(front, pixel, 0, {});
+    Require(front.prepared->fragments.size() == 1 && front.prepared->fragments.front().lock() == pixel, "a resolved link was not published");
+    ShaderSnapshot unrelated{};
+    auto other = std::make_shared<ShaderSnapshot>();
+    std::optional<ShaderPreparationTransaction> open(std::in_place);
+    static_cast<void>(open->Read(unrelated));
+    auto repeated = std::async(std::launch::async, [&] { ResolvePreparedGraphics(front, pixel, 0, {}); });
+    const bool unblocked = repeated.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    auto linking = std::async(std::launch::async, [&] { ResolvePreparedGraphics(front, other, 0, {}); });
+    const bool excluded = linking.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
+    open->Commit();
+    open.reset();
+    repeated.get();
+    linking.get();
+    Require(unblocked, "resolving a link the shader already had waited for another thread's transaction");
+    Require(excluded && front.prepared->fragments.size() == 2, "a new link was published beside a transaction that had read prepared state");
+    {
+        ShaderPreparationTransaction transaction;
+        transaction.Edit(front).fragments.clear();
+        ResolvePreparedGraphics(front, pixel, 0, {});
+        transaction.Commit();
+    }
+    Require(front.prepared->fragments.size() == 1 && front.prepared->fragments.front().lock() == pixel, "a link resolved in a transaction that had changed the shader was checked against the published links");
+}
+
 void PreparationPriority(bool beforeSubmit) {
     const auto workers = std::max(2u, std::thread::hardware_concurrency() / 2u);
     std::barrier started(static_cast<std::ptrdiff_t>(workers + 1u));
@@ -415,6 +443,7 @@ int main() {
         RegistryVersions();
         FusedHullHeaderSelection();
         TransactionLock();
+        CommittedLinks();
         PreparationPriority(false);
         PreparationPriority(true);
         auto device = OpenVulkanTestDevice();

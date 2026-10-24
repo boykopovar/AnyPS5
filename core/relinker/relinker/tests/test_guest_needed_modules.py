@@ -186,7 +186,7 @@ def main():
             assert output.exists(), output
             assert not list((case / "app0").rglob("*.guest.prx"))
             if not windows:
-                assert needed_libraries(output.read_bytes()) == ["needed.debug_prx" if "debug-name" in case.name else "needed.prx"]
+                assert needed_libraries(output.read_bytes()) == ["needed.prx"]
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):

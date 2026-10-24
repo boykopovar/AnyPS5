@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [M4AAC extended parameters](../../../core/libs/prx/libSceAudiodec/Export.cpp): 28-byte and 32-byte parameter variants add fields at offsets 24 and 28. Their accepted ranges are 0..1 and 0..2; nonzero modes throw until the corresponding decoder configuration is implemented. Zero extensions use the base decoding configuration.
+
 - [sceAudiodecDecode](../../../core/libs/prx/libSceAudiodec/src/Codecs.cpp) (libSceAudiodec) - a raw M4AAC stream carries no channel configuration, so the decoder tries the mono/stereo configuration and then configurations 3 to 7 within `ui_max_channels` until one decodes the first access unit, and keeps that one. No reference documents how the library picks the layout (shadPS4 maps the channel count straight to the configuration; SharpProspero only describes the maximum). With the stereo configuration a mono raw stream decodes as 2 channels, so 2 is reported, not 1
 - [sceAudiodecDecode](../../../core/libs/prx/libSceAudiodec/src/Codecs.cpp) (libSceAudiodec) - the HE-AAC handling follows one console measurement of an HE-AAC v2 ADTS stream: SBR output at 48 kHz in one channel with `ui_enable_heaac` 1, the 24 kHz mono core with 0. Not measured: whether the console, like FFmpeg, decodes a stream without SBR data in its first access unit as AAC-LC with `ui_enable_heaac` 1, and what it reports in `ui_sampling_freq` and `ui_heaac` with `ui_enable_heaac` 0 (here the rate of the returned PCM and 0)
 

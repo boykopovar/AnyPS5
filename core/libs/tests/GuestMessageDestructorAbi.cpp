@@ -32,6 +32,7 @@ void APS5_VABI _ZNSt11logic_errorD1Ev_nid_postfix(Object*);
 [[noreturn]] void APS5_VABI _ZNKSt11logic_error8_DoraiseEv_nid_postfix(const Object*);
 [[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type);
 int APS5_VABI GuestOuter();
+void APS5_VABI GuestCleanup();
 void APS5_VABI GuestStdCapture();
 void APS5_VABI ProbeDestroy(GuestDestroy, void*, void*);
 const char* APS5_VABI ProbeWhat(GuestWhat, const void*, const void*);
@@ -202,9 +203,46 @@ extern "C" void APS5_VABI FixtureInspect(void* pointer) {
     if (!regularRelease) header->destructor = reinterpret_cast<HostDestroy>(ObserveDestroy);
 }
 
+static unsigned hybridDestroyed;
+struct HybridGuard { ~HybridGuard() { ++hybridDestroyed; } };
+
+extern "C" [[gnu::noinline, noreturn]] void APS5_VABI FixtureHostThrow() {
+    HybridGuard guard;
+    __asm__ volatile("pxor %%xmm12, %%xmm12" ::: "xmm12");
+    throw 73;
+}
+
+[[gnu::noinline]] static void HybridMiddle() {
+    HybridGuard guard;
+    GuestCleanup();
+}
+
+static int TestHybridUnwind() {
+    const std::uint64_t expected[2] {0x123456789abcdef0, 0xfedcba9876543210};
+    std::uint64_t restored[2] {};
+    __asm__ volatile("movdqu %0, %%xmm12" :: "m"(expected) : "xmm12");
+    unsigned caught = 0;
+    try {
+        HybridGuard guard;
+        try { HybridMiddle(); }
+        catch (int value) {
+            if (value != 73 || hybridDestroyed != 2 || FixtureGuardDestroyed != 1) return 63;
+            ++caught;
+            throw;
+        }
+    } catch (int value) {
+        if (value != 73) return 64;
+        ++caught;
+    }
+    __asm__ volatile("movdqu %%xmm12, %0" : "=m"(restored));
+    return caught == 2 && hybridDestroyed == 3 && FixtureGuardDestroyed == 1 &&
+        std::memcmp(restored, expected, sizeof(expected)) == 0 ? 0 : 65;
+}
+
 int main(int argc, char** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     if (argc != 2) return 2;
+    if (std::strcmp(argv[1], "hybrid") == 0) return TestHybridUnwind();
     if (std::strncmp(argv[1], "vtable-", 7) == 0) return TestVtable(argv[1]);
     if (std::strcmp(argv[1], "control") == 0) {
         if (GuestOuter() != 0 || FixtureDestroyed != 1 || FixtureGuardDestroyed != 1 ||

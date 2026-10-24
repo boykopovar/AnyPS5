@@ -70,7 +70,7 @@ public:
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + UnitBytes - 1) & ~(static_cast<std::uintptr_t>(UnitBytes) - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + bytes != begin + bytes + UnitBytes) munmap(reinterpret_cast<void*>(aligned + bytes), begin + bytes + UnitBytes - aligned);
+            if (aligned + bytes != begin + bytes + UnitBytes) munmap(reinterpret_cast<void*>(aligned + bytes), begin + UnitBytes - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
             if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }

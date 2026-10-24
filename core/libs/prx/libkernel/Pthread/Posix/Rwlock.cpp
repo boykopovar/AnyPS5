@@ -70,6 +70,25 @@ int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr,
     return 0;
 }
 
+int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
+    if (!attr || !*attr) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
+    if (!type) throw std::runtime_error("pthread_rwlockattr_gettype_np: null type");
+    *type = (*attr)->type;
+    return 0;
+}
+
+int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type) {
+    return PosixThread::ToSce(pthread_rwlockattr_gettype_np_nid_postfix(attr, type));
+}
+
+int APS5_VABI scePthreadRwlockattrSetpshared(PthreadRwlockattr* attr, int pshared) {
+    return PosixThread::ToSce(pthread_rwlockattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int* pshared) {
+    return PosixThread::ToSce(pthread_rwlockattr_getpshared_nid_postfix(attr, pshared));
+}
+
 int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockRdlock(rwlock));
@@ -90,6 +109,16 @@ int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, cons
     if (scePthreadRwlockTrywrlock(rwlock) == 0) return 0;
     KernelUseconds usec = 0;
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return PosixThread::GUEST_EINVAL;
+    return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
+}
+
+int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    initializeStatic(rwlock, __func__);
+    return toPosix(scePthreadRwlockTimedrdlock(rwlock, usec));
+}
+
+int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
 }
 

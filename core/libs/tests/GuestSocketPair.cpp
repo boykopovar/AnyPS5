@@ -213,9 +213,9 @@ int main(int argc, char** argv) {
     Require(Exchange(pair[1], pair[0], "still open"));
     Require(close_nid_postfix(pair[0]) == 0);
     Require(Readable(pair[1], In | Hup) && recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
-#ifndef _WIN32
-    Require(send_nid_postfix(pair[1], ping, sizeof(ping), NoSignal) == -1 && *__error_nid_postfix() == 32);
-#endif
+    std::int64_t sent = 0;
+    for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(pair[1], ping, sizeof(ping), NoSignal);
+    Require(sent == -1 && *__error_nid_postfix() == 32);
     Require(close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(pair[1]) == -1 && *__error_nid_postfix() == 9);
 

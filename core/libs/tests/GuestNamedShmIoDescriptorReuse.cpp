@@ -115,6 +115,9 @@ extern "C" ssize_t readlink(const char* path, char* buffer, std::size_t length) 
     }
     return result;
 }
+extern "C" ssize_t __readlink_chk(const char* path, char* buffer, std::size_t length, std::size_t) {
+    return readlink(path, buffer, length);
+}
 extern "C" int flock(int descriptor, int operation) {
     const int result = static_cast<int>(::syscall(SYS_flock, descriptor, operation));
     if (result == 0 && operation == LOCK_EX && armed && !replaceAtProbe && !replaceBeforeProbe && !swapped) {

@@ -38,6 +38,7 @@ struct GuestTypeInfo {
 struct GuestSystemError {
     const void* vtable;
     const char* message;
+    int reserved;
     int code;
     const void* category;
 };
@@ -265,11 +266,11 @@ static void TestWcstombs() {
     Require(result == Failed && buffer[0] == 'x');
 
     std::memset(buffer, 'x', sizeof(buffer));
-    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), wide, sizeof(buffer)) == GuestEilseq);
-    Require(result == Failed && buffer[0] == 'a' && buffer[1] == '\0');
+    Require(sceAmprWcstombsS(&result, buffer, sizeof(buffer), wide, sizeof(buffer)) == 0);
+    Require(result == 3 && std::memcmp(buffer, "a\xc4\x80\0x", 5) == 0);
 
-    Require(sceAmprWcstombsS(&result, nullptr, 0, wide, 0) == GuestEilseq);
-    Require(result == Failed);
+    Require(sceAmprWcstombsS(&result, nullptr, 0, wide, 0) == 0);
+    Require(result == 3);
 }
 
 template<typename TException, typename TCall>

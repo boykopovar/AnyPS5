@@ -7,12 +7,12 @@
 
 extern "C" {
 
-int APS5_VABI sceVideoOutSetFlipMaster() {
+int APS5_VABI sceVideoOutSetFlipMaster(std::int32_t handle, std::int32_t masterHandle) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceVideoOutClearFlipMaster() {
+int APS5_VABI sceVideoOutClearFlipMaster(std::int32_t handle) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

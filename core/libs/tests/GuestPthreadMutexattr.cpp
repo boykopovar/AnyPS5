@@ -15,6 +15,19 @@ int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* att
 int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexattr* attr, int* prioceiling);
 int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type);
 int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr, int* type);
+int APS5_VABI pthread_mutexattr_setkind_np_nid_postfix(PthreadMutexattr* attr, int kind);
+int APS5_VABI pthread_mutexattr_getkind_np_nid_postfix(PthreadMutexattr attr);
+int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
+int APS5_VABI scePthreadMutexattrGettype(const PthreadMutexattr* attr, int* type);
+int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol);
+int APS5_VABI scePthreadMutexattrGetprotocol(const PthreadMutexattr* attr, int* protocol);
+int APS5_VABI scePthreadMutexattrSetprioceiling(PthreadMutexattr* attr, int prioceiling);
+int APS5_VABI scePthreadMutexattrGetprioceiling(const PthreadMutexattr* attr, int* prioceiling);
+int APS5_VABI scePthreadMutexattrSetpshared(PthreadMutexattr* attr, int pshared);
+int APS5_VABI scePthreadMutexattrGetpshared(const PthreadMutexattr* attr, int* pshared);
+int* APS5_VABI __error_nid_postfix();
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr);
 int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex);
@@ -26,6 +39,8 @@ int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
 }
 
 static constexpr int GUEST_EINVAL = 22;
+static constexpr int SCE_OK = 0;
+static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
@@ -80,6 +95,78 @@ static void CheckType() {
     Require(pthread_mutexattr_gettype_nid_postfix(nullptr, &type) == GUEST_EINVAL && type == -1);
 }
 
+static void CheckKind() {
+    PthreadMutexattr attr = nullptr;
+    *__error_nid_postfix() = 0;
+    Require(pthread_mutexattr_getkind_np_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
+    *__error_nid_postfix() = 0;
+    Require(pthread_mutexattr_setkind_np_nid_postfix(nullptr, 2) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
+    *__error_nid_postfix() = 0;
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 2) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
+    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 1);
+    int type = -1;
+    for (const int kind : {2, 3, 4, 1}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, kind) == 0);
+        Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == kind);
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == kind);
+    }
+    Require(pthread_mutexattr_settype_nid_postfix(&attr, 2) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
+    for (const int invalid : {0, 5, -1})
+        Require(Throws([&] { pthread_mutexattr_setkind_np_nid_postfix(&attr, invalid); }));
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
+    PthreadMutex mutex = nullptr;
+    Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
+    Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
+    Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
+    Require(pthread_mutex_unlock_nid_postfix(&mutex) == 0);
+    Require(pthread_mutex_unlock_nid_postfix(&mutex) == 0);
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    *__error_nid_postfix() = 0;
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 2) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
+}
+
+static void CheckSceAccessors() {
+    PthreadMutexattr attr = nullptr;
+    int value = -1;
+    Require(scePthreadMutexattrGettype(nullptr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprotocol(&attr, PRIO_NONE) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetpshared(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(value == -1);
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrGettype(&attr, &value) == SCE_OK && value == 1);
+    Require(scePthreadMutexattrSettype(&attr, 3) == SCE_OK);
+    Require(scePthreadMutexattrGettype(&attr, &value) == SCE_OK && value == 3);
+    Require(Throws([&] { scePthreadMutexattrGettype(&attr, nullptr); }));
+    Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_OK && value == PRIO_NONE);
+    for (const int invalid : {-1, 3})
+        Require(scePthreadMutexattrSetprotocol(&attr, invalid) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_OK && value == PRIO_NONE);
+    Require(scePthreadMutexattrSetprotocol(&attr, PRIO_INHERIT) == SCE_OK);
+    Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_OK && value == PRIO_INHERIT);
+    Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprotocol(&attr, PRIO_PROTECT) == SCE_OK);
+    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_OK && value == sched_get_priority_max_nid_postfix(SCHED_RR));
+    Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_OK);
+    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_OK && value == 300);
+    int protocol = -1;
+    Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_PROTECT);
+    Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
+    Require(scePthreadMutexattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetpshared(&attr, 0) == SCE_OK);
+    Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
+}
+
 static void CheckProcessSharing() {
     PthreadMutexattr attr = nullptr;
     int sharing = -1;
@@ -127,6 +214,8 @@ static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
 
 int main() {
     CheckType();
+    CheckKind();
+    CheckSceAccessors();
     CheckProcessSharing();
     CheckTimedlockInvalidDeadline();
     PthreadMutexattr attr = nullptr;

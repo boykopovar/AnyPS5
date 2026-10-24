@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 #include <thread>
 
@@ -36,6 +37,7 @@ static constexpr int EVFILT_USER = -11;
 static constexpr int EVFILT_HRTIMER = -15;
 static constexpr int EVFILT_AMPR = -25;
 static constexpr std::uint16_t EV_ERROR = 0x4000;
+static constexpr std::uint16_t EV_EOF = 0x8000;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -43,6 +45,15 @@ template <typename TResult>
 static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
     try {
         accessor(nullptr);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+static bool RejectsWideFflags(const KernelEvent* ev) {
+    try {
+        sceKernelGetEventError(ev);
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -246,12 +257,64 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void RequireReported(KernelEqueue eq, int num, std::initializer_list<uintptr_t> expected) {
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    Require(sceKernelWaitEqueue(eq, events, num, &count, &poll) == SCE_OK);
+    Require(count == static_cast<int>(expected.size()));
+    int index = 0;
+    for (const uintptr_t id : expected) {
+        Require(sceKernelGetEventId(&events[index++]) == id);
+    }
+}
+
+static void VerifyReportedEventsMoveBehindWaitingOnes() {
+    KernelEqueue eq = 0;
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int payload = 0;
+    Require(sceKernelCreateEqueue(&eq, "rotate") == SCE_OK);
+    for (const int id : {1, 2}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {1});
+    RequireReported(eq, 1, {2});
+    RequireReported(eq, 1, {1});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate three") == SCE_OK);
+    for (const int id : {1, 2, 3}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 2, {1, 2});
+    RequireReported(eq, 2, {3, 1});
+    RequireReported(eq, 2, {2, 3});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate edge") == SCE_OK);
+    for (const int id : {7, 8}) {
+        Require(sceKernelAddUserEventEdge(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {7});
+    Require(sceKernelTriggerUserEvent(eq, 7, &payload) == SCE_OK);
+    RequireReported(eq, 1, {8});
+    RequireReported(eq, 1, {7});
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
     VerifyRepeatedAmprCompletionsAreNotLost();
+    VerifyReportedEventsMoveBehindWaitingOnes();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);
@@ -291,12 +354,30 @@ int main() {
     Require(sceKernelGetEventFflags(&rawEvent) == static_cast<intptr_t>(0x80000001LL));
     Require(sceKernelGetEventData(&rawEvent) == -5);
     Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
-    Require(sceKernelGetEventError(&rawEvent) == 0);
-    rawEvent.flags = static_cast<std::uint16_t>(~EV_ERROR);
-    Require(sceKernelGetEventError(&rawEvent) == 0);
+    Require(RejectsWideFflags(&rawEvent));
+    rawEvent.fflags = 0;
     rawEvent.flags = EV_ERROR;
     rawEvent.data = 22;
-    Require(sceKernelGetEventError(&rawEvent) == 22);
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+    rawEvent.data = -1;
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+    rawEvent.data = 0x80020016;
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+    rawEvent.fflags = 5;
+    rawEvent.data = 0;
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x80020005));
+    rawEvent.data = 22;
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x80020005));
+    rawEvent.flags = 0;
+    rawEvent.fflags = 7;
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x80020007));
+    rawEvent.flags = EV_EOF;
+    rawEvent.fflags = 3;
+    rawEvent.data = 9;
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x80020003));
+    rawEvent.flags = static_cast<std::uint16_t>(~EV_ERROR);
+    rawEvent.fflags = 0xFFFF;
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x8002FFFF));
 
     Require(RejectsNull(sceKernelGetEventData));
     Require(RejectsNull(sceKernelGetEventError));
