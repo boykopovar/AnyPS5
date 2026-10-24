@@ -1454,7 +1454,7 @@ int main() {
     passed &= run("selects that each reach the rest of the program are settled in steps that grow with the program, not with its square", [&] {
         const auto [small, smallKept] = shaded(500u);
         const auto [large, largeKept] = shaded(4000u);
-        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps;
+        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps && large.steps < 90'000u;
     });
 
     return passed ? 0 : 1;
