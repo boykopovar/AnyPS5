@@ -58,6 +58,7 @@ extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, Virt
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
+constexpr int errnoOperationNotPermitted = 1;
 constexpr int errnoNoSuchProcess = 3;
 constexpr int errnoNoChild = 10;
 constexpr int errnoBadAddress = 14;
@@ -342,6 +343,24 @@ int APS5_VABI getsid_nid_postfix(int pid) {
     if (pid == 0 || pid == self) return self;
     *__error_nid_postfix() = errnoNoSuchProcess;
     return -1;
+}
+
+int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
+    if (pgid < 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+    const int self = getpid_nid_postfix();
+    if (pid != 0 && pid != self) {
+        *__error_nid_postfix() = errnoNoSuchProcess;
+        return -1;
+    }
+    *__error_nid_postfix() = errnoOperationNotPermitted;
+    return -1;
+}
+
+int APS5_VABI setpgrp_nid_postfix(int pid, int pgrp) {
+    return setpgid_nid_postfix(pid, pgrp);
 }
 
 int APS5_VABI getppid_nid_postfix(void) {
