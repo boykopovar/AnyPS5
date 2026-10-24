@@ -88,6 +88,10 @@ int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback, void*, int*);
 int APS5_VABI sceNetCtlUnregisterCallback(int);
 int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
 int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
+int APS5_VABI sceNetCtlCheckCallback(void);
+int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int);
+int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void);
 std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char*);
 int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
@@ -167,6 +171,19 @@ public:
 };
 
 static void APS5_VABI IgnoreNetCtlEvent(int, void*) {}
+
+struct NetCtlEventRecord {
+    int calls = 0;
+    int event = 0;
+    void* arg = nullptr;
+};
+
+static void APS5_VABI RecordNetCtlEvent(int event, void* arg) {
+    auto* record = static_cast<NetCtlEventRecord*>(arg);
+    ++record->calls;
+    record->event = event;
+    record->arg = arg;
+}
 
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
@@ -2212,6 +2229,46 @@ int main() {
             Require(sceNetCtlUnregisterCallback(i) == 0);
         }
         Require(sceNetCtlUnregisterCallbackV6(0) == 0);
+    }
+    {
+        int cid = -1;
+        Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, &cid) == static_cast<int>(0x80412107));
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, nullptr) == static_cast<int>(0x80412107));
+        int cids[8] = {};
+        for (int i = 0; i < 8; ++i) {
+            Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cids[i]) == 0);
+            Require(cids[i] == i);
+        }
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cid) == static_cast<int>(0x80412103));
+        Require(sceNetCtlRegisterCallback(IgnoreNetCtlEvent, nullptr, &cid) == 0 && cid == 0);
+        Require(sceNetCtlUnregisterCallback(0) == 0);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == static_cast<int>(0x80412105));
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(8) == static_cast<int>(0x80412105));
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(3) == 0);
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cid) == 0);
+        Require(cid == 3);
+        for (int i = 0; i < 8; ++i) {
+            Require(sceNetCtlUnregisterCallbackForNpToolkit(i) == 0);
+        }
+
+        NetCtlEventRecord toolkit;
+        NetCtlEventRecord plain;
+        Require(sceNetCtlRegisterCallbackForNpToolkit(RecordNetCtlEvent, &toolkit, &cid) == 0 && cid == 0);
+        Require(sceNetCtlCheckCallback() == 0 && toolkit.calls == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+        Require(toolkit.calls == 1 && toolkit.arg == &toolkit && (toolkit.event == 1 || toolkit.event == 3));
+        int current = -1;
+        Require(sceNetCtlGetState(&current) == 0 && toolkit.event == (current == 3 ? 3 : 1));
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 1);
+        int plainCid = -1;
+        Require(sceNetCtlRegisterCallback(RecordNetCtlEvent, &plain, &plainCid) == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && plain.calls == 0);
+        Require(sceNetCtlCheckCallback() == 0 && plain.calls == 1 && toolkit.calls == 1);
+        Require(sceNetCtlUnregisterCallback(plainCid) == 0);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
+        Require(sceNetCtlRegisterCallbackForNpToolkit(RecordNetCtlEvent, &toolkit, &cid) == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 2);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
     }
     if (ipv6Unavailable) {
         std::puts("skipped the IPv6 socket checks, the host has no usable IPv6 loopback");
