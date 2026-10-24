@@ -11,6 +11,7 @@ static void Require(bool value, const char* what) {
     std::exit(1);
 }
 
+#ifdef __linux__
 static std::uint64_t Parse(const char* text) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_cpu_topology_test_cpus-" + std::to_string(std::random_device{}()));
     {
@@ -21,8 +22,10 @@ static std::uint64_t Parse(const char* text) {
     std::filesystem::remove(path);
     return mask;
 }
+#endif
 
 int main() {
+#ifdef __linux__
     Require(Parse("0-15\n") == 0xffffull, "range");
     Require(Parse("16-31\n") == 0xffff0000ull, "high range");
     Require(Parse("0,2,4-5\n") == 0x35ull, "list of cpus and ranges");
@@ -33,6 +36,7 @@ int main() {
     Require(Parse("0-x\n") == 0, "malformed range");
     Require(Parse("0;1\n") == 0, "malformed separator");
     Require(CpuTopology::MaskFromCpuList("/nonexistent/anyps5/cpus") == 0, "missing file");
+#endif
 
     {
         std::uint64_t byClass[4] = {};
@@ -61,6 +65,12 @@ int main() {
     Require(!layout.hybrid || (layout.performant & layout.efficient) == 0, "hybrid classes overlap");
     const std::uint64_t first = layout.process & (~layout.process + 1);
     Require(CpuTopology::Pin(nullptr, first) == first, "pin to one cpu of the process");
+#ifdef _WIN32
+    Require(SetThreadAffinityMask(GetCurrentThread(), static_cast<DWORD_PTR>(first)) == first, "thread runs on the pinned cpu only");
+    Require(CpuTopology::Pin(nullptr, ~layout.process) == 0, "mask outside the process is not applied");
+    Require(CpuTopology::Pin(GetCurrentThread(), layout.process) == layout.process, "threads are pinned by handle");
+    Require(SetThreadAffinityMask(GetCurrentThread(), static_cast<DWORD_PTR>(first)) == layout.process, "thread runs on the mask pinned by handle");
+#else
     cpu_set_t set;
     CPU_ZERO(&set);
     Require(pthread_getaffinity_np(pthread_self(), sizeof(set), &set) == 0, "read thread affinity");
@@ -68,5 +78,6 @@ int main() {
     Require(CpuTopology::Pin(nullptr, ~layout.process) == 0, "mask outside the process is not applied");
     int dummy = 0;
     Require(CpuTopology::Pin(&dummy, first) == 0, "other threads are not pinned by handle");
+#endif
     return 0;
 }
