@@ -2,6 +2,7 @@
 #include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <iterator>
 #include <stdexcept>
 #include <string>
@@ -20,6 +21,7 @@ bool contains(const std::vector<std::uint32_t>& values, std::uint32_t value) {
 
 std::vector<std::uint32_t> intersectSorted(const std::vector<std::uint32_t>& first, const std::vector<std::uint32_t>& second) {
     std::vector<std::uint32_t> result;
+    result.reserve(std::min(first.size(), second.size()));
     std::set_intersection(first.begin(), first.end(), second.begin(), second.end(), std::back_inserter(result));
     return result;
 }
@@ -43,7 +45,9 @@ void remapIds(std::vector<std::uint32_t>& values, const std::vector<std::uint32_
     for (auto& value : values) {
         value = remapId(value, idMap);
     }
-    sortUnique(values);
+    if (std::adjacent_find(values.begin(), values.end(), std::greater_equal<>()) != values.end()) {
+        sortUnique(values);
+    }
 }
 
 void rebuildPredecessors(ControlFlowGraph& graph) {
@@ -118,18 +122,37 @@ bool ControlFlowGraph::PostDominates(std::uint32_t postDominator, std::uint32_t 
 std::uint32_t ControlFlowGraph::FindNearestCommonPostDominator(std::uint32_t firstBlock, std::uint32_t secondBlock) const {
     const auto& first = FindBlock(firstBlock);
     const auto& second = FindBlock(secondBlock);
+    if (first.immediatePostDominator != InvalidControlFlowId && second.immediatePostDominator != InvalidControlFlowId) {
+        const BasicBlock* left = &first;
+        const BasicBlock* right = &second;
+        while (left->postDominators.size() > right->postDominators.size()) left = &FindBlock(left->immediatePostDominator);
+        while (right->postDominators.size() > left->postDominators.size()) right = &FindBlock(right->immediatePostDominator);
+        while (left != right) {
+            if (left->immediatePostDominator == left->id) {
+                return InvalidControlFlowId;
+            }
+            left = &FindBlock(left->immediatePostDominator);
+            right = &FindBlock(right->immediatePostDominator);
+        }
+        return left->id;
+    }
     const auto common = intersectSorted(first.postDominators, second.postDominators);
     if (common.empty()) {
         return InvalidControlFlowId;
     }
+    if (common.size() == 1u) {
+        return common.front();
+    }
     for (const auto candidate : common) {
-        bool nearest = true;
-        for (const auto other : common) {
-            if (other != candidate && !PostDominates(other, candidate)) {
-                nearest = false;
-                break;
-            }
+        const auto& postDominators = FindBlock(candidate).postDominators;
+        if (postDominators.size() + 1u < common.size()) {
+            continue;
         }
+        auto member = postDominators.begin();
+        const bool nearest = std::all_of(common.begin(), common.end(), [&](std::uint32_t other) {
+            member = std::lower_bound(member, postDominators.end(), other);
+            return other == candidate || (member != postDominators.end() && *member == other);
+        });
         if (nearest) {
             return candidate;
         }
