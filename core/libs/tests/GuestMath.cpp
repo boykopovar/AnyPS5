@@ -142,6 +142,7 @@ float APS5_VABI asinhf_nid_postfix(float);
 double APS5_VABI acosh_nid_postfix(double);
 float APS5_VABI acoshf_nid_postfix(float);
 double APS5_VABI atanh_nid_postfix(double);
+double APS5_VABI tanh_nid_postfix(double);
 float APS5_VABI atanhf_nid_postfix(float);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
 std::int64_t APS5_VABI llround_nid_postfix(double);
@@ -710,6 +711,60 @@ static void CheckExpm1ConsoleBits() {
         Require(std::bit_cast<std::uint64_t>(expm1_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
         Require(errno == (item.error != 0 ? item.error : 1234));
     }
+}
+
+static void CheckTanhConsoleBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull},
+        {0x3e2fffffffffffffull, 0x3e2fffffffffffffull}, {0x3e30000000000000ull, 0x3e30000000000000ull},
+        {0xbe30000000000000ull, 0xbe30000000000000ull}, {0x3fefffffffffffffull, 0x3fe85efab514f394ull},
+        {0x3ff0000000000000ull, 0x3fe85efab514f394ull}, {0xbff0000000000000ull, 0xbfe85efab514f394ull},
+        {0x3fe0000000000000ull, 0x3fdd9353d7568af3ull}, {0x4035ffffffffffffull, 0x3ff0000000000000ull},
+        {0x4036000000000000ull, 0x3ff0000000000000ull}, {0xc036000000000000ull, 0xbff0000000000000ull},
+        {0x4049000000000000ull, 0x3ff0000000000000ull}, {0x7fefffffffffffffull, 0x3ff0000000000000ull},
+        {0x7ff0000000000000ull, 0x3ff0000000000000ull}, {0xfff0000000000000ull, 0xbff0000000000000ull},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull}, {0xfff8000000000002ull, 0xfff8000000000002ull},
+        {0x3f927ed0db8370b1ull, 0x3f927e4d1092a580ull}, {0x3f95d74e4cee78bfull, 0x3f95d67547d523a0ull},
+        {0x3f18f1b062cb523cull, 0x3f18f1b06187faaeull}, {0x3f937129f25ae835ull, 0x3f937090dd8c9cb3ull},
+        {0x3facb0d89f8aa91cull, 0x3faca92afe31a32bull}, {0x3f07f462f020acdeull, 0x3f07f462efd91530ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(tanh_nid_postfix(std::bit_cast<double>(input))) == expected && errno == 1234);
+    }
+}
+
+
+static void CheckTanhSaturationEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const std::uint64_t inputs[] = {0x4036000000000000ull, 0x4036000000000001ull, 0x403c000000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull};
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = tanh_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (std::uint64_t sign : {0ull, 0x8000000000000000ull}) {
+                    for (std::uint64_t magnitude : inputs) {
+                        Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                        errno = 1234;
+                        _mm_setcsr(control | sticky);
+                        const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(magnitude | sign)));
+                        const unsigned csr = _mm_getcsr();
+                        const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+                        const int error = errno;
+                        const int expectedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                        if (result != (0x3ff0000000000000ull | sign) || csr != (control | sticky) || flags != expectedFlags || error != 1234) {
+                            std::fprintf(stderr, "tanh saturation: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x flags=%x errno=%d\n", static_cast<unsigned long long>(magnitude | sign), mode, denorm, sticky, static_cast<unsigned long long>(result), csr, flags, error);
+                            Require(false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
 }
 
 static void CheckAsinl() {
@@ -1669,6 +1724,8 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckTanhConsoleBits();
+    CheckTanhSaturationEnvironment();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
