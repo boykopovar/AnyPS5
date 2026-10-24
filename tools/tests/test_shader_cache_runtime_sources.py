@@ -223,4 +223,7 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    if EXPLICIT_ARGS and not shutil.which('ninja'):
+        print('skipped, ninja is not on PATH')
+        sys.exit(77)
     unittest.main()
