@@ -2548,13 +2548,41 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 
 namespace {
 
+void copyCommittedRun(std::uint64_t address, std::span<std::byte> destination) {
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), destination.data(), destination.size(), &copied) && copied == destination.size()) return;
+    const auto error = GetLastError();
+    require(error == ERROR_PARTIAL_COPY || error == ERROR_NOACCESS || error == ERROR_INVALID_ADDRESS, "cannot copy committed guest memory");
+    ForgetPages(static_cast<std::uintptr_t>(address), destination.size());
+    std::fill(destination.begin(), destination.end(), std::byte{});
+    std::size_t offset = 0;
+    while (offset < destination.size()) {
+        const auto cursor = address + offset;
+        const auto bytes = std::min(destination.size() - offset, PageBytes - static_cast<std::size_t>(cursor % PageBytes));
+        MEMORY_BASIC_INFORMATION memory{};
+        require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory), "cannot query guest memory after a failed committed read");
+        if (memory.State == MEM_COMMIT && (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 && readableProtection(memory.Protect & 0xffu)) {
+            copied = 0;
+            if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(cursor), destination.data() + offset, bytes, &copied)) {
+                const auto pageError = GetLastError();
+                require(pageError == ERROR_PARTIAL_COPY || pageError == ERROR_NOACCESS || pageError == ERROR_INVALID_ADDRESS, "cannot copy a committed guest page");
+            }
+        }
+        offset += bytes;
+    }
+#else
+    std::memcpy(destination.data(), reinterpret_cast<const void*>(address), destination.size());
+#endif
+}
+
 void copyCommitted(std::uint64_t address, std::span<std::byte> destination) {
     if (Accessible(reinterpret_cast<const void*>(address), destination.size())) {
-        std::memcpy(destination.data(), reinterpret_cast<const void*>(address), destination.size());
+        copyCommittedRun(address, destination);
         return;
     }
     std::memset(destination.data(), 0, destination.size());
-    for (const auto& [begin, end] : CommittedRanges(address, destination.size())) std::memcpy(destination.data() + (begin - address), reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin));
+    for (const auto& [begin, end] : CommittedRanges(address, destination.size())) copyCommittedRun(begin, destination.subspan(static_cast<std::size_t>(begin - address), static_cast<std::size_t>(end - begin)));
 }
 
 }
