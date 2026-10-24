@@ -141,6 +141,9 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME video_out_frame_dump_wait COMMAND video_out_frame_dump_queue_tests wait)
     set_tests_properties(video_out_frame_dump_wait PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
         ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=1")
+    add_test(NAME video_out_frame_dump_cpu_queue COMMAND video_out_frame_dump_queue_tests)
+    set_tests_properties(video_out_frame_dump_cpu_queue PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
+        ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=4;APS5_NO_GPU_DUMP=1")
 endif()
 
 if(BUILD_TESTING)
