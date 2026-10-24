@@ -185,7 +185,7 @@ def main(argv=None):
         copy_sources(output)
         print(output)
         return 0
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
         parser.error(str(error))
 
 
