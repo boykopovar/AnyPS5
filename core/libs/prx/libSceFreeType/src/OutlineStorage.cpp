@@ -13,6 +13,7 @@ extern "C" {
 int APS5_VABI FT_Outline_Done_nid_postfix(GuestLibrary* library, GuestOutline* outline) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!outline) return FT_Err_Invalid_Outline;
+    if (!library->host) return FT_Err_Invalid_Argument;
     if (outline->flags & FT_OUTLINE_OWNER) {
         std::free(outline->points);
         std::free(outline->tags);
@@ -25,6 +26,7 @@ int APS5_VABI FT_Outline_Done_nid_postfix(GuestLibrary* library, GuestOutline* o
 int APS5_VABI FT_Outline_New_nid_postfix(GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, GuestOutline* outline) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!outline) return FT_Err_Invalid_Argument;
+    if (!library->host) return FT_Err_Invalid_Argument;
     *outline = {};
     if (numContours < 0 || static_cast<std::uint32_t>(numContours) > numPoints) return FT_Err_Invalid_Argument;
     if (numPoints > FT_OUTLINE_POINTS_MAX) return FT_Err_Array_Too_Large;
