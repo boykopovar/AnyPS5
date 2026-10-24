@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path
 
-CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_))")
+CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
 ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
 
 
@@ -28,7 +28,7 @@ def quote(value):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Write the configure check results of a CMake cache as an initial cache file")
     parser.add_argument("cache", help="CMakeCache.txt of a configured tree")
     parser.add_argument("seed", help="file to pass to cmake -C")

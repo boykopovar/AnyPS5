@@ -1,34 +1,10 @@
+#include "prx/libSceRazorCpu/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t APS5_VABI sceRazorCpuIsCapturing(void);
-int APS5_VABI sceRazorCpuJobManagerDispatch(const char* label, std::uint16_t firstId, std::uint16_t secondId, std::uint16_t firstCount, std::uint16_t secondCount, std::uint64_t firstValue, std::uint64_t secondValue);
-int APS5_VABI sceRazorCpuJobManagerJob(std::uint16_t firstId, std::uint16_t secondId, std::uint16_t thirdId, std::uint16_t event);
-int APS5_VABI sceRazorCpuJobManagerSequence(const char* label, std::uint16_t firstId, std::uint16_t secondId, std::uint16_t event);
-int APS5_VABI sceRazorCpuPushMarker(const char* label, std::uint32_t color, std::uint32_t flags);
-int APS5_VABI sceRazorCpuNamedSync(const char* label);
-int APS5_VABI sceRazorCpuPushMarkerStatic(const char* name, std::uint32_t color, std::uint32_t flags);
-int APS5_VABI sceRazorCpuPopMarker(void);
-bool APS5_VABI sceRazorCpuFlushOccurred(std::uint64_t* timeSpentInFlush);
-int APS5_VABI sceRazorCpuPlotValue(const char* series, float value);
-int APS5_VABI sceRazorCpuWriteBookmark(const char* label, const char* description);
-int APS5_VABI sceRazorCpuSync(void);
-void APS5_VABI sceRazorCpuDisableFiberUserMarkers(void);
-int APS5_VABI sceRazorCpuInitDataTags(void* buffer, std::size_t size);
-int APS5_VABI sceRazorCpuShutdownDataTags(void);
-std::size_t APS5_VABI sceRazorCpuGetDataTagStorageSize(std::uint32_t tagCount);
-int APS5_VABI sceRazorCpuTagArray(const char* label, std::uint32_t category, void* array, std::size_t bufferSize, std::size_t elementSize);
-int APS5_VABI sceRazorCpuTagBuffer(const char* label, std::uint32_t category, void* buffer, std::size_t bufferSize);
-int APS5_VABI sceRazorCpuResizeTaggedBuffer(std::uint32_t category, void* buffer, std::size_t newBufferSize);
-int APS5_VABI sceRazorCpuUnTagBuffer(std::uint32_t category, void* buffer);
-int APS5_VABI sceRazorCpuBeginLogicalFileAccess(const char* filename, std::uint64_t tag, std::uint64_t size, std::uint8_t operation);
-int APS5_VABI sceRazorCpuEndLogicalFileAccess(void);
-}
 
 namespace {
 
@@ -91,6 +67,7 @@ int main() {
     bool threw = false;
     try {
         sceRazorCpuGetDataTagStorageSize(16);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

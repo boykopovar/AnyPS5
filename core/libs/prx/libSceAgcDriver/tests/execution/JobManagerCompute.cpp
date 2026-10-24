@@ -1,5 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceJobManager/include/Api.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -11,61 +15,9 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 extern "C" void AgcDriverShutdown_nid_postfix();
-
-struct MemorySizeQueryParams {
-    std::uint32_t version;
-    std::uint32_t workers;
-    std::uint32_t sequences;
-    std::uint32_t invocations;
-    std::uint32_t dispatches;
-    std::uint32_t syncPoints;
-    std::uint32_t waits;
-    std::uint32_t computeSequences;
-    std::uint64_t computeQueueMask;
-};
-
-struct ConfigParams {
-    std::uint32_t version;
-    std::uint32_t threadFlags;
-    std::uint32_t stackSize;
-    std::uint32_t priority;
-    const char* threadName;
-    std::uint32_t spinMicroseconds;
-    std::uint32_t computeAffinity;
-    std::uint32_t computePriority;
-    std::uint32_t reserved;
-};
-
-using JobEntry = void (APS5_VABI*)(void*, std::uint32_t);
-
-struct Sequence {
-    APS5_VABI virtual int Dispatch(JobEntry, void*, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int SyncPoint() = 0;
-    APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-    APS5_VABI virtual int DispatchCompute(const void*, void*, std::int32_t, std::int32_t, std::int32_t, const char*) = 0;
-    APS5_VABI virtual int DispatchComputeIndirect(const void*, void*, const void*, const char*) = 0;
-};
-
-struct SequenceFactory {
-    APS5_VABI virtual int Create(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int Destroy(Sequence*) = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-    APS5_VABI virtual int CreateCompute(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int DestroyCompute(Sequence*) = 0;
-};
-
-extern "C" {
-void APS5_VABI _ZN3sce3Job10JobManagerC1Ev(void*);
-std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams*);
-int APS5_VABI _ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(void*, void*, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, const ConfigParams*);
-int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void*);
-SequenceFactory* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void*, std::uint32_t);
-}
 
 #define Construct _ZN3sce3Job10JobManagerC1Ev
 #define RequiredSize _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE
@@ -94,10 +46,10 @@ alignas(256) volatile std::uint32_t Output[4]{};
 alignas(256) std::array<std::uint32_t, 4> OutputDescriptor{};
 alignas(32) std::array<std::uint32_t, 8> IndirectArguments{1, 1, 1, 0, 0, 0, 0, 0};
 alignas(16) std::array<std::uint32_t, 8> Specials{};
-alignas(16) std::array<std::uint32_t, 8> SpecialsWithoutDispatch{};
+alignas(16) std::array<std::uint32_t, 8> SpecialsDefaultModifier{};
 std::array<ShaderRegister, 9> Registers{};
 alignas(16) std::array<unsigned char, 0x80> Shader{};
-alignas(16) std::array<unsigned char, 0x80> ShaderWithoutDispatch{};
+alignas(16) std::array<unsigned char, 0x80> ShaderDefaultModifier{};
 
 std::uint32_t Low(const volatile void* pointer) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer));
@@ -115,8 +67,8 @@ void BuildShader() {
                   {0x242, Low(OutputDescriptor.data())}, {0x243, High(OutputDescriptor.data())}}};
     Specials[4] = 1;
     const ShaderRegister* registers = Registers.data();
-    for (auto* shader : {&Shader, &ShaderWithoutDispatch}) {
-        const std::uint32_t* specials = shader == &Shader ? Specials.data() : SpecialsWithoutDispatch.data();
+    for (auto* shader : {&Shader, &ShaderDefaultModifier}) {
+        const std::uint32_t* specials = shader == &Shader ? Specials.data() : SpecialsDefaultModifier.data();
         std::memcpy(shader->data() + 0x20, &registers, sizeof(registers));
         std::memcpy(shader->data() + 0x28, &specials, sizeof(specials));
         (*shader)[0x5c] = static_cast<unsigned char>(Registers.size());
@@ -144,10 +96,10 @@ void APS5_VABI Nothing(void*, std::uint32_t) {
 
 void SizeCase() {
     Require(SizeFor(0, 0, false) == 0x10d0 && SizeFor(0, 0, true) == 0x14c0, "size without compute sequences");
-    Require(SizeFor(1, 1, false) == 0x24fd8 && SizeFor(1, 1, true) == 0x253c8, "size with one compute sequence");
-    Require(SizeFor(2, 3, false) == 0x48e20 && SizeFor(2, 3, true) == 0x49210, "size with two compute sequences");
-    Require(SizeFor(3, 7, false) == 0x6cb68, "size with three compute sequences");
-    Require(SizeFor(1, 3, true) == 0x491c8, "size with two queues for one compute sequence");
+    Require(SizeFor(1, 1, false) == 0x29fd8 && SizeFor(1, 1, true) == 0x2a3c8, "size with one compute sequence");
+    Require(SizeFor(2, 3, false) == 0x52de0 && SizeFor(2, 3, true) == 0x531d0, "size with two compute sequences");
+    Require(SizeFor(3, 7, false) == 0x7bb28, "size with three compute sequences");
+    Require(SizeFor(1, 3, true) == 0x53188, "size with two queues for one compute sequence");
     Require(SizeFor(2, 1, true) == 0, "size with fewer queues than compute sequences");
 }
 
@@ -165,9 +117,9 @@ void RunCase() {
     Require(Initialize(manager, memory, size, 2, 1, 1, 2, &wideAffinity) == InvalidArgument, "a handler affinity beyond 13 cores was accepted");
     Require(Initialize(manager, memory, size, 2, 1, 0xffffffffu, 2, nullptr) == InvalidArgument, "a sequence count that wraps was accepted");
     Require(Initialize(manager, memory, size, 2, 1, 1, 2, nullptr) == 0, "initialize with one compute sequence failed");
-    SequenceFactory* factory = Factories(manager, 0);
-    Sequence* sequence = nullptr;
-    Sequence* other = nullptr;
+    ISequenceFactory* factory = Factories(manager, 0);
+    ISequence* sequence = nullptr;
+    ISequence* other = nullptr;
     Require(factory->CreateCompute(&sequence, 100, 4, 4, 2, "compute") == 0, "the compute sequence was not created");
     Require(factory->CreateCompute(&other, 1, 1, 1, 1, "second") == NoneFree, "a second compute sequence was created");
     Require(factory->Create(&other, 1, 1, 1, 1, "cpu") == 0, "the CPU sequence was not created");
@@ -192,24 +144,30 @@ void RunCase() {
     Require(Output[0] == 0x22220002u, "the indirect compute dispatch had not run when the wait returned: " + std::to_string(Output[0]));
 
     Value[0] = 0x33330003u;
-    Require(sequence->DispatchCompute(ShaderWithoutDispatch.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the dispatch of a shader without the dispatch bit failed");
-    Require(sequence->Wait() == 0, "the wait after a shader without the dispatch bit failed");
-    Require(Output[0] == 0x22220002u, "a shader without the dispatch bit ran");
+    Require(sequence->DispatchCompute(ShaderDefaultModifier.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the dispatch with a default modifier failed");
+    Require(sequence->Wait() == 0, "the wait after a default modifier dispatch failed");
+    Require(Output[0] == 0x33330003u, "a default modifier dispatch did not run");
 
+    Value[0] = 0x33330004u;
+    Require(sequence->DispatchComputeIndirect(ShaderDefaultModifier.data(), Table.data(), IndirectArguments.data(), nullptr) == 0, "the indirect dispatch with a default modifier failed");
+    Require(sequence->Wait() == 0, "the wait after an indirect default modifier dispatch failed");
+    Require(Output[0] == 0x33330004u, "an indirect default modifier dispatch did not run");
+
+    Value[0] = 0x33330005u;
     Require(sequence->Dispatch(BlockingJob, nullptr, 1, "blocking") == 0, "the blocking job was not dispatched");
     Require(sequence->SyncPoint() == 0, "the sync point failed");
     Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the compute dispatch behind a sync point failed");
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    Require(Output[0] == 0x22220002u, "a compute dispatch ran before the CPU job ahead of its sync point finished");
+    Require(Output[0] == 0x33330004u, "a compute dispatch ran before the CPU job ahead of its sync point finished");
     Released = true;
     Require(sequence->SyncPoint() == 0, "the second sync point failed");
     Require(sequence->Dispatch(ReadOutputJob, nullptr, 1, "reader") == 0, "the reading job was not dispatched");
     Require(sequence->Wait() == 0, "the wait after the ordered dispatches failed");
-    Require(Output[0] == 0x33330003u, "the compute dispatch behind a sync point did not run");
-    Require(SeenByJob == 0x33330003u, "a CPU job behind a sync point ran before the compute dispatch ahead of it finished");
+    Require(Output[0] == 0x33330005u, "the compute dispatch behind a sync point did not run");
+    Require(SeenByJob == 0x33330005u, "a CPU job behind a sync point ran before the compute dispatch ahead of it finished");
 
     Value[0] = 0x44440004u;
-    Require(sequence->DispatchCompute(ShaderWithoutDispatch.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the leading dispatch failed");
+    Require(sequence->DispatchCompute(ShaderDefaultModifier.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the leading dispatch failed");
     Require(sequence->SyncPoint() == 0, "the sync point between compute dispatches failed");
     Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "behind") == 0, "the compute dispatch behind a compute dispatch failed");
     Require(sequence->Wait() == 0, "the wait after chained compute dispatches failed");
@@ -229,16 +187,127 @@ void RunCase() {
     ::operator delete(memory, std::align_val_t{256});
 }
 
+void CapacityCase() {
+    std::array<ShaderRegister, 255> registers;
+    registers.fill(Registers[2]);
+    std::copy(Registers.begin(), Registers.end(), registers.begin());
+    auto shader = Shader;
+    const ShaderRegister* data = registers.data();
+    std::memcpy(shader.data() + 0x20, &data, sizeof(data));
+    shader[0x5c] = static_cast<unsigned char>(registers.size());
+    const std::string marker(65535, 'm');
+    const MemorySizeQueryParams query{1, 1, 0, 0, 2, 0, 1, 1, 1};
+    const auto size = RequiredSize(&query);
+    const auto allocationSize = (size + 255) & ~std::uint64_t{255};
+    auto* memory = static_cast<std::uint8_t*>(::operator new(allocationSize, std::align_val_t{256}));
+    std::memset(memory, 0, allocationSize);
+    std::memset(memory + size, 0xa5, allocationSize - size);
+    alignas(64) unsigned char manager[0x100]{};
+    Construct(manager);
+    Require(Initialize(manager, memory, size, 1, 0, 1, 1, nullptr) == 0, "capacity manager initialization failed");
+    auto* factory = Factories(manager, 0);
+    ISequence* sequence = nullptr;
+    Require(factory->CreateCompute(&sequence, 0, 2, 0, 1, nullptr) == 0, "capacity sequence creation failed");
+    for (std::uint32_t round = 0; round < 2; ++round) {
+        Value[0] = 0xabcd0000u + round;
+        for (int dispatch = 0; dispatch < 2; ++dispatch)
+            Require(sequence->DispatchCompute(shader.data(), Table.data(), 1, 1, 1, marker.c_str()) == 0, "maximum register and marker dispatch failed");
+        Require(sequence->Wait() == 0, "maximum packet wait failed");
+        Require(Output[0] == Value[0], "maximum packet dispatch did not finish");
+        const auto* words = reinterpret_cast<const std::uint32_t*>(memory);
+        std::uint32_t markers = 0;
+        for (std::size_t offset = 0; offset + 0x4001 <= size / 4; ++offset) {
+            if (words[offset] != 0xffff102cu) continue;
+            Require(std::memcmp(words + offset + 1, marker.c_str(), marker.size() + 1) == 0, "maximum marker was truncated");
+            ++markers;
+        }
+        Require(markers == 2, "the maximum markers were not stored in the command area");
+    }
+    Require(factory->DestroyCompute(sequence) == 0, "capacity sequence destruction failed");
+    Require(Shutdown(manager) == 0, "capacity manager shutdown failed");
+    for (auto offset = size; offset < allocationSize; ++offset)
+        Require(memory[offset] == 0xa5, "maximum packets escaped the supplied work area");
+    ::operator delete(memory, std::align_val_t{256});
 }
 
-int main() {
+void StorageCase(bool directMemory) {
+    constexpr std::uint64_t mask = (1u << 1) | (1u << 5) | (1u << 8);
+    const MemorySizeQueryParams query{1, 2, 0, 0, 32, 8, 4, 2, mask};
+    const auto size = RequiredSize(&query);
+    const auto allocationSize = (size + 0xffff) & ~std::uint64_t{0xffff};
+    std::int64_t physical = 0;
+    void* memory = nullptr;
+    if (directMemory) {
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, allocationSize, 0x10000, 0, &physical) == 0, "direct work area allocation failed");
+        Require(sceKernelMapDirectMemory(&memory, allocationSize, 0x33, 0, physical, 0x10000) == 0, "direct work area mapping failed");
+    } else {
+        memory = ::operator new(allocationSize, std::align_val_t{256});
+    }
+    {
+        const GuestArena::HostWrite destination(memory, allocationSize);
+        std::memset(memory, 0, allocationSize);
+        std::memset(static_cast<std::uint8_t*>(memory) + size, 0xa5, allocationSize - size);
+    }
+    alignas(64) unsigned char manager[0x100]{};
+    Construct(manager);
+    Require(Initialize(manager, memory, size, 2, 0, 2, mask, nullptr) == 0, "storage manager initialization failed");
+    auto* factory = Factories(manager, 0);
+    std::array<ISequence*, 2> sequences{};
+    for (auto& sequence : sequences) Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
+    for (std::uint32_t round = 0; round < 3; ++round) {
+        for (auto* sequence : sequences) {
+            Value[0] = 0x56780000u + round;
+            for (int dispatch = 0; dispatch < 8; ++dispatch)
+                Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "batch") == 0, "batched dispatch failed");
+            Require(sequence->Wait() == 0, "batched wait failed");
+            Require(Output[0] == Value[0], "batched work was not visible after wait");
+            Require(sequence->Wait() == 0, "empty wait after a batch failed");
+        }
+        const auto* words = static_cast<const std::uint32_t*>(memory);
+        const auto base = reinterpret_cast<std::uintptr_t>(memory);
+        std::vector<std::uintptr_t> labels;
+        for (std::size_t index = 0; index + 8 <= size / 4; ++index) {
+            if (words[index] != 0xc0064900u || (words[index + 2] & 0xe7000000u) != 0x22000000u) continue;
+            const auto address = words[index + 3] | (std::uint64_t{words[index + 4]} << 32);
+            Require(address >= base && address + 8 <= base + size && (address & 7) == 0, "a completion label is outside the caller's work area");
+            Require(words[index + 5] == 8 * (round + 1) && words[index + 6] == 0, "a completion did not publish the batched 32-bit count");
+            Require(*reinterpret_cast<const volatile std::uint64_t*>(address) == words[index + 5], "a published batch was not retired");
+            labels.push_back(address);
+        }
+        Require(labels.size() == 2 && labels[0] != labels[1], "each queue must store one batch completion in the caller's work area");
+    }
+    for (auto* sequence : sequences) Require(factory->DestroyCompute(sequence) == 0, "storage sequence destruction failed");
+    for (auto& sequence : sequences) {
+        Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence reuse failed");
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "dispatch after sequence reuse failed");
+        Require(factory->DestroyCompute(sequence) == 0, "destroy did not wait for reused sequence work");
+    }
+    Require(Shutdown(manager) == 0, "storage manager shutdown failed");
+    const auto* bytes = static_cast<const std::uint8_t*>(memory);
+    for (auto offset = size; offset < allocationSize; ++offset)
+        Require(bytes[offset] == 0xa5, "the manager wrote beyond its supplied work area");
+    if (directMemory) Require(sceKernelReleaseDirectMemory(physical, allocationSize) == 0, "direct work area release failed");
+    else ::operator delete(memory, std::align_val_t{256});
+}
+
+}
+
+int RunJobManagerCase(const char* name) {
     try {
+        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0, "unknown compute fixture");
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
+#endif
         BuildShader();
-        SizeCase();
-        RunCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0) SizeCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "execution") == 0) RunCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "capacity") == 0) CapacityCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "storage") == 0) {
+            StorageCase(false);
+            StorageCase(true);
+        }
         AgcDriverShutdown_nid_postfix();
         std::cout << "job manager compute test passed\n";
         return 0;
@@ -252,3 +321,10 @@ int main() {
         return 1;
     }
 }
+
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+int main(int argc, char** argv) {
+    if (argc > 2) return 2;
+    return RunJobManagerCase(argc == 2 ? argv[1] : "compute");
+}
+#endif

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstring>
@@ -5,10 +6,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-}
 
 namespace {
 

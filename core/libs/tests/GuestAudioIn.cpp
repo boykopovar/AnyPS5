@@ -1,3 +1,4 @@
+#include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <chrono>
@@ -10,23 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioInInit();
-int APS5_VABI sceAudioInOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInHqOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInAsyncOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInOpenEx(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInHqOpenEx(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInSetCompressorPreGain();
-int APS5_VABI sceAudioInSetNoiseGateThreshold();
-int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t);
-int32_t APS5_VABI sceAudioInGetGain(int32_t, float*);
-int32_t APS5_VABI sceAudioInGetRerouteCount(int32_t);
-int APS5_VABI sceAudioInInput(int, void*);
-int APS5_VABI sceAudioInGetSilentState(int);
-int APS5_VABI sceAudioInClose(int);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -118,7 +102,10 @@ void TestValidation() {
     port = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10);
     gain = 0.5f;
     Require(port > 0 && sceAudioInGetGain(port, &gain) == 0 && gain == 1.0f && sceAudioInGetRerouteCount(port) == 0 && sceAudioInClose(port) == 0);
-    Require(ReportsNotImplemented("sceAudioInIsPadEmbeddedMic", [] { sceAudioInIsPadEmbeddedMic(1); }));
+    Require(sceAudioInIsPadEmbeddedMic(1) == static_cast<int32_t>(0x80260101));
+    const int mic = sceAudioInOpen(user, 0, 0, 256, 48000, 0x10);
+    Require(mic > 0 && sceAudioInIsPadEmbeddedMic(mic) == 0 && sceAudioInClose(mic) == 0);
+    Require(sceAudioInIsPadEmbeddedMic(mic) == static_cast<int32_t>(0x80260101));
 }
 
 void InputSound(int handle, std::vector<std::int16_t>& block, int samples = 256) {

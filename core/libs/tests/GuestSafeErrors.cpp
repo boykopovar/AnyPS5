@@ -1,5 +1,7 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -11,19 +13,6 @@
 #include <limits>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI strerror_s_nid_postfix(char*, std::size_t, int);
-std::size_t APS5_VABI strerrorlen_s_nid_postfix(int);
-int APS5_VABI strerror_r_nid_postfix(int, char*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
-void APS5_VABI ignore_handler_s_nid_postfix(const char*, void*, int);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-extern FileStream* __stderrp_nid_postfix;
-}
 
 namespace {
 
@@ -104,8 +93,10 @@ void CheckConstraints() {
         Require(violations == before + 1 && violationBuffer == nullptr, "one callback for null destination");
     }
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(ignore_handler_s_nid_postfix));
+
     Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "installed ignore handler returns to caller");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(Constraint));
+
 }
 
 void CheckDefaultHandler() {

@@ -1,3 +1,4 @@
+#include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -8,13 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #undef main
-
-extern "C" {
-int APS5_VABI sceMouseInit();
-int APS5_VABI sceMouseOpen(int userId, std::int32_t type, std::int32_t index, const void* param);
-int APS5_VABI sceMouseRead(std::int32_t handle, MouseData* data, std::int32_t num);
-int APS5_VABI sceMouseClose(std::int32_t handle);
-}
 
 namespace {
 

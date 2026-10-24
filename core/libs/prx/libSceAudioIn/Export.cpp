@@ -1,3 +1,4 @@
+#include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -191,9 +192,9 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_mutex);
+    if (!find(handle)) return AUDIO_IN_ERROR_INVALID_HANDLE;
+    return 0;
 }
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {

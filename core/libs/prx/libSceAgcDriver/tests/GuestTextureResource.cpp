@@ -95,6 +95,52 @@ void rejectFields(const Fields& f, std::string_view reason) {
 
 }
 
+static void RunR128TextureTests() {
+    constexpr std::array<std::uint32_t, 8> streamed{0xa0c18800u, 0xcad00000u, 0x01ffc1ffu, 0x905b2facu, 0u, 0u, 0u, 0u};
+    const auto view = DecodeTextureResource(streamed);
+    Require(view.baseAddress == 0xa0c1880000ull && view.format == 173u && view.tileMode == TextureTileMode::kStandard4KB && view.width == 512u && view.height == 512u && view.baseLevel == 0u && view.lastLevel == 9u && view.mipCount == 10u && view.allocatedMipCount == 10u && view.minLod == 0u,
+        "a 128-bit BC3 T# (2048x2048, levels 2..11, words 4-7 zero) must read as the 512x512 chain of its 10 resident levels, got " + std::to_string(view.width) + "x" + std::to_string(view.height) + " levels " + std::to_string(view.baseLevel) + ".." + std::to_string(view.lastLevel) + " of " + std::to_string(view.mipCount));
+    auto chainWords = streamed;
+    chainWords[3] &= ~(0xfu << 12u);
+    chainWords[5] = 11u << 4u;
+    const auto full = DecodeTextureResource(chainWords);
+    Require(full.width == 2048u && full.mipCount == 12u, "the same surface with MAX_MIP 11 must be the 12-level 2048x2048 chain");
+    const auto chain = DescribeSurface(full);
+    const auto resident = DescribeSurface(view);
+    Require(chain.mips.size() == 12u && resident.mips.size() == 10u, "the chain and the resident levels must have 12 and 10 levels");
+    for (std::uint32_t level = 0; level < 10u; ++level) {
+        const auto& a = chain.mips[level + 2u];
+        const auto& b = resident.mips[level];
+        Require(a.tiledOffset == b.tiledOffset && a.tiledSize == b.tiledSize && a.width == b.width && a.height == b.height && a.blocksPerRow == b.blocksPerRow && a.tail == b.tail && a.tailX == b.tailX && a.tailY == b.tailY, "resident level " + std::to_string(level) + " must be level " + std::to_string(level + 2u) + " of the 12-level chain");
+    }
+    Require(resident.guestBytes <= chain.mips[1].tiledOffset && chain.mips[0].tiledOffset > chain.mips[1].tiledOffset, "the resident levels must end before the chain's levels 1 and 0, which come last in a GFX10 swizzled chain");
+    auto levelZero = streamed;
+    levelZero[3] &= ~(0xfu << 12u);
+    const auto single = DecodeTextureResource(levelZero);
+    Require(single.mipCount == 1u && single.lastLevel == 0u, "a T# with words 4-7 zero that starts at level 0 must stay one level");
+    auto tailed = streamed;
+    tailed[5] = 4u << 20u;
+    reject([&] { DecodeTextureResource(tailed); }, "would move the surface's own");
+
+    constexpr std::array<std::uint32_t, 8> tall{0xa0c1de00u, 0xcad00000u, 0x01ffc0ffu, 0x905b4facu, 0u, 0u, 0u, 0u};
+    const auto tallView = DecodeTextureResource(tall);
+    Require(tallView.width == 64u && tallView.height == 128u && tallView.lastLevel == 7u && tallView.mipCount == 8u, "a 128-bit 1024x2048 T# of levels 4..11 must read as its 64x128 chain of 8 levels");
+
+    Fields clamped;
+    clamped.base40 = 0x55ea000ull;
+    clamped.format = 20;
+    clamped.width = 1024;
+    clamped.height = 1024;
+    clamped.tileModeRaw = 0x1b;
+    clamped.baseLevel = 2;
+    clamped.lastLevel = 10;
+    clamped.minLod = 2u * 256u + 64u;
+    const auto clampedView = DecodeTextureResource(pack(clamped));
+    Require(clampedView.width == 256u && clampedView.mipCount == 9u && clampedView.minLod == 64u, "reading a 128-bit T# from its resident levels must move its MIN_LOD clamp with the base level");
+    clamped.minLod = 256u;
+    Require(DecodeTextureResource(pack(clamped)).minLod == 0u, "a MIN_LOD clamp below the base level must vanish when read from the resident levels");
+}
+
 void RunGuestTextureResourceTests() {
     Fields base;
     const auto baseWords = pack(base);
@@ -138,8 +184,29 @@ void RunGuestTextureResourceTests() {
     fmaskArray.baseArray = 1u;
     const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
     Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
-    for (std::uint32_t format = 156u; format <= 168u; ++format) {
-        if (format == 166u) continue;
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 8> narrowFormats{{{156u, 5u}, {157u, 5u}, {158u, 5u}, {159u, 5u}, {160u, 5u}, {161u, 5u}, {163u, 11u}, {165u, 20u}}};
+    for (const auto& [format, surface] : narrowFormats) {
+        auto narrow = fmask;
+        narrow.format = format;
+        const auto narrowResource = DecodeTextureResource(pack(narrow));
+        Require(narrowResource.format == surface && narrowResource.tileMode == TextureTileMode::kZ64KBX, "FMASK " + std::to_string(format) + " did not use an integer Z surface of its storage width");
+        narrow.dstSelX = 4u;
+        narrow.dstSelY = 5u;
+        narrow.dstSelZ = 6u;
+        narrow.dstSelW = 7u;
+        Require(DecodeTextureResource(pack(narrow)).format == surface, "an expanded FMASK " + std::to_string(format) + " view with identity selectors was refused");
+        auto compressedNarrow = narrow;
+        compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
+        compressedNarrow.metaAddr = 0x123456789aull;
+        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+    }
+    auto identityWord = fmask;
+    identityWord.dstSelX = 4u;
+    identityWord.dstSelY = 5u;
+    identityWord.dstSelZ = 6u;
+    identityWord.dstSelW = 7u;
+    rejectFields(identityWord, "FMASK destination channel selector is not implemented");
+    for (const auto format : {162u, 164u, 167u, 168u}) {
         auto unsupported = fmask;
         unsupported.format = format;
         rejectFields(unsupported, "FMASK format is not implemented");
@@ -629,12 +696,15 @@ void RunGuestTextureResourceTests() {
     pastUntailed.maxMip = 0;
     pastUntailed.baseLevel = 1;
     pastUntailed.lastLevel = 1;
+    pastUntailed.perfMod = 4;
     rejectFields(pastUntailed, "would move the surface's own");
     auto untailedChain = tailView;
     untailedChain.mipCount = 1;
     const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
     untailedChain.mipCount = 2;
     Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
+
+    RunR128TextureTests();
 
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
