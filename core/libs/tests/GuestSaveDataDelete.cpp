@@ -130,6 +130,9 @@ int main() {
         Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
     }
 
+    Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null delete struct is rejected");
+    SaveDataDelete nullDir{};
+    Check(sceSaveDataDelete(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
