@@ -1959,6 +1959,15 @@ if(BUILD_TESTING)
     target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_timed_join_tests)
+    if(WIN32 AND Python3_Interpreter_FOUND)
+        foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
+            add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
+                ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}
+                ${joinProvider}.prx $<TARGET_FILE_DIR:guest_timed_join_tests>)
+            set_tests_properties(guest_timed_join_import_${joinProvider} PROPERTIES TIMEOUT 25
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_timed_join_tests>")
+        endforeach()
+    endif()
     foreach(joinMode IN ITEMS normal coarse)
         add_test(NAME guest_timed_join_${joinMode} COMMAND guest_timed_join_tests $<TARGET_FILE:libkernel>)
         set_tests_properties(guest_timed_join_${joinMode} PROPERTIES TIMEOUT 15)
