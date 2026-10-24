@@ -99,7 +99,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 43 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 43 ? 20 : guestFormat;
 }
 
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
@@ -113,6 +113,11 @@ const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
 
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).vkFormat;
+}
+
+VkFormat DccClearTextureFormat(std::uint32_t guestFormat) {
+    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    return ResolveTextureFormat(guestFormat);
 }
 
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
@@ -131,7 +136,7 @@ std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatPr
 }
 
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
-    if (IsRepackedTextureFormat(guestFormat)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
