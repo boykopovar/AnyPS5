@@ -7,6 +7,8 @@
 
 ### Unknown function info
 
+- [sceNetGetsockopt](../../../core/libs/prx/libSceNet/Export.cpp) - `SO_PROTOCOL` on raw sockets throws: FreeBSD's raw protocol-switch selection has not been mapped to host raw sockets. For stream and datagram sockets, the effective creation protocol and accepted-socket inheritance follow FreeBSD 11.4's [protocol tables](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/netinet/in_proto.c) and [sogetopt](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/kern/uipc_socket.c); the `0x1016` option and truncated integer output are not measured on PS5. Existing null-pointer validation still returns `EINVAL`.
+
 - [sceNetConfigAddIfaddr](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - disassembly confirms the same interface/address/broadcast/netmask arguments as SetIfaddr, entering its shared handler with add mode selected. GetIfaddr copies up to two 16-byte interface-address records. GetRouteInfo uses a family, record buffer, signed capacity and byte flags; internal statistics output is 16 bytes. The address-record and internal-statistics fields remain incomplete.
 
 - [Resolver-connect, thread creation, interface and diagnostic queries, WLAN configuration and DHCP queries](../../../core/libs/prx/libSceNet/Export.cpp) retain unsupported implementations. Their restored argument lists still reference incomplete connection, thread, interface, route, WLAN and statistics types. Kernel ioctl payloads need reconstruction from their handlers or consumers; buffer lengths alone do not establish field types.

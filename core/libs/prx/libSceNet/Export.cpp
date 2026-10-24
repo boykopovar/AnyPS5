@@ -276,6 +276,7 @@ constexpr int NET_TF_NODELAY = 4;
 constexpr int NET_SO_SNDTIMEO = 0x1005;
 constexpr int NET_SO_RCVTIMEO = 0x1006;
 constexpr int NET_SO_ERROR = 0x1007;
+constexpr int NET_SO_PROTOCOL = 0x1016;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
 constexpr int NET_SO_BROADCAST = 0x20;
@@ -393,6 +394,7 @@ bool native_to_guest_address(const sockaddr_storage& native, void* address, std:
 struct Sock {
     int family = 0;
     int type = 0;
+    int protocol = 0;
     std::shared_ptr<NativeSocketHandle> native;
     bool bound = false;
     bool listening = false;
@@ -1024,6 +1026,9 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     Sock s;
     s.family = family;
     s.type = type;
+    s.protocol = protocol;
+    if (protocol == 0 && type == NET_SOCK_STREAM) s.protocol = IPPROTO_TCP;
+    if (protocol == 0 && type == NET_SOCK_DGRAM) s.protocol = IPPROTO_UDP;
     s.native = std::move(handle);
     g_socks[fd] = s;
     return fd;
@@ -1148,6 +1153,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     Sock connection;
     connection.family = listener.family;
     connection.type = NET_SOCK_STREAM;
+    connection.protocol = listener.protocol;
     connection.native = std::move(handle);
 #ifdef _WIN32
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
@@ -1556,6 +1562,12 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         socket = it->second;
     }
     if (optval == nullptr || optlen == nullptr) return fail(NET_EINVAL);
+    if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
+        if (socket.type == NET_SOCK_RAW) NotImplemented_nid_no_patch(__func__);
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(socket.protocol)));
+        std::memcpy(optval, &socket.protocol, *optlen);
+        return 0;
+    }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO)) {
         const int microseconds = optname == NET_SO_RCVTIMEO ? socket.native->receiveTimeout.load() : socket.native->sendTimeout.load();
         const KernelTimeval timeout{microseconds / 1000000, microseconds % 1000000};
