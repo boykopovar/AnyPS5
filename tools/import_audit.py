@@ -84,6 +84,7 @@ def elf_program_dynamic_symbols(path, data):
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
     if dynamic_size % 16:
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
+    take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     for position in range(0, dynamic_size, 16):
@@ -197,6 +198,7 @@ def elf_imports(path, data):
         if kind == 11:
             if entry != 24 or size % 24 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic symbol table (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic symbol table")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
@@ -208,6 +210,7 @@ def elf_imports(path, data):
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic section")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 16):
