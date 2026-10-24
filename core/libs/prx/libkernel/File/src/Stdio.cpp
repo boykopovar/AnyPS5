@@ -1510,6 +1510,16 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
     if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GUEST_ENOTDIR);
+#ifdef _WIN32
+    if (native.has_filename()) {
+        WIN32_FIND_DATAW found{};
+        if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK)
+                return SceErrorFromErrno(GUEST_ENOTDIR);
+        }
+    }
+#endif
     if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::is_directory(native, error)) {
 #ifdef _WIN32

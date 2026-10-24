@@ -441,6 +441,20 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     constexpr int GuestEperm = 1;
     std::error_code error;
+#ifdef _WIN32
+    if (native.has_filename()) {
+        WIN32_FIND_DATAW found{};
+        if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            const bool link = (found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+            if (link && (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
+            }
+        }
+    }
+#endif
     if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) return SceErrorFromErrno(GuestEperm);
     if (NativeUnlink(native) != 0) {
 #ifdef _WIN32
