@@ -283,12 +283,10 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         if (kind == StageInputKind::BaryCoordSmooth && state.program.Metadata().barycentricBuiltinsUnnormalized) {
             const auto fragCoordW = state.module.AllocateId();
             state.module.AddFunction(spv::OpBitcast, TypeF32(state), fragCoordW, EmitBuiltinU32(state, StageInputKind::FragCoord, 3u));
-            const auto magnitude = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeF32(state), magnitude, GlslStd450(state), GLSLstd450FAbs, fragCoordW);
-            const auto bound = state.module.AllocateId();
-            state.module.AddFunction(spv::OpFAdd, TypeF32(state), bound, value, magnitude);
+            const auto rasterized = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFOrdGreaterThan, TypeBool(state), rasterized, fragCoordW, ConstantF32Value(state, 0.0f));
             const auto kept = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeF32(state), kept, GlslStd450(state), GLSLstd450FMin, value, bound);
+            state.module.AddFunction(spv::OpSelect, TypeF32(state), kept, rasterized, value, ConstantF32Value(state, 0.0f));
             state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, kept);
             return bits;
         }
