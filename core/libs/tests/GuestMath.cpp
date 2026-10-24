@@ -712,6 +712,44 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckHypotConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+    } cases[] = {
+        {0x4008000000000000ull, 0xc010000000000000ull, 0x4014000000000000ull},
+        {0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000000ull},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull},
+        {0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull},
+        {0x000fffffffffffffull, 0x0000000000000003ull, 0x000fffffffffffffull},
+        {0x20b0000000000000ull, 0x20afffffffffffffull, 0x20b6a09e667f3bccull},
+        {0x3ff0000000000000ull, 0x3c3fffffffffffffull, 0x3ff0000000000000ull},
+        {0x3ff0000000000000ull, 0x3c40000000000001ull, 0x3ff0000000000000ull},
+        {0x5f30000000000001ull, 0x5f30000000000000ull, 0x5f36a09e667f3bcdull},
+        {0x7fe0000000000000ull, 0x7fe0000000000000ull, 0x7fe6a09e667f3bcdull},
+        {0x7fe6a09e667f3bccull, 0x7fe6a09e667f3bccull, 0x7fefffffffffffffull},
+        {0x7fe6a09e667f3bcdull, 0xffe6a09e667f3bcdull, 0x7ff0000000000000ull},
+        {0x7fefffffffffffffull, 0x7c90000000000000ull, 0x7fefffffffffffffull},
+        {0x7ff0000000000000ull, 0x7ff8000000000123ull, 0x7ff0000000000000ull},
+        {0xfff8000000000123ull, 0xfff0000000000000ull, 0x7ff0000000000000ull},
+        {0x7ff8000000000123ull, 0x3ff0000000000000ull, 0x7ff8000000000123ull},
+        {0xfff8000000000002ull, 0x7ff8000000000001ull, 0x7ff8000000000002ull},
+        {0x7ff8000000000001ull, 0xfff8000000000002ull, 0x7ff8000000000001ull},
+        {0x3f3248d38a1f56f4ull, 0x3f99e5bdab7504d1ull, 0x3f99e624f1413604ull},
+        {0xbf6255dae03360b5ull, 0xbf58dcd1c7ac8390ull, 0x3f6626fab3b5c07dull},
+        {0x3fe8e3e3428b7d2eull, 0xbfb3d190ce6b97f0ull, 0x3fe9035eec2d0175ull},
+        {0x3f01bebbf0557b6dull, 0x3fdbdb5984b3498cull, 0x3fdbdb59861d01f3ull},
+        {0x40ab31016b06c517ull, 0x3f21950db8ad595cull, 0x40ab31016b06c51cull},
+        {0x4093ddc11a2e2b93ull, 0xc0095f93495aa618ull, 0x4093ddc527348f7full},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected && errno == 1234);
+        Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(std::bit_cast<double>(item.y), std::bit_cast<double>(item.x))) == item.expected || std::isnan(std::bit_cast<double>(item.expected)));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -1669,6 +1707,7 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckHypotConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

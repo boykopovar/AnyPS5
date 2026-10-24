@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <xmmintrin.h>
 
 #include "prx/libc/include/General.hpp"
@@ -316,14 +317,75 @@ float APS5_VABI acosf_nid_postfix(float x) {
 float APS5_VABI atan2f_nid_postfix(float y, float x) { return std::atan2(y, x); }
 float APS5_VABI hypotf_nid_postfix(float x, float y) { return static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y))); }
 double APS5_VABI hypot_nid_postfix(double x, double y) {
-    const std::uint64_t hx = std::bit_cast<std::uint64_t>(x);
-    const std::uint64_t hy = std::bit_cast<std::uint64_t>(y);
-    const std::uint64_t ix = hx & 0x7fffffffffffffffull;
-    const std::uint64_t iy = hy & 0x7fffffffffffffffull;
-    if (ix == 0x7ff0000000000000ull || iy == 0x7ff0000000000000ull) {
-        return std::numeric_limits<double>::infinity();
+    const auto highWord = [](double value) { return static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(value) >> 32); };
+    const auto lowWord = [](double value) { return static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(value)); };
+    const auto withHighWord = [](double value, std::int32_t high) {
+        return std::bit_cast<double>((std::bit_cast<std::uint64_t>(value) & 0xffffffffull) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(high)) << 32));
+    };
+    std::int32_t ha = highWord(x) & 0x7fffffff;
+    std::int32_t hb = highWord(y) & 0x7fffffff;
+    double a = x;
+    double b = y;
+    if (hb > ha) {
+        std::swap(a, b);
+        std::swap(ha, hb);
     }
-    return std::hypot(x, y);
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 0x3c00000) {
+        return a + b;
+    }
+    int k = 0;
+    if (ha > 0x5f300000) {
+        if (ha >= 0x7ff00000) {
+            double w = std::fabs(x + 0.0) - std::fabs(y + 0.0);
+            if (((static_cast<std::uint32_t>(ha) & 0xfffff) | lowWord(a)) == 0) {
+                w = a;
+            }
+            if (((static_cast<std::uint32_t>(hb) ^ 0x7ff00000) | lowWord(b)) == 0) {
+                w = b;
+            }
+            return w;
+        }
+        ha -= 0x25800000;
+        hb -= 0x25800000;
+        k += 600;
+        a = withHighWord(a, ha);
+        b = withHighWord(b, hb);
+    }
+    if (hb < 0x20b00000) {
+        if (hb <= 0x000fffff) {
+            if ((static_cast<std::uint32_t>(hb) | lowWord(b)) == 0) {
+                return a;
+            }
+            b *= 0x1p1022;
+            a *= 0x1p1022;
+            k -= 1022;
+        } else {
+            ha += 0x25800000;
+            hb += 0x25800000;
+            k -= 600;
+            a = withHighWord(a, ha);
+            b = withHighWord(b, hb);
+        }
+    }
+    double w = a - b;
+    if (w > b) {
+        const double t1 = withHighWord(0.0, ha);
+        const double t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const double y1 = withHighWord(0.0, hb);
+        const double y2 = b - y1;
+        const double t1 = withHighWord(0.0, ha + 0x00100000);
+        const double t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k != 0) {
+        return withHighWord(0.0, (1023 + k) << 20) * w;
+    }
+    return w;
 }
 float APS5_VABI tanf_nid_postfix(float x) { return std::tan(x); }
 float APS5_VABI log10f_nid_postfix(float x) { return std::log10(x); }
