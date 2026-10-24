@@ -4202,6 +4202,94 @@ void multisampleTests() {
     Require(TakeMultisampledClear(clearedCmask, pending, halfFloat, clear) && clear.float32[0] == 1.0f && !TakeMultisampledClear(clearedCmask, pending, halfFloat, clear), "a pending CMASK clear and a whole fill did not clear once to the CMASK clear color");
 }
 
+void eqaaColorTargetTests() {
+    using AgcDriver::Graphics::ColorMetadataPass;
+    using AgcDriver::Graphics::ColorTarget;
+    using AgcDriver::Graphics::ColorTileMode;
+    using AgcDriver::Graphics::DecodeColorBuffer;
+    using AgcDriver::Graphics::DecodeColorMetadataPass;
+    using AgcDriver::Graphics::DecodeState;
+    using AgcDriver::Graphics::MultisampledColorBytes;
+    const auto cmaskAddress = reinterpret_cast<std::uintptr_t>(cmaskMemory.data());
+    constexpr std::uint64_t FmaskAddress = 0x1238da0000ull;
+    const auto eqaa = [&] {
+        auto queue = makeState();
+        queue.context[0x2f8] = 0x0020c002u;
+        queue.context[0x292] = 3;
+        queue.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6aeu;
+        queue.context[0x31c] = 0x0000e028u;
+        queue.context[0x31d] = 0x0000a000u;
+        queue.context[0x31f] = static_cast<std::uint32_t>(cmaskAddress >> 8u);
+        queue.context[0x398] = static_cast<std::uint32_t>(cmaskAddress >> 40u);
+        queue.context[0x321] = static_cast<std::uint32_t>((FmaskAddress | 0x1200u) >> 8u);
+        queue.context[0x3a0] = static_cast<std::uint32_t>(FmaskAddress >> 40u);
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        return queue;
+    };
+    auto queue = eqaa();
+    std::vector<AgcDriver::Graphics::RegisterRead> reads;
+    AgcDriver::Graphics::State state;
+    {
+        const AgcDriver::Graphics::RegisterReadLogScope logScope(&reads);
+        state = DecodeState(queue);
+    }
+    for (const auto read : reads) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the EQAA decode reads: " + std::to_string(read.offset));
+    Require(std::ranges::any_of(reads, [](const auto& read) { return read.offset == 0x3a0u; }), "the EQAA decode did not read FMASK_BASE_EXT");
+    Require(state.samples == 4 && state.colors.size() == 1 && state.colors[0].samples == 4 && state.colors[0].eqaaFragments == 2, "a 4-sample 2-fragment target did not decode as an EQAA target drawn at its 4 coverage samples");
+    Require(state.colors[0].fmaskAddress == FmaskAddress && state.colors[0].cmaskAddress == cmaskAddress && state.colors[0].cmaskFastClear, "the EQAA target's FMASK or CMASK did not decode");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a draw into an EQAA target");
+    queue.context[0x31d] = 0x00002000u;
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) and one fragment are unsupported");
+    queue.context[0x31d] = 0x00012000u;
+    const auto full = DecodeState(queue).colors[0];
+    Require(full.samples == 4 && full.eqaaFragments == 0, "a 4-sample 4-fragment target decoded as EQAA");
+    queue.context[0x31d] = 0x00013000u;
+    Require(DecodeColorBuffer(queue.context, 0).eqaaFragments == 4 && DecodeColorBuffer(queue.context, 0).samples == 8, "an 8-sample 4-fragment target did not decode as EQAA");
+    queue.context[0x31d] = 0x00011000u;
+    expectFailure([&] { DecodeColorBuffer(queue.context, 0); }, "more fragments than samples");
+    queue = eqaa();
+    queue.context[0x31c] = 0x0000a028u;
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) are supported only with FMASK");
+    queue = eqaa();
+    queue.context.erase(0x321);
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) are supported only with FMASK");
+    queue = eqaa();
+    queue.context[0x3a0] = 0x100u;
+    expectFailure([&] { DecodeState(queue); }, "invalid FMASK address extension");
+    queue = eqaa();
+    queue.context[0x31c] |= 0x10000000u;
+    queue.context[0x325] = 0x2000;
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) are supported only with FMASK");
+
+    queue = eqaa();
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0xcc0030;
+    for (const auto offset : {0x318u, 0x31bu, 0x31cu, 0x390u}) queue.context[offset + (offset >= 0x390u ? 1u : 0xfu)] = queue.context[offset];
+    queue.context[0x32b] = 0x00008028u;
+    queue.context[0x32c] = 0;
+    queue.context[0x3b1] = queue.context[0x3b0];
+    queue.context[0x3b9] = queue.context[0x3b8];
+    const auto pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->mode == ColorMetadataPass::Mode::Resolve && pass->source.has_value() && pass->source->samples == 4 && pass->source->eqaaFragments == 2 && pass->targets.size() == 1 && pass->targets[0].samples == 1 && pass->targets[0].eqaaFragments == 0, "a CB resolve of an EQAA target did not decode with the target's coverage samples");
+
+    ColorTarget target{};
+    target.address = 0x1238ba0000ull;
+    target.extent = {512, 512};
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
+    target.elementBytes = 4;
+    target.samples = 4;
+    Require(MultisampledColorBytes(target) == 0x400000, "a 4x 512x512 4-byte target does not occupy 4 MiB");
+    target.eqaaFragments = 2;
+    Require(MultisampledColorBytes(target) == 0x200000, "a 4-sample 2-fragment 512x512 4-byte target does not occupy the 2 MiB of its fragments");
+    target.samples = 8;
+    target.eqaaFragments = 4;
+    Require(MultisampledColorBytes(target) == 0x400000, "an 8-sample 4-fragment 512x512 4-byte target does not occupy the 4 MiB of its fragments");
+    std::cout << "EQAA color target decode checks passed\n";
+}
+
 void multisampleDccStateTests() {
     static std::array<std::byte, 131072> color{};
     const auto address = (reinterpret_cast<std::uintptr_t>(color.data()) + 65535u) & ~std::uintptr_t{65535u};
@@ -12013,6 +12101,7 @@ int main(int argc, char** argv) {
         uint8x4TargetTests();
         msaaEnableClearDepthTests();
         multisampleTests();
+        eqaaColorTargetTests();
         MsaaEnableSingleSampleTests();
         multisampledDepthTests();
         clipDistanceTests();
