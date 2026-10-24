@@ -1,3 +1,4 @@
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -2251,6 +2252,10 @@ void DepthStencilTests() {
         // 260, AMD PAL), so a fill of the words a linear layout would hold covers nothing.
         Require(!HtileFillCovers(0x10000, {16, 16}, 0x10000, 16) && !HtileFillCovers(0x10000, {16, 16}, 0x10000, 264), "a fill of the linear HTILE size of a 16x16 surface misses its pipe-aligned words");
         Require(AgcDriver::Graphics::HtileMetadataBytes({1024, 512}) == 0x8000u && AgcDriver::Graphics::HtileMetadataBytes({1025, 512}) == 0x10000u && AgcDriver::Graphics::HtileMetadataBytes({3840, 2160}) == 20u * 0x8000u, "the HTILE metadata is 32 KiB per 1024x512 block");
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        Require(AgcDriver::Graphics::HtileMetadataBytes({512, 512}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({256, 256}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({2048, 1152}) == 0x30000u && AgcDriver::Graphics::HtileMetadataBytes({4096, 4096}) == 0x100000u, "a PS4 HTILE is 16 KiB per 512x512 block");
+        Require(HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x4000) && !HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x3ffc), "a 16 KiB fill covers the HTILE of a 512x512 PS4 depth target");
+        ShaderRecompiler::SetGcnGuestShaders(false);
     }
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
