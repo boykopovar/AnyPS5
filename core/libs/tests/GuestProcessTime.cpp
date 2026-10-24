@@ -1,10 +1,13 @@
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+
+extern "C" std::int64_t APS5_VABI clock_nid_postfix();
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
@@ -36,5 +39,9 @@ int main(int argc, char** argv) {
     Require(first < minuteMicros, "first process time wrapped");
     Require(first >= minimumElapsedMicros, "first process time does not include the time before the first call");
     Require(sceKernelGetProcessTime() >= first, "process time went backwards");
+    const std::uint64_t beforeClock = sceKernelGetProcessTime();
+    const std::int64_t clocked = clock_nid_postfix();
+    const std::uint64_t afterClock = sceKernelGetProcessTime();
+    Require(clocked >= static_cast<std::int64_t>(beforeClock) && clocked <= static_cast<std::int64_t>(afterClock), "clock() is not the process time");
     return 0;
 }
