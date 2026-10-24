@@ -18,15 +18,22 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+class FileStream;
+
+extern "C" {
+GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
+int APS5_VABI fputc_nid_postfix(int value, FileStream* stream);
+extern FileStream* __stderrp_nid_postfix;
+}
 
 using SonyConstraintHandler = void (APS5_VABI *)(const char* message, void* pointer, int error);
 
 inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
-    (void)message;
     (void)pointer;
     (void)error;
-    std::abort();
+    fputs_nid_postfix(message, __stderrp_nid_postfix);
+    fputc_nid_postfix('\n', __stderrp_nid_postfix);
 }
 
 inline std::mutex& SonyConstraintMutex() {
