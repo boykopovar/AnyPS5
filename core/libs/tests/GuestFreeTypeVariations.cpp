@@ -23,6 +23,7 @@ int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint3
 int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
 int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
 int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
+int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec*, void*);
 }
 
 static void Check(bool value, int line) {
@@ -222,6 +223,20 @@ static void TestSetMMDesign() {
     Require(FT_Set_MM_Design_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_MM_Design_Coordinates(nullptr, 0, nullptr));
 }
 
+static void TestGetMultiMaster() {
+    for (const bool variable : {true, false}) {
+        FacePair pair(variable ? VariableFont() : FontFixture::BuildFont(3, {}));
+        FT_Multi_Master actual{};
+        FT_Multi_Master expected{};
+        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, &actual) == FT_Get_Multi_Master(pair.oracle, &expected));
+        Require(actual.num_axis == expected.num_axis && actual.num_designs == expected.num_designs);
+        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_Multi_Master(pair.oracle, nullptr));
+    }
+    FT_Multi_Master actual{};
+    FT_Multi_Master expected{};
+    Require(FT_Get_Multi_Master_nid_postfix(nullptr, &actual) == FT_Get_Multi_Master(nullptr, &expected));
+}
+
 int main() {
     TestGetMMVar();
     TestDoneMMVar();
@@ -231,4 +246,5 @@ int main() {
     TestGetBlend();
     TestSetMMBlend();
     TestSetMMDesign();
+    TestGetMultiMaster();
 }
