@@ -161,6 +161,8 @@ public:
     // place. A hit in an in-flight batch whose fence signaled meanwhile is a miss (one status
     // query per hit). `ignoreSignaled` false: every in-flight batch counts, whatever its fence.
     bool PendingReadOverlaps(std::uint64_t address, std::size_t bytes, bool ignoreSignaled = true) const;
+    enum class GuestTouch : std::uint8_t { None = 0, Reads, Writes, Stores, Completions, Count };
+    GuestTouch UnfinishedGuestTouch() const;
     // The newest batch whose noted read overlaps the range (for the [copyhle] trace and the verify
     // switch): its serial (the open batch reports the serial it will get), recording queue, reader
     // kind, and whether its fence has signaled. Nullopt: no overlap.
@@ -199,6 +201,7 @@ public:
     // Ends and submits the open batch without waiting.
     void Submit();
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
+    bool SubmitHeld() const;
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -816,6 +819,7 @@ private:
     VkSemaphore timeline = VK_NULL_HANDLE;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
+    std::uint64_t heldSerial = 0;
     struct ProgressWatcher;
     std::unique_ptr<ProgressWatcher> progressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the

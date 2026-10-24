@@ -202,6 +202,7 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
+        std::vector<std::size_t> snapshotted;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -226,7 +227,7 @@ public:
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
     // once the work completed.
-    void MarkGpuWrites(Recorder& recorder);
+    void MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings = nullptr);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
@@ -383,6 +384,7 @@ private:
         std::uint32_t adjustment;
     };
     void writeDataWords(VkCommandBuffer commands, std::size_t allocation, std::span<const std::uint32_t> words) const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readsLeftInPlace(const DrawBindings& bindings) const;
 
     struct Binding {
         VkDescriptorSetLayoutBinding layout;

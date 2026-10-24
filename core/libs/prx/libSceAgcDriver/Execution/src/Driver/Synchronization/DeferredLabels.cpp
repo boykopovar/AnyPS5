@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
 
@@ -124,11 +125,13 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
         first = false;
         countLabelOutcome(reason);
         if (reason != 0 && reason != 5) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && reason != 7 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
+            KernelWakeSleepers_nid_no_patch();
         }
         noteLabelStore(label.address, bytes, stamp, queue);
     }
+    if (localDevice != nullptr) localDevice->SubmitAfterEarlyLabel();
     ++labelGroups;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
 

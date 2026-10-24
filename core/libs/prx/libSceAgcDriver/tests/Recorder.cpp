@@ -856,6 +856,36 @@ void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x20000, 0x1000, false), "noted ranges outlived their batch");
 }
 
+void unfinishedGuestTouchTests(const Device& device, Recorder& recorder) {
+    using Touch = Recorder::GuestTouch;
+    recorder.Sync();
+    Require(recorder.UnfinishedGuestTouch() == Touch::None, "an idle recorder touches guest memory");
+    recorder.Keep(std::make_shared<int>(1));
+    Require(!recorder.Idle() && recorder.UnfinishedGuestTouch() == Touch::None, "an open batch holding objects only touches guest memory");
+    recorder.Submit();
+    Require(!recorder.Idle() && recorder.UnfinishedGuestTouch() == Touch::None, "an in-flight batch holding objects only touches guest memory");
+    recorder.NotePendingRead(0x10000, 0x100, Kind::DispatchElement);
+    Require(recorder.UnfinishedGuestTouch() == Touch::Reads, "an open in-place read is not reported");
+    recorder.NotePendingWrite(0x20000, 0x10);
+    Require(recorder.UnfinishedGuestTouch() == Touch::Writes, "an open write does not outrank a read");
+    recorder.Submit();
+    device.WaitQueue();
+    Require(!recorder.Idle() && recorder.UnfinishedGuestTouch() == Touch::None, "a signaled batch's read or write still counts");
+    recorder.Sync();
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> list{{0x30000, 0x30010}};
+    recorder.NotePendingReadList(std::make_shared<const Recorder::ReadList>(list), Kind::AddressBased);
+    Require(recorder.UnfinishedGuestTouch() == Touch::Reads, "a read list is not reported");
+    recorder.Sync();
+    bool ran = false;
+    recorder.OnComplete([&ran] { ran = true; });
+    Require(recorder.UnfinishedGuestTouch() == Touch::Completions, "an open completion action is not reported");
+    recorder.Submit();
+    device.WaitQueue();
+    Require(!ran && recorder.UnfinishedGuestTouch() == Touch::Completions, "a signaled batch's completion action that has not run is ignored");
+    recorder.Sync();
+    Require(ran && recorder.Idle() && recorder.UnfinishedGuestTouch() == Touch::None, "the completion action did not run or still counts");
+}
+
 Recorder::WriteRanges expectedWriteUnion(Recorder::WriteRanges ranges) {
     std::sort(ranges.begin(), ranges.end());
     Recorder::WriteRanges result;
@@ -11204,6 +11234,7 @@ int main(int argc, char** argv) {
         }
 #endif
         readTrackingTests(device, recorder);
+        unfinishedGuestTouchTests(device, recorder);
         readListTests(device, recorder);
         overlappedRangeTests(recorder);
         spaceWriteSyncTests(device, recorder);

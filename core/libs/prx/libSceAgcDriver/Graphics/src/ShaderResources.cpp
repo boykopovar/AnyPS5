@@ -5701,6 +5701,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
     if (selected.empty()) return {};
+    result->snapshotted.assign(selected.begin(), selected.end());
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
@@ -5795,7 +5796,25 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
-void ShaderResources::MarkGpuWrites(Recorder& recorder) {
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::readsLeftInPlace(const DrawBindings& bindings) const {
+    auto reads = guestMemory.InPlaceReads();
+    std::erase_if(reads, [&](const std::pair<std::uint64_t, std::uint64_t>& read) {
+        bool snapshotted = false;
+        for (std::size_t index = 0; index < allocations.size(); ++index) {
+            const auto& item = allocations[index];
+            if (!item.guest || item.size == 0 || item.address == 0) continue;
+            const auto begin = item.address - item.adjustment;
+            const auto end = begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment);
+            if (end <= read.first || read.second <= begin) continue;
+            if (std::find(bindings.snapshotted.begin(), bindings.snapshotted.end(), index) == bindings.snapshotted.end()) return false;
+            snapshotted = true;
+        }
+        return snapshotted;
+    });
+    return reads;
+}
+
+void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings) {
     // The ranges this use reads in place through their host imports (read-only and written elements
     // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
     // one of them (the copy HLE) must not land before the recorded work read it.
@@ -5803,6 +5822,8 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (auto split = guestMemory.SplitInPlaceReads()) {
         recorder.NotePendingReadList(std::move(split->space), kind);
         recorder.NotePendingReads(split->own, kind);
+    } else if (bindings != nullptr && !bindings->snapshotted.empty() && !guestMemory.HoldsLease()) {
+        recorder.NotePendingReads(readsLeftInPlace(*bindings), kind);
     } else {
         recorder.NotePendingReads(guestMemory.InPlaceReads(), kind);
     }
