@@ -2741,10 +2741,9 @@ std::shared_ptr<DeviceBuffer> Recorder::UploadScratchBuffer(UploadScratch kind, 
     ensureOpen();
     auto& scratch = open->uploadScratch[static_cast<std::size_t>(kind)];
     if (scratch == nullptr || scratch->Size() < bytes) {
-        const auto grown = scratch == nullptr || scratch->Size() > std::numeric_limits<std::size_t>::max() / 2 ? bytes : std::max(bytes, scratch->Size() * 2);
         const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (kind == UploadScratch::Tiled ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        scratch = std::make_shared<DeviceBuffer>(context, grown, usage);
-        Keep(scratch, grown);
+        scratch = std::make_shared<DeviceBuffer>(context, bytes, usage);
+        Keep(scratch, bytes);
     }
     return scratch;
 }
