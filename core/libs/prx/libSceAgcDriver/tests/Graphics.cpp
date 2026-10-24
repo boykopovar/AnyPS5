@@ -11297,6 +11297,117 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+// The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
+// entries keep coming back after their eviction, so the bound doubles and a later pass finds every
+// pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
+void pipelineStoreGrowthTests(bool fixed) {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 301;
+    fragment.variantId = 302;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{41}, fragmentKey{42};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    constexpr std::uint32_t configurations = 1536;
+    const auto pass = [&](std::uint32_t count) {
+        std::uint32_t built = 0;
+        for (std::uint32_t configuration = 0; configuration < count; ++configuration) {
+            VertexInputLayout input;
+            input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+            bool created = false;
+            static_cast<void>(CachedPipeline(context, State{}, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+            built += created ? 1u : 0u;
+        }
+        return built;
+    };
+    std::uint32_t lastBuilt = 0;
+    for (int round = 0; round < 6; ++round) lastBuilt = pass(configurations);
+    const auto grown = PipelineStoreTotals();
+    if (fixed) {
+        Require(grown.bound == 1024, "a bound set with APS5_PIPELINE_STORE_ENTRIES changed");
+        Require(lastBuilt == configurations, "a fixed 1024-entry bound kept pipelines of a 1536-configuration cycle");
+    } else {
+        Require(grown.bound == 2048, "the bound did not grow to 2048 while evicted pipelines kept coming back");
+        Require(lastBuilt == 0, "a pass over 1536 configurations still rebuilt pipelines after the bound grew");
+    }
+    ClearCachedPipelines(context.device);
+    Require(mock.live == 0, "pipeline store growth tests leaked Vulkan objects");
+}
+
+// A journal longer than the store's starting bound: 1032 recorded pipelines replayed into an empty
+// store all stay resident (the replay grows the bound instead of dropping what does not fit).
+void pipelineStoreReplayGrowthTests() {
+    using namespace AgcDriver::Graphics;
+    const auto root = std::filesystem::temp_directory_path() / ("aps5-pipeline-store-replay-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(root);
+    struct Cleanup {
+        std::filesystem::path directory;
+        ~Cleanup() {
+            ShaderRecompiler::ShaderDiskCache::Shutdown();
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } cleanup{root};
+#ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", root.c_str());
+    _putenv_s("APS5_PIPELINE_JOURNAL_THREADS", "2");
+#else
+    setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+    setenv("ANYPS5_SHADER_CACHE_DIR", root.string().c_str(), 1);
+    setenv("APS5_PIPELINE_JOURNAL_THREADS", "2", 1);
+#endif
+    Require(PipelineJournalEnabled(), "the journal is disabled with a shader cache directory set");
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 401;
+    fragment.variantId = 402;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    auto cache = std::make_unique<DescriptorCache>(context);
+    context.descriptorCache = cache.get();
+    const auto layouts = DescribeSetLayouts(context, shaders);
+    const auto resources = layouts.View();
+    constexpr std::uint64_t fingerprint = 0x5eed'0000'0000'0002ull;
+    {
+        auto absent = StartPipelineJournalReplay(context, fingerprint, {});
+        Require(absent != nullptr, "the first replay did not start");
+        absent->Wait();
+    }
+    constexpr std::uint32_t configurations = 1032;
+    for (std::uint32_t configuration = 0; configuration < configurations; ++configuration) {
+        VertexInputLayout input;
+        input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+        static_cast<void>(CachedPipeline(context, State{}, input, resources, shaders));
+    }
+    FlushPipelineJournal();
+    ClearCachedPipelines(context.device);
+    Require(PipelineStoreTotals().cached == 0, "clearing the device left pipelines in the store");
+    auto replay = StartPipelineJournalReplay(context, fingerprint, {});
+    Require(replay != nullptr, "the replay did not start");
+    replay->Wait();
+    const auto totals = PipelineStoreTotals();
+    Require(totals.cached == configurations, "a replay of " + std::to_string(configurations) + " recorded pipelines kept " + std::to_string(totals.cached) + " in the store (bound " + std::to_string(totals.bound) + ")");
+    ClearCachedPipelines(context.device);
+    context.descriptorCache = nullptr;
+    cache.reset();
+    Require(mock.live == 0, "pipeline store replay growth tests leaked Vulkan objects");
+}
+
 void pipelineJournalTests(bool longPath = false, bool extended = false) {
     using namespace AgcDriver::Graphics;
     using Stage = ShaderRecompiler::ShaderStage;
@@ -11726,6 +11837,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-clear-waits-for-build") {
             pipelineLibraryClearWaitsForBuildTests();
             std::cout << "pipeline library clear waits for active part builds\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-replay-growth") {
+            pipelineStoreReplayGrowthTests();
+            std::cout << "a replayed journal longer than the store bound stays resident\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
+            pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
+            std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-lazy-buffer-pool") {

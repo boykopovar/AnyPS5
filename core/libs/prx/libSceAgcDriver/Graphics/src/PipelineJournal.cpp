@@ -926,7 +926,7 @@ private:
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();
-                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 1024u);
+                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 16384u);
                 if (journal.entries.size() > limit) journal.entries.resize(static_cast<std::size_t>(limit));
                 loaded = std::move(journal);
             } catch (const std::exception& error) {
@@ -983,7 +983,7 @@ private:
             return;
         }
         const auto store = PipelineStoreTotals();
-        if (store.cached >= store.bound) {
+        if (store.cached >= store.bound && !PipelineStoreCanGrow()) {
             counters.skipped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
