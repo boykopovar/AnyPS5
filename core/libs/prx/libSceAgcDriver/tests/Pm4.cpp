@@ -402,8 +402,17 @@ void testIndirectDraw() {
     alignas(4) std::array<std::uint16_t, 8> indices{};
     state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
     state.indexType = 0;
+    state.indexBufferSize.reset();
+    const auto unlimited = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
+    check(unlimited.indexed && unlimited.indirect && !unlimited.indirect->indexLimitKnown && unlimited.indexCount == 0 && unlimited.indexAddress == state.indexBase && unlimited.indexSize == 2 && unlimited.indirect->recordBytes == 20, "an indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    const auto unlimitedMulti = AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state);
+    check(unlimitedMulti.indirect && !unlimitedMulti.indirect->indexLimitKnown && unlimitedMulti.indirect->count == 3 && unlimitedMulti.indirect->stride == 20, "a multi indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    execute(state, makePacket(0x13, {0}));
+    check(state.indexBufferSize.has_value() && *state.indexBufferSize == 0, "INDEX_BUFFER_SIZE of zero was not recorded as written");
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state); }, "INDEX_BUFFER_SIZE");
+    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state); }, "INDEX_BUFFER_SIZE");
     state.indexBufferSize = 8;
+    check(AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state).indirect->indexLimitKnown, "a written INDEX_BUFFER_SIZE resolved with an unknown limit");
     const auto indexed = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
     check(indexed.indexed && indexed.indexAddress == state.indexBase && indexed.indexCount == 8 && indexed.indexSize == 2 && indexed.indirect->recordBytes == 20 && indexed.indirect->stride == 20 && indexed.firstVertex == 0 && indexed.indirect->indxOffset == 0, "indexed indirect draw mismatch");
     check(indexed.indirect->VertexDwordOffset() == 12 && indexed.indirect->InstanceDwordOffset() == 16, "indexed record geometry mismatch");
