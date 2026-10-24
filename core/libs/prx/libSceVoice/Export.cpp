@@ -277,7 +277,7 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return VoiceErrorNotInitialized;
-    if (info == nullptr) APS5_INVALID_ARG_EX;
+    if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
     info->port_type = port.type;
     info->state = PortStateReady;
@@ -319,7 +319,7 @@ int APS5_VABI sceVoiceGetPortAttr(std::uint32_t portId, std::int32_t attr, void*
 }
 
 int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_t* size) {
-    if (data == nullptr || size == nullptr) APS5_INVALID_ARG_EX;
+    if (data == nullptr || size == nullptr) return InvalidArgument;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "port is not an output port");

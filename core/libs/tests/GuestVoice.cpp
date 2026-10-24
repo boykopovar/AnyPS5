@@ -207,6 +207,8 @@ int main() {
 
     VoicePortInfo after{};
     Require(sceVoiceGetPortInfo(input, &after) == 0);
+    Require(sceVoiceGetPortInfo(input, nullptr) == invalidArgument);
+    Require(sceVoiceGetPortInfo(output, nullptr) == invalidArgument);
     Require(after.port_type == before.port_type && after.state == before.state && after.frame_size == before.frame_size);
     float volume = 0;
     bool muted = false;
@@ -214,6 +216,9 @@ int main() {
     Require(sceVoiceGetMuteFlag(output, &muted) == 0 && muted);
     std::uint8_t data[64]{};
     std::uint32_t size = sizeof(data);
+    Require(sceVoiceReadFromOPort(output, nullptr, &size) == invalidArgument);
+    Require(sceVoiceReadFromOPort(output, data, nullptr) == invalidArgument);
+    Require(sceVoiceReadFromOPort(output, nullptr, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(output, data, &size) == 0 && size == 0);
     Require(sceVoiceDisconnectIPortFromOPort(input, output) == 0);
 
