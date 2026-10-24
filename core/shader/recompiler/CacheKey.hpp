@@ -325,6 +325,7 @@ private:
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
+        append(key, value.imageAtomicStoreBarriers);
         append(key, value.float32DenormPreserve);
         append(key, value.fusedExactArithmetic);
         append(key, value.largePixelFunctionLdsBuffer);

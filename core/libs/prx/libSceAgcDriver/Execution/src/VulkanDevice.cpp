@@ -3867,6 +3867,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.registrationModules = state->graphicsPipelineLibrary;
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.waveLdsMemoryBarriers = !state->subgroupControlBarriers;
+    target.imageAtomicStoreBarriers = state->driverId == VK_DRIVER_ID_MOLTENVK;
     target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
