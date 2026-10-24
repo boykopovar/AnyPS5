@@ -3,10 +3,13 @@
 
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
+#include "SDL_hidapi.h"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 
 class DisplayWindow;
@@ -29,6 +32,9 @@ private:
     PadInputState sampleController() const;
     void applyOutput();
     void enableSensors();
+    void openHaptics();
+    void closeHaptics();
+    void streamHaptics();
 
     Pad::KeyboardMouse keyboardMouse;
     SDL_GameController* controller = nullptr;
@@ -40,6 +46,9 @@ private:
     std::chrono::steady_clock::time_point nextRumbleRefresh{};
     LightBarPacer lightBar;
     TriggerEffectCache triggerEffect;
+    SDL_hid_device* haptics = nullptr;
+    std::atomic<bool> hapticsRunning{false};
+    std::thread hapticsThread;
 };
 
 #endif

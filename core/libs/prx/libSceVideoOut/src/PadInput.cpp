@@ -1,14 +1,17 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 #include "SDL.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
+#include "prx/libSceVideoOut/include/DualSenseHaptics.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
@@ -62,6 +65,7 @@ void PadInput::openController(int deviceIndex) {
     outputPending = true;
     lightBar.Reset();
     triggerEffect.Reset();
+    openHaptics();
 }
 
 void PadInput::enableSensors() {
@@ -71,7 +75,58 @@ void PadInput::enableSensors() {
     if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO) == SDL_TRUE) SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, wanted);
 }
 
+void PadInput::openHaptics() {
+    if (controller == nullptr || SDL_GameControllerGetType(controller) != SDL_CONTROLLER_TYPE_PS5) return;
+    const char* path = SDL_GameControllerPath(controller);
+    if (path == nullptr) return;
+    bool bluetooth = false;
+    SDL_hid_device_info* devices = SDL_hid_enumerate(0x054c, 0);
+    for (auto* device = devices; device != nullptr; device = device->next) {
+        if (device->path != nullptr && std::strcmp(device->path, path) == 0) bluetooth = device->interface_number == -1;
+    }
+    SDL_hid_free_enumeration(devices);
+    if (!bluetooth) return;
+    haptics = SDL_hid_open_path(path, 0);
+    if (haptics == nullptr) {
+        APS5_LOG_ERR("Pad: could not open the Bluetooth DualSense for haptics: %s", SDL_GetError());
+        return;
+    }
+    hapticsRunning = true;
+    PadSetHapticStreamOpen_nid_postfix(true);
+    hapticsThread = std::thread([this] { streamHaptics(); });
+    APS5_LOG_CHARS_OUT("Pad: vibration ports play on the Bluetooth DualSense as haptics reports");
+}
+
+void PadInput::streamHaptics() {
+    std::uint8_t sequence = 0;
+    std::uint8_t counter = 0;
+    const auto write = [this](std::span<const std::uint8_t> report) {
+        if (SDL_hid_write(haptics, report.data(), report.size()) >= 0) return true;
+        APS5_LOG_ERR("Pad: a Bluetooth DualSense haptics report failed (%s); haptics stop until the controller reconnects", SDL_GetError());
+        PadSetHapticStreamOpen_nid_postfix(false);
+        hapticsRunning = false;
+        return false;
+    };
+    if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
+    while (hapticsRunning) {
+        std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};
+        if (!PadWaitTakeHapticBlock_nid_postfix(samples.data(), 50)) continue;
+        if (std::all_of(samples.begin(), samples.end(), [](std::int8_t sample) { return sample == 0; })) continue;
+        if (!write(DualSenseHaptics::Report(sequence++, counter++, samples))) return;
+    }
+}
+
+void PadInput::closeHaptics() {
+    if (haptics == nullptr) return;
+    PadSetHapticStreamOpen_nid_postfix(false);
+    hapticsRunning = false;
+    if (hapticsThread.joinable()) hapticsThread.join();
+    SDL_hid_close(haptics);
+    haptics = nullptr;
+}
+
 void PadInput::closeController() {
+    closeHaptics();
     if (controller == nullptr) return;
     SDL_GameControllerClose(controller);
     controller = nullptr;

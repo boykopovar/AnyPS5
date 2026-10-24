@@ -1,11 +1,14 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadAudioHapticQueue.hpp"
+#include "prx/libScePad/include/PadHapticBuffer.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <cstdlib>
 #include <deque>
@@ -24,6 +27,10 @@ namespace {
     std::chrono::steady_clock::time_point audioHapticEnd;
     std::array<std::uint8_t, 2> audioHapticRumble{};
     PadAudioHapticQueue legacyHaptics;
+    std::mutex hapticMutex;
+    std::condition_variable hapticReady;
+    PadHapticBuffer haptics;
+    std::atomic<bool> hapticStreamOpen{false};
     std::uint64_t timestamp = 0;
     std::uint64_t injectedTimestamp = 0;
 
@@ -438,4 +445,36 @@ extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source) {
     std::lock_guard lock(stateMutex);
     legacyHaptics.Clear(source);
     if (RefreshAudioHaptics()) ++output.sequence;
+}
+
+extern "C" void PadSetHapticStreamOpen_nid_postfix(bool open) {
+    {
+        std::lock_guard lock(hapticMutex);
+        haptics.Clear();
+        hapticStreamOpen.store(open);
+    }
+    hapticReady.notify_all();
+}
+
+extern "C" bool PadHapticStreamOpen_nid_postfix() {
+    return hapticStreamOpen.load();
+}
+
+extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate) {
+    if (left == nullptr || right == nullptr || !hapticStreamOpen.load()) return;
+    {
+        std::lock_guard lock(hapticMutex);
+        haptics.Push(left, right, stride, frames, rate);
+    }
+    hapticReady.notify_all();
+}
+
+extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint32_t timeoutMs) {
+    if (block == nullptr) return false;
+    std::unique_lock lock(hapticMutex);
+    hapticReady.wait_for(lock, std::chrono::milliseconds(timeoutMs), [] {
+        return !hapticStreamOpen.load() || haptics.Frames() >= PadHapticBuffer::BlockFrames * 2;
+    });
+    if (!hapticStreamOpen.load()) return false;
+    return haptics.Take(std::span<std::int8_t, PadHapticBuffer::BlockFrames * 2>(block, PadHapticBuffer::BlockFrames * 2));
 }

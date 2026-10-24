@@ -211,7 +211,9 @@ static void Render(AudioOut2Context& context, const AudioOut2Grain& grain) {
     if (pad != nullptr) {
         AudioOut2FinishPadMix(pad, context.grain);
         if (context.padDevice != 0) QueuePadGrain(context);
-        else {
+        else if (PadHapticStreamOpen_nid_postfix()) {
+            PadSubmitHapticFrames_nid_postfix(pad + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, context.grain, AUDIO_OUT2_SAMPLE_RATE);
+        } else {
             const auto rumble = AudioOut2RumbleFromPadFrames(pad, context.grain);
             PadSubmitAudioHaptics_nid_postfix(rumble[0], rumble[1]);
         }

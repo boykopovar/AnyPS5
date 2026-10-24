@@ -336,7 +336,9 @@ static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std
     paceVirtualPort(port, data != nullptr, lock);
     const auto source = static_cast<int>(&port - g_ports) + 1;
     if (port.type == PORT_TYPE_VIBRATION && data == nullptr) PadClearLegacyAudioHaptics_nid_postfix(source);
-    if (!pad.empty()) {
+    if (!pad.empty() && PadHapticStreamOpen_nid_postfix()) {
+        PadSubmitHapticFrames_nid_postfix(pad.data() + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad.data() + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, port.samplesNum, port.freq);
+    } else if (!pad.empty()) {
         constexpr std::uint32_t grainFrames = 256;
         const auto begin = port.virtualQueueEnd - (1000000ULL * port.samplesNum) / port.freq;
         for (std::uint32_t frame = 0; frame < port.samplesNum;) {
