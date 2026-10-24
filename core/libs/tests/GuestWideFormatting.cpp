@@ -186,6 +186,17 @@ static void CheckSecureWideBoundary() {
         "vsnwprintf_s oversized size leaves the buffer untouched");
 }
 
+static void CheckFloat() {
+    char16_t buffer[64];
+    Require(swprintf_nid_postfix(buffer, 64, u"[%.0f|%.1f|%#.3g|%.20f]", 2.5, 0.25, 2025.0, 0.1) == 39 &&
+        buffer == std::u16string(u"[3|0.3|2.03e+03|0.10000000000000000555]"), "swprintf rounds and caps decimal digits");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%.0f|%-8.2e]", 67108865.5, 1125.0) == 19 && buffer == std::u16string(u"[67108865|1.13e+03]"),
+        "swprintf rounds a large tie down");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%a|%.3a]", 0x1p-1074, 0x0.fffffffffffffp-1022) == 25 &&
+        buffer == std::u16string(u"[0x1p-1074|0x2.000p-1023]"), "swprintf normalises subnormal hexadecimal floats");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%.2Lf]", 0.125L) == 6 && buffer == std::u16string(u"[0.13]"), "swprintf long double rounding");
+}
+
 static void CheckSwprintf() {
     char16_t buffer[8];
     for (auto& unit : buffer) unit = u'x';
@@ -310,6 +321,7 @@ int main() {
     CheckPointer();
     CheckCount();
     CheckSwprintf();
+    CheckFloat();
     CheckSecureWideBoundary();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
