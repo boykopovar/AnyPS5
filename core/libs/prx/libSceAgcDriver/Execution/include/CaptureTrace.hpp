@@ -45,6 +45,8 @@ public:
     }
 
 private:
+    friend struct CaptureTraceTestAccess;
+
     static CaptureTrace& instance() {
         static CaptureTrace trace;
         return trace;
@@ -73,8 +75,8 @@ private:
     void append(std::string line) {
         if (!output.is_open()) return;
         const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-        std::lock_guard lock(mutex);
-        if (pending.size() + line.size() + 64 > 16 * 1024 * 1024) throw std::runtime_error("Capture trace queue exceeded 16 MiB");
+        std::unique_lock lock(mutex);
+        spaceAvailable.wait(lock, [this, &line] { return pending.size() + line.size() + 64 <= 16 * 1024 * 1024; });
         pending += std::to_string(++sequence) + " " + std::to_string(elapsed) + "us " + line + "\n";
         if (line.starts_with("blit ")) flushRequested = true;
         if (pending.size() >= 65536 || flushRequested) changed.notify_one();
@@ -91,6 +93,7 @@ private:
                     batch.swap(pending);
                     flushRequested = false;
                 }
+                spaceAvailable.notify_all();
                 if (batch.empty()) continue;
                 output.write(batch.data(), static_cast<std::streamsize>(batch.size()));
                 output.flush();
@@ -104,6 +107,7 @@ private:
     std::ofstream output;
     std::mutex mutex;
     std::condition_variable changed;
+    std::condition_variable spaceAvailable;
     std::string pending;
     std::thread worker;
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
