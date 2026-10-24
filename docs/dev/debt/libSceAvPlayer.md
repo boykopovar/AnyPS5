@@ -16,6 +16,8 @@
 
 - [Paused initial video](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) keeps the first picture available when audio has already established the playback epoch before the caller pauses. Further pictures of that epoch stay blocked, as after a paused jump. The console's exact initial preparation ordering has not been measured.
 
+- [AvPlayer frame aspect ratio](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) - the `aspect_ratio` of a video frame is the stream's sample aspect ratio (1.0 when the stream gives none), while the stream info keeps width / height, as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/avplayer/avplayer_source.cpp). A title that sizes its video quad from the frame value drew it (9/16)^2 too small with width / height; the console's own definition of the field is unknown
+
 ### Functional
 
 - [sceAvPlayerGetVideoData / sceAvPlayerGetVideoDataEx](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) - delivers a video frame up to 0.75 × frame duration ahead of its timestamp in default sync mode to accommodate presentation loops that poll slightly before the refresh boundary; the console's exact presentation tolerance is unverified.
