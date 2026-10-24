@@ -49,6 +49,7 @@ struct ColorTarget {
     bool dccPipeAligned = false;
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
+    std::uint32_t cmaskSlice = 0;
     bool cmaskFastClear = false;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};

@@ -204,7 +204,7 @@ CmaskLayout::CmaskLayout(std::uint32_t width, std::uint32_t height) : width(widt
     bytes = static_cast<std::size_t>(blocksPerRow) * ((height + 511u) / 512u) * Alignment;
 }
 
-std::size_t CmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY) const {
+std::size_t CmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY, std::uint32_t slice) const {
     require(tileX < TilesX() && tileY < TilesY(), "AGC graphics: CMASK tile out of range");
     static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 13> equation{{
         {0x008u, 0x000u}, {0x000u, 0x010u}, {0x040u, 0x000u}, {0x000u, 0x040u}, {0x080u, 0x000u}, {0x000u, 0x080u}, {0x100u, 0x000u},
@@ -214,6 +214,7 @@ std::size_t CmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY) const 
     const auto y = tileY * 8u;
     std::size_t offset = 0;
     for (std::size_t bit = 0; bit < equation.size(); ++bit) offset |= static_cast<std::size_t>(parity((x & equation[bit].first) ^ (y & equation[bit].second))) << bit;
+    offset ^= static_cast<std::size_t>(((slice & 1u) << 12u) | ((slice & 2u) << 10u) | ((slice & 4u) << 8u) | ((slice & 8u) << 6u));
     const auto block = static_cast<std::size_t>(y / 512u) * blocksPerRow + x / 1024u;
     return block * Alignment * 2u + offset;
 }

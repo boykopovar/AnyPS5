@@ -35,7 +35,7 @@ alignas(4096) std::array<std::byte, 2 * 65536> SurfaceStorage{};
 const std::span<std::byte, 65536> Surface{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(SurfaceStorage.data()) + 65535u) & ~std::uintptr_t{65535u}), 65536};
 alignas(4096) std::array<std::uint8_t, 4096> Cmask{};
 
-ColorTarget target(ColorTileMode mode) {
+ColorTarget target(ColorTileMode mode, std::uint32_t slice = 0) {
     const ColorTargetLayout layout(Width, Height, mode, 4);
     ColorTarget color{};
     color.address = reinterpret_cast<std::uintptr_t>(Surface.data());
@@ -50,6 +50,7 @@ ColorTarget target(ColorTileMode mode) {
     color.surfaceExtent = color.extent;
     color.cmaskAddress = reinterpret_cast<std::uintptr_t>(Cmask.data());
     color.cmaskBytes = CmaskLayout(Width, Height).Bytes();
+    color.cmaskSlice = slice;
     return color;
 }
 
@@ -64,7 +65,7 @@ void prepare(const ColorTarget& color, const std::function<bool(std::uint32_t, s
     for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
         for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
             if (!cleared(tileX, tileY)) continue;
-            const auto nibble = layout.Nibble(tileX, tileY);
+            const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
             mask[nibble / 2u] &= std::byte{static_cast<std::uint8_t>((nibble % 2u) == 0 ? 0xf0u : 0x0fu)};
             mask[nibble / 2u] |= std::byte{static_cast<std::uint8_t>((nibble % 2u) == 0 ? code : code << 4u)};
         }
@@ -121,8 +122,9 @@ void eliminate(AgcDriver::VulkanDevice& device, const ColorTarget& color) {
     device.ColorMetadataPass({ColorMetadataPass::Mode::EliminateFastClear, {color}});
 }
 
-void run(AgcDriver::VulkanDevice& device, ColorTileMode mode, const std::string& name) {
-    const auto color = target(mode);
+void run(AgcDriver::VulkanDevice& device, ColorTileMode mode, const std::string& label, std::uint32_t slice = 0) {
+    const std::string name = slice == 0 ? label : label + " slice " + std::to_string(slice);
+    const auto color = target(mode, slice);
     prepare(color, [](std::uint32_t, std::uint32_t) { return true; });
     draw(device, color, {{0, 0}, {20, Height}});
     expect(device, color, [](std::uint32_t x, std::uint32_t) { return x < 20 ? Drawn : Clear; }, name + " fast-cleared target drawn over its left part");
@@ -174,6 +176,7 @@ int main() {
         }
         run(*device, ColorTileMode::Linear, "linear");
         run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X");
+        for (const std::uint32_t slice : {1u, 2u, 3u, 8u}) run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X", slice);
         unknownCode(*device);
         device->WaitIdle();
         device.reset();

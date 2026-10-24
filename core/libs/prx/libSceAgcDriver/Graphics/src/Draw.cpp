@@ -412,7 +412,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     if (uniform(std::byte{0})) return CmaskState::Cleared;
     for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
         for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
-            const auto nibble = layout.Nibble(tileX, tileY);
+            const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
             const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
             if (code == 0u) cleared.push_back(tileY * layout.TilesX() + tileX);
         }
@@ -452,7 +452,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     const auto commands = recorder.Commands();
     if (resident != nullptr && !resident->Cached()) recorder.KeepBytes(resident.get(), static_cast<std::size_t>(resident->BudgetBytes()));
     recorder.Keep(resident);
-    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
+    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0, color.cmaskSlice);
     recorder.NotePendingWrite(address, bytes);
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
