@@ -357,6 +357,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidentMirror.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
@@ -1215,6 +1216,17 @@ if(BUILD_TESTING)
         set_tests_properties(agc_dcc_key_sharing PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
+
+add_test_executable(agc_reference_storage_tests EXCLUDE_FROM_ALL tests/ReferenceStorage.cpp)
+target_sources(agc_reference_storage_tests PRIVATE Graphics/src/ReferenceStorage.cpp tests/AllocationFailure.cpp)
+target_include_directories(agc_reference_storage_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_reference_storage_tests PRIVATE libc)
+set_target_properties(agc_reference_storage_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_reference_storage_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_reference_storage_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_reference_storage COMMAND agc_reference_storage_tests)
 endif()
 
 add_test_executable(agc_buffer_pool_tests EXCLUDE_FROM_ALL tests/BufferPool.cpp)
@@ -2682,6 +2694,8 @@ if(BUILD_TESTING)
     add_test(NAME agc_sparse_heap_mirror_unwatch COMMAND agc_driver_graphics_tests --sparse-heap-mirror-unwatch)
     add_test(NAME agc_sparse_heap_mirror_unwatch_no_space_cache COMMAND agc_driver_graphics_tests --sparse-heap-mirror-unwatch)
     add_test(NAME agc_sparse_heap_mirror_budget COMMAND agc_driver_graphics_tests --sparse-heap-mirror-budget)
+    add_test(NAME agc_heap_mirror_reference_size COMMAND agc_driver_graphics_tests --heap-mirror-reference-size)
+    set_tests_properties(agc_heap_mirror_reference_size PROPERTIES TIMEOUT 30)
     add_test(NAME agc_heap_mirror_run_unwatch COMMAND agc_driver_graphics_tests --heap-mirror-run-unwatch)
     add_test(NAME agc_heap_mirror_run_unwatch_no_space_cache COMMAND agc_driver_graphics_tests --heap-mirror-run-unwatch)
     set_tests_properties(agc_heap_mirror_unwatch_no_space_cache agc_sparse_heap_mirror_unwatch_no_space_cache agc_heap_mirror_run_unwatch_no_space_cache PROPERTIES ENVIRONMENT "APS5_NO_ADDRESS_SPACE_CACHE=1")

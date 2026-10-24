@@ -3239,6 +3239,67 @@ void RunSparseHeapMirrorBudgetTests(const Context& context, const BdaTestAccess&
     std::cout << "a sparse heap whose mirror would pass the heap mirror budget is copied\n";
 }
 
+void RunHeapMirrorReferenceSizeTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t heapBytes = 4 * block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: heap mirror reference sizes not tested\n";
+        return;
+    }
+    auto* guest = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(heapBytes, block));
+    Require(guest != nullptr, "cannot allocate the heap in the guest arena");
+    GuestArena::GuestArenaCommit_nid_postfix(guest, heapBytes, PAGE_READWRITE, heapBytes);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: heap mirror reference sizes not tested\n";
+        return;
+    }
+    void* mapping = mmap(nullptr, heapBytes + block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "cannot map the heap");
+    auto* guest = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapping) + block - 1) & ~std::uintptr_t{block - 1});
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, heapBytes);
+#endif
+    std::memset(guest, 0x11, heapBytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(guest);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, heapBytes, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    const auto before = MirrorCounters();
+    const auto store = [&](std::uint64_t written, std::size_t bytes, std::size_t at, std::byte value) {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.AddWritable(written, bytes);
+        leased.Upload(true);
+        std::uint32_t adjustment = 0;
+        const auto view = leased.Descriptor(written, static_cast<std::uint32_t>(bytes), adjustment);
+        access.bytes(view.buffer)[view.offset + adjustment + at] = value;
+        leased.WriteBack();
+    };
+    store(address + 4096, 8192, 8000, std::byte{0x7a});
+    Require(MirrorCounters().heapMirrors == before.heapMirrors + 1, "the writable heap was not mirrored");
+    Require(guest[4096 + 8000] == 0x7a, "the larger write-back lost the GPU's store");
+    store(address + 16384, 2048, 2000, std::byte{0x7b});
+    Require(guest[16384 + 2000] == 0x7b && guest[4096 + 8000] == 0x7a, "a smaller write-back after a larger one lost the GPU's store");
+    store(address + 32768, 8192, 100, std::byte{0x7c});
+    Require(guest[32768 + 100] == 0x7c && guest[16384 + 2000] == 0x7b, "a write-back after a smaller one lost the GPU's store");
+    registry(false);
+    ClearImageMirrors(context.device);
+    ClearSnapshotCopies(context.device);
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(guest, heapBytes);
+    GuestArena::GuestArenaRelease_nid_postfix(guest, heapBytes);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, heapBytes);
+    munmap(mapping, heapBytes + block);
+#endif
+    std::cout << "a writable heap mirror writes back a smaller range after a larger one\n";
+}
+
 void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t block = 65536;
     constexpr std::size_t heapBytes = 32 * block;
