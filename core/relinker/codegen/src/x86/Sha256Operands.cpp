@@ -20,16 +20,15 @@ Sha256Operands DecodeSha256(const std::uint8_t* data, const std::size_t length) 
             pos += 1;
             continue;
         }
-        if (b == PrefixOperandSize || b == PrefixRepne || b == PrefixRep) {
+        if (b == PrefixLock || b == PrefixOperandSize || b == PrefixRepne || b == PrefixRep) {
             throw CodegenException("Not a SHA-256 instruction");
         }
-        if (b != PrefixLock && b != PrefixAddressSize &&
+        if (b != PrefixAddressSize &&
             b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
             b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
         }
-        if (b != PrefixLock)
-            prefixes.push_back(b);
+        prefixes.push_back(b);
         rex = 0;
         pos += 1;
     }
