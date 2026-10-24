@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "Cookies.hpp"
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -60,6 +61,11 @@ static std::vector<int> ReleaseOwnedHandles(int owner) {
 static bool HandleIsLive(int id) {
     std::lock_guard lock(g_handlesMutex);
     return FindAnyHandle(id) != nullptr;
+}
+
+bool Http2CookieBoxExists(int cookieBoxId) {
+    std::lock_guard lock(g_handlesMutex);
+    return FindHandle(cookieBoxId, Http2Kind::CookieBox) != nullptr;
 }
 
 struct Http2MemoryPoolStats {
@@ -352,7 +358,7 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
 }
 
 int APS5_VABI sceHttp2CookieFlush(int id) {
-    (void)id;
+    Http2FlushCookies(id);
     return 0;
 }
 
@@ -368,9 +374,12 @@ int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
 }
 
 int APS5_VABI sceHttp2DeleteCookieBox(int cookie_box_id) {
-    std::lock_guard lock(g_handlesMutex);
-    if (FindHandle(cookie_box_id, Http2Kind::CookieBox) == nullptr) return ERROR_INVALID_ID;
-    g_handles.erase(cookie_box_id);
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(cookie_box_id, Http2Kind::CookieBox) == nullptr) return ERROR_INVALID_ID;
+        g_handles.erase(cookie_box_id);
+    }
+    Http2ForgetCookies(cookie_box_id);
     return 0;
 }
 
@@ -421,11 +430,6 @@ int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint3
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceHttp2AddCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttp2AuthCacheFlush(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -451,17 +455,7 @@ int APS5_VABI sceHttp2GetAutoRedirect(void) {
     return 0;
 }
 
-int APS5_VABI sceHttp2GetCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttp2GetCookieBox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2GetCookieStats(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -477,21 +471,6 @@ int APS5_VABI sceHttp2RemoveRequestHeader(void) {
 }
 
 int APS5_VABI sceHttp2SetAuthInfoCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNumPerDomain(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxSize(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
