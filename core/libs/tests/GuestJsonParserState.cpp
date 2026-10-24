@@ -19,6 +19,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
+int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, int (APS5_VABI*)(char&, void*), void*);
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
 std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value*);
 std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
@@ -57,6 +58,44 @@ static void APS5_VABI NotifyTracked(void*, int error, std::size_t, void* context
 static int Parse(Value& value, const char* text) {
     return _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, text, std::strlen(text));
 }
+static int APS5_VABI ReadNext(char& character, void* context) {
+    auto& cursor = *static_cast<const char**>(context);
+    if (!*cursor) return -1;
+    character = *cursor++;
+    return 0;
+}
+static void CheckArrayEntryFailures(ParserTrace& live, std::size_t baseline) {
+    for (bool callback : {false, true}) for (bool valid : {false, true}) {
+        bool completed = false;
+        unsigned failures = 0;
+        for (int budget = 0; budget < 32 && !completed; ++budget) {
+            Value value{}; _ZN3sce4Json5ValueC1El(&value, 77);
+            Require(Parse(value, "[]") == 0, "Prepare an owned empty array before element admission");
+            const char* document = valid ? "[1]" : "[1,";
+            const char* cursor = document;
+            const auto notifications = live.notifications;
+            live.budget = budget;
+            const int status = callback ? _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&value, ReadNext, &cursor) : Parse(value, document);
+            live.budget = -1;
+            const bool failed = live.notifications != notifications;
+            const int expected = failed ? static_cast<int>(0x80848102) : valid ? 0 : callback ? -1 : static_cast<int>(0x80848101);
+            Require(status == expected, "Array element allocation and reader failures must preserve their public status");
+            if (!failed) {
+                completed = true;
+                Require(value.type == 6 && _ZNK3sce4Json5Value5countEv(&value) == (valid ? 1 : 2), "Complete and malformed array parsing must retain the admitted entry count");
+                const auto* first = _ZNK3sce4Json5Array5frontEv(reinterpret_cast<const Array*>(value.payload));
+                Require(first->type == 3 && first->payload == 1 && first->parent == &value, "The parsed element must remain owned by its destination array");
+            } else {
+                ++failures;
+                Require(Parse(value, "false") == 0 && Parse(value, "[]") == 0 && Parse(value, "[1]") == 0 && _ZNK3sce4Json5Value5countEv(&value) == 1,
+                        "A failed array parse must permit cleanup and successful reuse of the same value");
+            }
+            _ZN3sce4Json5ValueD1Ev(&value);
+            Require(live.size() == baseline, "Element admission and callback parsing must leave no unreachable guest allocations after cleanup");
+        }
+        Require(completed && failures != 0, "Every reader and syntax case must exercise guest allocation failure and complete admission");
+    }
+}
 int main() {
     JsonTest::Allocator allocator;
     void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTracked), reinterpret_cast<void*>(FreeTracked), reinterpret_cast<void*>(NotifyTracked)};
@@ -67,6 +106,7 @@ int main() {
     _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, &parameter) == 0, "Initialize parser state tests");
     const auto baseline = live.size();
+    CheckArrayEntryFailures(live, baseline);
     struct FailureCase { bool once; int budget; int type; unsigned notifications; std::size_t requests; const char* text; };
     const FailureCase failures[]{
         {false, 0, 0, 2, 2, ""}, {false, 1, 0, 2, 3, ""},
