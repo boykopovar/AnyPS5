@@ -37,6 +37,7 @@ extern "C" {
 void* APS5_VABI SSL_get_SSL_CTX_nid_postfix(const TestSsl*);
 void* APS5_VABI SSL_get_rbio_nid_postfix(const TestSsl*);
 void* APS5_VABI SSL_get_wbio_nid_postfix(const TestSsl*);
+int APS5_VABI SSL_version_nid_postfix(const TestSsl*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -85,9 +86,20 @@ static void TestGetWbio() {
     Require(SSL_get_wbio_nid_postfix(&ssl) == &write);
 }
 
+static void TestVersion() {
+    TestSsl ssl {};
+    RequireThrows([] { SSL_version_nid_postfix(nullptr); });
+    Require(SSL_version_nid_postfix(&ssl) == 0);
+    ssl.version = 0x0303;
+    Require(SSL_version_nid_postfix(&ssl) == 0x0303);
+    ssl.version = 0xFEFF;
+    Require(SSL_version_nid_postfix(&ssl) == 0xFEFF);
+}
+
 int main() {
     TestGetSslCtx();
     TestGetRbio();
     TestGetWbio();
+    TestVersion();
     return 0;
 }
