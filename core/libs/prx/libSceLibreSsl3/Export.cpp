@@ -326,11 +326,6 @@ int APS5_VABI X509_get0_notAfter_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_get0_notBefore_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_get0_signature_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
