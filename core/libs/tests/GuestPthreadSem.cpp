@@ -10,6 +10,7 @@
 extern "C" {
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI scePthreadCancel(Pthread thread);
 int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
 int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
 int APS5_VABI scePthreadSemPost(PthreadSem* sem);
@@ -66,6 +67,18 @@ static void* APS5_VABI Poster(void* arg) {
     return nullptr;
 }
 
+struct CancellableWaitContext {
+    PthreadSem* sem = nullptr;
+    std::atomic<bool> waiting{false};
+};
+
+static void* APS5_VABI CancellableWaiter(void* arg) {
+    auto& context = *static_cast<CancellableWaitContext*>(arg);
+    context.waiting.store(true, std::memory_order_release);
+    (void)scePthreadSemWait(context.sem);
+    return nullptr;
+}
+
 int main() {
     CheckValueLimit();
 
@@ -90,9 +103,73 @@ int main() {
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     Require(scePthreadSemDestroy(&context.sem) == SCE_OK);
 
-    bool rejected = false;
-    try { scePthreadSemWait(&context.sem); }
-    catch (const std::runtime_error&) { rejected = true; }
-    Require(rejected);
+    Require(scePthreadSemDestroy(&context.sem) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadSemDestroy(&sem) == SCE_OK);
+
+    PthreadSem busySem = nullptr;
+    Require(scePthreadSemInit(&busySem, 0, 0, nullptr) == SCE_OK);
+    std::atomic<bool> busyWaiting{false};
+    std::atomic<int> waitResult{-1};
+    std::thread waiterThread([&] {
+        busyWaiting.store(true, std::memory_order_release);
+        waitResult = scePthreadSemWait(&busySem);
+    });
+    while (!busyWaiting.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(scePthreadSemDestroy(&busySem) == SCE_OK);
+    waiterThread.join();
+    Require(waitResult == SCE_KERNEL_ERROR_EINVAL);
+
+    PthreadSem cancelSem = nullptr;
+    Require(scePthreadSemInit(&cancelSem, 0, 0, nullptr) == SCE_OK);
+    CancellableWaitContext cancelContext{&cancelSem};
+    Pthread cancelThread = nullptr;
+    Require(scePthreadCreate(&cancelThread, nullptr, CancellableWaiter, &cancelContext, nullptr) == SCE_OK);
+    while (!cancelContext.waiting.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(scePthreadCancel(cancelThread) == SCE_OK);
+    Require(scePthreadJoin(cancelThread, nullptr) == SCE_OK);
+    Require(scePthreadSemDestroy(&cancelSem) == SCE_OK);
+
+    for (int iter = 0; iter < 50; ++iter) {
+        PthreadSem raceSem = nullptr;
+        Require(scePthreadSemInit(&raceSem, 0, 0, nullptr) == SCE_OK);
+        std::atomic<bool> raceWaiting{false};
+        std::thread racer([&] {
+            raceWaiting.store(true, std::memory_order_release);
+            Require(scePthreadSemWait(&raceSem) == SCE_OK);
+            Require(scePthreadSemDestroy(&raceSem) == SCE_OK);
+        });
+        while (!raceWaiting.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        Require(scePthreadSemPost(&raceSem) == SCE_OK);
+        racer.join();
+    }
+
+    for (int iter = 0; iter < 50; ++iter) {
+        PthreadSem queuedSem = nullptr;
+        Require(scePthreadSemInit(&queuedSem, 0, 0, nullptr) == SCE_OK);
+        std::atomic<bool> postStarted{false};
+        std::atomic<int> postResult{-1};
+        std::thread concurrentPost([&] {
+            postStarted.store(true, std::memory_order_release);
+            try {
+                postResult = scePthreadSemPost(&queuedSem);
+            } catch (const std::exception&) {
+                postResult = -2;
+            }
+        });
+        while (!postStarted.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        Require(scePthreadSemDestroy(&queuedSem) == SCE_OK);
+        concurrentPost.join();
+        Require(postResult == SCE_OK || postResult == SCE_KERNEL_ERROR_EINVAL || postResult == -2);
+    }
 }
