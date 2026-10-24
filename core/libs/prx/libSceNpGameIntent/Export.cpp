@@ -19,7 +19,7 @@ extern "C" {
 
 int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) {
  if (intentData == nullptr || key == nullptr || valueBuf == nullptr || bufSize == 0) {
-  APS5_INVALID_ARG_EX;
+  return NpGameIntentErrorInvalidArgument;
  }
 
  valueBuf[0] = '\0';
@@ -33,7 +33,7 @@ int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {
 
 int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
  if (intentInfo == nullptr) {
-  APS5_INVALID_ARG_EX;
+  return NpGameIntentErrorInvalidArgument;
  }
 
  intentInfo->user_id = NpGameIntentUserIdInvalid;

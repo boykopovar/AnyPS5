@@ -15,7 +15,6 @@ int APS5_VABI sceNpGameIntentVshInitialize(void);
 int APS5_VABI sceNpGameIntentVshTerminate(void);
 int APS5_VABI sceNpGameIntentTerminate(void);
 int APS5_VABI sceNpAppLauncherInitialize(const void* initParam);
-int APS5_VABI sceNpAppLauncherLaunchApp(void);
 int APS5_VABI sceNpAppLauncherTerminate(void);
 }
 
@@ -36,6 +35,7 @@ static bool Throws(TCall call) {
 }
 
 int main() {
+    constexpr int kInvalidArgument = -2141898748;
     constexpr int kIntentNotFound = -2141898746;
     constexpr int kValueNotFound = -2141898745;
 
@@ -55,9 +55,18 @@ int main() {
     Require(info.user_id == -1, "info user_id mismatch");
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
+    Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
     Require(sceNpGameIntentReceiveIntent(&info) == kIntentNotFound, "receive intent mismatch");
 
     char buf[64]{};
+    Require(sceNpGameIntentGetPropertyValueString(nullptr, "key", buf, sizeof(buf)) == kInvalidArgument,
+            "null intent data did not fail");
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, nullptr, buf, sizeof(buf)) == kInvalidArgument,
+            "null key did not fail");
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", nullptr, sizeof(buf)) == kInvalidArgument,
+            "null value buf did not fail");
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", buf, 0) == kInvalidArgument,
+            "zero buf size did not fail");
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", buf, sizeof(buf)) == kValueNotFound,
             "get property value mismatch");
 
@@ -68,8 +77,6 @@ int main() {
     unsigned char appLauncherParam[0x28]{};
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;
     Require(sceNpAppLauncherInitialize(appLauncherParam) == 0, "app launcher init failed");
-    Require(Throws<std::runtime_error>([] { sceNpAppLauncherLaunchApp(); }),
-            "app launcher launch must throw until implemented");
     Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x10;
     Require(sceNpAppLauncherInitialize(appLauncherParam) == 0,
