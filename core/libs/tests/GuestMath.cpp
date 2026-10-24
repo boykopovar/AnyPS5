@@ -712,6 +712,65 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckNextafterConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+        int expectedErrno;
+    } cases[] = {
+        {0x0000000000000000ull, 0x3ff0000000000000ull, 0x0000000000000001ull, 0},
+        {0x8000000000000000ull, 0xbff0000000000000ull, 0x8000000000000001ull, 0},
+        {0x0000000000000001ull, 0x0000000000000000ull, 0x0000000000000000ull, ERANGE},
+        {0x8000000000000001ull, 0x3ff0000000000000ull, 0x8000000000000000ull, ERANGE},
+        {0x0010000000000000ull, 0x0000000000000000ull, 0x000fffffffffffffull, ERANGE},
+        {0x000fffffffffffffull, 0x3ff0000000000000ull, 0x0010000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x7ff0000000000000ull, 0x7ff0000000000000ull, ERANGE},
+        {0xffefffffffffffffull, 0xfff0000000000000ull, 0xfff0000000000000ull, ERANGE},
+        {0x7ff0000000000000ull, 0x0000000000000000ull, 0x7fefffffffffffffull, 0},
+        {0x3ff0000000000000ull, 0x4000000000000000ull, 0x3ff0000000000001ull, 0},
+        {0x3ff0000000000000ull, 0x3ff0000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x8000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull, 0},
+        {0x7ff0000000000001ull, 0x3ff0000000000000ull, 0x7ff8000000000001ull, 0},
+        {0x3ff0000000000000ull, 0xfff8000000000123ull, 0xfff8000000000123ull, 0},
+        {0x7ff8000000000123ull, 0xfff8000000000456ull, 0x7ff8000000000123ull, 0},
+        {0xfff8000000000456ull, 0x7ff0000000000001ull, 0xfff8000000000456ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(nextafter_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected);
+        Require(errno == (item.expectedErrno != 0 ? item.expectedErrno : 1234));
+    }
+    constexpr struct {
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t expected;
+        int expectedErrno;
+    } floatCases[] = {
+        {0x00000000u, 0x3f800000u, 0x00000001u, 0},
+        {0x80000000u, 0xbf800000u, 0x80000001u, 0},
+        {0x00000001u, 0x00000000u, 0x00000000u, ERANGE},
+        {0x80000001u, 0x3f800000u, 0x80000000u, ERANGE},
+        {0x00800000u, 0x00000000u, 0x007fffffu, ERANGE},
+        {0x007fffffu, 0x3f800000u, 0x00800000u, 0},
+        {0x7f7fffffu, 0x7f800000u, 0x7f800000u, ERANGE},
+        {0xff7fffffu, 0xff800000u, 0xff800000u, ERANGE},
+        {0x7f800000u, 0x00000000u, 0x7f7fffffu, 0},
+        {0x3f800000u, 0x40000000u, 0x3f800001u, 0},
+        {0x3f800000u, 0x3f800000u, 0x3f800000u, 0},
+        {0x80000000u, 0x00000000u, 0x00000000u, 0},
+        {0x7f800001u, 0x3f800000u, 0x7fc00001u, 0},
+        {0x3f800000u, 0xffc00123u, 0xffc00123u, 0},
+        {0x7fc00123u, 0xffc00456u, 0x7fc00123u, 0},
+        {0xffc00456u, 0x7f800001u, 0xffc00456u, 0},
+    };
+    for (const auto& item : floatCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(nextafterf_nid_postfix(std::bit_cast<float>(item.x), std::bit_cast<float>(item.y))) == item.expected);
+        Require(errno == (item.expectedErrno != 0 ? item.expectedErrno : 1234));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -1669,6 +1728,7 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckNextafterConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

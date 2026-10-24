@@ -834,8 +834,58 @@ float APS5_VABI cbrtf_nid_postfix(float x) {
     return static_cast<float>(T);
 }
 float APS5_VABI remainderf_nid_postfix(float x, float y) { return std::remainder(x, y); }
-float APS5_VABI nextafterf_nid_postfix(float x, float y) { return std::nextafter(x, y); }
-double APS5_VABI nextafter_nid_postfix(double x, double y) { return std::nextafter(x, y); }
+float APS5_VABI nextafterf_nid_postfix(float x, float y) {
+    const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
+    const std::uint32_t uy = std::bit_cast<std::uint32_t>(y);
+    if ((ux & 0x7fffffffu) > 0x7f800000u || (uy & 0x7fffffffu) > 0x7f800000u) {
+        volatile float sum = x + y;
+        (void)sum;
+        return std::bit_cast<float>(((ux & 0x7fffffffu) > 0x7f800000u ? ux : uy) | 0x00400000u);
+    }
+    if (x == y) {
+        return y;
+    }
+    if ((ux & 0x7fffffffu) == 0) {
+        return std::bit_cast<float>((uy & 0x80000000u) | 1u);
+    }
+    const bool towardZero = (x > 0.0f) == (x > y);
+    const std::uint32_t next = towardZero ? ux - 1 : ux + 1;
+    const std::uint32_t exponent = next & 0x7f800000u;
+    if (exponent == 0x7f800000u) {
+        errno = ERANGE;
+        return x + x;
+    }
+    if (exponent == 0) {
+        errno = ERANGE;
+    }
+    return std::bit_cast<float>(next);
+}
+double APS5_VABI nextafter_nid_postfix(double x, double y) {
+    const std::uint64_t ux = std::bit_cast<std::uint64_t>(x);
+    const std::uint64_t uy = std::bit_cast<std::uint64_t>(y);
+    if ((ux & 0x7fffffffffffffffull) > 0x7ff0000000000000ull || (uy & 0x7fffffffffffffffull) > 0x7ff0000000000000ull) {
+        volatile double sum = x + y;
+        (void)sum;
+        return std::bit_cast<double>(((ux & 0x7fffffffffffffffull) > 0x7ff0000000000000ull ? ux : uy) | 0x0008000000000000ull);
+    }
+    if (x == y) {
+        return y;
+    }
+    if ((ux & 0x7fffffffffffffffull) == 0) {
+        return std::bit_cast<double>((uy & 0x8000000000000000ull) | 1u);
+    }
+    const bool towardZero = (x > 0.0) == (x > y);
+    const std::uint64_t next = towardZero ? ux - 1 : ux + 1;
+    const std::uint64_t exponent = next & 0x7ff0000000000000ull;
+    if (exponent == 0x7ff0000000000000ull) {
+        errno = ERANGE;
+        return x + x;
+    }
+    if (exponent == 0) {
+        errno = ERANGE;
+    }
+    return std::bit_cast<double>(next);
+}
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }
