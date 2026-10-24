@@ -24,10 +24,20 @@ namespace {
 constexpr int SCE_SYSMODULE_ERROR_INVALID_VALUE = static_cast<int>(0x805A1000);
 constexpr int SCE_SYSMODULE_ERROR_UNLOADED = static_cast<int>(0x805A1001);
 constexpr int kRtldNow = 2;
+constexpr std::uint32_t kLowestRejectedPublicId = 0x4321;
+constexpr std::uint32_t kLowestRejectedInternalId = 0xffff;
 
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
     return it != kModuleTable.end() ? it->second : nullptr;
+}
+
+bool isRejectedPublicId(const std::uint32_t id) {
+    return id >= kLowestRejectedPublicId;
+}
+
+bool isRejectedInternalId(const std::uint32_t id) {
+    return (id & 0x7fffffffu) >= kLowestRejectedInternalId;
 }
 
 std::mutex gMutex;
@@ -185,6 +195,9 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedPublicId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
         return 0;
     }
@@ -201,6 +214,9 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedPublicId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
         return 0;
     }
@@ -217,6 +233,9 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternalWithArg: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -232,6 +251,9 @@ int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedPublicId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
         return 0;
     }
@@ -249,6 +271,9 @@ int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -261,6 +286,9 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -280,6 +308,9 @@ int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternalWithArg: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -299,6 +330,9 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleIsLoadedInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);

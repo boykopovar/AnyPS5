@@ -118,7 +118,7 @@ void CheckUnwindInfo() {
 #endif
 
 std::uint16_t UnknownModuleId() {
-    for (std::uint32_t id = 0xffff; id != 0; --id) {
+    for (std::uint32_t id = 0xff; id != 0; --id) {
         if (kModuleTable.find(id) == kModuleTable.end()) return static_cast<std::uint16_t>(id);
     }
     std::abort();
@@ -221,7 +221,7 @@ int main() {
         Require(result == 0x5a5a5a5a);
     }
 
-    Require(ThrowsRuntimeError([] { sceSysmoduleIsLoadedInternal(0x00ffffffu); }));
+    Require(sceSysmoduleIsLoadedInternal(0x00ffffffu) == kInvalidValue);
     Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);

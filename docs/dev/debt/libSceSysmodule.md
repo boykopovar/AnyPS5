@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceSysmoduleIsLoaded, sceSysmoduleLoadModule, sceSysmoduleUnloadModule](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) accept a module id missing from the module table: they log it and return 0 without loading anything, so `sceSysmoduleIsLoaded` reports an unknown module as loaded and unloading it succeeds, because titles that load or unload such an id aborted otherwise. The internal variants (`sceSysmoduleLoadModuleInternal`, `sceSysmoduleUnloadModuleInternal`, `sceSysmoduleLoadModuleInternalWithArg`, `sceSysmoduleUnloadModuleInternalWithArg`, `sceSysmoduleGetModuleHandleInternal`) throw for an unknown id. What the console returns for an id it does not know is not verified.
+- [sceSysmoduleIsLoaded, sceSysmoduleLoadModule, sceSysmoduleUnloadModule](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) answer 0 for a public id missing from the module table and below 0x4321, so `sceSysmoduleIsLoaded` reports it as loaded; kept because titles that load or unload such an id aborted otherwise. The internal variants throw for an internal id missing from the table whose low 31 bits are below 0xffff, and `sceSysmoduleGetModuleHandleInternal` for any missing id. Measured in a payload process on a PS5 (firmware 12.70): `sceSysmoduleIsLoaded` answers 0x805a1000 for the missing id 0x131 and 0x805a1001 for 0x133, `sceSysmoduleIsLoadedInternal` 0x805a1001 for the missing id 0x800000c4; public ids from 0x4321 and internal ids with low 31 bits from 0xffff answer 0x805a1000, the ids between the measured ones and the WithArg variants inferred.
 
 ### Unknown function info
 
