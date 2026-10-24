@@ -73,4 +73,10 @@ void APS5_VABI SSL_CTX_set_next_proto_select_cb_nid_postfix(LibreSslCallbackCtx*
     callbacks.nextProtoSelectCbArg = arg;
 }
 
+void APS5_VABI SSL_CTX_set_alpn_select_cb_nid_postfix(LibreSslCallbackCtx* ctx, void* callback, void* arg) {
+    LibreSslCtxCallbacks& callbacks = Callbacks(ctx, __func__);
+    callbacks.alpnSelectCb = callback;
+    callbacks.alpnSelectCbArg = arg;
+}
+
 }
