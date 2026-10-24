@@ -9,6 +9,8 @@ extern "C" {
 int APS5_VABI getpid_nid_postfix(void);
 int APS5_VABI getppid_nid_postfix(void);
 int APS5_VABI getsid_nid_postfix(int);
+int APS5_VABI getpgrp_nid_postfix(void);
+int APS5_VABI getpgid_nid_postfix(int);
 int* APS5_VABI __error_nid_postfix();
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -20,6 +22,19 @@ int main() {
     Require(getsid_nid_postfix(123456) == -1);
     Require(*__error_nid_postfix() == 3);
     Require(getsid_nid_postfix(-1) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(getpgrp_nid_postfix() == self);
+    Require(*__error_nid_postfix() == 0);
+    Require(getpgid_nid_postfix(0) == self);
+    Require(*__error_nid_postfix() == 0);
+    Require(getpgid_nid_postfix(self) == self);
+    Require(*__error_nid_postfix() == 0);
+    *__error_nid_postfix() = 0;
+    Require(getpgid_nid_postfix(123456) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(getpgid_nid_postfix(-1) == -1);
     Require(*__error_nid_postfix() == 3);
     const int parent = getppid_nid_postfix();
     Require(parent > 0 && parent != getpid_nid_postfix());

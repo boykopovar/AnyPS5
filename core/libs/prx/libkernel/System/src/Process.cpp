@@ -344,6 +344,17 @@ int APS5_VABI getsid_nid_postfix(int pid) {
     return -1;
 }
 
+int APS5_VABI getpgrp_nid_postfix(void) {
+    return getpid_nid_postfix();
+}
+
+int APS5_VABI getpgid_nid_postfix(int pid) {
+    const int self = getpid_nid_postfix();
+    if (pid == 0 || pid == self) return self;
+    *__error_nid_postfix() = errnoNoSuchProcess;
+    return -1;
+}
+
 int APS5_VABI getppid_nid_postfix(void) {
 #ifdef _WIN32
     const DWORD self = GetCurrentProcessId();
