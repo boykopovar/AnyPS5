@@ -102,7 +102,6 @@ static void UnregisterGuestStackMapping(void* mapping) {
     guestStackMappings.erase(reinterpret_cast<std::uintptr_t>(mapping));
 }
 
-static constexpr std::uintptr_t GUEST_ARENA_START = 0x200000000;
 static constexpr std::uintptr_t GUEST_MAIN_STACK_TOP = 0x7eeffc000;
 static constexpr int GUEST_MAP_FIXED = 0x10;
 static std::atomic<std::uintptr_t> guestMainStackLow{0};
@@ -212,10 +211,10 @@ extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* ar
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
-    if (arenaBase < GUEST_ARENA_START || arenaBytes < GUEST_MAIN_STACK_TOP - GUEST_ARENA_START)
-        throw std::runtime_error("EnterGuestMainStack: the guest arena does not cover the console's main stack range");
-    const std::uintptr_t top = arenaBase - GUEST_ARENA_START + GUEST_MAIN_STACK_TOP;
+    const std::uintptr_t top = GuestArena::GuestAddressOffset + GUEST_MAIN_STACK_TOP;
     const std::size_t bytes = GuestMainStackBytes() + GUEST_STACK_GUARD;
+    if (top - bytes < arenaBase || top > arenaBase + arenaBytes)
+        throw std::runtime_error("EnterGuestMainStack: the guest arena does not cover the console's main stack range");
     void* mapping = reinterpret_cast<void*>(top - bytes);
     const int mapped = DoMapAnon(&mapping, bytes, 3, GUEST_MAP_FIXED, PS5_PAGE_SIZE, true);
     if (mapped == SCE_KERNEL_ERROR_ENOMEM) {
