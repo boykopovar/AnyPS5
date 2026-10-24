@@ -1,4 +1,5 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include <cstring>
 #include <stdexcept>
 
 namespace LibcException {
@@ -38,8 +39,50 @@ bool APS5_VABI DynamicCastTypeInfo(const ClassTypeInfo*, std::ptrdiff_t, ClassTy
     throw std::runtime_error("RTTI __dyncast_result is not supported");
 }
 
-ClassTypeInfo::__sub_kind APS5_VABI FindPublicTypeInfo(const ClassTypeInfo*, std::ptrdiff_t, const void*, const ClassTypeInfo*, const void*) {
-    throw std::runtime_error("RTTI __do_find_public_src is not supported");
+ClassTypeInfo::__sub_kind APS5_VABI FindPublicTypeInfo(const ClassTypeInfo* self, std::ptrdiff_t src2dst,
+                                                       const void* object, const ClassTypeInfo* sourceType,
+                                                       const void* source) {
+    constexpr int notContained = 1;
+    constexpr int containedPublic = 6;
+    constexpr int containedMask = 4;
+    constexpr int publicMask = 2;
+    constexpr int virtualMask = 1;
+    if (!self || !sourceType) throw std::invalid_argument("RTTI __do_find_public_src: null type");
+    const auto* vtable = *reinterpret_cast<const std::type_info* const* const*>(self);
+    const char* kind = vtable[-1]->name();
+    if (std::strcmp(kind, "N10__cxxabiv120__si_class_type_infoE") == 0) {
+        if (object == source && *self == *sourceType)
+            return static_cast<ClassTypeInfo::__sub_kind>(containedPublic);
+        const auto* single = static_cast<const __cxxabiv1::__si_class_type_info*>(self);
+        return FindPublicTypeInfo(single->__base_type, src2dst, object, sourceType, source);
+    }
+    if (std::strcmp(kind, "N10__cxxabiv121__vmi_class_type_infoE") == 0) {
+        if (object == source && *self == *sourceType)
+            return static_cast<ClassTypeInfo::__sub_kind>(containedPublic);
+    } else {
+        return static_cast<ClassTypeInfo::__sub_kind>(object == source ? containedPublic : notContained);
+    }
+
+    const auto* multiple = static_cast<const __cxxabiv1::__vmi_class_type_info*>(self);
+    for (unsigned index = multiple->__base_count; index-- > 0;) {
+        const auto& base = multiple->__base_info[index];
+        if ((base.__offset_flags & publicMask) == 0) continue;
+        const bool isVirtual = (base.__offset_flags & virtualMask) != 0;
+        if (isVirtual && src2dst == -3) continue;
+        auto offset = base.__offset_flags >> 8;
+        const void* baseObject = object;
+        if (isVirtual) {
+            if (!object) continue;
+            const auto* addressPoint = *static_cast<const std::intptr_t* const*>(object);
+            std::memcpy(&offset, reinterpret_cast<const unsigned char*>(addressPoint) + offset, sizeof(offset));
+        }
+        if (object) baseObject = static_cast<const unsigned char*>(object) + offset;
+        const auto result = FindPublicTypeInfo(base.__base_type, src2dst, baseObject, sourceType, source);
+        const int bits = static_cast<int>(result);
+        if ((bits & containedMask) == 0) continue;
+        return static_cast<ClassTypeInfo::__sub_kind>(bits | (isVirtual ? virtualMask : 0));
+    }
+    return static_cast<ClassTypeInfo::__sub_kind>(notContained);
 }
 
 }
