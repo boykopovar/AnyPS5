@@ -20,6 +20,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
+extern "C" int64_t timezone_nid_postfix;
 
 namespace {
 
@@ -99,14 +100,6 @@ std::tm toHostTm(const GuestTm& guest) {
     host.tm_wday = guest.tm_wday;
     host.tm_yday = guest.tm_yday;
     host.tm_isdst = guest.tm_isdst;
-#ifndef _WIN32
-    host.tm_gmtoff = static_cast<long>(guest.tm_gmtoff);
-#ifdef __APPLE__
-    host.tm_zone = const_cast<char*>(guest.tm_zone);
-#else
-    host.tm_zone = guest.tm_zone;
-#endif
-#endif
     return host;
 }
 
@@ -295,13 +288,7 @@ void addYear(FormatBuffer& buffer, int year, int base, bool century, bool lastDi
 }
 
 const char* guestZoneName(const GuestTm& guest) {
-    if (guest.tm_zone != nullptr) return guest.tm_zone;
-    if (guest.tm_isdst < 0) return "";
-#ifdef _WIN32
-    return _tzname[guest.tm_isdst != 0 ? 1 : 0];
-#else
-    return tzname[guest.tm_isdst != 0 ? 1 : 0];
-#endif
+    return tzname_nid_postfix[guest.tm_isdst > 0 ? 1 : 0];
 }
 
 void addIsoWeek(FormatBuffer& buffer, char conversion, Padding padding, const GuestTm& time) {
@@ -469,8 +456,7 @@ void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time) {
                     addText(buffer, guestZoneName(time));
                     break;
                 case 'z': {
-                    if (time.tm_isdst < 0) break;
-                    int difference = static_cast<int>(time.tm_gmtoff);
+                    int difference = static_cast<int>(-timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0));
                     addText(buffer, difference < 0 ? "-" : "+");
                     if (difference < 0) difference = -difference;
                     difference /= 60;
@@ -554,6 +540,7 @@ void APS5_VABI tzset_nid_postfix(void) {
     GuestTm universal{};
     GuestTm local{};
     gmtime_s_nid_postfix(&now, &universal);
+    universal.tm_isdst = 0;
     localtime_s_nid_postfix(&now, &local);
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
@@ -625,13 +612,6 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
     }
     host.tm_year = static_cast<int>(year);
     copyCalendarFields(host, *result);
-    long standardBias = 0;
-    long daylightBias = 0;
-    _get_timezone(&standardBias);
-    _get_dstbias(&daylightBias);
-    const bool daylight = host.tm_isdst > 0;
-    result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
-    result->tm_zone = _tzname[daylight ? 1 : 0];
 #else
     const std::time_t t = static_cast<std::time_t>(*timer);
     if (localtime_r(&t, &host) == nullptr) {
@@ -639,8 +619,6 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
         return nullptr;
     }
     copyCalendarFields(host, *result);
-    result->tm_gmtoff = host.tm_gmtoff;
-    result->tm_zone = host.tm_zone;
 #endif
     return result;
 }
@@ -648,8 +626,7 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
 GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
     if (timer == nullptr || result == nullptr) return nullptr;
     if (!utcCalendarFields(*timer, *result)) return nullptr;
-    result->tm_gmtoff = 0;
-    result->tm_zone = "UTC";
+    result->tm_isdst = -1;
     return result;
 }
 
