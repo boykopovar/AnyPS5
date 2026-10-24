@@ -30,8 +30,12 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             length += *format++;
             if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l')) length += *format++;
         }
-        const char conversion = *format;
+        char conversion = *format;
         if (!conversion) { errno = 22; return EOF; }
+        if ((conversion == 'S' || conversion == 'C') && length.empty()) {
+            length = "l";
+            conversion = conversion == 'S' ? 's' : 'c';
+        }
         if (!std::strchr("diouxXaAeEfFgGcspn[", conversion)) {
             NotImplemented_nid_no_patch("vsscanf format conversion");
             return EOF;
