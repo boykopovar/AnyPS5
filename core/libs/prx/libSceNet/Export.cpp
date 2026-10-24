@@ -2525,6 +2525,12 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
 #ifdef _WIN32
     u_long available = 0;
     if (ioctlsocket(native->value, FIONREAD, &available) != 0) return fail(native_error());
+#elif defined(__APPLE__)
+    int available = 0;
+    socklen_t size = sizeof(available);
+    const int queried = native->stream ? ::ioctl(native->value, FIONREAD, &available)
+                                    : ::getsockopt(native->value, SOL_SOCKET, SO_NREAD, &available, &size);
+    if (queried != 0) return fail(native_error());
 #else
     int available = 0;
     if (::ioctl(native->value, FIONREAD, &available) != 0) return fail(native_error());
