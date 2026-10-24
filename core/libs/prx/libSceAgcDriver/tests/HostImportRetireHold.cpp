@@ -360,6 +360,54 @@ void BusyRetireOutlivesALaterBatch() {
     Expect(!Live(retired), "the dropped import outlived every batch of its hold");
 }
 
+void CachedLookupMatchesTheFullLookup() {
+    Heap heap;
+    ActiveRecorder active;
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    HostImportLookupCache cache;
+    const auto* first = HostImportForCached(context, heap.Address(), 4096, cache);
+    Expect(first != nullptr && cache.import == first, "the first cached lookup did not import and remember the range");
+    if (first == nullptr) return;
+    Expect(HostImportFor(context, heap.Address(), 4096) == first, "the full lookup answered another import than the cached one");
+    const auto before = first->lastUse;
+    Expect(HostImportForCached(context, heap.Address(), 4096, cache) == first, "a repeat lookup did not answer from the cache");
+    const auto cachedUse = first->lastUse;
+    static_cast<void>(HostImportFor(context, heap.Address(), 4096));
+    Expect(cachedUse - before == first->lastUse - cachedUse, "a cached lookup and a full lookup stamp the last use differently");
+    Expect(HostImportForCached(context, heap.Address(), 8192, cache) == HostImportFor(context, heap.Address(), 8192) && cache.bytes == 8192, "another range was answered from the cache");
+    Expect(HostImportForCached(context, 0, 0, cache) == nullptr && HostImportForCached(context, heap.Address(), 0, cache) == nullptr, "an empty range was answered");
+}
+
+void CachedLookupFollowsTheImportTable() {
+    Heap heap;
+    ActiveRecorder active;
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    HostImportLookupCache cache;
+    const auto* first = HostImportForCached(context, heap.Address(), 4096, cache);
+    Expect(first != nullptr, "the first range was not imported");
+    if (first == nullptr) return;
+    const auto firstBuffer = first->buffer;
+    {
+        Heap other;
+        const auto* added = HostImportFor(context, other.Address(), 4096);
+        Expect(added != nullptr && added != first, "an import of another range was not made");
+        Expect(HostImportForCached(context, heap.Address(), 4096, cache) == HostImportFor(context, heap.Address(), 4096), "an import added between two lookups changed the cached answer");
+        Expect(HostImportForCached(context, other.Address(), 4096, cache) == added, "the cache answered the range of another import");
+        Expect(HostImportForCached(context, heap.Address(), 4096, cache) == first, "the cache lost the import that stayed");
+    }
+    HostImportLookupCache removed;
+    static_cast<void>(HostImportForCached(context, heap.Address(), 4096, removed));
+    heap.Grow();
+    const auto* grown = HostImportForCached(context, heap.Address(), 4096, removed);
+    Expect(grown != nullptr && grown == HostImportFor(context, heap.Address(), 4096) && grown->buffer != firstBuffer && grown->bytes == 2 * RangeBytes, "a dropped import was still answered from the cache");
+    Expect(removed.import == grown && HostImportForCached(context, heap.Address(), 4096, removed) == grown, "the cache did not refill after the import was dropped");
+    HostImportLookupCache gone;
+    Expect(HostImportForCached(context, heap.Address(), 4096, gone) == grown, "a cache filled after the drop answered another import");
+    Expect(HostImportForCached(context, heap.Address(2 * RangeBytes), 4096, gone) == nullptr && gone.import == nullptr, "a range outside every registered range was answered or remembered");
+}
+
 }
 
 int main() {
@@ -373,6 +421,8 @@ int main() {
         WindowPromotionOutlivesTheHold();
         IdleRetireOutlivesTheHold();
         BusyRetireOutlivesALaterBatch();
+        CachedLookupMatchesTheFullLookup();
+        CachedLookupFollowsTheImportTable();
         AgcDriver::Tests::RunHostImportFailureTests(mockContext(), false);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
