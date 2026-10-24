@@ -122,9 +122,10 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
     return Io::SameFile(first, second);
 }
 
-bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second) {
-    const auto firstPath = std::filesystem::weakly_canonical(first);
-    const auto secondPath = std::filesystem::weakly_canonical(second);
+bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
+                           std::filesystem::path& firstPath, std::filesystem::path& secondPath) {
+    if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
+    if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
 #ifdef _WIN32
@@ -401,11 +402,12 @@ int Run(const int argc, char* argv[]) {
             outputPaths.push_back(desktopEntry->EntryPath);
         }
         if (args.windowsDiagnostics) outputPaths.push_back(std::filesystem::absolute("windows-diagnostics-imports.txt"));
+        std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second))
+                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous]))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }
