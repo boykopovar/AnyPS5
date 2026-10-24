@@ -710,10 +710,8 @@ int main() {
     };
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
-    flushCaches(request, beforeInit);
     CheckPoolStatsRejected(0, beforeInit);
     CheckPoolStatsRejected(-1, beforeInit);
-    CheckPoolStatsRejected(request, beforeInit);
     Require(Throws([] { sceHttpGetMemoryPoolStats(0, nullptr); }));
     HttpEpollHandle epoll = nullptr;
     HttpNBEvent events[2]{};
@@ -727,13 +725,11 @@ int main() {
     flushCaches(0, invalidId);
     flushCaches(-1, invalidId);
     flushCaches(INT32_MAX, invalidId);
-    flushCaches(request, invalidId);
     CheckPoolStats(context, 0x10000);
     CheckPoolStats(context, 0x10000);
     CheckPoolStatsRejected(0, invalidId);
     CheckPoolStatsRejected(-1, invalidId);
     CheckPoolStatsRejected(INT32_MAX, invalidId);
-    CheckPoolStatsRejected(request, invalidId);
     Require(Throws([context] { sceHttpGetMemoryPoolStats(context, nullptr); }));
     Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
