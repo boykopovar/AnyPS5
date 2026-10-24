@@ -1402,9 +1402,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_socket_options_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_socket_options_tests)
     add_test(NAME guest_socket_options COMMAND guest_socket_options_tests)
-    set_tests_properties(guest_socket_options PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_socket_options_multicast COMMAND guest_socket_options_tests multicast)
+    set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_socket_options PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_stream_options_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketStreamOptions.cpp)
