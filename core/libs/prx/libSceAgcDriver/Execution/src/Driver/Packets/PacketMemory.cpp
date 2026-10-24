@@ -162,7 +162,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     else ++storesBehindCompletions;
                     wroteOnGpu = true;
                     drained = false;
-                } else if (reason == 1) {
+                } else if (reason == 1 || (reason == 3 && opcode == 0x40 && Pm4::CopyDataSource(packet) == Pm4::CopyDataGpuClockSource && !localDevice->StoresPendingOver(store->address, bytes.size()))) {
                     GuestMemory::Write(store->address, bytes, 1);
                     ++storesOnCpu;
                     wroteOnGpu = true;
