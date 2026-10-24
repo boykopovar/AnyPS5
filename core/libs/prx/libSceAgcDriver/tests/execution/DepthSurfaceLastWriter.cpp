@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -54,7 +55,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
             queues(context.physical, &count, nullptr);
             std::vector<VkQueueFamilyProperties> families(count);

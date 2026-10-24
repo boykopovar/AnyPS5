@@ -6,9 +6,206 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <cstddef>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+
+namespace Hmd2 {
+
+struct ReprojectionStatus;
+struct ReprojectionOutput {
+    std::uint32_t textureDescriptor[8];
+};
+
+struct ReprojectionInitializeParameter {
+    void* workMemory;
+    void* displayMemory;
+    std::int32_t threadPriority;
+    std::uint32_t threadAffinity;
+    std::uint32_t queueParameter24;
+    std::uint32_t queueParameter28;
+    std::uint32_t renderingMode;
+    std::uint32_t reserved36;
+    void* auxiliaryMemory;
+    std::uint32_t timingInterval;
+    std::uint32_t reserved52[5];
+};
+
+static_assert(sizeof(ReprojectionOutput) == 32);
+static_assert(sizeof(ReprojectionInitializeParameter) == 72);
+static_assert(offsetof(ReprojectionInitializeParameter, threadPriority) == 16);
+static_assert(offsetof(ReprojectionInitializeParameter, threadAffinity) == 20);
+static_assert(offsetof(ReprojectionInitializeParameter, renderingMode) == 32);
+static_assert(offsetof(ReprojectionInitializeParameter, auxiliaryMemory) == 40);
+static_assert(offsetof(ReprojectionInitializeParameter, timingInterval) == 48);
+struct ReprojectionLayer;
+struct ReprojectionBufferedLayer;
+
+struct ReprojectionOption {
+    std::uint32_t size;
+    std::uint32_t flags;
+    std::uint32_t reserved[30];
+};
+
+struct ReprojectionParameter {
+    const ReprojectionLayer* layers;
+    std::int32_t layerCount;
+    std::uint8_t padding[4];
+    const ReprojectionOption* option;
+};
+
+struct ReprojectionBufferedParameter {
+    const ReprojectionBufferedLayer* layers;
+    std::int32_t layerCount;
+    std::uint8_t padding[4];
+    const ReprojectionOption* option;
+};
+
+static_assert(sizeof(ReprojectionOption) == 128);
+static_assert(sizeof(ReprojectionParameter) == 24);
+static_assert(sizeof(ReprojectionBufferedParameter) == 24);
+static_assert(offsetof(ReprojectionParameter, option) == 16);
+static_assert(offsetof(ReprojectionBufferedParameter, option) == 16);
+
+
+struct MirroringParameter {
+    void* workMemory;
+    void* displayMemory;
+};
+
+struct MirroringOption {
+    std::uint32_t mode;
+    std::uint32_t reserved[7];
+};
+
+static_assert(sizeof(MirroringParameter) == 16);
+static_assert(sizeof(MirroringOption) == 32);
+
+struct GazeResultParameter {
+    std::uint32_t size;
+    std::int32_t handle;
+    std::uint8_t reserved[8];
+};
+struct GazeResult;
+struct FoveatedRenderingResult {
+    std::uint32_t size;
+    std::int32_t status;
+    float direction[3];
+    std::uint8_t reserved[4];
+};
+
+static_assert(sizeof(GazeResultParameter) == 16);
+static_assert(sizeof(FoveatedRenderingResult) == 24);
+static_assert(offsetof(FoveatedRenderingResult, direction) == 8);
+struct GazeCalibrationData {
+    void* data;
+    std::int32_t size;
+};
+struct GazeUserCalibrationData {
+    const void* data;
+    std::int32_t size;
+};
+struct GazeUserCalibrationStatus {
+    std::int32_t status;
+    std::int32_t eye;
+    float point[3];
+};
+struct GazeRawData;
+struct GazeObjectSelectionTransform {
+    float values[16];
+};
+
+struct GazeObjectSelectionObject {
+    std::uint64_t id;
+    std::uint32_t enabled;
+    std::uint32_t reserved12;
+    GazeObjectSelectionTransform transform;
+    const GazeObjectSelectionTransform* boundingBoxes;
+    std::uint32_t boundingBoxCount;
+    std::uint32_t reserved92;
+};
+
+struct GazeObjectSelectionParameter {
+    std::uint32_t size;
+    std::uint32_t reserved4;
+    std::uint64_t reserved8;
+    std::uint64_t gazeTimestamp;
+    GazeObjectSelectionTransform transform;
+    std::uint32_t selectionMode;
+    std::uint32_t filterMode;
+    std::uint64_t timestamp;
+    const GazeObjectSelectionObject* objects;
+    std::uint32_t objectCount;
+    std::uint32_t reserved116;
+};
+
+struct GazeObjectSelectionResult {
+    std::uint32_t size;
+    std::uint32_t selected;
+    std::uint64_t objectId;
+    std::uint64_t gazeTimestamp;
+    std::uint32_t gazeValid;
+    float origin[3];
+    float direction[3];
+    float distance;
+};
+
+static_assert(sizeof(GazeObjectSelectionTransform) == 64);
+static_assert(sizeof(GazeObjectSelectionObject) == 96);
+static_assert(offsetof(GazeObjectSelectionObject, transform) == 16);
+static_assert(offsetof(GazeObjectSelectionObject, boundingBoxes) == 80);
+static_assert(offsetof(GazeObjectSelectionObject, boundingBoxCount) == 88);
+static_assert(sizeof(GazeObjectSelectionParameter) == 120);
+static_assert(offsetof(GazeObjectSelectionParameter, transform) == 24);
+static_assert(offsetof(GazeObjectSelectionParameter, selectionMode) == 88);
+static_assert(offsetof(GazeObjectSelectionParameter, timestamp) == 96);
+static_assert(offsetof(GazeObjectSelectionParameter, objects) == 104);
+static_assert(offsetof(GazeObjectSelectionParameter, objectCount) == 112);
+static_assert(sizeof(GazeObjectSelectionResult) == 56);
+static_assert(offsetof(GazeObjectSelectionResult, objectId) == 8);
+static_assert(offsetof(GazeObjectSelectionResult, gazeTimestamp) == 16);
+static_assert(offsetof(GazeObjectSelectionResult, origin) == 28);
+static_assert(offsetof(GazeObjectSelectionResult, direction) == 40);
+static_assert(offsetof(GazeObjectSelectionResult, distance) == 52);
+struct GazeObjectSelectionInitializeParameter {
+    std::uint32_t size;
+    std::uint32_t maxObjects;
+    void* memory;
+    std::uint32_t memorySize;
+    std::uint32_t reserved;
+};
+struct GazeObjectSelectionMemoryParameter {
+    std::uint32_t size;
+    std::uint32_t maxObjects;
+};
+struct GazeObjectSelectionMemoryInfo {
+    std::uint32_t size;
+    std::uint32_t memorySize;
+    std::uint64_t alignment;
+};
+
+struct CalibrationPoint {
+    float x;
+    float y;
+    float z;
+};
+
+static_assert(sizeof(CalibrationPoint) == 12);
+static_assert(sizeof(GazeCalibrationData) == 16);
+static_assert(offsetof(GazeCalibrationData, size) == 8);
+static_assert(sizeof(GazeUserCalibrationData) == 16);
+static_assert(offsetof(GazeUserCalibrationData, size) == 8);
+static_assert(sizeof(GazeUserCalibrationStatus) == 20);
+static_assert(offsetof(GazeUserCalibrationStatus, point) == 8);
+static_assert(sizeof(GazeObjectSelectionInitializeParameter) == 24);
+static_assert(offsetof(GazeObjectSelectionInitializeParameter, memory) == 8);
+static_assert(offsetof(GazeObjectSelectionInitializeParameter, memorySize) == 16);
+static_assert(sizeof(GazeObjectSelectionMemoryParameter) == 8);
+static_assert(sizeof(GazeObjectSelectionMemoryInfo) == 16);
+static_assert(offsetof(GazeObjectSelectionMemoryInfo, alignment) == 8);
+
+}
 
 namespace {
 
@@ -50,7 +247,7 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
 
 extern "C" {
 
-int APS5_VABI sceHmd2ReprojectionGetStatus() {
+int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -94,14 +291,40 @@ std::int32_t APS5_VABI sceHmd2Close(std::int32_t handle) {
     return 0;
 }
 
-int APS5_VABI sceHmd2GazeGetResult() {
-    NotImplemented_nid_no_patch(__func__);
+static std::int32_t Hmd2GazeHandle(const Hmd2::GazeResultParameter* param, const void* result, std::uint32_t resultSize, const char* name) {
+    if (!param || !result) return Hmd2::ParameterNull;
+    std::uint32_t size;
+    std::memcpy(&size, result, sizeof(size));
+    if (param->size != sizeof(Hmd2::GazeResultParameter) || size != resultSize) return Hmd2::ParameterInvalid;
+    std::lock_guard lock(stateMutex);
+    if (openHandle == 0 || param->handle != openHandle) return Hmd2::InvalidHandle;
+    NotImplemented_nid_no_patch(name);
     return 0;
 }
 
-int APS5_VABI sceHmd2GazeGetResultForFoveatedRendering() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static void Hmd2StoreInvalidGaze(std::byte* result, std::size_t offset) {
+    const std::int32_t invalidIndex = -1;
+    const float invalidPair[2] = {-0.0f, 0.0f};
+    const float invalidScalar = -1.0f;
+    std::memcpy(result + 4, &invalidIndex, sizeof(invalidIndex));
+    std::memcpy(result + offset, invalidPair, sizeof(invalidPair));
+    std::memcpy(result + offset + sizeof(invalidPair), &invalidScalar, sizeof(invalidScalar));
+}
+
+int APS5_VABI sceHmd2GazeGetResult(const Hmd2::GazeResultParameter* param, Hmd2::GazeResult* result) {
+    const std::int32_t status = Hmd2GazeHandle(param, result, 0x38, __func__);
+    if (status != Hmd2::InvalidHandle) return status;
+    auto* bytes = reinterpret_cast<std::byte*>(result);
+    std::memset(bytes + 4, 0, 0x38 - 4);
+    Hmd2StoreInvalidGaze(bytes, 0x14);
+    return status;
+}
+
+int APS5_VABI sceHmd2GazeGetResultForFoveatedRendering(const Hmd2::GazeResultParameter* param, Hmd2::FoveatedRenderingResult* result) {
+    const std::int32_t status = Hmd2GazeHandle(param, result, 0x18, __func__);
+    if (status != Hmd2::InvalidHandle) return status;
+    Hmd2StoreInvalidGaze(reinterpret_cast<std::byte*>(result), 8);
+    return status;
 }
 
 std::int32_t APS5_VABI sceHmd2GetDeviceInformation(Hmd2::DeviceInformation* info) {
@@ -130,7 +353,7 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
     return DeviceHandle;
 }
 
-int APS5_VABI sceHmd2ReprojectionBeginFrame() {
+int APS5_VABI sceHmd2ReprojectionBeginFrame(std::uint64_t frameId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -145,12 +368,12 @@ int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionEnableMirroring() {
+int APS5_VABI sceHmd2ReprojectionEnableMirroring(const Hmd2::MirroringParameter* parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionEnableVrMode() {
+int APS5_VABI sceHmd2ReprojectionEnableVrMode(std::uint64_t mode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -163,17 +386,17 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign() {
     return {0x4000, 0x100};
 }
 
-int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime() {
+int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime(std::uint64_t frameId, std::uint64_t* time) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionInitialize() {
+int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializeParameter* parameter, const void* reserved) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionQueryBufferSizeAlign() {
+Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryBufferSizeAlign() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -182,32 +405,32 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryDisplayBufferSizeAlign() {
     return {0x6000000, 0x10000};
 }
 
-int APS5_VABI sceHmd2ReprojectionSetAllowPositionalReprojection() {
+int APS5_VABI sceHmd2ReprojectionSetAllowPositionalReprojection(std::uint8_t mode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetMirroringOption() {
+int APS5_VABI sceHmd2ReprojectionSetMirroringOption(const Hmd2::MirroringOption* option) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetParam() {
+int APS5_VABI sceHmd2ReprojectionSetParam(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionParameter* parameter, std::uint64_t reserved) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer() {
+int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionBufferedParameter* parameter, std::uint64_t reserved) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetRenderConfig() {
+int APS5_VABI sceHmd2ReprojectionSetRenderConfig(std::uint64_t flags, std::uint64_t reserved, std::uint64_t reserved2) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetTiming() {
+int APS5_VABI sceHmd2ReprojectionSetTiming(std::int32_t timing) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -259,12 +482,12 @@ int APS5_VABI sceHmd2ReprojectionSet() {
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetEventGpuEnd() {
+int APS5_VABI sceHmd2ReprojectionSetEventGpuEnd(KernelEqueue queue, std::int32_t eventId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceHmd2ReprojectionSetEventGpuStart() {
+int APS5_VABI sceHmd2ReprojectionSetEventGpuStart(KernelEqueue queue, std::int32_t eventId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -292,7 +515,9 @@ APS5_EXPORT("9KnNj-dyASg", Hmd2BeforeInitializeZero);
 APS5_EXPORT("Qta2bkstbFk", Hmd2BeforeInitializeZero);
 APS5_EXPORT("5ZcObnDRBXE", Hmd2BeforeInitializeZero);
 APS5_EXPORT("AvPNn0qx4WQ", Hmd2BeforeInitializeZero);
-APS5_EXPORT("jp0apqNGgi8", Hmd2BeforeInitializeZero);
+int APS5_VABI sceHmd2SetIpdOffset(std::uint8_t enabled, float offset) {
+    return BeforeInitialize(0, __func__);
+}
 APS5_EXPORT("-kZT7X7OMg0", Hmd2BeforeInitializeZero);
 APS5_EXPORT("1ewLtng-SVk", Hmd2BeforeInitializeZero);
 APS5_EXPORT("B0b8DeIUGes", Hmd2BeforeInitializeZero);
@@ -310,7 +535,9 @@ APS5_EXPORT("MjY1gBSaed0", Hmd2BeforeInitializeZero);
 APS5_EXPORT("evAMjJYHqW4", Hmd2BeforeInitializeZero);
 APS5_EXPORT("r93FLEZ3BBk", Hmd2BeforeInitializeZero);
 APS5_EXPORT("IdYURdEdNFo", Hmd2BeforeInitializeZero);
-APS5_EXPORT("CVcL2Cu2AEI", Hmd2BeforeInitializeZero);
+int APS5_VABI sceHmd2GazeActivateGazeTracking(std::int32_t mode) {
+    return BeforeInitialize(0, __func__);
+}
 APS5_EXPORT("NmKIfVxr2s0", Hmd2BeforeInitializeZero);
 APS5_EXPORT("KeDLkkp62Gg", Hmd2BeforeInitializeZero);
 APS5_EXPORT("+aadu6-ra+A", Hmd2BeforeInitializeZero);
@@ -347,14 +574,22 @@ APS5_EXPORT("TJ8lyRsjFY4", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("-XQVcLnyX68", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("giQwQoHhYYA", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("zNc9IkgawMI", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("-tnG5UJPvAc", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("FPhFmG+jXuQ", Hmd2BeforeInitializeError0004);
+int APS5_VABI sceHmd2GazeStartUserCalibration() {
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
+int APS5_VABI sceHmd2GazeStopUserCalibration() {
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
 APS5_EXPORT("CKlkvNngofQ", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("yL1CZaciFWE", Hmd2BeforeInitializeError0004);
+int APS5_VABI sceHmd2GazeSetUserCalibrationPoint(Hmd2::CalibrationPoint point) {
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
 APS5_EXPORT("qlzgyG3s0RY", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("kTIDrDLzMv0", Hmd2BeforeInitializeError0004);
 APS5_EXPORT("9Gee0ef8a+U", Hmd2BeforeInitializeError0004);
-APS5_EXPORT("ecZVjQdwmBI", Hmd2BeforeInitializeError0004);
+int APS5_VABI sceHmd2GazeSetEnabledEye(std::int32_t eye) {
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeParameterNull() {
     return BeforeInitialize(Hmd2::ParameterNull, __func__);
@@ -367,14 +602,20 @@ APS5_EXPORT("J44idh9izZM", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("Ps0wAvYaa1E", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("kLnMR8oQ1MY", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("kMz4rbBxvjo", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("DIU1sFRRaiE", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("ZQvU4vDzZGQ", Hmd2BeforeInitializeParameterNull);
+int APS5_VABI sceHmd2GazeGetCalibrationData(std::int32_t type, Hmd2::GazeCalibrationData* data) {
+    return BeforeInitialize(Hmd2::ParameterNull, __func__);
+}
+int APS5_VABI sceHmd2GazeSetUserCalibrationData(const Hmd2::GazeUserCalibrationData* data) {
+    return BeforeInitialize(Hmd2::ParameterNull, __func__);
+}
 APS5_EXPORT("TJpyGGP9YEY", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("Dih+Odk+RC0", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("oaqdSJw+HVY", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("m35gtHuanXU", Hmd2BeforeInitializeParameterNull);
 APS5_EXPORT("CTM7QPLJF9Q", Hmd2BeforeInitializeParameterNull);
-APS5_EXPORT("+rExHeC9lP0", Hmd2BeforeInitializeParameterNull);
+int APS5_VABI sceHmd2GazeObjectSelectionInitialize(const Hmd2::GazeObjectSelectionInitializeParameter* parameter) {
+    return BeforeInitialize(Hmd2::ParameterNull, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeParameterInvalid() {
     return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
@@ -395,18 +636,30 @@ std::int32_t APS5_VABI Hmd2BeforeInitializeReprojectionNotInitialized() {
 APS5_EXPORT("d3SEIYTP6wc", Hmd2BeforeInitializeReprojectionNotInitialized);
 APS5_EXPORT("EVECbTvBezo", Hmd2BeforeInitializeReprojectionNotInitialized);
 APS5_EXPORT("ciusPdJKjSU", Hmd2BeforeInitializeReprojectionNotInitialized);
-APS5_EXPORT("DIwqTkcZiJo", Hmd2BeforeInitializeReprojectionNotInitialized);
-APS5_EXPORT("64ERZWVFBTE", Hmd2BeforeInitializeReprojectionNotInitialized);
-APS5_EXPORT("z0+0gXUJWs8", Hmd2BeforeInitializeReprojectionNotInitialized);
-APS5_EXPORT("rjAd4nCY4DM", Hmd2BeforeInitializeReprojectionNotInitialized);
-APS5_EXPORT("Acyg4vTdGm0", Hmd2BeforeInitializeReprojectionNotInitialized);
+int APS5_VABI sceHmd2ReprojectionSetUserEventStart(KernelEqueue queue, std::int32_t eventId) {
+    return BeforeInitialize(Hmd2::ReprojectionNotInitialized, __func__);
+}
+int APS5_VABI sceHmd2ReprojectionSetUserEventEnd(KernelEqueue queue, std::int32_t eventId) {
+    return BeforeInitialize(Hmd2::ReprojectionNotInitialized, __func__);
+}
+int APS5_VABI sceHmd2ReprojectionClearUserEventStart() {
+    return BeforeInitialize(Hmd2::ReprojectionNotInitialized, __func__);
+}
+int APS5_VABI sceHmd2ReprojectionClearUserEventEnd() {
+    return BeforeInitialize(Hmd2::ReprojectionNotInitialized, __func__);
+}
+int APS5_VABI sceHmd2ReprojectionGetCurrentOutput(Hmd2::ReprojectionOutput* output) {
+    return BeforeInitialize(Hmd2::ReprojectionNotInitialized, __func__);
+}
 APS5_EXPORT("aGOWaEeg04I", Hmd2BeforeInitializeReprojectionNotInitialized);
 APS5_EXPORT("9up+EPhw1No", Hmd2BeforeInitializeReprojectionNotInitialized);
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeError002C() {
     return BeforeInitialize(Hmd2::Error002C, __func__);
 }
-APS5_EXPORT("V1kLQmP-17U", Hmd2BeforeInitializeError002C);
+int APS5_VABI sceHmd2GazeObjectSelectionTerminate() {
+    return BeforeInitialize(Hmd2::Error002C, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeError1002() {
     return BeforeInitialize(Hmd2::Error1002, __func__);
@@ -563,8 +816,14 @@ APS5_EXPORT("Tc9rasWfrm4", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("ckTbKTX4KZg", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("D7576PUbUjk", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("tTJ04SrBT8U", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("sDP7hZ-P6OI", Hmd2CheckFirstThenError0004);
-APS5_EXPORT("J+eVNbN9ndY", Hmd2CheckFirstThenError0004);
+int APS5_VABI sceHmd2GazeGetDeviceStatus(std::int32_t* status) {
+    if (status == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
+int APS5_VABI sceHmd2GazeGetUserCalibrationStatus(Hmd2::GazeUserCalibrationStatus* status) {
+    if (status == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::Error0004, __func__);
+}
 APS5_EXPORT("kozvHBNyxf0", Hmd2CheckFirstThenError0004);
 APS5_EXPORT("638Tmg5y6U4", Hmd2CheckFirstThenError0004);
 
@@ -576,7 +835,10 @@ APS5_EXPORT("8ETtFtp5zqY", Hmd2CheckFirstThenZero);
 APS5_EXPORT("CWPkBm3EXQA", Hmd2CheckFirstThenZero);
 APS5_EXPORT("R62liQQIAaA", Hmd2CheckFirstThenZero);
 APS5_EXPORT("-bcWLHsdzo0", Hmd2CheckFirstThenZero);
-APS5_EXPORT("JngJzgNbu8U", Hmd2CheckFirstThenZero);
+int APS5_VABI sceHmd2SetFieldOfView(const Hmd2::FieldOfView* fieldOfView) {
+    if (fieldOfView == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(0, __func__);
+}
 APS5_EXPORT("xNBSz8xrGdk", Hmd2CheckFirstThenZero);
 APS5_EXPORT("yUVPfN-jRIU", Hmd2CheckFirstThenZero);
 APS5_EXPORT("BKPR3RZ5aO4", Hmd2CheckFirstThenZero);
@@ -610,8 +872,16 @@ std::int32_t APS5_VABI Hmd2CheckFirstTwoThenParameterInvalid(const void* a0, con
     return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
 }
 APS5_EXPORT("PPX68fNToFM", Hmd2CheckFirstTwoThenParameterInvalid);
-APS5_EXPORT("LxPIfjHaY4c", Hmd2CheckFirstTwoThenParameterInvalid);
-APS5_EXPORT("w8gBTTdg+po", Hmd2CheckFirstTwoThenParameterInvalid);
+int APS5_VABI sceHmd2GazeObjectSelectionQueryMemory(const Hmd2::GazeObjectSelectionMemoryParameter* parameter, Hmd2::GazeObjectSelectionMemoryInfo* info) {
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    if (info == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
+}
+int APS5_VABI sceHmd2GazeObjectSelectionGetSelectedObject(const Hmd2::GazeObjectSelectionParameter* parameter, Hmd2::GazeObjectSelectionResult* result) {
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    if (result == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2CheckSecondThenError002C(const void* a0, const void* a1) {
     (void)a0;
@@ -647,7 +917,11 @@ std::int32_t APS5_VABI Hmd2CheckSecondThenParameterInvalid(const void* a0, const
     return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
 }
 APS5_EXPORT("72U64E+0z6U", Hmd2CheckSecondThenParameterInvalid);
-APS5_EXPORT("LCQzi5ILGrY", Hmd2CheckSecondThenParameterInvalid);
+int APS5_VABI sceHmd2GazeGetCalibrationDataMaxSize(std::int32_t type, std::uint32_t* size) {
+    (void)type;
+    if (size == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::ParameterInvalid, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2CheckFirstThenError800d0203(const void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
@@ -702,7 +976,11 @@ std::int32_t APS5_VABI Hmd2CheckSecondThenInvalidHandle(const void* a0, const vo
     if (a1 == nullptr) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
-APS5_EXPORT("wEHILc7TP04", Hmd2CheckSecondThenInvalidHandle);
+int APS5_VABI sceHmd2GazeInsertRawDataWithHandle(std::int32_t handle, Hmd2::GazeRawData* data) {
+    (void)handle;
+    if (data == nullptr) return Hmd2::ParameterNull;
+    return BeforeInitialize(Hmd2::InvalidHandle, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2CheckSecondThenError1002(const void* a0, const void* a1) {
     (void)a0;

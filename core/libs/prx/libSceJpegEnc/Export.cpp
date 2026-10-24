@@ -82,7 +82,7 @@ std::int32_t validateEncodeParam(const JpegEncEncodeParam* param) {
     if (param->sampling_type != SAMPLING_TYPE_FULL && param->sampling_type != SAMPLING_TYPE_422 && param->sampling_type != SAMPLING_TYPE_420) {
         return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
     }
-    if (param->restart_interval > static_cast<std::int32_t>(MAX_IMAGE_DIMENSION)) return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
+    if (param->restart_interval < RESTART_INTERVAL_PER_ROW || param->restart_interval > static_cast<std::int32_t>(MAX_IMAGE_DIMENSION)) return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
 
     switch (param->pixel_format) {
     case PIXEL_FORMAT_R8G8B8A8:
@@ -186,27 +186,25 @@ int32_t APS5_VABI sceJpegEncDelete(void* handle) {
     return 0;
 }
 
-int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param, JpegEncOutputInfo* output_info) {
+int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param, JpegEncOutputInfo* outputInfo) {
     if (!toEncoder(handle)) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     const std::int32_t result = validateEncodeParam(param);
     if (result != 0) return result;
     if (param->encode_mode == ENCODE_MODE_MJPEG) throw std::runtime_error("sceJpegEncEncode: MJPEG encode mode is not implemented");
-    if (param->restart_interval < RESTART_INTERVAL_PER_ROW) throw std::runtime_error("sceJpegEncEncode: unknown negative restart interval");
 
     const std::uint32_t channels = param->pixel_format == PIXEL_FORMAT_Y8 ? 1 : 3;
     const std::vector<std::uint8_t> pixels = toPackedPixels(*param, channels);
     const std::uint32_t restartBlocks = param->restart_interval > 0 ? static_cast<std::uint32_t>(param->restart_interval) : 0;
     const std::uint32_t restartRows = param->restart_interval == RESTART_INTERVAL_PER_ROW ? 1 : 0;
-    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, param->image_width, param->image_height, channels, toQuality(*param), toSampling(*param),
-                                                                 restartBlocks, restartRows);
+    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, param->image_width, param->image_height, channels, toQuality(*param), toSampling(*param), restartBlocks, restartRows);
     if (jpeg.size() > param->jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
     std::memcpy(param->jpeg, jpeg.data(), jpeg.size());
-    if (output_info) {
-        output_info->size = static_cast<std::uint32_t>(jpeg.size());
-        output_info->height = param->image_height;
+    if (outputInfo) {
+        outputInfo->size = static_cast<std::uint32_t>(jpeg.size());
+        outputInfo->height = param->image_height;
     }
-    return 0;
+    return static_cast<std::int32_t>(jpeg.size());
 }
 
 int32_t APS5_VABI sceJpegEncQueryMemorySize(const JpegEncCreateParam* param) {

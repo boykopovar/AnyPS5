@@ -127,8 +127,9 @@ Fit FloatFit(std::string_view text) {
     if (digits == 0) return Fit::Invalid;
     if (Lower(text[index]) != (hex ? 'p' : 'e')) return Fit::Invalid;
     ++index;
-    if (index < text.size() && (text[index] == '+' || text[index] == '-')) ++index;
-    if (index == text.size()) return Fit::Prefix;
+    if (index == text.size()) return Fit::Valid;
+    if (text[index] == '+' || text[index] == '-') ++index;
+    if (index == text.size()) return Fit::Valid;
     for (; index < text.size(); ++index) {
         if (!IsDecimal(text[index])) return Fit::Invalid;
     }
@@ -256,7 +257,7 @@ private:
     }
 
     Outcome Literal(char16_t expected) {
-        if (input.Peek() < 0) return Outcome::Input;
+        if (input.Peek() < 0) return Outcome::Matching;
         if (input.Peek() != expected) return Outcome::Matching;
         input.Advance();
         return Outcome::Done;
@@ -303,6 +304,7 @@ private:
         if (*format == u'%') {
             ++format;
             SkipSpace();
+            if (input.Peek() < 0) return Outcome::Input;
             return Literal(u'%');
         }
         const Directive directive = Parse();
@@ -319,6 +321,8 @@ private:
         case u's':
         case u'c':
         case u'[': return Text(directive);
+        case u'S':
+        case u'C': return Outcome::Matching;
         case u'n': return Count(directive);
         default: Fail("unsupported conversion " + std::to_string(directive.conversion));
         }

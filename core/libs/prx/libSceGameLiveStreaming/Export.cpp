@@ -4,6 +4,18 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstring>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+
+static std::mutex g_mutex;
+static bool g_initialized = false;
+static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
+static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
+static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
+static constexpr std::size_t ProgramInfoSize = 0x134C;
+
+struct GameLiveStreamingProgramInfo;
 
 struct GameLiveStreamingStatus2 {
     std::int32_t userId;
@@ -19,24 +31,35 @@ static_assert(sizeof(GameLiveStreamingStatus2) == 72);
 
 extern "C" {
 
-int APS5_VABI sceGameLiveStreamingInitialize(size_t heap_size) {
-    if (heap_size == 0) APS5_INVALID_ARG_EX;
+int APS5_VABI sceGameLiveStreamingInitialize(size_t heapSize) {
+    if (heapSize != 0x4000) return ErrorInvalidArgument;
+    std::lock_guard lock(g_mutex);
+    if (g_initialized) return ErrorAlreadyInitialized;
+    g_initialized = true;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingTerminate(void) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    g_initialized = false;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* status) {
-    if (status == nullptr) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    if (status == nullptr) return ErrorInvalidArgument;
     std::memset(status, 0, sizeof(*status));
     status->userId = USER_SERVICE_USER_ID_INVALID;
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingGetProgramInfo() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo* info) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    if (info == nullptr) return ErrorInvalidArgument;
+    std::memset(info, 0, ProgramInfoSize);
     return 0;
 }
 
@@ -250,8 +273,10 @@ int APS5_VABI sceGameLiveStreamingStopDebugBroadcast(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(bool isEnableLiveStreaming) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) throw std::logic_error(std::string(__func__) + ": not initialized");
+    (void)isEnableLiveStreaming;
     return 0;
 }
 

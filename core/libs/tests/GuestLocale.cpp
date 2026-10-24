@@ -34,6 +34,10 @@ void APS5_VABI _Locksyslock_nid_postfix();
 void APS5_VABI _Unlocksyslock_nid_postfix();
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t wc, std::uint64_t desc);
 int* APS5_VABI __error_nid_postfix();
+extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
+extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 
 }
 
@@ -50,6 +54,25 @@ static void RequireException(TAction action) {
         caught = true;
     }
     Require(caught);
+}
+
+static void CheckInputFacetObjects() {
+    Require(_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 0 && _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 0);
+    _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 7;
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 9;
+    Require(_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 7 && _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 9);
+    _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+    for (const auto slot : _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) Require(slot == 0);
+}
+
+static void CheckCodecvtWideVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
 }
 
 static void CheckGuestCalls() {
@@ -249,6 +272,8 @@ int main() {
     CheckStreamWidth();
     CheckStandardStreams();
     CheckWideCaseTranslation();
+    CheckInputFacetObjects();
+    CheckCodecvtWideVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();

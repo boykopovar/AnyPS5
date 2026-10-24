@@ -155,10 +155,11 @@ void CheckAttributes() {
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, &num_attributes) == 0 && num_attributes == 3, "null output reports the supported attribute count");
     Require(sceAudio3dPortGetAttributesSupported(1, nullptr, &num_attributes) == INVALID_PORT, "supported attributes reject an invalid port");
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, nullptr) == INVALID_PARAMETER, "supported attributes require a count pointer");
-    num_attributes = 2;
-    std::uint32_t partial[3]{0, 0, 99};
-    Require(sceAudio3dPortGetAttributesSupported(0, partial, &num_attributes) == 0 && num_attributes == 2, "supported attributes respect the caller capacity");
-    Require(partial[0] == supported[0] && partial[1] == supported[1] && partial[2] == 99, "supported attributes copy only the requested entries");
+    Require(sceAudio3dPortGetAttributesSupported(1, nullptr, nullptr) == INVALID_PORT, "port validation precedes count validation");
+    num_attributes = 0;
+    std::uint32_t output[4]{0, 0, 0, 99};
+    Require(sceAudio3dPortGetAttributesSupported(0, output, &num_attributes) == 0 && num_attributes == 3, "the count is output only");
+    Require(output[0] == supported[0] && output[1] == supported[1] && output[2] == supported[2] && output[3] == 99, "the complete list is written without touching the following element");
     num_attributes = 3;
     std::uint32_t all[3]{};
     Require(sceAudio3dPortGetAttributesSupported(0, all, &num_attributes) == 0 && num_attributes == 3, "all supported attributes are returned");

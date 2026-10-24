@@ -99,6 +99,31 @@ static void CheckAddressLengths(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+static void CheckSendToPortZero() {
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    std::array<unsigned char, 16> portZero{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sendto_nid_postfix(sender, "x", 1, 0, portZero.data(), portZero.size()) == -1 && *__error_nid_postfix() == 49);
+    char buffer[4];
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    Require(sendto_nid_postfix(sender, "x", 1, 0, address.data(), address.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0) == 1);
+    const int bound = socket_nid_postfix(2, 2, 0);
+    Require(bound >= 0);
+    std::array<unsigned char, 16> bindAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(bound, bindAddress.data(), bindAddress.size()) == 0);
+    Require(sendto_nid_postfix(bound, "x", 1, 0, portZero.data(), portZero.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    std::array<unsigned char, 16> anyDestination{16, 2, 0, 0, 0, 0, 0, 0};
+    Require(sendto_nid_postfix(bound, "x", 1, 0, anyDestination.data(), anyDestination.size()) == -1 && *__error_nid_postfix() == 49);
+    Require(close_nid_postfix(bound) == 0 && close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
+}
+
 static void CheckDontWait() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -136,6 +161,7 @@ int main() {
     CheckAddressLengths(2);
     CheckAddressLengths(28);
     CheckDontWait();
+    CheckSendToPortZero();
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
     Require(receiver >= 0 && sender >= 0 && receiver != sender);
@@ -228,6 +254,9 @@ int main() {
     source.fill(0);
     unsigned char control[8]{};
     Msghdr incoming{source.data(), static_cast<std::uint32_t>(source.size()), pieces, 2, control, sizeof(control), -1};
+    Require(recvmsg_nid_postfix(receiver, &incoming, 2) == 14 && incoming.flags == 2);
+    incoming.nameLength = static_cast<std::uint32_t>(source.size());
+    incoming.controlLength = sizeof(control);
     Require(recvmsg_nid_postfix(receiver, &incoming, 0) == 14);
     Require(std::memcmp(first, "scat", 4) == 0 && std::memcmp(second, "ter gather", 10) == 0);
     Require(incoming.flags == 0 && incoming.controlLength == 0 && incoming.nameLength == 16 && source[1] == 2 && source[4] == 127);
@@ -236,9 +265,15 @@ int main() {
     char shortBuffer[5]{};
     Iovec single{shortBuffer, sizeof(shortBuffer)};
     Msghdr truncated{nullptr, 0, &single, 1, nullptr, 0, 0};
-    Require(recvmsg_nid_postfix(receiver, &truncated, 0) == 5);
-    Require(std::memcmp(shortBuffer, "scatt", 5) == 0 && truncated.flags == 0x10);
+    Require(recvmsg_nid_postfix(receiver, &truncated, 2) == 5 && truncated.flags == 0x12);
+    Require(recvmsg_nid_postfix(receiver, &truncated, 0x80) == 5);
+    Require(std::memcmp(shortBuffer, "scatt", 5) == 0 && truncated.flags == 0x90);
     Require(recvmsg_nid_postfix(receiver, &truncated, 0) == -1 && *__error_nid_postfix() == 35);
+    Iovec none{shortBuffer, 0};
+    Msghdr empty{nullptr, 0, &none, 1, nullptr, 0, -1};
+    Require(fcntl_nid_postfix(receiver, 4, 2) == 0);
+    Require(recvmsg_nid_postfix(receiver, &empty, 0) == 0 && empty.flags == 0);
+    Require(fcntl_nid_postfix(receiver, 4, 6) == 0);
     Msghdr oversized{nullptr, 0, parts, 1025, nullptr, 0, 0};
     Require(sendmsg_nid_postfix(sender, &oversized, 0) == -1 && *__error_nid_postfix() == 40);
     Require(recvmsg_nid_postfix(receiver, nullptr, 0) == -1 && *__error_nid_postfix() == 14);

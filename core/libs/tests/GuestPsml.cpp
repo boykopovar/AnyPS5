@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 extern "C" {
 std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement1100(void* requirement, const void* param);
@@ -116,8 +117,8 @@ struct ContextParam {
     }
 };
 
-std::array<Block, 4> Blocks(const Requirement& requirement, std::uint64_t first) {
-    std::array<Block, 4> blocks{};
+std::vector<Block> Blocks(const Requirement& requirement, std::uint64_t first) {
+    std::vector<Block> blocks(requirement.blockCount);
     for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = {first + i * requirement.blockBytes, requirement.blockBytes};
     return blocks;
 }
@@ -153,7 +154,7 @@ void SetupAfterInit() {
     SharedParam sharedParam{};
     Requirement shared{};
     Require(scePsmlMfsrGetSharedResourcesInitRequirement(&shared, &sharedParam) == 0);
-    Require(shared.blockBytes == 0x200000 && shared.alignment == 0x200000 && shared.blockCount == 4);
+    Require(shared.blockBytes == 0x200000 && shared.alignment == 0x200000 && shared.blockCount == 52);
 
     const auto sharedBlocks = Blocks(shared, 0x10000000);
     sharedParam.blocks = sharedBlocks.data();
@@ -239,7 +240,7 @@ void RefusedAfterInit() {
     Require(scePsmlMfsrGetSharedResourcesInitRequirement(&requirement, &sharedParam) == 0);
     const auto blocks = Blocks(requirement, 0x10000000);
     sharedParam.blocks = blocks.data();
-    sharedParam.blockCount = 3;
+    sharedParam.blockCount = 51;
     void* sharedResources = nullptr;
     Require(Throws([&] { scePsmlMfsrCreateSharedResources(&sharedResources, &sharedParam); }, "fewer memory blocks"));
     auto small = blocks;

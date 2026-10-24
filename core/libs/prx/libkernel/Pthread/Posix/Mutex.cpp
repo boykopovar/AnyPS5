@@ -29,7 +29,7 @@ void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
     PthreadMutex current = slot.load(std::memory_order_acquire);
     if (!_isStaticInitializer(current)) return;
     auto* created = new PthreadMutexPrivate();
-    created->_type = reinterpret_cast<std::uintptr_t>(current) == POSIX_ADAPTIVE_MUTEX_INITIALIZER ? MutexType::Adaptive : MutexType::ErrorCheck;
+    created->SetType(reinterpret_cast<std::uintptr_t>(current) == POSIX_ADAPTIVE_MUTEX_INITIALIZER ? MutexType::Adaptive : MutexType::ErrorCheck);
     if (!slot.compare_exchange_strong(current, created, std::memory_order_acq_rel, std::memory_order_acquire))
         delete created;
 }
@@ -77,6 +77,31 @@ int APS5_VABI pthread_mutex_trylock_nid_postfix(PthreadMutex* mutex) {
 int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex) {
     _initializeStatic(mutex, __func__);
     return PosixThread::ToErrno(scePthreadMutexUnlock(mutex));
+}
+
+int APS5_VABI pthread_mutex_reltimedlock_np_nid_postfix(PthreadMutex* mutex, KernelUseconds usec) {
+    _initializeStatic(mutex, __func__);
+    return PosixThread::ToErrno(scePthreadMutexTimedlock(mutex, usec));
+}
+
+int APS5_VABI pthread_mutex_isowned_np_nid_postfix(PthreadMutex* mutex) {
+    return MutexOperations::IsOwned(mutex) ? 1 : 0;
+}
+
+int APS5_VABI pthread_mutex_getspinloops_np_nid_postfix(PthreadMutex* mutex, int* count) {
+    return PosixThread::ToErrno(scePthreadMutexGetspinloops(mutex, count));
+}
+
+int APS5_VABI pthread_mutex_setspinloops_np_nid_postfix(PthreadMutex* mutex, int count) {
+    return PosixThread::ToErrno(scePthreadMutexSetspinloops(mutex, count));
+}
+
+int APS5_VABI pthread_mutex_getyieldloops_np_nid_postfix(PthreadMutex* mutex, int* count) {
+    return PosixThread::ToErrno(scePthreadMutexGetyieldloops(mutex, count));
+}
+
+int APS5_VABI pthread_mutex_setyieldloops_np_nid_postfix(PthreadMutex* mutex, int count) {
+    return PosixThread::ToErrno(scePthreadMutexSetyieldloops(mutex, count));
 }
 
 int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr) {

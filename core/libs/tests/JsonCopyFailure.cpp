@@ -5,14 +5,23 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <initializer_list>
 
 struct Value { void* node; };
 struct String { void* text; };
 struct Array { void* items; };
 struct Object { void* items; };
+struct Iterator { void* state; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 
 extern "C" {
+Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
+Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
+void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
+void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(Iterator*, const Iterator*);
+void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(Iterator*);
+void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value*, const String*);
@@ -212,9 +221,62 @@ int main() {
         }
         Require(succeeded, "copy never succeeded");
     }
+    for (bool objectIterator : {false, true}) {
+        activeCase = objectIterator ? "object iterator copy" : "array iterator copy";
+        const auto before = liveAllocations;
+        Iterator source{};
+        if (objectIterator) _ZNK3sce4Json6Object5beginEv(&source, object);
+        else _ZNK3sce4Json5Array5beginEv(&source, array);
+        for (activeBudget = 0; activeBudget <= 1; ++activeBudget) {
+            Iterator copy{};
+            bool succeeded = false;
+            allocationBudget = activeBudget;
+            try {
+                if (objectIterator) _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &source);
+                else _ZN3sce4Json5Array8iteratorC1ERKS2_(&copy, &source);
+                succeeded = true;
+            } catch (const std::bad_alloc&) {
+                ++failures;
+            }
+            allocationBudget = -1;
+            Require(succeeded == (activeBudget == 1), "iterator allocation failure ignored");
+            if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
+            if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
+            else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
+        }
+        if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&source);
+        else _ZN3sce4Json5Array8iteratorD1Ev(&source);
+        Require(liveAllocations == before, "iterator copy leaked allocations");
+    }
+    activeCase = "value swap";
+    bool swapSucceeded = false;
+    for (activeBudget = 0; activeBudget < 256 && !swapSucceeded; ++activeBudget) {
+        const auto before = liveAllocations;
+        Value first{}, second{};
+        _ZN3sce4Json5ValueC1ERKS1_(&first, &objectValue);
+        _ZN3sce4Json5ValueC1ERKS1_(&second, &arrayValue);
+        allocationBudget = activeBudget;
+        try {
+            _ZN3sce4Json5Value4swapERS1_(&first, &second);
+            swapSucceeded = true;
+        } catch (const std::bad_alloc&) {
+            ++failures;
+        }
+        allocationBudget = -1;
+        if (swapSucceeded) {
+            CheckValue(first, arrayJson);
+            CheckValue(second, objectJson);
+        }
+        _ZN3sce4Json5ValueD1Ev(&first);
+        _ZN3sce4Json5ValueD1Ev(&second);
+        Require(liveAllocations == before, "swap leaked allocations");
+        CheckValue(objectValue, objectJson);
+        CheckValue(arrayValue, arrayJson);
+    }
+    Require(swapSucceeded, "swap never succeeded");
     _ZN3sce4Json6StringD1Ev(&text);
     _ZN3sce4Json5ValueD1Ev(&arrayValue);
     _ZN3sce4Json5ValueD1Ev(&objectValue);
     Require(liveAllocations == initial, "source cleanup leaked allocations");
-    std::printf("JSON copy cleanup: %zu operations, %u allocation failures, no leaks\n", sizeof(cases) / sizeof(cases[0]), failures);
+    std::printf("JSON copy cleanup: %zu operations, %u allocation failures, no leaks\n", sizeof(cases) / sizeof(cases[0]) + 3, failures);
 }

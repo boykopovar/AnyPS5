@@ -32,15 +32,19 @@ struct GuestSigaction {
 };
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
+extern "C" GuestSignalSet _sigintr_nid_postfix{};
+
 namespace {
 using GuestHandler = void (APS5_VABI *)(int);
 constexpr int MaxSignal = 128;
 constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
+constexpr std::uint32_t UnblockableSignals = (1u << (GuestSigkill - 1)) | (1u << (GuestSigstop - 1));
 constexpr int GuestSigalrm = 14;
 constexpr int GuestSigcont = 19;
 constexpr int SaRestart = 0x2;
 constexpr int SaSiginfo = 0x40;
+constexpr int SaDefinedFlags = 0x7f;
 std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
 std::atomic<std::uint32_t> blockedMask{0};
@@ -481,7 +485,7 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     const auto invalid = reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1));
     if (guest < 1 || guest > MaxSignal || ((guest == GuestSigkill || guest == GuestSigstop) && handler != nullptr)) { *__error_nid_postfix() = 22; return invalid; }
     std::lock_guard lock(registration);
-    const GuestSigaction action{reinterpret_cast<std::uintptr_t>(handler), SaRestart, {}};
+    const GuestSigaction action{reinterpret_cast<std::uintptr_t>(handler), SignalInSet(_sigintr_nid_postfix, guest) ? 0 : SaRestart, {}};
     if (!Install(guest, action)) { *__error_nid_postfix() = 22; return invalid; }
     const auto previous = reinterpret_cast<GuestHandler>(dispositions[guest].handler);
     dispositions[guest] = action;
@@ -489,6 +493,7 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
 }
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
+    if (action && action->handler > 1 && (action->flags & ~SaDefinedFlags) != 0) { *__error_nid_postfix() = 22; return -1; }
     if (action && (guest == GuestSigkill || guest == GuestSigstop) && action->handler != 0) { *__error_nid_postfix() = 22; return -1; }
     std::lock_guard lock(registration);
     const GuestSigaction old = dispositions[guest];
@@ -498,6 +503,9 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
     }
     if (previous) *previous = old;
     return 0;
+}
+int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    return sigaction_nid_postfix(guest, action, previous);
 }
 int APS5_VABI raise_nid_postfix(int guest) {
     if (guest == 0) return 0;
@@ -562,7 +570,7 @@ int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, Guest
         if (set != nullptr) {
             switch (how) {
                 case 1:
-                    blockedMask.fetch_or(set->bits[0]);
+                    blockedMask.fetch_or(set->bits[0] & ~UnblockableSignals);
                     for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_or(set->bits[word]);
                     break;
                 case 2:
@@ -570,7 +578,7 @@ int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, Guest
                     for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~set->bits[word]);
                     break;
                 case 3:
-                    blockedMask.store(set->bits[0]);
+                    blockedMask.store(set->bits[0] & ~UnblockableSignals);
                     for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].store(set->bits[word]);
                     break;
             }
@@ -635,13 +643,17 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     GuestSignalSet previous{{0, 0, 0, 0}};
     {
         std::lock_guard lock(registration);
-        previous.bits[0] = blockedMask.exchange(set->bits[0]);
+        previous.bits[0] = blockedMask.exchange(set->bits[0] & ~UnblockableSignals);
         for (int word = 1; word < 4; ++word) previous.bits[word] = blockedMaskExtra[word - 1].exchange(set->bits[word]);
     }
     WaitForDeliverableSignal();
     _sigprocmask_nid_postfix(GuestSigsetmask, &previous, nullptr);
     *__error_nid_postfix() = GuestEintr;
     return -1;
+}
+
+int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
+    return sigsuspend_nid_postfix(set);
 }
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {

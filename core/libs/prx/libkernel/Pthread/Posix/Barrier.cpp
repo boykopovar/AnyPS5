@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include <climits>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -60,7 +61,7 @@ int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPriva
 
 int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
     (void)attr;
-    if (!barrier || count == 0) return 22;
+    if (!barrier || count == 0 || count > INT_MAX) return 22;
     try {
         auto* value = new PthreadBarrierPrivate;
         value->count = count;

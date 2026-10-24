@@ -82,7 +82,8 @@ void InitializeOpenedHandle(FontHandleNative* font, FontLibNative* library, Font
     driver->metric(obj, 0xEA00, metric);
     font->metricB = metric[0];
     float scale = 0.0f;
-    driver->scale(obj, metric, &scale);
+    std::uint32_t resolution = 0;
+    driver->scale(obj, &resolution, &scale);
     font->style = {};
     font->style.dpi_x = 0x48;
     font->style.dpi_y = 0x48;
@@ -397,8 +398,6 @@ int APS5_VABI sceFontOpenFontInstance(FontHandle fontHandle, FontHandle setupFon
     ReleaseFontLock(source, sourceLock);
     FontState& targetState = ResetState(target);
     if (FontState* sourceState = TryGetState(fontHandle)) {
-        targetState.scaleW = sourceState->scaleW;
-        targetState.scaleH = sourceState->scaleH;
         if (sourceState->faceData && !sourceState->faceData->empty()) LoadStateFace(targetState, sourceState->faceData, subFontIndex);
         for (const FallbackFace& fallback : sourceState->fallbacks) AddStateFallbackFace(targetState, fallback.data, fallback.subFontIndex);
     }
@@ -492,6 +491,11 @@ int APS5_VABI sceFontGetLibrary(FontHandle fontHandle, FontLibrary* pLibrary) {
 }
 
 int APS5_VABI sceFontGetFontGlyphsCount(FontHandle fontHandle, std::uint32_t* glyphsCount) {
+    const auto* font = GetNativeFont(fontHandle);
+    if (!font || font->magic != HANDLE_MAGIC) {
+        if (glyphsCount) *glyphsCount = 0;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
     if (!glyphsCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
     *glyphsCount = 0;
     const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
@@ -503,19 +507,31 @@ int APS5_VABI sceFontGetFontGlyphsCount(FontHandle fontHandle, std::uint32_t* gl
 }
 
 int APS5_VABI sceFontGetCharGlyphCode(FontHandle fontHandle, std::uint32_t code, std::uint32_t* glyphCode) {
+    if (glyphCode) *glyphCode = 0;
+    const auto* font = GetNativeFont(fontHandle);
+    if (!font || font->magic != HANDLE_MAGIC) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    if (code == 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
     if (!glyphCode) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *glyphCode = 0;
+    if ((code & 0x80000000u) != 0 && (code & 0x3fff0000u) != 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
+    std::uint32_t index = 0;
     const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
+        if ((code & 0x80000000u) != 0) {
+            if (!driver.glyphs_count) return SCE_FONT_ERROR_FATAL;
+            std::uint32_t count = 0;
+            const int result = driver.glyphs_count(obj, &count);
+            if (result != SCE_FONT_OK) return result;
+            index = code & 0x3fffffffu;
+            return index < count ? SCE_FONT_OK : SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+        }
         if (!driver.glyph_index) return SCE_FONT_ERROR_FATAL;
-        if (code == 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
-        return driver.glyph_index(obj, code, glyphCode);
+        return driver.glyph_index(obj, code, &index);
     });
-    if (rc != SCE_FONT_OK) *glyphCode = 0;
+    if (rc == SCE_FONT_OK) *glyphCode = index | 0x80000000u;
     return rc;
 }
 
 int APS5_VABI sceFontGetFontResolution(FontHandle fontHandle, std::uint32_t* pResolution, float* pScalePixel) {
-    std::uint16_t unitsPerEm = 0;
+    std::uint32_t unitsPerEm = 0;
     float scalePixel = 0.0f;
     const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
         if (!pResolution && !pScalePixel) return SCE_FONT_ERROR_INVALID_PARAMETER;

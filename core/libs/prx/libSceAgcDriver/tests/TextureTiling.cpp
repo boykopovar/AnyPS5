@@ -386,6 +386,29 @@ void RunTextureTilingTests() {
         Require(dense.pitchBytes == 1024 && CoveredMipBytes(TextureTileMode::kLinear, 4, dense) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{0, 3072}}, "linear rows without padding are not one range");
     }
 
+    {
+        const auto* equation = FindTextureSwizzleEquation(XorSwizzleMode(TextureTileMode::kZ64KBX), 4u);
+        Require(equation != nullptr, "missing the 64KB Z_X swizzle equation of 4-byte elements");
+        for (const auto mask : equation->bits) Require((mask & 0x00f80f80u) == 0u, "a 64KB Z_X address bit of a 4-byte element reads x or y bits past one 128x128 tile");
+        GuestTextureResource plane{};
+        plane.width = 3840;
+        plane.height = 2160;
+        plane.mipCount = 1;
+        plane.tileMode = TextureTileMode::kZ64KBX;
+        plane.dimension = TextureDimension::k2D;
+        plane.format = 22;
+        const auto geometry = DescribeSurface(plane);
+        const auto& mip = geometry.mips.front();
+        const auto block = ThinBlockLayout(TextureTileMode::kZ64KBX, 4u);
+        Require(block[0] == 65536u && block[1] == 128u && block[2] == 128u, "a 64KB Z_X tile of 4-byte elements is not 128x128");
+        Require(!mip.tail && mip.tiledOffset == 0u && mip.blocksPerRow == 30u && geometry.guestBytes == 510ull * 65536ull, "a 3840x2160 D32 Z_X plane is not 30x17 tiles");
+        const std::array<std::pair<std::uint32_t, std::uint32_t>, 8> samples{{{0, 0}, {127, 127}, {128, 0}, {3839, 0}, {0, 128}, {1000, 700}, {2047, 1151}, {3839, 2159}}};
+        for (const auto& [x, y] : samples) {
+            const auto offset = mip.tiledOffset + (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0] + equationOffset(*equation, x, y, 0);
+            Require(offset / 65536u == static_cast<std::uint64_t>(y >> 7u) * 30u + (x >> 7u), "element (" + std::to_string(x) + ", " + std::to_string(y) + ") of a 3840x2160 D32 Z_X plane lies outside the 64 KiB unit of its 128x128 tile");
+        }
+    }
+
     reject([] { ComputeSurfaceSize({}, 1); }, "empty mip chain");
     reject([] { ComputeSurfaceSize(ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 1), 0); }, "zero array layers");
 

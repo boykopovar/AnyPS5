@@ -28,8 +28,10 @@ extern "C" int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t ver
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t reference);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint64_t mask);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint32_t reference);
+extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask);
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
 extern "C" std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
@@ -531,18 +533,28 @@ void testMemory() {
     check(packet[8] == 0x55667788u && packet[9] == 0x11223344u && packet[12] == 2u, "wait reference or poll interval mismatch");
     sceAgcWaitRegMemPatchReference(packet, 7);
     check(packet[8] == 7 && packet[9] == 0x11223344u, "reference patch changed the high word");
-    const auto before = storage.words;
-    expectFailure([&] { sceAgcWaitRegMemPatchReference(packet, 0x100000000ull); });
-    check(storage.words == before, "invalid memory operation modified packet memory");
     auto* truncated = Agc::Command::WriteWait(&storage.buffer, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
     check(truncated[8] == 0u && truncated[9] == 1u, "32-bit wait did not keep the low halves of the reference and mask");
     sceAgcWaitRegMemPatchMask(packet, 0x0f0f0f0fu);
     check(packet[10] == 0x0f0f0f0fu && packet[11] == 0xffffffffu && packet[8] == 7, "64-bit mask patch changed the wrong word");
     sceAgcWaitRegMemPatchMask(truncated, 0xff00u);
     check(truncated[9] == 0xff00u && truncated[8] == 0u && truncated[10] == 2u, "32-bit mask patch changed the wrong word");
+    for (auto* waitPacket : {packet, truncated}) {
+        const auto lowMask = waitPacket == packet ? 7u : 3u;
+        waitPacket[6] |= lowMask;
+        waitPacket[7] = 0xa5fc0000u;
+        const auto tag = waitPacket[2] & 0xffff0000u;
+        const std::uintptr_t address = 0x1236abcd12345679ull;
+        check(sceAgcWaitRegMemPatchAddress(waitPacket, reinterpret_cast<const volatile void*>(address)) == 0, "wait address patch failed");
+        check(waitPacket[2] == (tag | 0xabcdu) && waitPacket[3] == 0x12345679u, "wait wrapper address patch mismatch");
+        check(waitPacket[6] == ((0x12345679u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5feabcdu, "wait address patch did not preserve control bits");
+        for (std::uint32_t comparison = 0; comparison <= 255; ++comparison) {
+            const auto control = waitPacket[5] & ~7u;
+            check(sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)) == 0, "wait comparison patch failed");
+            check(waitPacket[5] == (control | (comparison & 7u)), "wait comparison patch changed control bits");
+        }
+    }
     const auto beforeMask = storage.words;
-    expectFailure([&] { sceAgcWaitRegMemPatchMask(packet, 0x100000000ull); });
-    expectFailure([&] { sceAgcWaitRegMemPatchMask(truncated, 0x100000000ull); });
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
 }
@@ -691,15 +703,13 @@ void testDefaults() {
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
 }
 
-struct DefaultsType {
-    std::uint32_t key;
-    std::uint32_t bankIndex;
-};
+constexpr std::size_t PairEntryBytes = 8;
+constexpr std::size_t CompactEntryBytes = 12;
 
-std::uint32_t colourTargetBlock(const void* root) {
+std::uint32_t colourTargetBlock(const void* root, std::size_t entryBytes) {
     const auto* bytes = static_cast<const unsigned char*>(root);
     ShaderRegister** contextBlocks = nullptr;
-    const DefaultsType* types = nullptr;
+    const unsigned char* types = nullptr;
     std::uint32_t count = 0;
     std::memcpy(&contextBlocks, bytes, sizeof(contextBlocks));
     std::memcpy(&types, bytes + 0x30, sizeof(types));
@@ -709,12 +719,17 @@ std::uint32_t colourTargetBlock(const void* root) {
     std::uint32_t matches = 0;
     std::uint32_t block = 0;
     for (std::uint32_t entry = 0; entry < count; ++entry) {
-        if ((types[entry].bankIndex & 3u) == 0)
+        std::uint32_t key = 0;
+        std::uint32_t bankIndex = 0;
+        std::memcpy(&key, types + entry * entryBytes, sizeof(key));
+        std::memcpy(&bankIndex, types + entry * entryBytes + 4, sizeof(bankIndex));
+        bankIndex &= 0x3ffu;
+        if ((bankIndex & 3u) == 0)
             ++contexts;
-        if (types[entry].key != 0x38e92c91u)
+        if (key != 0x38e92c91u)
             continue;
-        check((types[entry].bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
-        block = types[entry].bankIndex >> 2;
+        check((bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
+        block = bankIndex >> 2;
         ++matches;
     }
     check(matches == 1 && block < contexts && contextBlocks[block] != nullptr, "MRT0 defaults key is missing, repeated or outside the context blocks");
@@ -727,7 +742,11 @@ std::uint32_t colourTargetBlock(const void* root) {
 void testDefaultsTypes() {
     const auto* legacy = sceAgcGetRegisterDefaults();
     check(legacy != sceAgcGetRegisterDefaults2(13), "legacy register defaults reused the compact versioned table");
-    check(colourTargetBlock(legacy) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(legacy, PairEntryBytes) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(13), CompactEntryBytes) == 78, "versioned MRT0 defaults are not block 78 of the compact 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(10), CompactEntryBytes) == 73, "versioned MRT0 defaults are not block 73 of the compact 128-entry table");
+    for (std::uint32_t version = 4; version < 14; ++version)
+        colourTargetBlock(sceAgcGetRegisterDefaults2(version), CompactEntryBytes);
 
     const auto checkCompactTypes = [](const void* root, std::uint32_t count, std::uint32_t key,
                                       std::uint32_t packedType, std::uint32_t extra) {

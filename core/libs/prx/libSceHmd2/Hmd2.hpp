@@ -60,9 +60,13 @@ static_assert(sizeof(FieldOfView) == 16);
 struct SizeAlign {
     std::uint64_t size;
     std::uint64_t align;
+
+    constexpr SizeAlign(std::uint64_t size = 0, std::uint64_t align = 0) noexcept : size(size), align(align) {}
 };
 
 static_assert(sizeof(SizeAlign) == 16);
+static_assert(offsetof(SizeAlign, size) == 0);
+static_assert(offsetof(SizeAlign, align) == 8);
 
 }
 
@@ -76,6 +80,7 @@ std::int32_t APS5_VABI sceHmd2GetDeviceInformationByHandle(std::int32_t handle, 
 std::int32_t APS5_VABI sceHmd2GetFieldOfView(std::int32_t handle, Hmd2::FieldOfView* fieldOfView);
 std::int32_t APS5_VABI sceHmd2GetFieldOfViewWithoutHandle(Hmd2::FieldOfView* fieldOfView);
 std::int32_t APS5_VABI sceHmd2SetVibration(std::int32_t handle, std::uint32_t level);
+Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQueryDisplayBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionQuerySeeThroughBufferSizeAlign();
 Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringDisplayBufferSizeAlign();

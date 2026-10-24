@@ -361,6 +361,13 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
     return result;
 }
 
+static bool SizeOverflowsInt(char* buffer, size_t size) {
+    if (size == 0 || size - 1 <= static_cast<size_t>(INT_MAX)) return false;
+    errno = 84;
+    if (buffer != nullptr) *buffer = '\0';
+    return true;
+}
+
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
@@ -378,6 +385,7 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     va_end(args);
 #endif
     stream->SyncStatus();
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
@@ -402,6 +410,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    if (SizeOverflowsInt(buffer, size)) return -1;
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     const int result = LibcDetail::FormatWindows(buffer, size, format, args);
@@ -438,6 +447,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    if (SizeOverflowsInt(buffer, size)) return -1;
     std::va_list args;
     va_start(args, format);
     const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, size, format, args);
@@ -540,6 +550,7 @@ int APS5_VABI vsprintf_nid_postfix(char* str, const char* format, VaList* args) 
 }
 
 int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, VaList* c) {
+    if (SizeOverflowsInt(str, size)) return -1;
 #ifdef _WIN32
     return LibcDetail::FormatWindows(str, size, format, c);
 #else
@@ -656,6 +667,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
     va_end(copy);
 #endif
     stream->SyncStatus();
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 

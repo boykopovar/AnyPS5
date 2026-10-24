@@ -107,7 +107,8 @@ int APS5_VABI sceUltReaderWriterLockDestroy(void* rwlock) {
     if (it == gLocks.end()) {
         return ULT_ERROR_STATE;
     }
-    auto& state = *it->second;
+    const auto owner = it->second;
+    auto& state = *owner;
     std::lock_guard<std::mutex> stateLock(state._mutex);
     if (state._readers != 0 || state._writing || state._waiters != 0) {
         return ULT_ERROR_BUSY;

@@ -51,6 +51,13 @@ public:
     virtual void OnError() = 0;
 };
 
+struct StartInfo {
+    std::uint64_t size;
+    std::uint64_t startTime;
+};
+
+static_assert(sizeof(StartInfo) == 16);
+
 struct SourceSettings {
     AvPlayerMemAllocator memory;
     AvPlayerFileReplacement file;
@@ -66,7 +73,7 @@ public:
     virtual bool EnableStream(std::uint32_t index) = 0;
     virtual bool DisableStream(std::uint32_t index) = 0;
     virtual bool ChangeStream(std::uint32_t from, std::uint32_t to) = 0;
-    virtual int Start() = 0;
+    virtual int Start(std::uint64_t startTime) = 0;
     virtual void Stop() = 0;
     virtual void Pause() = 0;
     virtual void Resume() = 0;
@@ -103,7 +110,7 @@ public:
     int EnableStream(std::uint32_t index);
     int DisableStream(std::uint32_t index);
     int ChangeStream(std::uint32_t from, std::uint32_t to);
-    int Start();
+    int Start(std::uint64_t startTime = 0);
     int Stop();
     int Pause();
     int Resume();
@@ -136,7 +143,7 @@ private:
     void autoStart();
     void checkEndOfFile();
     bool readyLocked() const;
-    int startLocked();
+    int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
 
     AvPlayerFileReplacement file{};

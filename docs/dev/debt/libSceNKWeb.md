@@ -1,5 +1,5 @@
 # libSceNKWeb technical debt
 
-### Unknown function info
+### Functional
 
-- [sceNKWebInitialize and sceNKWebTerminate](../../../core/libs/prx/libSceNKWeb/Export.cpp) (libSceNKWeb) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNKWeb.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceNKWebInitialize and sceNKWebTerminate](../../../core/libs/prx/libSceNKWeb/Export.cpp) remain throwing stubs. Both native exports take no input arguments and return a 32-bit status; decompiler SIMD parameters are unused register propagation through initialization and cleanup helpers.

@@ -10,6 +10,10 @@
 #include <cstring>
 #include <stdexcept>
 
+namespace Hmd2 {
+struct ReprojectionOutput;
+}
+
 extern "C" {
 std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0);
 std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1);
@@ -55,6 +59,9 @@ std::int32_t APS5_VABI Hmd2BeforeInitializeError1003();
 std::int32_t APS5_VABI Hmd2BeforeInitializeMinusOne();
 std::int32_t APS5_VABI Hmd2BeforeInitializeValue0400();
 std::int32_t APS5_VABI Hmd2BeforeInitializeValue20000();
+int APS5_VABI sceHmd2GazeActivateGazeTracking(std::int32_t mode);
+int APS5_VABI sceHmd2ReprojectionGetCurrentOutput(Hmd2::ReprojectionOutput* output);
+int APS5_VABI sceHmd2SetFieldOfView(const Hmd2::FieldOfView* fieldOfView);
 }
 
 namespace {
@@ -299,6 +306,16 @@ int main() {
     InstallProcessParameters();
     TestBeforeInitialize();
     TestWithoutHeadset();
+    bool threw = false;
+    try {
+        static_cast<void>(sceHmd2ReprojectionQueryBufferSizeAlign());
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "buffer size query did not throw");
+    Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");
+    Require(sceHmd2ReprojectionGetCurrentOutput(nullptr) == Hmd2::ReprojectionNotInitialized, "reprojection before initialization");
+    Require(sceHmd2SetFieldOfView(nullptr) == Hmd2::ParameterNull, "null field of view");
     std::puts("HMD2 tests passed");
     return 0;
 }

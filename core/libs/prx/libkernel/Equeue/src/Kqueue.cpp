@@ -55,6 +55,7 @@ constexpr std::uint16_t KNOTE_CLEARED_FLAGS = EV_ADD | EV_DELETE | EV_ENABLE | E
 
 std::mutex g_kqueueMutex;
 std::unordered_map<int, KernelEqueueRef> g_kqueues;
+std::mutex g_kqueueWatchMutex;
 
 int PosixFailure(int error) {
     *__error_nid_postfix() = error;
@@ -189,13 +190,56 @@ void WatchEdges(KernelEqueueEvent& event, bool socket) {
     event.filter.resetFunc = ResetEdge;
 }
 
+bool PollKqueue(KernelEqueueEvent* e) {
+    const auto pending = e->filter.watched->CountTriggeredEvents();
+    e->event.data = static_cast<std::intptr_t>(pending);
+    return pending != 0;
+}
+
+bool KqueueReaches(const KernelEqueueRef& from, const KernelEqueuePrivate* target, std::vector<const KernelEqueuePrivate*>& visited) {
+    if (from.get() == target) {
+        return true;
+    }
+    if (std::find(visited.begin(), visited.end(), from.get()) != visited.end()) {
+        return false;
+    }
+    visited.push_back(from.get());
+    for (const auto& next : from->WatchedQueues()) {
+        if (KqueueReaches(next, target, visited)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int AddKqueueKnote(const KernelEqueueRef& queue, const KernelEqueueRef& watched, KernelEvent& change, std::uint16_t flags) {
+    if ((flags & EV_CLEAR) != 0) {
+        NotImplemented_nid_no_patch("kevent: EV_CLEAR on a kqueue descriptor");
+    }
+    std::lock_guard lock(g_kqueueWatchMutex);
+    std::vector<const KernelEqueuePrivate*> visited;
+    if (KqueueReaches(watched, queue.get(), visited)) {
+        NotImplemented_nid_no_patch("kevent: EVFILT_READ on a kqueue that watches the kqueue being registered on");
+    }
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = flags;
+    event.event.fflags = 0;
+    event.event.data = 0;
+    event.filter.pollFunc = PollKqueue;
+    event.filter.watched = watched;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     const int descriptor = static_cast<int>(change.ident);
-    if (IsKqueueDescriptor(descriptor)) {
+    if (const auto watched = FindKqueue(descriptor)) {
         if (change.filter != EVFILT_READ) {
             return GUEST_EINVAL;
         }
-        NotImplemented_nid_no_patch("kevent: EVFILT_READ on a kqueue descriptor");
+        return AddKqueueKnote(queue, watched, change, flags);
     }
     if (descriptor == 0 && change.filter == EVFILT_READ && File::IsHostStream(descriptor)) {
         return AddStandardInputKnote(queue, change, flags);

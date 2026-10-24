@@ -323,6 +323,21 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
     }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength != 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        if (name[3] != getpid_nid_postfix()) {
+            *__error_nid_postfix() = 3;
+            return -1;
+        }
+        return CopyOut(nullptr, 0, oldValue, oldLength);
+    }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 32) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
@@ -452,7 +467,8 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {6, 12};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 
 int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* version) {
@@ -518,6 +534,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     for (const auto& entry : SystemIntegers) {
         if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, 2);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 }

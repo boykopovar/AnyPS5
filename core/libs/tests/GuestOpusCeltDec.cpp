@@ -3,13 +3,15 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <stdexcept>
+#include <opus.h>
 
 extern "C" {
 int APS5_VABI sceOpusCeltDecInitialize(std::uint32_t*);
-int APS5_VABI sceOpusCeltDecTerminate(std::uint32_t*);
+int APS5_VABI sceOpusCeltDecTerminate(const std::uint32_t*);
 int APS5_VABI sceOpusCeltDecGetSize(int);
-int APS5_VABI sceOpusCeltDecCreateEx(std::uint32_t*, void*, int, int);
+int APS5_VABI sceOpusCeltDecCreateEx(const std::uint32_t*, void*, int, int);
 int APS5_VABI sceOpusCeltDecDecode(void*, const std::uint8_t*, int, std::int16_t*, int);
 int APS5_VABI sceOpusCeltDecDestroy(void*);
 }
@@ -75,11 +77,28 @@ void RequireTone(const std::int16_t* pcm, int samples, int channels, int rate) {
 } // namespace
 
 int main() {
+    constexpr std::uint32_t errorBase = 0x81400000u;
+    Require(sceOpusCeltDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
     Require(sceOpusCeltDecInitialize(&context) == 0);
+    std::array<std::uint8_t, 640> invalidState{};
+    std::int16_t output = 12345;
+    const std::uint8_t packet = 0;
+    Require(sceOpusCeltDecCreateEx(nullptr, invalidState.data(), 0, 0) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecCreateEx(&context, invalidState.data(), 0, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecCreateEx(&context, invalidState.data(), 48000, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecDecode(nullptr, nullptr, -1, nullptr, -1) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecDecode(invalidState.data(), nullptr, -1, nullptr, -1) == static_cast<int>(errorBase + 6));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, -1, nullptr, -1) == static_cast<int>(errorBase + 7));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, nullptr, -1) == static_cast<int>(errorBase + 8));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, -1) == static_cast<int>(errorBase + 9));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, 2) == static_cast<int>(errorBase + 1));
+    Require(output == 12345);
+
     RequireThrows([&] { sceOpusCeltDecInitialize(&context); });
     Require(sceOpusCeltDecGetSize(1) == 640 && sceOpusCeltDecGetSize(2) == 640);
-    RequireThrows([&] { sceOpusCeltDecGetSize(3); });
+    Require(sceOpusCeltDecGetSize(3) == static_cast<int>(errorBase + 3));
     std::array<std::uint8_t, 640> state{}, monoState{};
     Require(sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2) == 0);
     Require(sceOpusCeltDecCreateEx(&context, monoState.data(), 48000, 1) == 0);
@@ -109,25 +128,37 @@ int main() {
 
     std::array<std::uint8_t, 640> unsupported{};
     for (int rate : {0, 22050, 44100, 96000})
-        RequireThrows([&] { sceOpusCeltDecCreateEx(&context, unsupported.data(), rate, 2); });
+        Require(sceOpusCeltDecCreateEx(&context, unsupported.data(), rate, 2) == static_cast<int>(errorBase + 2));
     for (int rate : {8000, 12000, 16000, 24000, 48000}) {
-        std::array<std::uint8_t, 640> toneState{};
-        Require(sceOpusCeltDecCreateEx(&context, toneState.data(), rate, 2) == 0);
-        const int samples = 960 * rate / 48000;
-        std::array<std::int16_t, 1922> tone{};
-        for (int frame = 0; frame < 4; ++frame) {
-            tone.fill(12345);
-            RequireThrows([&] { sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * 4 - 1); });
-            Require(sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * 4) == samples * 4);
-            Require(tone[0] == 12345 && tone[samples * 2 + 1] == 12345);
-            if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, 2, rate);
+        for (int channels : {1, 2}) {
+            std::array<std::uint8_t, 640> toneState{};
+            Require(sceOpusCeltDecCreateEx(&context, toneState.data(), rate, channels) == 0);
+            int error = OPUS_OK;
+            auto* reference = opus_decoder_create(rate, channels, &error);
+            Require(reference && error == OPUS_OK);
+            const int samples = 960 * rate / 48000;
+            std::array<std::int16_t, 1922> tone{};
+            for (int frame = 0; frame < 4; ++frame) {
+                tone.fill(12345);
+                RequireThrows([&] { sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2 - 1); });
+                Require(sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2) == samples * channels * 2);
+                Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
+                std::array<std::int16_t, 1920> expected{};
+                Require(opus_decode(reference, CELT_TONE[frame], 60, expected.data(), samples, 0) == samples);
+                if (!std::equal(expected.begin(), expected.begin() + samples * channels, tone.begin() + 1)) {
+                    std::fprintf(stderr, "CELT PCM differs from libopus at %d Hz, %d channels, frame %d\n", rate, channels, frame);
+                    std::abort();
+                }
+                if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, channels, rate);
+            }
+            opus_decoder_destroy(reference);
+            Require(sceOpusCeltDecDestroy(toneState.data()) == 0);
         }
-        Require(sceOpusCeltDecDestroy(toneState.data()) == 0);
     }
 
     Require(sceOpusCeltDecDestroy(state.data()) == 0);
-    RequireThrows([&] { sceOpusCeltDecDestroy(state.data()); });
-    RequireThrows([&] { sceOpusCeltDecDecode(state.data(), CELT_STEREO + 2, CELT_STEREO[0], pcm.data(), 3840); });
+    Require(sceOpusCeltDecDestroy(state.data()) == static_cast<int>(errorBase + 1));
+    Require(sceOpusCeltDecDecode(state.data(), CELT_STEREO + 2, CELT_STEREO[0], pcm.data(), 3840) == static_cast<int>(errorBase + 1));
     Require(sceOpusCeltDecDestroy(monoState.data()) == 0);
     Require(sceOpusCeltDecTerminate(&context) == 0);
     RequireThrows([&] { sceOpusCeltDecTerminate(&context); });

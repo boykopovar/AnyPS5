@@ -175,10 +175,9 @@ int APS5_VABI sceAvPlayerStart(AvPlayerInternal* h) {
     return ToPlayer(h)->Start();
 }
 
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* h, const void* start_info_ex) {
-    (void)start_info_ex;
-    if (!h) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
-    return ToPlayer(h)->Start();
+int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* handle, const StartInfo* startInfo) {
+    if (handle == nullptr || startInfo == nullptr || startInfo->size != sizeof(*startInfo)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    return ToPlayer(handle)->Start(startInfo->startTime);
 }
 
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal* h) {

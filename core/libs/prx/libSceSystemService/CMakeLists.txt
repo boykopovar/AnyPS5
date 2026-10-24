@@ -22,10 +22,14 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_loadexec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
+        set(loadexecLibraries $<TARGET_FILE:libSceSystemService> $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel>)
+        if(APS5_ENABLE_TRACY)
+            list(APPEND loadexecLibraries $<TARGET_FILE:TracyClient>)
+        endif()
         add_test(NAME loadexec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_loadexec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_loadexec_host>
-            $<TARGET_FILE:libSceSystemService> $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> ${CMAKE_CXX_COMPILER})
+            ${loadexecLibraries} ${CMAKE_CXX_COMPILER})
         set_tests_properties(loadexec_arguments PROPERTIES TIMEOUT 30)
         add_asan_test_options(loadexec_arguments verify_asan_link_order=0)
     endif()

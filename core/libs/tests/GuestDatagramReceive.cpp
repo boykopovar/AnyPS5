@@ -140,6 +140,21 @@ static void Check(bool net, bool from, int family) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     } while (std::chrono::steady_clock::now() < deadline);
     Require(result == 0 && byte == '!', "empty datagram");
+    if (!net) {
+        send("hello", 5);
+        const auto ready = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        do {
+            result = receive(&byte, 1, 2, nullptr, nullptr);
+            if (result >= 0 || *error != 35) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < ready);
+        Require(result == 1, "wait for the datagram");
+        Require(receive(&byte, 0, 2, nullptr, nullptr) == 0 && receive(&byte, 1, 2, nullptr, nullptr) == 1, "a zero-length peek keeps the datagram");
+        Require(receive(&byte, 0, 0, nullptr, nullptr) == 0, "a zero-length receive returns 0");
+        Require(receive(&byte, 1, 0, nullptr, nullptr) < 0 && *error == 35, "a zero-length receive discards the datagram");
+        Require(fcntl_nid_postfix(receiver, 4, 2) == 0, "make receiver blocking");
+        Require(receive(&byte, 0, 0, nullptr, nullptr) == 0, "a zero-length receive on an empty queue returns 0 without waiting");
+    }
     Require(closeSocket(receiver) == 0, "close receiver");
     Require(closeSocket(sender) == 0, "close sender");
 }
