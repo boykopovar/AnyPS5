@@ -36,6 +36,7 @@ int APS5_VABI iswpunct_nid_postfix(std::uint32_t);
 int APS5_VABI iswspace_nid_postfix(std::uint32_t);
 int APS5_VABI iswupper_nid_postfix(std::uint32_t);
 int APS5_VABI iswxdigit_nid_postfix(std::uint32_t);
+int APS5_VABI iswascii_nid_postfix(std::uint32_t);
 int APS5_VABI iswctype_nid_postfix(std::uint32_t, std::uint64_t);
 std::uint64_t APS5_VABI wctype_nid_postfix(const char*);
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t);
@@ -120,6 +121,10 @@ int main() {
         }
         Require(entry.wide(0xffffffff) == 0 && iswctype_nid_postfix(0xffffffff, entry.mask) == 0);
     }
+    for (std::uint32_t c = 0; c < 300; ++c) {
+        Require((iswascii_nid_postfix(c) != 0) == (c <= 0x7f));
+    }
+    Require(iswascii_nid_postfix(0xffffffff) == 0);
     Require(wctype_nid_postfix("ideogram") == 0x80000 && wctype_nid_postfix("special") == 0x100000);
     Require(wctype_nid_postfix("phonogram") == 0x200000 && wctype_nid_postfix("number") == 0x400000);
     Require(wctype_nid_postfix("rune") == 0xffffff00 && wctype_nid_postfix("") == 0 && wctype_nid_postfix("Alpha") == 0);
