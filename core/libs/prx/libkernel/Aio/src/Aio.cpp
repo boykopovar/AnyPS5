@@ -8,6 +8,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
@@ -106,6 +107,7 @@ bool RunRequest(KernelAioRwRequest& req, bool write) {
         req.result->state = AioAborted;
         return false;
     }
+    if (!write) EqueueNoteRead(req.fd);
     req.result->return_value = done;
     req.result->state = AioCompleted;
     return true;

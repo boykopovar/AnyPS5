@@ -1,12 +1,17 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -36,7 +41,12 @@
 namespace {
 
 constexpr int GUEST_EBADF = 9;
+constexpr int GUEST_ENODEV = 19;
 constexpr int GUEST_EINVAL = 22;
+constexpr std::uint32_t GUEST_NOTE_OPEN = 0x0080;
+constexpr std::uint32_t GUEST_NOTE_CLOSE = 0x0100;
+constexpr std::uint32_t GUEST_NOTE_CLOSE_WRITE = 0x0200;
+constexpr std::uint32_t GUEST_NOTE_READ = 0x0400;
 #ifdef __APPLE__
 static_assert(NOTE_DELETE == 0x0001 && NOTE_WRITE == 0x0002 && NOTE_EXTEND == 0x0004 && NOTE_ATTRIB == 0x0008 &&
     NOTE_LINK == 0x0010 && NOTE_RENAME == 0x0020);
@@ -145,6 +155,70 @@ void VnodeWatch::Deliver(std::uint32_t hint) {
     }
     VnodeHint message{this, hint};
     owner->TriggerEvent(ident, EVFILT_VNODE, &message);
+}
+
+struct VnodeIdentity {
+    std::uint32_t device;
+    std::uint32_t inode;
+};
+
+struct AccessWatch {
+    VnodeIdentity identity;
+    std::weak_ptr<VnodeWatch> watch;
+};
+
+std::mutex g_accessMutex;
+std::vector<AccessWatch> g_accessWatches;
+std::atomic<std::size_t> g_accessWatchCount{0};
+
+std::optional<VnodeIdentity> DescriptorIdentity(int descriptor) {
+    FileStat status{};
+    if (!File::FillFileStatFromDescriptor(descriptor, &status)) {
+        return std::nullopt;
+    }
+    return VnodeIdentity{status.st_dev, status.st_ino};
+}
+
+void WatchAccess(const VnodeIdentity& identity, const std::shared_ptr<VnodeWatch>& watch) {
+    std::lock_guard lock(g_accessMutex);
+    g_accessWatches.push_back({identity, watch});
+    g_accessWatchCount.store(g_accessWatches.size());
+}
+
+void ForgetAccess(const VnodeWatch* watch) {
+    std::lock_guard lock(g_accessMutex);
+    std::erase_if(g_accessWatches, [watch](const AccessWatch& entry) {
+        const auto live = entry.watch.lock();
+        return !live || live.get() == watch;
+    });
+    g_accessWatchCount.store(g_accessWatches.size());
+}
+
+void DeliverAccess(const VnodeIdentity& identity, std::uint32_t note) {
+    std::vector<std::shared_ptr<VnodeWatch>> watches;
+    {
+        std::lock_guard lock(g_accessMutex);
+        for (const auto& entry : g_accessWatches) {
+            if (entry.identity.device != identity.device || entry.identity.inode != identity.inode) {
+                continue;
+            }
+            if (auto live = entry.watch.lock()) {
+                watches.push_back(std::move(live));
+            }
+        }
+    }
+    for (const auto& watch : watches) {
+        watch->Deliver(note);
+    }
+}
+
+void DeliverAccess(int descriptor, std::uint32_t note) {
+    if (g_accessWatchCount.load() == 0) {
+        return;
+    }
+    if (const auto identity = DescriptorIdentity(descriptor)) {
+        DeliverAccess(*identity, note);
+    }
 }
 
 #ifdef _WIN32
@@ -354,8 +428,12 @@ int OpenHostWatch(int descriptor, std::uint32_t notes, HostWatch& host) {
         if (type == FILE_TYPE_PIPE) {
             return GUEST_EINVAL;
         }
+        if (type == FILE_TYPE_CHAR) {
+            DWORD mode = 0;
+            return ::GetConsoleMode(handle, &mode) ? GUEST_EINVAL : GUEST_ENODEV;
+        }
         if (type != FILE_TYPE_DISK) {
-            NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+            return GUEST_ENODEV;
         }
         host.target = ::ReOpenFile(handle, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     }
@@ -437,7 +515,7 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
         return GUEST_EINVAL;
     }
     if (!S_ISREG(status.st_mode) && !S_ISDIR(status.st_mode)) {
-        NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+        return ::isatty(descriptor) ? GUEST_EINVAL : GUEST_ENODEV;
     }
     host.target = ::fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
     if (host.target < 0) {
@@ -636,7 +714,7 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
         return GUEST_EINVAL;
     }
     if (!S_ISREG(status.st_mode) && !S_ISDIR(status.st_mode)) {
-        NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+        return ::isatty(descriptor) ? GUEST_EINVAL : GUEST_ENODEV;
     }
     host.directory = S_ISDIR(status.st_mode);
     const auto path = "/proc/self/fd/" + std::to_string(descriptor);
@@ -681,7 +759,9 @@ void TriggerVnode(KernelEqueueEvent* event, void* data) {
 }
 
 void StopVnode(KernelEqueue, KernelEqueueEvent* event) {
-    static_cast<VnodeWatch*>(event->filter.data)->Stop();
+    auto* watch = static_cast<VnodeWatch*>(event->filter.data);
+    ForgetAccess(watch);
+    watch->Stop();
 }
 
 int VnodeDescriptorError(int descriptor) {
@@ -699,25 +779,22 @@ int VnodeDescriptorError(int descriptor) {
 
 }
 
-void RequireVnodeNotes(std::uint32_t fflags) {
-    if ((fflags & ~MAPPED_NOTES) != 0) {
-        NotImplemented_nid_no_patch(("EVFILT_VNODE: fflags " + std::to_string(fflags & ~MAPPED_NOTES)).c_str());
-    }
-}
-
 void SetVnodeNotes(KernelEqueueEvent& event, std::uint32_t fflags) {
     static_cast<VnodeWatch*>(event.filter.data)->SetInterest(fflags);
 }
 
 int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t fflags, std::uint16_t flags, void* udata) {
-    RequireVnodeNotes(fflags);
     if (const int error = VnodeDescriptorError(descriptor)) {
         return error;
     }
+    const bool archived = File::IsArchivedFile(descriptor);
     HostWatch host;
-    if (const int error = OpenHostWatch(descriptor, fflags, host)) {
-        return error;
+    if (!archived) {
+        if (const int error = OpenHostWatch(descriptor, fflags, host)) {
+            return error;
+        }
     }
+    const auto identity = DescriptorIdentity(descriptor);
     std::shared_ptr<VnodeWatch> watch;
     try {
         watch = std::make_shared<VnodeWatch>(queue, static_cast<std::uintptr_t>(descriptor), fflags);
@@ -745,8 +822,42 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    if (identity) {
+        WatchAccess(*identity, watch);
+    }
+    if (!archived) {
+        std::thread(RunHostWatch, watch, std::move(host)).detach();
+    }
     return 0;
+}
+
+void EqueueNoteOpen(int descriptor) {
+    DeliverAccess(descriptor, GUEST_NOTE_OPEN);
+}
+
+void EqueueNoteRead(int descriptor) {
+    DeliverAccess(descriptor, GUEST_NOTE_READ);
+}
+
+EqueueCloseNote EqueuePrepareCloseNote(int descriptor) {
+    if (g_accessWatchCount.load() == 0 || !File::LastDescriptorOfOpenFile(descriptor)) {
+        return {};
+    }
+    const auto identity = DescriptorIdentity(descriptor);
+    if (!identity) {
+        return {};
+    }
+    return {identity->device, identity->inode, File::OpenFileWrites(descriptor) ? GUEST_NOTE_CLOSE_WRITE : GUEST_NOTE_CLOSE};
+}
+
+void EqueueDeliverCloseNote(const EqueueCloseNote& note) {
+    if (note.note != 0) {
+        DeliverAccess(VnodeIdentity{note.device, note.inode}, note.note);
+    }
+}
+
+void EqueueNoteClose(int descriptor) {
+    EqueueDeliverCloseNote(EqueuePrepareCloseNote(descriptor));
 }
 
 extern "C" {
@@ -757,7 +868,6 @@ int APS5_VABI sceKernelAddFileEvent(KernelEqueue eq, int fd, int watch, void* ud
         return SCE_KERNEL_ERROR_EBADF;
     }
     const auto notes = static_cast<std::uint32_t>(watch);
-    RequireVnodeNotes(notes);
     if (const int error = VnodeDescriptorError(fd)) {
         return SceKernelError(error);
     }

@@ -333,9 +333,6 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     }
     const bool descriptor = change.filter == EVFILT_READ || change.filter == EVFILT_WRITE;
     const auto lowWater = descriptor ? DescriptorLowWater(change) : 0;
-    if (change.filter == EVFILT_VNODE) {
-        RequireVnodeNotes(change.fflags);
-    }
     return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, descriptor, lowWater](KernelEqueueEvent& event) {
         event.event.udata = change.udata;
         if (descriptor) {

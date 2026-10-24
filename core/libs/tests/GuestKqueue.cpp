@@ -27,12 +27,15 @@ int APS5_VABI kqueue_nid_postfix();
 int APS5_VABI kevent_nid_postfix(int, const KernelEvent*, int, KernelEvent*, int, const KernelTimespec*);
 int APS5_VABI close_nid_postfix(int);
 int APS5_VABI dup_nid_postfix(int);
+int APS5_VABI dup2_nid_postfix(int, int);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI fcntl_nid_postfix(int, int, ...);
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
+std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
+int APS5_VABI getdents_nid_postfix(int, char*, int);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
 int APS5_VABI rmdir_nid_postfix(const char*);
@@ -50,6 +53,7 @@ int* APS5_VABI __error_nid_postfix();
 
 static constexpr int GuestEnoent = 2;
 static constexpr int GuestEbadf = 9;
+static constexpr int GuestEnodev = 19;
 static constexpr int GuestEinval = 22;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
@@ -89,12 +93,18 @@ static constexpr std::uint32_t NoteAttrib = 0x0008;
 static constexpr std::uint32_t NoteLink = 0x0010;
 static constexpr std::uint32_t NoteRename = 0x0020;
 static constexpr std::uint32_t NoteRevoke = 0x0040;
+static constexpr std::uint32_t NoteOpen = 0x0080;
+static constexpr std::uint32_t NoteClose = 0x0100;
+static constexpr std::uint32_t NoteCloseWrite = 0x0200;
+static constexpr std::uint32_t NoteRead = 0x0400;
+static constexpr int ReadOnly = 0x0000;
 static constexpr int ReadWrite = 0x0002;
 static constexpr int Create = 0x0200;
 static constexpr int Directory = 0x00020000;
 static constexpr int SceOk = 0;
 static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
+static constexpr int SceEnodev = static_cast<int>(0x80020013);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -860,7 +870,10 @@ static void FileWatch() {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     Require(ftruncate_nid_postfix(file, 0) == 0);
     Require(Wait(kq, events, 4) == 1 && events[0].fflags == NoteAttrib && events[0].udata == nullptr);
-    Require(Throws([kq, ident] { Apply(kq, Change(ident, EvfiltVnode, EvAdd, NoteRevoke)); }));
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd, NoteRevoke | 0x00100000)) == 0);
+    Require(write_nid_postfix(file, "abc", 3) == 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require(Poll(kq, events, 4) == 0);
     Require(Apply(kq, Change(ident, EvfiltVnode, EvDelete)) == 0);
     RequireFailure(Apply(kq, Change(ident, EvfiltVnode, EvDelete)), GuestEnoent);
 
@@ -893,6 +906,98 @@ static void FileWatch() {
     Require(sceKernelDeleteFileEvent(eq, file) == SceEbadf);
     Require(sceKernelDeleteEqueue(eq) == SceOk);
     Require(close_nid_postfix(kq) == 0);
+    Require(std::filesystem::remove(path));
+}
+
+static std::uint32_t PolledNotes(int kq, std::uintptr_t ident) {
+    KernelEvent events[4]{};
+    const int count = Poll(kq, events, 4);
+    Require(count == 0 || (count == 1 && events[0].ident == ident && events[0].filter == EvfiltVnode));
+    return count == 0 ? 0 : events[0].fflags;
+}
+
+static void AccessNotes() {
+    const auto path = TemporaryName("access");
+    const int created = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(created >= 0 && write_nid_postfix(created, "abc", 3) == 3 && close_nid_postfix(created) == 0);
+    const int watched = open_nid_postfix(path.c_str(), ReadOnly, 0);
+    Require(watched >= 0);
+    const int kq = kqueue_nid_postfix();
+    const auto ident = static_cast<std::uintptr_t>(watched);
+    const std::uint32_t access = NoteOpen | NoteClose | NoteCloseWrite | NoteRead;
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, access)) == 0);
+    Require(PolledNotes(kq, ident) == 0);
+
+    const int reader = open_nid_postfix(path.c_str(), ReadOnly, 0);
+    Require(reader >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    char buffer[8]{};
+    Require(read_nid_postfix(reader, buffer, sizeof(buffer)) == 3 && PolledNotes(kq, ident) == NoteRead);
+    Require(read_nid_postfix(reader, buffer, sizeof(buffer)) == 0 && PolledNotes(kq, ident) == NoteRead);
+    Require(pread_nid_postfix(reader, buffer, 1, 1) == 1 && buffer[0] == 'b' && PolledNotes(kq, ident) == NoteRead);
+    const int copy = dup_nid_postfix(reader);
+    Require(copy >= 0 && close_nid_postfix(reader) == 0 && PolledNotes(kq, ident) == 0);
+    Require(close_nid_postfix(copy) == 0 && PolledNotes(kq, ident) == NoteClose);
+
+    const int writer = open_nid_postfix(path.c_str(), ReadWrite, 0);
+    Require(writer >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    Require(close_nid_postfix(writer) == 0 && PolledNotes(kq, ident) == NoteCloseWrite);
+
+    const int replaced = open_nid_postfix(path.c_str(), ReadOnly, 0);
+    Require(replaced >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(dup2_nid_postfix(pipe[0], replaced) == replaced && PolledNotes(kq, ident) == NoteClose);
+    Require(close_nid_postfix(replaced) == 0 && close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(PolledNotes(kq, ident) == 0);
+
+    KernelEqueue eq = 0;
+    int marker = 0;
+    Require(sceKernelCreateEqueue(&eq, "access") == SceOk);
+    Require(sceKernelAddFileEvent(eq, watched, static_cast<int>(NoteOpen), &marker) == SceOk);
+    const int opened = open_nid_postfix(path.c_str(), ReadOnly, 0);
+    Require(opened >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds second = 1000000;
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &second) == SceOk && count == 1);
+    Require(events[0].ident == ident && events[0].fflags == NoteOpen && events[0].udata == &marker);
+    Require(close_nid_postfix(opened) == 0 && PolledNotes(kq, ident) == NoteClose);
+    Require(sceKernelDeleteFileEvent(eq, watched) == SceOk);
+
+    const int other = kqueue_nid_postfix();
+    const int observer = open_nid_postfix(path.c_str(), ReadOnly, 0);
+    Require(observer >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    const auto observerIdent = static_cast<std::uintptr_t>(observer);
+    Require(Apply(other, Change(observerIdent, EvfiltVnode, EvAdd | EvClear, access)) == 0);
+    Require(close_nid_postfix(watched) == 0 && PolledNotes(other, observerIdent) == NoteClose);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(ident, EvfiltVnode, EvDelete)), GuestEbadf);
+    Require(close_nid_postfix(observer) == 0 && Poll(other, events, 4) == 0);
+
+    const int random = open_nid_postfix("/dev/urandom", ReadOnly, 0);
+    Require(random >= 0);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(random), EvfiltVnode, EvAdd, NoteOpen)), GuestEnodev);
+    Require(sceKernelAddFileEvent(eq, random, static_cast<int>(NoteOpen), nullptr) == SceEnodev);
+    Require(close_nid_postfix(random) == 0);
+    Require(sceKernelDeleteEqueue(eq) == SceOk);
+    Require(close_nid_postfix(other) == 0 && close_nid_postfix(kq) == 0);
+    Require(std::filesystem::remove(path));
+}
+
+static void DirectoryAccessNotes() {
+    const auto path = TemporaryName("listing");
+    Require(mkdir_nid_postfix(path.c_str(), 0755) == 0);
+    const int directory = open_nid_postfix(path.c_str(), Directory, 0);
+    Require(directory >= 0);
+    const int kq = kqueue_nid_postfix();
+    const auto ident = static_cast<std::uintptr_t>(directory);
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteOpen | NoteClose | NoteCloseWrite | NoteRead)) == 0);
+    const int lister = open_nid_postfix(path.c_str(), Directory, 0);
+    Require(lister >= 0 && PolledNotes(kq, ident) == NoteOpen);
+    char entries[4096];
+    Require(getdents_nid_postfix(lister, entries, sizeof(entries)) >= 0 && PolledNotes(kq, ident) == NoteRead);
+    Require(close_nid_postfix(lister) == 0 && PolledNotes(kq, ident) == NoteClose);
+    Require(close_nid_postfix(directory) == 0 && close_nid_postfix(kq) == 0);
     Require(std::filesystem::remove(path));
 }
 
@@ -1203,6 +1308,8 @@ int main() {
     Errors();
     LowWaterMarks();
     FileWatch();
+    AccessNotes();
+    DirectoryAccessNotes();
 #ifndef _WIN32
     RenameAndDeleteWatchedFile();
 #endif

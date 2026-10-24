@@ -738,6 +738,7 @@ int APS5_VABI close_nid_postfix(int d) {
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
     EqueueDescriptorClosed(d);
+    EqueueNoteClose(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
@@ -817,10 +818,12 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
     auto* const standard = HostStandardHandle_nid_no_patch(to);
+    const auto closing = EqueuePrepareCloseNote(to);
     const int duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
     KeepStandardHandle_nid_no_patch(to, standard);
     if (duplicated != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     EqueueDescriptorClosed(to);
+    EqueueDeliverCloseNote(closing);
     GuestSockets::Forget(to);
     File::ForgetDirectoryDescriptor(to);
     File::DuplicateDirectoryDescriptor(from, to);
@@ -837,9 +840,11 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     }
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
+    const auto closing = EqueuePrepareCloseNote(to);
     const int result = ::dup2(from, to);
     if (result < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     EqueueDescriptorClosed(to);
+    EqueueDeliverCloseNote(closing);
     GuestSockets::Forget(to);
     File::ForgetRandomDevice(to);
     if (sourceIsRandom) File::RememberRandomDevice(to);
@@ -992,10 +997,10 @@ int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t off
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
     if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<int64_t>(nbytes);
-    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return *archived;
+    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return EqueueNotedRead(d, *archived);
     char empty = 0;
     const auto result = NativePread(d, buf == nullptr ? &empty : buf, nbytes, offset);
-    return result < 0 ? PosixFailure(SceErrorFromErrno(errno) & 0xffff) : result;
+    return result < 0 ? PosixFailure(SceErrorFromErrno(errno) & 0xffff) : EqueueNotedRead(d, result);
 }
 
 int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_t nbytes, int64_t offset) {
@@ -1130,7 +1135,7 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
     const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
     if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
-    return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
+    return EqueueNotedRead(fd, File::ReadDirectoryDescriptor(fd, buf, nbytes, basep));
 }
 
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
@@ -1196,7 +1201,7 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
         const auto record = (GuestHeaderBytes + nameLength + 1 + 3) & ~std::size_t{3};
         if (nameLength > GuestMaxName || written + record > static_cast<std::size_t>(nbytes)) {
             if (::lseek(fd, resume, SEEK_SET) < 0) return SceErrorFromErrno(errno);
-            if (written != 0) return static_cast<int>(written);
+            if (written != 0) return EqueueNotedRead(fd, static_cast<int>(written));
             return nameLength > GuestMaxName ? static_cast<int>(0x80020000u | GUEST_ENAMETOOLONG) : SceErrorFromErrno(GUEST_EINVAL);
         }
         char* out = buf + written;
@@ -1214,7 +1219,7 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
         offset += entry->d_reclen;
     }
     if (::lseek(fd, resume, SEEK_SET) < 0) return SceErrorFromErrno(errno);
-    return static_cast<int>(written);
+    return EqueueNotedRead(fd, static_cast<int>(written));
 }
 
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
@@ -1311,10 +1316,10 @@ int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
     if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<int64_t>(nbytes);
-    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return *archived;
+    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return EqueueNotedRead(d, *archived);
     char empty = 0;
     const auto result = NativePread(d, nbytes == 0 && buf == nullptr ? &empty : buf, nbytes, offset);
-    return result < 0 ? SceErrorFromErrno(errno) : result;
+    return result < 0 ? SceErrorFromErrno(errno) : EqueueNotedRead(d, result);
 }
 
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
@@ -1388,7 +1393,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
 }
 
 int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt) {
-    return TransferIovecs(d, iov, iovcnt, nullptr, false);
+    return EqueueNotedRead(d, TransferIovecs(d, iov, iovcnt, nullptr, false));
 }
 
 int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* iov, int iovcnt) {
@@ -1396,7 +1401,7 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* iov, int iovcnt) {
 }
 
 int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
-    return TransferIovecs(d, iov, iovcnt, &offset, false);
+    return EqueueNotedRead(d, TransferIovecs(d, iov, iovcnt, &offset, false));
 }
 
 int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
@@ -1411,9 +1416,9 @@ int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
     if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<int64_t>(nbytes);
-    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return *archived;
+    if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, &offset)) return EqueueNotedRead(d, *archived);
     const auto result = NativePread(d, buf, nbytes, offset);
-    return result < 0 ? SceErrorFromErrno(errno) : result;
+    return result < 0 ? SceErrorFromErrno(errno) : EqueueNotedRead(d, result);
 }
 
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
@@ -1435,9 +1440,9 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
         return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;
     }
     if (File::IsRandomDevice(d)) return ReadRandomIovecs(d, iov, iovcnt);
-    if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, nullptr)) return *archived;
+    if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, nullptr)) return EqueueNotedRead(d, *archived);
     const auto result = static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt));
-    return result < 0 ? SceErrorFromErrno(errno) : result;
+    return result < 0 ? SceErrorFromErrno(errno) : EqueueNotedRead(d, result);
 }
 
 int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt) {
@@ -1464,9 +1469,9 @@ int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* guestIov, int iovcnt
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (File::IsRandomDevice(d)) return ReadRandomIovecs(d, iov, iovcnt);
-    if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, &offset)) return *archived;
+    if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, &offset)) return EqueueNotedRead(d, *archived);
     const auto result = static_cast<std::int64_t>(::preadv(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)));
-    return result < 0 ? SceErrorFromErrno(errno) : result;
+    return result < 0 ? SceErrorFromErrno(errno) : EqueueNotedRead(d, result);
 }
 
 int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* guestIov, int iovcnt, int64_t offset) {
