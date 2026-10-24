@@ -156,6 +156,38 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
     return 0;
 }
 
+int APS5_VABI FT_Open_Face_nid_postfix(GuestLibrary* library, const GuestOpenArgs* args, std::int64_t faceIndex, GuestFaceRec** aface) {
+    if (!args) return FT_Err_Invalid_Argument;
+    if (!library) return FT_Err_Invalid_Library_Handle;
+    if (args->flags & (FT_OPEN_STREAM | FT_OPEN_DRIVER | FT_OPEN_PARAMS)) {
+        throw std::runtime_error("FT_Open_Face: opening from a stream, driver or parameters is not implemented");
+    }
+    auto face = std::make_unique<GuestFace>();
+    FT_Open_Args native{};
+    if (args->flags & FT_OPEN_MEMORY) {
+        if (args->memory_size < std::numeric_limits<FT_Long>::min() || args->memory_size > std::numeric_limits<FT_Long>::max()) {
+            throw std::runtime_error("FT_Open_Face: a font buffer size outside the host FT_Long range is not implemented");
+        }
+        native.flags = FT_OPEN_MEMORY;
+        native.memory_base = args->memory_base;
+        native.memory_size = static_cast<FT_Long>(args->memory_size);
+    } else if (args->flags & FT_OPEN_PATHNAME) {
+        if (!args->pathname) return FT_Err_Invalid_Argument;
+        if (!ReadFontFile(args->pathname, face->bytes)) return FT_Err_Cannot_Open_Resource;
+        if (face->bytes.size() > static_cast<std::size_t>(std::numeric_limits<FT_Long>::max())) {
+            throw std::runtime_error("FT_Open_Face: a font file larger than the host FT_Long range is not implemented");
+        }
+        native.flags = FT_OPEN_MEMORY;
+        native.memory_base = face->bytes.data();
+        native.memory_size = static_cast<FT_Long>(face->bytes.size());
+    }
+    FT_Face host = nullptr;
+    const FT_Error error = FT_Open_Face(library->host, &native, static_cast<FT_Long>(OpenFaceIndex(faceIndex)), aface ? &host : nullptr);
+    if (error != 0 || !aface) return error;
+    PublishFace(library, std::move(face), host, aface);
+    return 0;
+}
+
 int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {
     const GuestFace* owner = FaceOf(face);
     return FT_Reference_Face(owner ? owner->host : nullptr);
