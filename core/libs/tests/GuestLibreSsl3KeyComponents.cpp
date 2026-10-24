@@ -25,6 +25,7 @@ extern "C" {
 void APS5_VABI RSA_get0_key_nid_postfix(const TestKey*, const void**, const void**, const void**);
 void APS5_VABI DH_get0_pqg_nid_postfix(const TestKey*, const void**, const void**, const void**);
 void APS5_VABI DH_get0_key_nid_postfix(const TestKey*, const void**, const void**);
+void APS5_VABI DSA_get0_pqg_nid_postfix(const TestKey*, const void**, const void**, const void**);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -95,9 +96,29 @@ static void TestDhKey() {
     RequireThrows([] { DH_get0_key_nid_postfix(nullptr, nullptr, nullptr); });
 }
 
+static void TestDsaPqg() {
+    TestKey key = Filled();
+    const void* first = Unset;
+    const void* second = Unset;
+    const void* third = Unset;
+    DSA_get0_pqg_nid_postfix(&key, &first, &second, &third);
+    Require(first == &Number[2] && second == &Number[3] && third == &Number[4]);
+    first = second = third = Unset;
+    DSA_get0_pqg_nid_postfix(&key, nullptr, &second, nullptr);
+    Require(first == Unset && second == &Number[3] && third == Unset);
+    DSA_get0_pqg_nid_postfix(&key, nullptr, nullptr, nullptr);
+    key.slots[2] = nullptr;
+    key.slots[4] = nullptr;
+    DSA_get0_pqg_nid_postfix(&key, &first, nullptr, &third);
+    Require(first == nullptr && third == nullptr);
+    RequireThrows([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
+    RequireThrows([] { DSA_get0_pqg_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
+}
+
 int main() {
     TestRsaKey();
     TestDhPqg();
     TestDhKey();
+    TestDsaPqg();
     return 0;
 }
