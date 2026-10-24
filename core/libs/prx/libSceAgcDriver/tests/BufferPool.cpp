@@ -350,6 +350,32 @@ void LargerClass() {
     Expect(MemoryOf(best.Handle()) != twelve && ClassOf(best.Handle()) == 5 * MiB, "a 4 MiB + 1 request did not take the smallest retained class that fits (5 MiB)");
 }
 
+void ExactSizeReuse() {
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        VkBuffer first = VK_NULL_HANDLE;
+        VkBuffer second = VK_NULL_HANDLE;
+        {
+            auto a = std::make_unique<Buffer>(context, 3000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            auto b = std::make_unique<Buffer>(context, 4000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            first = a->Handle();
+            second = b->Handle();
+            a.reset();
+            b.reset();
+        }
+        const auto destroyed = mock.destroyedBuffers;
+        {
+            Buffer again(context, 3000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            Expect(again.Handle() == first && mock.destroyedBuffers == destroyed, "a pooled buffer of the requested exact size was passed over for a newer one that had to be rebuilt");
+            Expect(mock.sizes.at(again.Handle()) == 3000 && again.Bytes().size() == 3000, "a reused buffer does not have the requested size");
+        }
+        Buffer other(context, 4000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+        Expect(other.Handle() == second && mock.sizes.at(other.Handle()) == 4000, "the other exact size was not kept for its own request");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "exact-size reuse leaked Vulkan objects");
+}
+
 void KeptUntilFence() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -1168,6 +1194,7 @@ int main(int argc, char** argv) {
         Expect(mock.liveBytes == 0, "slab return test leaked memory");
         SizeClassesAndDirections();
         LargerClass();
+        ExactSizeReuse();
         KeptUntilFence();
         SmallDeviceRetention();
         Budget();

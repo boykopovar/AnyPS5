@@ -184,6 +184,7 @@ private:
     static constexpr std::size_t classLimit = std::size_t{1} << 20u;
     static constexpr unsigned deviceClassBits = 3;
     static constexpr std::size_t defaultSlots = 4096;
+    static constexpr std::size_t exactSizeScan = 64;
 };
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
