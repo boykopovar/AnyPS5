@@ -112,3 +112,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
