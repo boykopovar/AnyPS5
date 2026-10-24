@@ -34,6 +34,7 @@ std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
 std::int64_t APS5_VABI recvmsg_nid_postfix(int, Msghdr*, int);
+std::int64_t APS5_VABI sendmsg_nid_postfix(int, const Msghdr*, int);
 int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI shutdown_nid_postfix(int, int);
@@ -175,7 +176,68 @@ static void CheckReceiveMessageFaults() {
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(memory, page * 3) == 0);
 }
 
+static bool SendFaults(int descriptor, const Msghdr* message) {
+    *__error_nid_postfix() = 0;
+    return sendmsg_nid_postfix(descriptor, message, 0) == -1 && *__error_nid_postfix() == 14;
+}
+
+static void CheckSendMessageFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page * 3, 3, 0) == 0 && memory != nullptr);
+    auto* writable = static_cast<char*>(memory);
+    auto* readOnly = writable + page;
+    auto* inaccessible = writable + 2 * page;
+    std::memcpy(readOnly, "ro", 2);
+    auto* readOnlyVector = reinterpret_cast<Iovec*>(readOnly + 64);
+    *readOnlyVector = {readOnly, 2};
+    auto* readOnlyMessage = reinterpret_cast<Msghdr*>(readOnly + 128);
+    *readOnlyMessage = {nullptr, 0, readOnlyVector, 1, nullptr, 0, 0};
+    char data[4] = {'a', 'b', 'c', 'd'};
+    Iovec good{data, sizeof(data)};
+    Require(sceKernelMprotect(readOnly, page, 1) == 0 && sceKernelMprotect(inaccessible, page, 0) == 0);
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+
+    Require(SendFaults(pair[0], reinterpret_cast<Msghdr*>(0x1000)));
+    Require(SendFaults(pair[0], reinterpret_cast<Msghdr*>(inaccessible)));
+    Msghdr message{nullptr, 0, reinterpret_cast<Iovec*>(0x1000), 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message.iov = reinterpret_cast<Iovec*>(inaccessible);
+    Require(SendFaults(pair[0], &message));
+    Iovec vector{reinterpret_cast<void*>(0x1000), sizeof(data)};
+    message.iov = &vector;
+    Require(SendFaults(pair[0], &message));
+    vector.base = inaccessible;
+    Require(SendFaults(pair[0], &message));
+    Iovec second[2] = {good, {inaccessible, 2}};
+    message.iov = second;
+    message.iovLength = 2;
+    Require(SendFaults(pair[0], &message));
+    message = {reinterpret_cast<void*>(0x1000), 16, &good, 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message = {inaccessible, 16, &good, 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message = {nullptr, 0, &vector, 1, nullptr, 0, 0};
+    *__error_nid_postfix() = 0;
+    Require(sendmsg_nid_postfix(-1, &message, 0) == -1 && *__error_nid_postfix() == 9);
+    char peeked[4]{};
+    Require(fcntl_nid_postfix(pair[1], 4, 4) == 0);
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], peeked, sizeof(peeked), 0) == -1 && *__error_nid_postfix() == 35);
+    Require(fcntl_nid_postfix(pair[1], 4, 0) == 0);
+
+    Require(sendmsg_nid_postfix(pair[0], readOnlyMessage, 0) == 2);
+    Require(recv_nid_postfix(pair[1], peeked, sizeof(peeked), 0) == 2 && std::memcmp(peeked, "ro", 2) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(memory, page * 3) == 0);
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "sendmsg-memory") == 0) {
+        CheckSendMessageFaults();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "recvmsg-memory") == 0) {
         CheckReceiveMessageFaults();
         return 0;
