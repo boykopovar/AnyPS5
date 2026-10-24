@@ -22,6 +22,8 @@ namespace {
 constexpr std::uint16_t kEtNone = 0;
 constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
+constexpr std::uint16_t kEtSceDynExec = 0xfe10;
+constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
@@ -64,6 +66,11 @@ RelinkResult RelinkerPipeline::Relink() {
         throw RelinkerException("ET_NONE inputs do not specify an ELF object type");
     if (inputType == kEtCore)
         throw RelinkerException("ET_CORE core dumps are not executable images");
+    if (inputType != ET_EXEC && inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
+        std::ostringstream message;
+        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_EXEC, ET_DYN, 0xfe10 or 0xfe18";
+        throw RelinkerException(message.str(), 0x10);
+    }
 
     auto programHeaders = elfReader->ReadProgramHeaders();
 
