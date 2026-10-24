@@ -57,4 +57,8 @@ void* APS5_VABI X509_get_subject_name_nid_postfix(const LibreSslX509* certificat
     return CertInfo(certificate, __func__).subject;
 }
 
+void* APS5_VABI X509_get_serialNumber_nid_postfix(const LibreSslX509* certificate) {
+    return CertInfo(certificate, __func__).serialNumber;
+}
+
 }
