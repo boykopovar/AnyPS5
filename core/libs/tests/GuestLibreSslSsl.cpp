@@ -39,6 +39,7 @@ void* APS5_VABI SSL_get_rbio_nid_postfix(const TestSsl*);
 void* APS5_VABI SSL_get_wbio_nid_postfix(const TestSsl*);
 int APS5_VABI SSL_version_nid_postfix(const TestSsl*);
 std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const TestSsl*);
+int APS5_VABI SSL_get_shutdown_nid_postfix(const TestSsl*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -109,11 +110,26 @@ static void TestVerifyResult() {
     Require(SSL_get_verify_result_nid_postfix(&ssl) == -1);
 }
 
+static void TestGetShutdown() {
+    TestSslInternal internal {};
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get_shutdown_nid_postfix(nullptr); });
+    RequireThrows([&] { SSL_get_shutdown_nid_postfix(&ssl); });
+    ssl.internal = &internal;
+    Require(SSL_get_shutdown_nid_postfix(&ssl) == 0);
+    internal.rwstate = 3;
+    internal.shutdown = 1;
+    Require(SSL_get_shutdown_nid_postfix(&ssl) == 1);
+    internal.shutdown = 3;
+    Require(SSL_get_shutdown_nid_postfix(&ssl) == 3);
+}
+
 int main() {
     TestGetSslCtx();
     TestGetRbio();
     TestGetWbio();
     TestVersion();
     TestVerifyResult();
+    TestGetShutdown();
     return 0;
 }
