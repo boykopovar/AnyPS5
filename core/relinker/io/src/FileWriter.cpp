@@ -33,11 +33,10 @@ int createTemporary(const std::filesystem::path& target, const mode_t mode, std:
     constexpr std::string_view characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     std::random_device device;
     for (int attempt = 0; attempt < 100; ++attempt) {
-        std::string suffix = ".";
+        std::string suffix = ".anyps5-";
         for (int index = 0; index < 6; ++index)
             suffix += characters[device() % characters.size()];
-        temporary = target;
-        temporary += suffix;
+        temporary = target.parent_path() / suffix;
         const int descriptor = open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
         if (descriptor >= 0 || errno != EEXIST)
             return descriptor;
