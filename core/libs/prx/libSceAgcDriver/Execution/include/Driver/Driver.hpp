@@ -240,7 +240,8 @@ private:
     static IndirectSource& indirectSource();
     static std::string describeIndirectSource();
     std::array<std::uint32_t, 5> readDispatchArguments(std::uint32_t queue, std::uint64_t arguments, std::uint32_t initiator);
-    static bool& sampledRead();
+    static bool sampledRead();
+    static void setSampledRead(bool sampled);
     static bool writeEvidenceEnabled();
     static bool writerKeyedEvidence();
     static bool foreignWriters();
