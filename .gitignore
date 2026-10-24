@@ -36,6 +36,7 @@ build_tools/
 b/
 Build/
 build-*/
+result
 cmake-build-debug/
 cmake-build-release/
 cmake-build-*/

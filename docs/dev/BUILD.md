@@ -1,5 +1,20 @@
 # Build
 
+## Nix
+
+On x86-64 Linux, Nix 2.27 or newer with `nix-command` and `flakes` enabled builds both targets:
+
+```sh
+git submodule update --init --recursive
+nix build
+```
+
+The output contains `result/bin/relinker` and the patched libraries in `result/lib/anyps5/`.
+Build either target separately with `nix build .#relinker` or `nix build .#libs`.
+The flake includes Git submodules and fetches the pinned FFmpeg package before configuration.
+Copy the patched `.prx` files into a title's `libs/` directory as described in the
+[runtime layout](../user/USAGE.md#runtime-layout). The libraries retain Nix store dependencies.
+
 ## Relinker only
 
 The relinker can be built without initializing submodules or configuring SDL, Vulkan, FFmpeg, FreeType or the shader recompiler. It requires CMake, a C++20 compiler and a build tool. Python 3.9 or newer enables the Python regression tests.
