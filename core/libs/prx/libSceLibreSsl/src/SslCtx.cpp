@@ -54,4 +54,10 @@ void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).certStore;
 }
 
+void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
+    LibreSslCtx& context = Context(ctx, __func__);
+    if (!context.internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    context.internal->quietShutdown = mode;
+}
+
 }
