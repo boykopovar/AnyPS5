@@ -711,6 +711,7 @@ struct CompiledShaderArtifact {
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
     bool bdaWrites = false;
+    bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
