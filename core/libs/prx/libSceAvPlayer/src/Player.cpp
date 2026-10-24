@@ -391,4 +391,29 @@ void Player::SetClockTimeForTest(double milliseconds) {
     if (source) source->SetClockTimeForTest(milliseconds);
 }
 
+void Player::SetHoldAudioEofForTest(bool hold) {
+    std::lock_guard lock(mutex);
+    if (source) source->SetHoldAudioEofForTest(hold);
+}
+
+bool Player::AudioEofHeldForTest() {
+    std::lock_guard lock(mutex);
+    return source && source->AudioEofHeldForTest();
+}
+
+bool Player::AudioEndedForTest() {
+    std::lock_guard lock(mutex);
+    return source && source->AudioEndedForTest();
+}
+
+int Player::QueuedAudioForTest() {
+    std::lock_guard lock(mutex);
+    return source ? source->QueuedAudioForTest() : 0;
+}
+
+bool Player::NextQueuedAudioTimestampForTest(std::uint64_t& timestamp) {
+    std::lock_guard lock(mutex);
+    return source && source->NextQueuedAudioTimestampForTest(timestamp);
+}
+
 }
