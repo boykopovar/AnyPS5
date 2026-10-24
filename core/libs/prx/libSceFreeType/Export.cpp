@@ -320,6 +320,13 @@ void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(GuestGlyphSlotRec* slot) {
     if (owner) SyncSlot(*owner);
 }
 
+void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    if (owner) WriteBackOutline(*owner);
+    FT_GlyphSlot_Embolden(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
+}
+
 int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec* face, std::int32_t encoding) {
     GuestFace* owner = FaceOf(face);
     const FT_Error error = FT_Select_Charmap(owner ? owner->host : nullptr, static_cast<FT_Encoding>(encoding));
