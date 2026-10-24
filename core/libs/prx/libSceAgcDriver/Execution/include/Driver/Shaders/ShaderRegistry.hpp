@@ -171,6 +171,44 @@ struct PreparedShaders : PreparedShaderState {
     std::vector<std::size_t> convertedSamples;
 };
 
+class SharedCode {
+public:
+    SharedCode() = default;
+    SharedCode(std::vector<std::uint32_t> values) : words(std::make_shared<std::vector<std::uint32_t>>(std::move(values))) {}
+    SharedCode(std::initializer_list<std::uint32_t> values) : SharedCode(std::vector<std::uint32_t>(values)) {}
+    template<std::input_iterator TIterator>
+    SharedCode(TIterator first, TIterator last) : SharedCode(std::vector<std::uint32_t>(first, last)) {}
+
+    operator const std::vector<std::uint32_t>&() const { return Words(); }
+    [[nodiscard]] const std::vector<std::uint32_t>& Words() const { return words != nullptr ? *words : none(); }
+    [[nodiscard]] const std::uint32_t* data() const { return Words().data(); }
+    [[nodiscard]] std::size_t size() const { return Words().size(); }
+    [[nodiscard]] bool empty() const { return Words().empty(); }
+    [[nodiscard]] const std::uint32_t* begin() const { return Words().data(); }
+    [[nodiscard]] const std::uint32_t* end() const { return Words().data() + Words().size(); }
+    [[nodiscard]] std::uint32_t operator[](std::size_t index) const { return Words()[index]; }
+    [[nodiscard]] bool SharesWith(const SharedCode& other) const { return words != nullptr && words == other.words; }
+    bool operator==(const SharedCode& other) const { return words == other.words || Words() == other.Words(); }
+    bool operator==(const std::vector<std::uint32_t>& other) const { return Words() == other; }
+
+    std::vector<std::uint32_t>& Mutable() {
+        if (words == nullptr) words = std::make_shared<std::vector<std::uint32_t>>();
+        else if (words.use_count() > 1) words = std::make_shared<std::vector<std::uint32_t>>(*words);
+        return *words;
+    }
+    void resize(std::size_t count) { Mutable().resize(count); }
+    template<typename TIterator>
+    void assign(TIterator first, TIterator last) { Mutable().assign(first, last); }
+
+private:
+    static const std::vector<std::uint32_t>& none() {
+        static const std::vector<std::uint32_t> none;
+        return none;
+    }
+
+    std::shared_ptr<std::vector<std::uint32_t>> words;
+};
+
 struct RegisteredShaderState {
     Registers shader;
     Registers context;
@@ -183,7 +221,7 @@ struct ShaderSnapshot {
     std::uint64_t codeAddress;
     std::uint64_t headerAddress;
     std::uint8_t type;
-    std::vector<std::uint32_t> code;
+    SharedCode code;
     std::vector<std::byte> header;
     std::shared_ptr<PreparedShaders> prepared = std::make_shared<PreparedShaders>();
     std::shared_ptr<const RegisteredShaderState> registeredState;

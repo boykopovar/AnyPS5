@@ -446,6 +446,7 @@ void SharedCodeHeaders() {
     };
     const auto [vertexSnapshot, meshSnapshot] = snapshots();
     Require(vertexSnapshot->registeredState != meshSnapshot->registeredState, "a header with other registers shared another header's registered state");
+    Require(vertexSnapshot->code.SharesWith(meshSnapshot->code), "two headers of one program keep separate copies of its code");
     Shader copy = vertex.shader;
     copy.user_data = nullptr;
     AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive);

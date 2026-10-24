@@ -119,7 +119,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
         snapshot.code.resize(std::min(available, std::max<std::size_t>(64, previous * 2)));
         drain(address + previous * sizeof(std::uint32_t), (snapshot.code.size() - previous) * sizeof(std::uint32_t));
         GuestMemory::Read(address + previous * sizeof(std::uint32_t),
-            std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
+            std::as_writable_bytes(std::span(snapshot.code.Mutable()).subspan(previous)), alignof(std::uint32_t));
         try {
             const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(snapshot.code);
             if (const auto tail = ShaderRecompiler::FindUserDataTail(decoded, 0u, 106u)) snapshot.userDataTailRegister = tail->userDataRegister;
@@ -2324,7 +2324,7 @@ void Driver::RegisterShader(const Shader* shader) {
     require(!RawGraphicsDrawnIn(reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(code) + fields.shader_size), "a shader was registered over a graphics program that was drawn without registration");
     ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), fields.type, {}, {}};
     snapshot.code.resize(fields.shader_size / sizeof(std::uint32_t));
-    std::memcpy(snapshot.code.data(), code, fields.shader_size);
+    std::memcpy(snapshot.code.Mutable().data(), code, fields.shader_size);
     snapshot.header.resize(fields.header_size);
     std::memcpy(snapshot.header.data(), static_cast<const void*>(shader), fields.header_size);
 
@@ -2359,7 +2359,9 @@ void Driver::RegisterShader(const Shader* shader) {
         if (shaders != nullptr) {
             if (const auto found = shaders->find(snapshot.codeAddress); found != shaders->end()) {
                 for (const auto& current : found->second) {
-                    if (current->registeredState == nullptr || current->type != snapshot.type || current->code != snapshot.code || *current->registeredState != *snapshot.registeredState) continue;
+                    if (current->code != snapshot.code) continue;
+                    snapshot.code = current->code;
+                    if (current->registeredState == nullptr || current->type != snapshot.type || *current->registeredState != *snapshot.registeredState) continue;
                     snapshot.registeredState = current->registeredState;
                     break;
                 }
