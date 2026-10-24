@@ -1775,7 +1775,7 @@ private:
                 continue;
             }
             image.table = next++;
-            if (image.atomic64 || image.packed || image.byElements != 0u) {
+            if (image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
             }
         }

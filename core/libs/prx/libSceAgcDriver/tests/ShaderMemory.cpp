@@ -3364,6 +3364,19 @@ void verifyImageTableRegistration() {
     const auto* atomicTable = TableBinding(*atomic.result, DescriptorRole::ImageStorageTable);
     require((atomicFault & Abi::PoisonFlag) == 0u && atomicTable != nullptr && atomicTable->count != 0u && atomicTable->imageAtomic.size() == atomicTable->count && std::all_of(atomicTable->imageWritten.begin(), atomicTable->imageWritten.end(), [](bool written) { return written; }) && std::all_of(atomicTable->imageAtomic.begin(), atomicTable->imageAtomic.end(), [](bool atomic) { return atomic; }), "image table registration: the image_atomic_add table was not bound as atomic storage elements");
     require(TableBinding(*atomic.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*atomic.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: an atomic-only table bound sampled elements");
+    auto atomic64Code = storeCode;
+    atomic64Code[8] = 0xf0440308u;
+    guest.heap[0] = TableT(texture.bytes.data(), TableFormat32_32UInt, TableType2D);
+    static constexpr std::array<std::uint32_t, 5> int64ImageCapabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityInt64ImageEXT};
+    auto atomic64Request = TableRequest(atomic64Code, userData);
+    atomic64Request.target.supportedCapabilities = int64ImageCapabilities;
+    const auto atomic64 = CompileTable(atomic64Request);
+    const auto& atomic64Plan = *atomic64.capture->plan;
+    require(atomic64Plan.info.images.size() == 1u && atomic64Plan.info.images[0].table == 0u && atomic64Plan.info.images[0].tableOperation == TableOperation::Supported, "image table registration: a table T# feeding image_atomic64_add was not a supported table operation");
+    const auto& atomic64Map = TableMap(*atomic64.result);
+    const auto atomic64Fault = atomic64Map[Abi::TableHeader(0) + Abi::TableFault];
+    const auto* atomic64Table = TableBinding(*atomic64.result, DescriptorRole::ImageStorageTable);
+    require((atomic64Fault & Abi::PoisonFlag) == 0u && atomic64Table != nullptr && atomic64Table->count != 0u && atomic64Table->imageAtomic64.size() == atomic64Table->count && std::all_of(atomic64Table->imageAtomic64.begin(), atomic64Table->imageAtomic64.end(), [](bool atomic) { return atomic; }), "image table registration: the image_atomic64_add table was not bound as 64-bit atomic storage elements");
     const std::array<std::pair<std::uint32_t, const char*>, 2> unsupportedStores{{{0xf0240f08u, "image_store_mip"}, {0xf0280f08u, "image_store_pck"}}};
     for (const auto& [instruction, name] : unsupportedStores) {
         auto code = storeCode;
@@ -3794,7 +3807,7 @@ void verifySelectedRecordDirectOperations() {
         require(word0 == 0xf0440308u || (TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2]))), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
         const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
         const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
-        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u || word0 == 0xf0440108u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u || word0 == 0xf0440108u || word0 == 0xf0440308u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
     }
     const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
     const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
