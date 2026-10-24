@@ -968,10 +968,12 @@ std::uint64_t failedCollectBegin = 0;
 std::uint64_t failedCollectEnd = 0;
 std::uint64_t unwatchHookBegin = 0;
 std::uint64_t unwatchHookEnd = 0;
+bool unwatchHookProven = true;
 
 void RecordUnwatch(std::uint64_t address, std::size_t bytes) {
     unwatchHookBegin = address;
     unwatchHookEnd = address + bytes;
+    unwatchHookProven = UnwatchWritesProven();
 }
 
 bool FailFreshCollect(std::uintptr_t address, std::size_t bytes, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
@@ -995,6 +997,7 @@ void CheckFailedCollectUnwatch() {
     Require(Watched(base, Block) && Watched(base + 2 * Block, Block), "a failed collect unwatched unrelated blocks");
     Require(failedCollectBegin == base + Block && failedCollectEnd == base + 2 * Block, "the failed fresh collect did not cover its block");
     Require(unwatchHookBegin <= base + Block && unwatchHookEnd >= base + 2 * Block, "a failed collect did not run the unwatch hook over its block");
+    Require(!unwatchHookProven, "a failed collect ran the unwatch hook as if the CPU writes to its block were proven");
 }
 #endif
 
@@ -1352,6 +1355,59 @@ void CheckUnwatchedImport() {
 #endif
 }
 
+struct ImportHookCall {
+    std::uint64_t begin;
+    std::uint64_t end;
+    bool watched;
+    bool proven;
+};
+
+std::vector<ImportHookCall> importHookCalls;
+std::uint64_t importHookProbe = 0;
+
+void RecordImportHook(std::uint64_t address, std::size_t bytes) {
+    importHookCalls.push_back({address, address + bytes, Watched(importHookProbe, Block), UnwatchWritesProven()});
+}
+
+void CheckImportWalkUnwatchHooks() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Require(CollectWritesUncached(base, 4 * Block) != 0, "the import walk block is not collected");
+    struct Reset {
+        ~Reset() {
+            SetImportWalkFailureForTest(0);
+            SetUnwatchHook(nullptr);
+        }
+    } reset;
+    SetUnwatchHook(&RecordImportHook);
+    for (const int walk : {1, 2}) {
+        const std::string what = walk == 1 ? "an import that stays watched whose page walk failed before the import" : "an import that stays watched whose page walk failed after the import";
+        const auto imported = base + static_cast<std::uint64_t>(walk - 1) * 2 * Block;
+        Require(Watched(imported, Block), what + ": its block was not watched before the import");
+        importHookCalls.clear();
+        importHookProbe = imported;
+        bool hookedBeforeImport = false;
+        SetImportWalkFailureForTest(walk);
+        Require(ImportWatched(imported, Block, [&] {
+            hookedBeforeImport = !importHookCalls.empty();
+            return true;
+        }), what + ": the import failed");
+        SetImportWalkFailureForTest(0);
+        Require(importHookCalls.size() == 1, what + " did not run the unwatch hook once");
+        const auto& call = importHookCalls.front();
+        Require(call.begin <= imported && imported + Block <= call.end, what + " gave the unwatch hook a range that misses its block");
+        Require(call.watched, what + " ran the unwatch hook after its block left the write watch");
+        Require(!call.proven, what + " ran the unwatch hook as if the CPU writes to its block were proven");
+        Require(hookedBeforeImport == (walk == 1), what + (walk == 1 ? " ran the unwatch hook after the import" : " ran the unwatch hook before the import"));
+        Require(!Watched(imported, Block), what + " left its block watched");
+    }
+    importHookCalls.clear();
+    importHookProbe = base + 3 * Block;
+    Unwatch(base + 3 * Block, Block);
+    Require(importHookCalls.size() == 1 && importHookCalls.front().watched && importHookCalls.front().proven, "Unwatch did not run the unwatch hook once, while watched, with its CPU writes proven");
+}
+
 class PartlyCommitted {
 public:
     static constexpr std::size_t Bytes = 4 * Block;
@@ -1565,6 +1621,7 @@ int main() {
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();
+        CheckImportWalkUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();
     } catch (const std::exception& error) {
