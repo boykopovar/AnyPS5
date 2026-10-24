@@ -570,26 +570,40 @@ def cmake_comments(text):
     return lines
 
 
-def cpp_text(text, preserve_comments=False):
-    def mask(match):
-        if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
-            return match.group()
-        blank = re.sub(r"[^\n]", " ", match.group())
-        return blank if match.group("comment") is not None else '""' + blank[2:]
+def cpp_mask(match, preserve_comments=False):
+    if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
+        return match.group()
+    blank = re.sub(r"[^\n]", " ", match.group())
+    return blank if match.group("comment") is not None else '""' + blank[2:]
 
-    return CPP_TOKEN.sub(mask, text)
+
+def cpp_text(text, preserve_comments=False):
+    return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
+
+
+def cpp_pieces(text):
+    end = 0
+    for match in CPP_TOKEN.finditer(text):
+        yield text[end:match.start()]
+        yield cpp_mask(match)
+        end = match.end()
+    yield text[end:]
 
 
 def function_body(lines, start):
-    text = cpp_text("\n".join(lines[start:start + 400]))
-    brace, semicolon = text.find("{"), text.find(";")
-    if brace < 0 or 0 <= semicolon < brace:
-        return None
-    depth = 0
-    for index in range(brace, len(text)):
-        depth += {"{": 1, "}": -1}.get(text[index], 0)
-        if depth == 0:
-            return re.sub(r"\s+", " ", text[brace + 1:index]).replace(" ", "")
+    body, depth = None, 0
+    for piece in cpp_pieces("\n".join(lines[start:start + 400])):
+        for character in piece:
+            if body is None:
+                if character == ";":
+                    return None
+                if character == "{":
+                    body, depth = [], 1
+                continue
+            depth += {"{": 1, "}": -1}.get(character, 0)
+            if depth == 0:
+                return re.sub(r"\s+", " ", "".join(body)).replace(" ", "")
+            body.append(character)
     return None
 
 
