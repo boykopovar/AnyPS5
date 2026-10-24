@@ -4,6 +4,7 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/HostFault.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
 #include <algorithm>
@@ -334,6 +335,13 @@ void ReportUndeliverableException(const EXCEPTION_POINTERS* info, std::uint64_t 
     ReportStackCandidates(info->ContextRecord->Rsp, 32, 0x4000);
 }
 
+std::atomic<LibcHostFaultHandler> g_hostFaultHandler{nullptr};
+
+bool HandleHostFault(EXCEPTION_POINTERS* info) {
+    const auto handler = g_hostFaultHandler.load(std::memory_order_acquire);
+    return handler != nullptr && handler(info);
+}
+
 bool HandleSse4a(EXCEPTION_POINTERS* info) {
     if (!g_sse4aEmulation) return false;
     const auto* record = info->ExceptionRecord;
@@ -357,6 +365,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
         if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord)) ReportUndeliverableException(info, frame);
@@ -690,5 +699,9 @@ const bool g_crashReportInstalled = [] {
     return true;
 }();
 
+}
+
+extern "C" void LibcSetHostFaultHandler_nid_no_patch(LibcHostFaultHandler handler) noexcept {
+    g_hostFaultHandler.store(handler, std::memory_order_release);
 }
 #endif

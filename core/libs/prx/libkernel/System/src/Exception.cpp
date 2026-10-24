@@ -2,6 +2,9 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/HostFault.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <vector>
@@ -25,10 +28,19 @@
 #include <ucontext.h>
 #include <unistd.h>
 #endif
+#ifdef __linux__
+#include <string_view>
+#include <dlfcn.h>
+#include <link.h>
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 35))
+#define LIBKERNEL_EXCEPTION_FIND_OBJECT 1
+#endif
+#endif
 
 extern "C" Pthread APS5_VABI scePthreadSelf();
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
+extern "C" void Aps5FaultEntryStub();
 extern "C" [[noreturn]] void Aps5RedirectedExit(CONTEXT* context, const void* vectors, void (*restore)(CONTEXT*, EXCEPTION_RECORD*));
 #endif
 
@@ -98,6 +110,36 @@ using GuestExceptionHandler = void (APS5_VABI *)(int, void*);
 
 constexpr std::array<int, 6> AllowedSignals{1, 4, 8, 10, 11, 30};
 constexpr int RaisedSignal = 30;
+constexpr int SignalIllegal = 4;
+constexpr int SignalFloatingPoint = 8;
+constexpr int SignalBus = 10;
+constexpr int SignalSegmentation = 11;
+
+constexpr std::uint32_t TrapPrivilegedInstruction = 1;
+constexpr std::uint32_t TrapArithmetic = 6;
+constexpr std::uint32_t TrapProtection = 9;
+constexpr std::uint32_t TrapPage = 12;
+constexpr std::uint32_t TrapAlignment = 14;
+constexpr std::uint32_t TrapDivide = 18;
+constexpr std::uint32_t TrapSegmentNotPresent = 26;
+constexpr std::uint32_t TrapStack = 27;
+constexpr std::uint32_t TrapSimd = 29;
+
+constexpr std::uint64_t PageProtection = 0x1;
+constexpr std::uint64_t PageWrite = 0x2;
+constexpr std::uint64_t PageUser = 0x4;
+constexpr std::uint64_t PageFetch = 0x10;
+
+struct Trap {
+    std::uint32_t number;
+    std::uint64_t address;
+    std::uint64_t error;
+};
+
+struct Fault {
+    int signum;
+    Trap trap;
+};
 
 std::array<std::atomic<void*>, 32> handlers{};
 static_assert(std::atomic<void*>::is_always_lock_free);
@@ -179,8 +221,15 @@ void LogGuestExceptionContext(int signum, const GuestMcontext& context) {
 #endif
 }
 
-void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext) {
+bool FaultSignal(int signum) {
+    return signum == SignalIllegal || signum == SignalFloatingPoint || signum == SignalBus || signum == SignalSegmentation;
+}
+
+void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}) {
     auto& m = ucontext.mcontext;
+    m.trapno = trap.number;
+    m.addr = trap.address;
+    m.err = trap.error;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
     handler(signum, &ucontext);
@@ -202,6 +251,7 @@ struct Delivery {
     CONTEXT context;
     std::uint8_t vectors[VectorBytes];
     std::uint64_t saveVectors;
+    Trap trap;
 };
 
 const bool SaveVectors = [] {
@@ -209,7 +259,7 @@ const bool SaveVectors = [] {
     return __builtin_cpu_supports("avx") != 0;
 }();
 
-void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
+void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap) {
     GuestUcontext ucontext{};
     auto& m = ucontext.mcontext;
     m.rdi = context.Rdi;
@@ -235,7 +285,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
     m.len = sizeof(GuestMcontext);
     static_assert(sizeof(context.FltSave) <= sizeof(m.fpstate));
     std::memcpy(m.fpstate, &context.FltSave, sizeof(context.FltSave));
-    CallHandler(handler, signum, ucontext);
+    CallHandler(handler, signum, ucontext, trap);
     context.Rdi = m.rdi;
     context.Rsi = m.rsi;
     context.Rdx = m.rdx;
@@ -260,7 +310,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
 
 [[noreturn]] void RedirectedEntry(Delivery* delivery) {
     CONTEXT context = delivery->context;
-    Deliver(delivery->handler, delivery->signum, context);
+    Deliver(delivery->handler, delivery->signum, context, delivery->trap);
     Aps5RedirectedExit(&context, delivery->saveVectors != 0 ? delivery->vectors : nullptr, RtlRestoreContext);
 }
 
@@ -281,7 +331,7 @@ void CALLBACK WaitingEntry(ULONG_PTR parameter) {
     delete delivery;
     CONTEXT context{};
     RtlCaptureContext(&context);
-    Deliver(handler, signum, context);
+    Deliver(handler, signum, context, {});
 }
 
 static_assert(HomeArea + 8 == 40, "Aps5RedirectedEntryStub finds the delivery 40 bytes above its stack pointer");
@@ -400,12 +450,12 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     if (thread == scePthreadSelf()) {
         CONTEXT context{};
         RtlCaptureContext(&context);
-        Deliver(handler, signum, context);
+        Deliver(handler, signum, context, {});
         return true;
     }
     const auto native = static_cast<HANDLE>(thread->nativeHandle);
-    auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0});
-    alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
+    auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0, {}});
+    alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u, {}};
     const auto start = std::chrono::steady_clock::now();
     const auto retryDeadline = start + RetryLimit;
     auto hostDeadline = start + HostCodeLimit;
@@ -472,6 +522,130 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     }
     ResumeThread(native);
     return true;
+}
+
+constexpr DWORD FloatMultipleFaults = 0xc00002b4;
+constexpr DWORD FloatMultipleTraps = 0xc00002b5;
+constexpr ULONG_PTR AccessExecute = 8;
+constexpr std::uint32_t MxcsrFlags = 0x3f;
+constexpr int MxcsrMaskShift = 7;
+
+struct PendingFault {
+    GuestExceptionHandler handler;
+    int signum;
+    Trap trap;
+    CONTEXT context;
+};
+
+thread_local PendingFault pendingFault;
+
+bool Committed(ULONG_PTR address) {
+    MEMORY_BASIC_INFORMATION info{};
+    return VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT && (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
+}
+
+std::uint32_t FloatingPointTrap(const CONTEXT& context) {
+    const std::uint32_t mxcsr = context.MxCsr;
+    return (mxcsr & MxcsrFlags & ~(mxcsr >> MxcsrMaskShift)) != 0 ? TrapSimd : TrapArithmetic;
+}
+
+bool Classify(const EXCEPTION_RECORD& record, const CONTEXT& context, Fault& fault) {
+    switch (record.ExceptionCode) {
+    case EXCEPTION_ACCESS_VIOLATION: {
+        if (record.NumberParameters < 2) return false;
+        const ULONG_PTR access = record.ExceptionInformation[0];
+        const ULONG_PTR address = record.ExceptionInformation[1];
+        if (address == ~static_cast<ULONG_PTR>(0)) {
+            fault = {SignalBus, {TrapProtection, 0, 0}};
+            return true;
+        }
+        std::uint64_t error = PageUser;
+        if (access == 1) error |= PageWrite;
+        if (access == AccessExecute) error |= PageFetch;
+        if (Committed(address)) error |= PageProtection;
+        fault = {SignalSegmentation, {TrapPage, address, error}};
+        return true;
+    }
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        fault = {SignalIllegal, {TrapPrivilegedInstruction, 0, 0}};
+        return true;
+    case EXCEPTION_PRIV_INSTRUCTION:
+        fault = {SignalBus, {TrapProtection, 0, 0}};
+        return true;
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_INT_OVERFLOW:
+        fault = {SignalFloatingPoint, {TrapDivide, 0, 0}};
+        return true;
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        fault = {SignalBus, {TrapAlignment, 0, 0}};
+        return true;
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+    case EXCEPTION_FLT_INEXACT_RESULT:
+    case EXCEPTION_FLT_INVALID_OPERATION:
+    case EXCEPTION_FLT_OVERFLOW:
+    case EXCEPTION_FLT_STACK_CHECK:
+    case EXCEPTION_FLT_UNDERFLOW:
+    case FloatMultipleFaults:
+    case FloatMultipleTraps:
+        fault = {SignalFloatingPoint, {FloatingPointTrap(context), 0, 0}};
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool GuestCode(DWORD64 rip) {
+    if (GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(rip), 1)) return true;
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) != sizeof(info) || info.Type != MEM_IMAGE) return false;
+    const auto* image = static_cast<const unsigned char*>(info.AllocationBase);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const DWORD64 rva = rip - reinterpret_cast<DWORD64>(image);
+    bool relinked = false;
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::memcmp(sections[i].Name, ".elf", 4) != 0) continue;
+        relinked = true;
+        if (rva >= sections[i].VirtualAddress && rva < static_cast<DWORD64>(sections[i].VirtualAddress) + sections[i].Misc.VirtualSize) return true;
+    }
+    return !relinked && info.AllocationBase == GetModuleHandleW(nullptr);
+}
+
+bool DeliverHostFault(void* exceptionPointers) noexcept {
+    auto& info = *static_cast<EXCEPTION_POINTERS*>(exceptionPointers);
+    auto& context = *info.ContextRecord;
+    Fault fault{};
+    if (!Classify(*info.ExceptionRecord, context, fault)) return false;
+    const auto handler = Handler(fault.signum);
+    if (handler == nullptr || !GuestCode(context.Rip)) return false;
+    auto& pending = pendingFault;
+    if (pending.handler != nullptr) return false;
+    pending.handler = handler;
+    pending.signum = fault.signum;
+    pending.trap = fault.trap;
+    std::memcpy(&pending.context, &context, sizeof(CONTEXT));
+    pending.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+    context.Rsp = (context.Rsp - RedZone) & ~static_cast<DWORD64>(15);
+    context.Rip = reinterpret_cast<DWORD64>(&Aps5FaultEntryStub);
+    return true;
+}
+
+[[noreturn]] void FaultEntry(const void* vectors) {
+    const PendingFault pending = pendingFault;
+    pendingFault.handler = nullptr;
+    CONTEXT context = pending.context;
+    Deliver(pending.handler, pending.signum, context, pending.trap);
+    Aps5RedirectedExit(&context, SaveVectors ? vectors : nullptr, RtlRestoreContext);
+}
+
+void InstallFaultDelivery() {
+    static const bool installed = [] {
+        LibcSetHostFaultHandler_nid_no_patch(DeliverHostFault);
+        return true;
+    }();
+    (void)installed;
 }
 #else
 constexpr int HostSignal = SIGUSR1;
@@ -542,6 +716,122 @@ void Deliver(int, siginfo_t*, void* context) {
     ToHost(ucontext.mcontext, host);
 }
 
+#ifdef __linux__
+constexpr std::array<int, 4> FaultSignals{SIGSEGV, SIGBUS, SIGILL, SIGFPE};
+constexpr greg_t VectorDivide = 0;
+constexpr greg_t VectorInvalidOpcode = 6;
+constexpr greg_t VectorSegmentNotPresent = 11;
+constexpr greg_t VectorStack = 12;
+constexpr greg_t VectorProtection = 13;
+constexpr greg_t VectorPage = 14;
+constexpr greg_t VectorFloatingPoint = 16;
+constexpr greg_t VectorAlignment = 17;
+constexpr greg_t VectorSimd = 19;
+constexpr std::string_view GuestModuleSuffix = ".guest.prx";
+
+std::array<struct sigaction, FaultSignals.size()> previousFaultActions{};
+
+bool Classify(int hostSignal, const mcontext_t& host, Fault& fault) {
+    const auto* g = host.gregs;
+    const auto error = static_cast<std::uint64_t>(g[REG_ERR]);
+    switch (g[REG_TRAPNO]) {
+    case VectorDivide:
+        fault = {SignalFloatingPoint, {TrapDivide, 0, 0}};
+        return hostSignal == SIGFPE;
+    case VectorInvalidOpcode:
+        fault = {SignalIllegal, {TrapPrivilegedInstruction, 0, 0}};
+        return hostSignal == SIGILL;
+    case VectorSegmentNotPresent:
+        fault = {SignalBus, {TrapSegmentNotPresent, 0, error}};
+        return true;
+    case VectorStack:
+        fault = {SignalBus, {TrapStack, 0, error}};
+        return true;
+    case VectorProtection:
+        fault = {SignalBus, {TrapProtection, 0, error}};
+        return true;
+    case VectorPage:
+        fault = {hostSignal == SIGBUS ? SignalBus : SignalSegmentation, {TrapPage, static_cast<std::uint64_t>(g[REG_CR2]), error}};
+        return hostSignal == SIGSEGV || hostSignal == SIGBUS;
+    case VectorFloatingPoint:
+        fault = {SignalFloatingPoint, {TrapArithmetic, 0, 0}};
+        return hostSignal == SIGFPE;
+    case VectorAlignment:
+        fault = {SignalBus, {TrapAlignment, 0, error}};
+        return true;
+    case VectorSimd:
+        fault = {SignalFloatingPoint, {TrapSimd, 0, 0}};
+        return hostSignal == SIGFPE;
+    default:
+        return false;
+    }
+}
+
+bool GuestCode(std::uintptr_t rip) {
+    if (GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(rip), 1)) return true;
+#ifdef LIBKERNEL_EXCEPTION_FIND_OBJECT
+    dl_find_object object{};
+    if (_dl_find_object(reinterpret_cast<void*>(rip), &object) != 0) return false;
+    const link_map* native = object.dlfo_link_map;
+#else
+    Dl_info symbol{};
+    link_map* native = nullptr;
+    if (!dladdr1(reinterpret_cast<const void*>(rip), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP)) return false;
+#endif
+    if (!native) return false;
+    const std::string_view name = native->l_name ? native->l_name : "";
+    return name.empty() || name.ends_with(GuestModuleSuffix);
+}
+
+void ChainFault(int hostSignal, siginfo_t* info, void* context) {
+    for (std::size_t i = 0; i < FaultSignals.size(); ++i) {
+        if (FaultSignals[i] != hostSignal) continue;
+        const auto& previous = previousFaultActions[i];
+        if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
+            previous.sa_sigaction(hostSignal, info, context);
+            return;
+        }
+        if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN && previous.sa_handler != nullptr) {
+            previous.sa_handler(hostSignal);
+            return;
+        }
+        if (info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
+    }
+    ::signal(hostSignal, SIG_DFL);
+    if (info->si_code <= 0) ::raise(hostSignal);
+}
+
+void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
+    auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
+    Fault fault{};
+    const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
+    if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
+    const auto handler = deliverable ? Handler(fault.signum) : nullptr;
+    if (handler == nullptr || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
+        ChainFault(hostSignal, info, context);
+        return;
+    }
+    GuestUcontext ucontext{};
+    FromHost(host, ucontext.mcontext);
+    CallHandler(handler, fault.signum, ucontext, fault.trap);
+    ToHost(ucontext.mcontext, host);
+}
+
+void InstallFaultDelivery() {
+    static const bool installed = [] {
+        struct sigaction action{};
+        action.sa_sigaction = DeliverFault;
+        action.sa_flags = SA_SIGINFO | SA_NODEFER;
+        sigemptyset(&action.sa_mask);
+        for (std::size_t i = 0; i < FaultSignals.size(); ++i)
+            if (sigaction(FaultSignals[i], &action, &previousFaultActions[i]) != 0)
+                throw std::system_error(errno, std::generic_category(), "sceKernelInstallExceptionHandler: cannot install the host fault handler");
+        return true;
+    }();
+    (void)installed;
+}
+#endif
+
 void InstallDelivery() {
     static const bool installed = [] {
         struct sigaction action{};
@@ -594,6 +884,38 @@ bool RaiseOn(Pthread thread) {
 extern "C" [[noreturn]] void Aps5RedirectedEntry(void* delivery) {
     RedirectedEntry(static_cast<Delivery*>(delivery));
 }
+extern "C" [[noreturn]] void Aps5FaultEntry(const void* vectors) {
+    FaultEntry(vectors);
+}
+extern "C" const bool Aps5FaultSavesVectors = SaveVectors;
+static_assert(VectorBytes == 512, "Aps5FaultEntryStub stores ymm0-ymm15 in 512 bytes below the redirected stack pointer");
+asm(".text\n"
+    ".globl Aps5FaultEntryStub\n"
+    "Aps5FaultEntryStub:\n"
+    "    subq $512, %rsp\n"
+    "    cmpb $0, Aps5FaultSavesVectors(%rip)\n"
+    "    je 1f\n"
+    "    vmovdqu %ymm0, 0(%rsp)\n"
+    "    vmovdqu %ymm1, 32(%rsp)\n"
+    "    vmovdqu %ymm2, 64(%rsp)\n"
+    "    vmovdqu %ymm3, 96(%rsp)\n"
+    "    vmovdqu %ymm4, 128(%rsp)\n"
+    "    vmovdqu %ymm5, 160(%rsp)\n"
+    "    vmovdqu %ymm6, 192(%rsp)\n"
+    "    vmovdqu %ymm7, 224(%rsp)\n"
+    "    vmovdqu %ymm8, 256(%rsp)\n"
+    "    vmovdqu %ymm9, 288(%rsp)\n"
+    "    vmovdqu %ymm10, 320(%rsp)\n"
+    "    vmovdqu %ymm11, 352(%rsp)\n"
+    "    vmovdqu %ymm12, 384(%rsp)\n"
+    "    vmovdqu %ymm13, 416(%rsp)\n"
+    "    vmovdqu %ymm14, 448(%rsp)\n"
+    "    vmovdqu %ymm15, 480(%rsp)\n"
+    "1:\n"
+    "    movq %rsp, %rcx\n"
+    "    subq $40, %rsp\n"
+    "    movq $0, (%rsp)\n"
+    "    jmp Aps5FaultEntry\n");
 asm(".text\n"
     ".globl Aps5RedirectedEntryStub\n"
     "Aps5RedirectedEntryStub:\n"
@@ -664,6 +986,9 @@ int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
  if (!Allowed(signum) || handler == nullptr) return SCE_KERNEL_ERROR_EINVAL;
  void* expected = nullptr;
  if (!handlers[signum].compare_exchange_strong(expected, handler, std::memory_order_acq_rel)) return SCE_KERNEL_ERROR_EAGAIN;
+#if defined(_WIN32) || defined(__linux__)
+ if (FaultSignal(signum)) InstallFaultDelivery();
+#endif
  return 0;
 }
 

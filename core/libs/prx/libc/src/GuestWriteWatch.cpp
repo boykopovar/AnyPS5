@@ -393,6 +393,10 @@ public:
         return (next != _ranges.begin() && std::prev(next)->second.end > begin) || (next != _ranges.end() && next->first < end);
     }
 
+    bool HandleFault(std::uintptr_t address) {
+        return _available && record(address);
+    }
+
     enum class Take { All, Armed, Fresh };
 
     bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context, Take take = Take::All) {
@@ -701,6 +705,15 @@ bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t byt
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address) {
+#if defined(__APPLE__)
+    return Watch::Get().HandleFault(address);
+#else
+    static_cast<void>(address);
     return false;
 #endif
 }
