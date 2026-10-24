@@ -1177,6 +1177,22 @@ int main() {
             nullptr, 0, &returned, nullptr) != 0);
         Require(CloseHandle(taggedCleanup) != 0 && std::filesystem::remove(tagged));
     }
+
+const auto fullTarget = root / "junction-full-target";
+    const auto fullJunction = root / "junction-full";
+    Require(std::filesystem::create_directory(fullTarget));
+    FILE* const inside = std::fopen((fullTarget / "inside.txt").string().c_str(), "wb");
+    Require(inside != nullptr);
+    std::fclose(inside);
+    const auto fullCommand = L"cmd /c mklink /J \"" + fullJunction.wstring() + L"\" \"" + fullTarget.wstring() + L"\"";
+    Require(_wsystem(fullCommand.c_str()) == 0);
+    Require(rmdir_nid_postfix(fullJunction.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(sceKernelRmdir(fullJunction.string().c_str()) == static_cast<int>(0x80020014u));
+    Require(std::filesystem::is_regular_file(fullTarget / "inside.txt"));
+    Require(sceKernelUnlink(fullJunction.string().c_str()) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(fullJunction)));
+    Require(std::filesystem::is_regular_file(fullTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullTarget / "inside.txt") && std::filesystem::remove(fullTarget));
 #endif
     FileStat identity{};
     FileStat byDescriptor{};
