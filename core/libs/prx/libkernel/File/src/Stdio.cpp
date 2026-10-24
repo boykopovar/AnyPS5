@@ -734,10 +734,10 @@ int APS5_VABI close_nid_postfix(int d) {
         return -1;
     }
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d);
+    EqueueDescriptorClosed(d);
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    EqueueDescriptorClosed(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
