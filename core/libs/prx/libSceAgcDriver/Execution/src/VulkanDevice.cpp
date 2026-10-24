@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
@@ -122,8 +123,17 @@ DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> famili
 
 namespace {
 
+void DumpRingsOnDeviceLoss() noexcept {
+    static std::atomic<bool> dumped{false};
+    if (dumped.exchange(true)) return;
+    DriverDetail::DumpSubmissionRingsAfterFailure();
+}
+
 void check(VkResult result, const char* operation) {
-    if (result == VK_ERROR_DEVICE_LOST) Graphics::ReportDeviceLost();
+    if (result == VK_ERROR_DEVICE_LOST) {
+        Graphics::ReportDeviceLost();
+        DumpRingsOnDeviceLoss();
+    }
     if (result != VK_SUCCESS) {
         throw std::runtime_error(std::string(operation) + ": Vulkan result " + std::to_string(result));
     }
@@ -2094,6 +2104,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 for (const auto& line : owner->markerLog.Report(words[0], words[1])) std::fprintf(stderr, "%s\n", line.c_str());
             }
             for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData)) std::fprintf(stderr, "%s\n", line.c_str());
+            DumpRingsOnDeviceLoss();
         };
         Graphics::DeviceLostOwner() = state.get();
         state->deviceLostHook = true;
@@ -3282,6 +3293,13 @@ FrameDumps& Dumps() {
 }
 
 bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
+    static const bool traceQueue = std::getenv("APS5_TRACE_QUEUE") != nullptr;
+    if (traceQueue) {
+        const auto resident = Graphics::StorageTexture::FindPendingSlice(buffer.address, DisplayBufferSize(buffer));
+        static int described = 0;
+        if (described++ < 4) std::fprintf(stderr, "[present] buffer 0x%llx %ux%u format 0x%llx tiling %u pitch %u dcc 0x%llx resident %d\n", static_cast<unsigned long long>(buffer.address), buffer.width, buffer.height,
+                     static_cast<unsigned long long>(buffer.pixelFormat), buffer.tilingMode, buffer.pitchInPixel, static_cast<unsigned long long>(buffer.dccAddress), resident != nullptr ? 1 : 0);
+    }
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
     if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
     else Graphics::StorageTexture::FlushDumpSelected("flip");
@@ -3616,12 +3634,14 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commands;
-    submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &rendered;
     timing.Mark("command_record_scale");
     // The slot's fence signaled (retired above) or was never used: the reset cannot block.
     check(state->DeviceFunction<PFN_vkResetFences>("vkResetFences")(state->device, 1, &slot.fence), "vkResetFences present");
-    check(state->DeviceFunction<PFN_vkQueueSubmit>("vkQueueSubmit")(state->queue, 1, &submit, slot.fence), "vkQueueSubmit clear");
+    const auto queueResult = state->DeviceFunction<PFN_vkQueueSubmit>("vkQueueSubmit")(state->queue, 1, &submit, slot.fence);
+    if (std::getenv("APS5_TRACE_QUEUE") != nullptr) {
+        std::fprintf(stderr, "[queue] present slot %zu image %u fence 0x%llx semaphore 0x%llx result %d\n", static_cast<std::size_t>(&slot - state->presentSlots.data()), index, static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(slot.fence)), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(rendered)), static_cast<int>(queueResult));
+    }
+    check(queueResult, "vkQueueSubmit clear");
     const auto submittedAt = std::chrono::steady_clock::now();
     timing.Mark("queue_submit");
     APS5_LOG_CHARS_OUT_DEBUG("Presentation vkQueueSubmit OK");
@@ -3741,12 +3761,13 @@ void VulkanDevice::QueuePresent() {
     const auto index = state->queueIndex;
     require(index < state->rendered.size(), "presented image index is out of range");
     VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &state->rendered[index];
     present.swapchainCount = 1;
     present.pSwapchains = &state->swapchain;
     present.pImageIndices = &index;
     const auto presented = state->DeviceFunction<PFN_vkQueuePresentKHR>("vkQueuePresentKHR")(state->queue, &present);
+    if (std::getenv("APS5_TRACE_QUEUE") != nullptr) {
+        std::fprintf(stderr, "[queue] present-queue image %u result %d\n", index, static_cast<int>(presented));
+    }
     if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR) state->extent = {0, 0};
     else check(presented, "vkQueuePresentKHR");
     timing.Mark("queue_present");
@@ -5173,7 +5194,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
         capture.apiVersion = state->properties.apiVersion;
         std::copy_n(state->properties.pipelineCacheUUID, VK_UUID_SIZE, capture.pipelineCacheUuid.begin());
         const auto path = capture.WriteOptional(directory);
-        if (!path.empty()) std::fprintf(stderr, "[compute-capture] %s\n", path.string().c_str());
+        if (!path.empty()) std::fprintf(stderr, "[compute-capture] program=0x%llx %s\n", static_cast<unsigned long long>(programAddress), path.string().c_str());
     }
     if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
     CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), context.pipelineCache, objects->module, objects->layout, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, &objects->pipeline, context.pipelineCacheSynchronization);

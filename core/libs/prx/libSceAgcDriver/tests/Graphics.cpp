@@ -405,6 +405,24 @@ void stateTests() {
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "render-target address or size changed");
     Require(state.viewport.y == 4 && state.viewport.height == -4, "negative viewport height was lost");
     Require(state.color.format == VK_FORMAT_R8G8B8A8_UNORM, "RGBA format changed");
+    Require(!state.rasterizerDiscard, "a four-component position export discarded rasterization");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    queue.context[0x1c3] = 0;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.rasterizerDiscard, "a disabled position export did not discard rasterization");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a draw without a position export was rejected");
+    queue.context[0x1c3] = 0x44;
+    Require(!AgcDriver::Graphics::DecodeState(queue).rasterizerDiscard, "an auxiliary position export discarded rasterization");
+    queue.context[0x1c3] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 1");
+    queue.context[0x1c3] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 2");
+    queue.context[0x1c3] = 3;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 3");
+    queue = makeState();
+    queue.context[0x1c3] = 0;
+    Require(AgcDriver::Graphics::CanonicalPipelineState(AgcDriver::Graphics::DecodeState(queue)).rasterizerDiscard, "the canonical state dropped the rasterizer discard");
     queue.userConfig[0x24b] = 1;
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
@@ -482,7 +500,7 @@ void stateTests() {
     queue = makeState();
     queue.context[0x8e] = 0xff;
     queue.context[0x8f] = 0xff;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
+    Require(AgcDriver::Graphics::DecodeState(queue).colors.size() == 1, "a target whose shader export format is zero became an attachment");
     queue = makeState();
     queue.context[0x200] = 2;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth");
@@ -1321,7 +1339,10 @@ void ShaderStageTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported vertex");
     }
     queue.context[0x2d5] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "without PRIMGEN_EN");
+    {
+        const auto legacy = AgcDriver::Graphics::DecodeState(queue).stages;
+        Require(legacy.path == AgcDriver::Graphics::ShaderPath::Vertex && legacy.registerValue == 0, "legacy vertex routing did not decode as vertex");
+    }
     queue.context.erase(0x2d5);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.context[0x2d5] = 0x2000;
@@ -1670,6 +1691,34 @@ void UnexportedPixelInputTests() {
     const std::array<std::uint32_t, 5> all{0u, 1u, 2u, 4u, 5u};
     const auto unchanged = AgcDriver::Graphics::DefaultUnexportedInputs(pixel, all);
     Require(std::ranges::equal(unchanged.interpolatorSettings, pixel.interpolatorSettings), "inputs of exported parameters were changed");
+}
+
+void ShaderDeclaredPixelInputTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.context[0x1b3] = queue.context[0x1b4] = 0x302;
+    queue.context[0x1b6] = 1;
+    for (std::uint32_t i = 0; i < 5; ++i) queue.context[0x191 + i] = i;
+    const std::array<std::uint8_t, 8> exports{};
+    const auto stateOnly = DecodePixelStageInfo(queue.context, exports);
+    Require(stateOnly.interpolatorCount == 1, "the queued input count was not decoded without a shader header");
+    std::vector<std::byte> header(sizeof(Shader));
+    Shader shader{};
+    shader.num_input_semantics = 5;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    const auto declared = DecodePixelStageInfo(queue.context, exports, false, header);
+    Require(declared.interpolatorCount == 5, "the fragment header's declared inputs did not extend the input count");
+    for (std::uint32_t i = 0; i < 5; ++i) Require(declared.interpolatorSettings[i] == i, "a declared input lost its queued SPI_PS_INPUT_CNTL setting");
+    auto missing = queue;
+    missing.context.erase(0x193);
+    const auto defaulted = DecodePixelStageInfo(missing.context, exports, false, header);
+    Require(defaulted.interpolatorCount == 5 && defaulted.interpolatorSettings[2] == 2, "an unwritten input beyond the queued count did not read parameter 2");
+    queue.context[0x1b6] |= 1u << 9u;
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "per-primitive pixel inputs");
+    queue.context[0x1b6] = 1u;
+    shader.num_input_semantics = 33;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "input count exceeds 32");
 }
 
 void PixelInputLayoutTests() {
@@ -2278,7 +2327,7 @@ void CompactedExportTests() {
     const auto withHole = AgcDriver::Graphics::DecodeState(disabledFirst);
     Require(withHole.colors.size() == 1 && withHole.colors[0].slot == 4 && withHole.colors[0].exportIndex == 1 && withHole.blends.size() == 2 && withHole.blends[0].colorWriteMask == 0, "COLOR_INVALID shifted a later MRT export");
     queue.context[0x1c5] = 0x90009u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
+    Require(AgcDriver::Graphics::DecodeState(queue).colors.size() == 1, "a second export with format zero became an attachment");
     queue.context[0x8e] = 0xf000fu;
     queue.context[0x8f] = 0xf0f0fu;
     queue.context[0x1c5] = 0x999u;
@@ -2743,21 +2792,38 @@ void memoryValueFillTests() {
 }
 
 void depthMaintenanceTests() {
-    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x4000u}) {
+    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x9fffffffu}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
             auto queue = makeState();
+            queue.context[0x010] = 1;
+            queue.context[0x011] = 0;
             queue.context[0x000] = mode | clear;
             queue.context[0x200] = 0;
             queue.context[0x8e] = 0;
             queue.context[0x8f] = 0;
             queue.shader.erase(0x8);
             const auto reason = AgcDriver::Graphics::DepthMaintenanceRejection(queue);
-            Require(reason.find("DB_RENDER_CONTROL") != std::string::npos, "depth maintenance passed without depth tests or color writes");
+            Require(reason.find("DB_RENDER_CONTROL") != std::string::npos, "depth maintenance passed with a depth plane bound and no depth tests or color writes");
             Require(AgcDriver::Graphics::DrawRejection(queue, false) == reason, "draw precheck did not reject depth maintenance first");
             expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, reason);
         }
     }
-    for (const auto control : {0u, 1u, 2u, 3u, 0x20u, 0x40u, 0x80u, 0xc0u, 0x100u, 0xf00u, 0x2000u, 0x2063u, 0x2fe3u}) {
+    for (const auto present : {false, true}) {
+        for (const auto control : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x101cu, 0x9fffffffu}) {
+            auto queue = makeState();
+            if (present) {
+                queue.context[0x010] = 0;
+                queue.context[0x011] = 0;
+            }
+            queue.context[0x000] = control;
+            queue.context[0x200] = 0;
+            queue.context[0x8e] = 0;
+            queue.context[0x8f] = 0;
+            queue.shader.erase(0x8);
+            Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "depth maintenance without a bound depth or stencil plane was rejected");
+        }
+    }
+    for (const auto control : {0u, 1u, 2u, 3u, 0x20u, 0x40u, 0x80u, 0xc0u, 0x100u, 0xf00u, 0x2000u, 0x2063u, 0x2fe3u, 0x4000u, 0xffffc000u}) {
         auto queue = makeState();
         queue.context[0x000] = control;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
@@ -2769,6 +2835,7 @@ void depthMaintenanceTests() {
         queue.context[0x8e] = 0;
         queue.context[0x8f] = 0;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "a resummarize draw without depth, stencil or color work was rejected");
+        queue.context[0x010] = 1;
         queue.context[0x200] = 2;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a resummarize draw with a depth test passed");
         queue.context[0x200] = 0;
@@ -2800,7 +2867,7 @@ void depthMaintenanceTests() {
     pixel.context[0x1c4] = 0;
     pixel.context[0x203] = 0x40;
     Require(!AgcDriver::Graphics::DepthMaintenanceRejection(pixel).empty(), "a resummarize draw with a running pixel stage passed");
-    for (const auto offset : {0x200u, 0x010u, 0x011u, 0x8eu, 0x8fu}) {
+    for (const auto offset : {0x200u, 0x8eu, 0x8fu}) {
         auto missing = readOnly;
         missing.context.erase(offset);
         Require(!AgcDriver::Graphics::DepthMaintenanceRejection(missing).empty(), "a resummarize draw without a required register passed");
@@ -4825,10 +4892,15 @@ void InitialContextTests() {
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "sparse guest setup lost its render target");
-    Require(queue.context.at(0x206) == 0x43f, "initial homogeneous viewport mode changed");
+    Require(queue.context.at(0x206) == 0, "initial viewport control changed");
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_VTE_CNTL=0x");
+    }
+    queue.context[0x206] = 0;
+    {
+        const auto identity = AgcDriver::Graphics::DecodeState(queue);
+        Require(identity.viewport.x == 0.0f && identity.viewport.y == 0.0f && identity.viewport.width == static_cast<float>(identity.renderExtent.width) && identity.viewport.height == static_cast<float>(identity.renderExtent.height), "the reset viewport control did not cover the render target");
     }
     queue.context[0x206] = 0x43f;
     queue.context[0x203] &= ~0x800u;
@@ -4837,7 +4909,7 @@ void InitialContextTests() {
     queue.context.erase(0x2dc);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.ClearContext();
-    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0, "clear did not restore controls and discard target state");
+    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0xffffffffu, "clear did not restore controls and discard target state");
     Require(!queue.context.contains(0xdead), "unknown context register acquired a default");
 }
 
@@ -11994,6 +12066,7 @@ int main(int argc, char** argv) {
         vertexPointListTests();
         TuningFieldTests();
         PixelInputLayoutTests();
+        ShaderDeclaredPixelInputTests();
         UnexportedPixelInputTests();
         ColorPipeBankXorTests();
         HeaderlessVertexStageTests();

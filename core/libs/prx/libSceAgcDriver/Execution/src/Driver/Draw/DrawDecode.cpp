@@ -179,7 +179,14 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     auto product = std::make_shared<DrawDecode>();
     product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
     DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
-    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
+    std::span<const std::byte> fragmentHeader;
+    for (const auto& program : product->programs) {
+        if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
+            fragmentHeader = program.binary.header;
+            break;
+        }
+    }
+    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader);
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyDepthRemap(context, product->state);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);

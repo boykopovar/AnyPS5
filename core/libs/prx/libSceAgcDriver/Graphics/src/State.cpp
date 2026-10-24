@@ -121,7 +121,7 @@ void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, 
 
 std::string vteMessage(std::uint32_t viewportControl) {
     std::ostringstream message;
-    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms; pre-divided coordinates, reciprocal W or disabled transforms are unsupported";
+    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms, or 0 for positions without a viewport transform; other combinations are unsupported";
     return message.str();
 }
 
@@ -1166,8 +1166,8 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
     if (path == ShaderPath::Vertex) {
-        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
-        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
+        const bool legacy = (value & 0x20ffu) == 0;
+        validate(legacy || (value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation) {
         validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
         validate((value & ~0x0207ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
@@ -1233,11 +1233,17 @@ bool DepthResummarizeDrawsNothing(const QueueState& queue) {
 std::string DepthMaintenanceRejection(const QueueState& queue) {
     if (DepthResummarizeDrawsNothing(queue)) return {};
     const auto control = find(queue.context, 0x000);
-    if (control == queue.context.end() || (control->second & ~0x2fe3u) == 0) return {};
+    if (control == queue.context.end()) return {};
+    constexpr std::uint32_t maintenance = 0x0000101cu;
+    if ((control->second & maintenance) == 0) return {};
+    if (!depthSurfaceBound(queue.context)) return {};
     const auto depthControl = find(queue.context, 0x200);
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & ~0x2fe3u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
-    return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
+    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    const auto word = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0u : it->second; };
+    char detail[384];
+    std::snprintf(detail, sizeof(detail), " (register 0x0 = 0x%08x; 0x200 = 0x%08x, 0x010 = 0x%08x, 0x011 = 0x%08x, 0x002 = 0x%08x, 0x012 = 0x%08x, 0x014 = 0x%08x, 0x8e = 0x%08x, 0x8f = 0x%08x)", control->second, word(0x200), word(0x010), word(0x011), word(0x002), word(0x012), word(0x014), word(0x8e), word(0x8f));
+    return std::string("DB_RENDER_CONTROL depth copy, resummarize or decompress is unsupported") + detail;
 }
 
 ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne) {
@@ -1436,7 +1442,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     Require(read(cx, 0x2f9) == 0x2du, "nonstandard pixel center or vertex quantization is unsupported");
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
     zero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
@@ -1459,14 +1465,19 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     // matters where the shader exports.
     const auto targetMask = ColorWriteMask(cx);
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
+    const auto exportFormatEntry = find(cx, 0x1c5);
+    const auto exportFormat = exportFormatEntry == cx.end() ? 0u : exportFormatEntry->second;
     std::vector<std::uint32_t> exportSlots;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
         if (((shaderMask >> (4u * slot)) & 0xfu) != 0) exportSlots.push_back(slot);
     }
+    const auto exportFormatAt = [&](std::uint32_t index) { return (exportFormat >> (4u * index)) & 0xfu; };
     const auto written = [&](std::uint32_t slot) { return ((targetMask >> (4u * slot)) & 0xfu) != 0; };
     std::uint32_t exportCount = 0;
     for (std::uint32_t index = 0; index < exportSlots.size(); ++index) {
-        if (written(exportSlots[index])) exportCount = index + 1;
+        if (!written(exportSlots[index])) continue;
+        if (exportFormatAt(index) == 0) continue;
+        exportCount = index + 1;
     }
     if (((read(cx, 0x202) >> 4u) & 7u) == 0u) exportCount = 0;
     result.hasColorTarget = exportCount != 0;
@@ -1475,17 +1486,20 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     // CB_COLOR_CONTROL mode 0 disables color writes, which only matters when a target is written.
     if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
-    const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
-    // SPI_SHADER_POS_FORMAT: POS0 must be a 4-component position; later vectors carry the misc/clip
-    // exports that PA_CL_VS_OUT_CNTL validation above already limits to ignored layer/viewport data.
-    Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
+    const auto positionFormat = read(cx, 0x1c3) & 0xfu;
+    if (positionFormat == 0u) {
+        result.rasterizerDiscard = true;
+    } else {
+        Require(positionFormat == 4u, "position export format " + std::to_string(positionFormat) + " is unsupported");
+    }
     for (std::uint32_t index = 0; index < exportCount; ++index) {
         const auto slot = exportSlots[index];
         if (!written(slot)) continue;
         // Export formats only matter for the targets the draw writes.
-        const auto slotExport = (exportFormat >> (4u * index)) & 0xfu;
-        if (slotExport == 0 || slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
+        const auto slotExport = exportFormatAt(index);
+        if (slotExport == 0) continue;
+        if (slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
         auto color = DecodeColorBuffer(cx, slot);
         if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
         color.exportIndex = index;
@@ -1543,28 +1557,33 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
-    const auto xs = readFloat(cx, 0x10f);
-    const auto xo = readFloat(cx, 0x110);
-    const auto ys = readFloat(cx, 0x111);
-    const auto yo = readFloat(cx, 0x112);
-    const auto zs = readFloat(cx, 0x113);
-    const auto zo = readFloat(cx, 0x114);
-    const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
-    const auto maxDepth = zo + zs;
-    APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
-    const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
-    const bool collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
-    if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
-        std::ostringstream message;
-        message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth << "), negativeOneToOne=" << result.negativeOneToOne;
-        throw std::runtime_error(message.str());
+    bool collapsed = false;
+    if (viewportControl == 0u) {
+        result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
+    } else {
+        const auto xs = readFloat(cx, 0x10f);
+        const auto xo = readFloat(cx, 0x110);
+        const auto ys = readFloat(cx, 0x111);
+        const auto yo = readFloat(cx, 0x112);
+        const auto zs = readFloat(cx, 0x113);
+        const auto zo = readFloat(cx, 0x114);
+        const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
+        const auto maxDepth = zo + zs;
+        APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
+        const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+        collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
+        if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
+            std::ostringstream message;
+            message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth << "), negativeOneToOne=" << result.negativeOneToOne;
+            throw std::runtime_error(message.str());
+        }
+        Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
+        result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
+        result.depthScale = zs;
+        result.depthOffset = zo;
+        result.depthClampMin = readFloat(cx, 0xb4);
+        result.depthClampMax = readFloat(cx, 0xb5);
     }
-    Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
-    result.depthScale = zs;
-    result.depthOffset = zo;
-    result.depthClampMin = readFloat(cx, 0xb4);
-    result.depthClampMax = readFloat(cx, 0xb5);
-    result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
     if (const auto renderControl = find(cx, 0x000); result.depth && renderControl != cx.end() && (renderControl->second & 1u) != 0) {
         result.viewport.minDepth = result.depth->clearDepth;
         result.viewport.maxDepth = result.depth->clearDepth;
@@ -2054,11 +2073,11 @@ namespace {
 
 bool drawCovers(const Registers& cx, VkExtent2D extent) {
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
-    const auto xs = std::fabs(readFloat(cx, 0x10f));
-    const auto xo = readFloat(cx, 0x110);
-    const auto ys = std::fabs(readFloat(cx, 0x111));
-    const auto yo = readFloat(cx, 0x112);
+    if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
+    const auto xs = viewportControl == 0u ? 0.0f : std::fabs(readFloat(cx, 0x10f));
+    const auto xo = viewportControl == 0u ? 0.0f : readFloat(cx, 0x110);
+    const auto ys = viewportControl == 0u ? 0.0f : std::fabs(readFloat(cx, 0x111));
+    const auto yo = viewportControl == 0u ? 0.0f : readFloat(cx, 0x112);
     VkRect2D covered{{0, 0}, {0x7fffu, 0x7fffu}};
     intersect(covered, cx, 0xc, true);
     intersect(covered, cx, 0x81, false);
@@ -2066,7 +2085,7 @@ bool drawCovers(const Registers& cx, VkExtent2D extent) {
     if ((read(cx, 0x292) & 2u) != 0) intersect(covered, cx, 0x94, false);
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
-    const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height;
+    const bool viewportCovers = viewportControl == 0u || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
     const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= extent.width && covered.extent.height >= extent.height;
     return viewportCovers && scissorCovers;
 }
@@ -2248,7 +2267,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x2f8, config) && value(cx, 0x30e, word) && value(cx, 0x30f, other)) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
-    if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
+    if (value(cx, 0x206, word) && word != 0x43fu && word != 0u) return vteMessage(word);
     if (auto reason = nonzero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, ColorWriteMask(cx) != 0)) return colorControlMessage(word);

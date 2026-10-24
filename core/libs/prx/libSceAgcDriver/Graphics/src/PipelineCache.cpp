@@ -180,6 +180,7 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
 }
 
 void PipelineCache::save(bool final, bool waitForPipelines) {
+    if (DeviceLost()) return;
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };

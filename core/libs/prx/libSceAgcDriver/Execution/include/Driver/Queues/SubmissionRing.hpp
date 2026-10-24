@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_QUEUES_SUBMISSIONRING_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_QUEUES_SUBMISSIONRING_HPP
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,11 @@ void PrepareSubmissionRing(std::uint32_t queue);
 
 void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const std::uint32_t> commands, const void* guest, bool rewindTail);
 
+void RecordShaderUse(std::uint32_t queue, std::uint64_t serial, std::uint32_t stage, std::uint64_t target, std::uint64_t codeAddress, std::uint64_t entryAddress, const std::array<std::uint32_t, 3>& groups = {});
+
 void DumpSubmissionRings(std::string_view reason);
+
+void DumpSubmissionRingsAfterFailure() noexcept;
 
 class StallWatch {
 public:
