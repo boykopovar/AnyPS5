@@ -62,6 +62,17 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             needsTlsResolver = true;
         }
     }
+    for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
+        const auto& symbol = image.Symbols[index];
+        if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
+            (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+        const auto thunk = address();
+        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+        bytes.push_back(0xe9);
+        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
+        Io::WriteU64(symbols, index * 24 + 8, thunk);
+    }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
     if (needsTlsResolver) needed.push_back(addString("ld-linux-x86-64.so.2"));
