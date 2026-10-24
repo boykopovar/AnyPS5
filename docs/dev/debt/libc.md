@@ -1,5 +1,9 @@
 # libc technical debt
 
+### Silent stubs
+
+- [_Mtx_current_owns](../../../core/libs/prx/libc/src/Threads.cpp) (libSceLibcInternal, implemented in libc, NID `VYQwFs4CC4Y`) returns 1 and ignores its argument. This follows the PS5 12.00 body reading reported in [PR8859](https://github.com/boykopovar/AnyPS5/pull/8859), rather than inspecting host mutex ownership. The firmware observation is attributed to that contributor; other firmware versions and the argument's console type remain unverified.
+
 ### Unknown function info
 
 - [strtonum](../../../core/libs/prx/libc/src/StringExtensions.cpp) (libc) is unverified on the console. Its signature, decimal parsing, inclusive bounds, error strings, error precedence and errno preservation follow [FreeBSD 11.4 strtonum.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtonum.c). Parsing uses the host `strtoll` with base 10.
