@@ -582,7 +582,13 @@ int main() {
 #endif
     std::error_code error;
     const auto link = (root / "link").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(link).c_str(), L"sub\\target.txt", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        error = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink("sub/target.txt", link, error);
+#endif
     if (!error) {
         std::memset(buffer, '#', sizeof(buffer));
         Require(readlink_nid_postfix(link.c_str(), buffer, sizeof(buffer)) == 14);
