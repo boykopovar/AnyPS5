@@ -11,6 +11,7 @@ int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI listen_nid_postfix(int, int);
 int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
+std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
 int APS5_VABI close_nid_postfix(int);
 int* APS5_VABI __error_nid_postfix();
@@ -45,7 +46,28 @@ static void CheckDatagram(int family) {
     Require(connect_nid_postfix(probe, address.data(), size) == -1 && *__error_nid_postfix() == 49,
         "connect to port 0 on an unconnected datagram socket must fail with EADDRNOTAVAIL (49)");
     Require(getpeername_nid_postfix(probe, name.data(), &length) == -1 && *__error_nid_postfix() == 57, "still unconnected");
-    Require(close_nid_postfix(probe) == 0, "close");
+    const int peer = socket_nid_postfix(family, 2, 0);
+    Require(peer >= 0, "peer");
+    const int bound = bind_nid_postfix(peer, address.data(), size);
+    if (bound < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(peer) == 0 && close_nid_postfix(probe) == 0, "close");
+        return;
+    }
+    Require(bound == 0, "bind peer");
+    Address target{};
+    length = target.size();
+    Require(getsockname_nid_postfix(peer, target.data(), &length) == 0, "peer name");
+    Require(connect_nid_postfix(probe, target.data(), size) == 0, "connect to the peer");
+    length = name.size();
+    Require(getpeername_nid_postfix(probe, name.data(), &length) == 0, "connected");
+    Require(connect_nid_postfix(probe, address.data(), size) == -1 && *__error_nid_postfix() == 49,
+        "connect to port 0 on a connected datagram socket must fail with EADDRNOTAVAIL (49)");
+    length = name.size();
+    Require(getpeername_nid_postfix(probe, name.data(), &length) == -1 && *__error_nid_postfix() == 57,
+        "connect to port 0 must disconnect a connected datagram socket");
+    Require(send_nid_postfix(probe, "x", 1, 0) == -1 && *__error_nid_postfix() == 39,
+        "send without an address after the disconnect must fail with EDESTADDRREQ (39)");
+    Require(close_nid_postfix(peer) == 0 && close_nid_postfix(probe) == 0, "close");
 }
 
 static void CheckStream(int family) {

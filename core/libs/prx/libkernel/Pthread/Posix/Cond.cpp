@@ -80,4 +80,16 @@ int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* att
     return 0;
 }
 
+int APS5_VABI pthread_cond_signalto_np_nid_postfix(PthreadCond* cond, Pthread thread) {
+    return toPosix(scePthreadCondSignalto(cond, thread));
+}
+
+int APS5_VABI scePthreadCondattrSetpshared(PthreadCondattr* attr, int pshared) {
+    return PosixThread::ToSce(pthread_condattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* pshared) {
+    return PosixThread::ToSce(pthread_condattr_getpshared_nid_postfix(attr, pshared));
+}
+
 }

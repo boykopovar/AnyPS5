@@ -14,6 +14,7 @@ int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* h
 int APS5_VABI sceVideoRecordingStart(void);
 int APS5_VABI sceVideoRecordingStop(void);
 int APS5_VABI sceVideoRecordingClose(int discard);
+int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void* data, std::size_t size);
 }
 
 namespace {
@@ -62,6 +63,9 @@ int main() {
     for (const std::uint8_t value : heap) Require(value == Sentinel, "the heap was written");
     Require(sceVideoRecordingGetStatus() == StatusNone, "a failed open changed the status");
 
+    Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == static_cast<int>(0x80a80006), "info 0xa001 validation");
+    Require(sceVideoRecordingGetInfo(0xa005, nullptr, 0) == static_cast<int>(0x80a80006), "info 0xa005 validation");
+    Require(sceVideoRecordingGetInfo(0, nullptr, 0) == static_cast<int>(0x80a80003), "unknown info validation");
     std::puts("VideoRecording tests passed");
     return 0;
 }

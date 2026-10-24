@@ -77,14 +77,14 @@ DWORD runChild(const wchar_t* mode) {
 
 int runMallocOverflow() {
     registerDefaultHeap();
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 77;
     try {
         auto* pointer = malloc_nid_postfix(std::numeric_limits<std::size_t>::max() - HeaderBytes);
         if (pointer != nullptr) {
             free_nid_postfix(pointer);
             return 1;
         }
-        return *__error_nid_postfix() == 12 ? 0 : 4;
+        return *__error_nid_postfix() == 77 ? 0 : 4;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "malloc failed with an unexpected exception: %s\n", error.what());
         return 2;
@@ -100,14 +100,14 @@ int runReallocOverflow() {
     auto* original = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
     std::memset(original, 0x5a, bytes);
     bool rejectedWithExpectedError = false;
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 77;
     try {
         auto* result = realloc_nid_postfix(original, std::numeric_limits<std::size_t>::max() - HeaderBytes);
         if (result != nullptr) {
             free_nid_postfix(result);
             return 4;
         }
-        rejectedWithExpectedError = *__error_nid_postfix() == 12;
+        rejectedWithExpectedError = *__error_nid_postfix() == 77;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "realloc failed with an unexpected exception: %s\n", error.what());
     } catch (...) {

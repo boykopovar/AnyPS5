@@ -12,9 +12,7 @@ static std::atomic<bool> g_chatEnabled{false};
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2Initialize(void) {
-    return 0;
-}
+int APS5_VABI sceAudioOut2Initialize(void);
 
 int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
     (void)param;

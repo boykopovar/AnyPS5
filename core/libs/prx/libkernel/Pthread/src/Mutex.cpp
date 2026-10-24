@@ -149,16 +149,6 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {
-    if (!attr || !*attr)
-        return SCE_KERNEL_ERROR_EINVAL;
-    constexpr int PrioNone = 0;
-    constexpr int PrioProtect = 2;
-    if (protocol < PrioNone || protocol > PrioProtect)
-        return SCE_KERNEL_ERROR_EINVAL;
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");

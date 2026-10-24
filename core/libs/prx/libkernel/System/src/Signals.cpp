@@ -124,6 +124,10 @@ bool TakePending(int guest) {
     return (word.fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
 }
 
+void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
+    if (action.handler == 1 || (action.handler == 0 && IgnoredByDefault(guest))) TakePending(guest);
+}
+
 bool PendingInSet(const GuestSignalSet& set, int* guest) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
         if (!SignalInSet(set, candidate) || !TakePending(candidate)) continue;
@@ -489,6 +493,7 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     if (!Install(guest, action)) { *__error_nid_postfix() = 22; return invalid; }
     const auto previous = reinterpret_cast<GuestHandler>(dispositions[guest].handler);
     dispositions[guest] = action;
+    DiscardPendingIfIgnored(guest, action);
     return previous;
 }
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
@@ -500,9 +505,13 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
     if (action) {
         if (!Install(guest, *action)) { *__error_nid_postfix() = 22; return -1; }
         dispositions[guest] = *action;
+        DiscardPendingIfIgnored(guest, *action);
     }
     if (previous) *previous = old;
     return 0;
+}
+int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    return sigaction_nid_postfix(guest, action, previous);
 }
 int APS5_VABI raise_nid_postfix(int guest) {
     if (guest == 0) return 0;
@@ -649,6 +658,10 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     return -1;
 }
 
+int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
+    return sigsuspend_nid_postfix(set);
+}
+
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
     if (set == nullptr) { *__error_nid_postfix() = 14; return -1; }
     auto& pending = Pending();
@@ -667,4 +680,13 @@ int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t programCounter) {
     return 0;
 }
 
+}
+
+namespace {
+struct RegisterSignalsOnLoad {
+    RegisterSignalsOnLoad() {
+        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
+    }
+};
+const RegisterSignalsOnLoad gRegisterSignals;
 }

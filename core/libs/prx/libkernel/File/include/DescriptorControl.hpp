@@ -14,6 +14,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument);
 int DuplicateFrom(int fd, int start);
 void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites = false);
 bool HasFixedSizeWrites(int fd);
+void RememberPipe(int fd);
 void ShareDescriptor(int from, int to);
 void ForgetDescriptor(int fd);
 bool Appends(int fd);

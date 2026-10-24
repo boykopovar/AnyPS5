@@ -608,8 +608,8 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     const int result = ::pipe(native);
 #endif
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
-    File::RememberDescriptor(native[0], 0);
-    File::RememberDescriptor(native[1], 0);
+    File::RememberPipe(native[0]);
+    File::RememberPipe(native[1]);
     std::memcpy(descriptors, native, sizeof(native));
     return 0;
 }
@@ -719,7 +719,7 @@ int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
 }
 
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {
-    if (GuestSockets::IsOpen(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchflags");
     if (!File::IsVnode(d)) {
         if (!DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
@@ -739,7 +739,7 @@ int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int 
 }
 
 int APS5_VABI close_nid_postfix(int d) {
-    if (File::IsHostStream(d)) return PosixFailure(GUEST_EBADF);
+    if (File::IsHostStream(d)) return PosixFailure(GUEST_EPERM);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) {
         if (socketError == 0) return 0;
@@ -747,16 +747,18 @@ int APS5_VABI close_nid_postfix(int d) {
         return -1;
     }
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d);
+    EqueueDescriptorClosed(d);
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    EqueueDescriptorClosed(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
     File::ForgetFileLock(d);
+    const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(d);
+    if (shared != -2) return shared;
     return WithoutParameterHandler([d] { return ::_close(d); });
 #else
     return ::close(d);
@@ -775,26 +777,9 @@ std::atomic<int> g_hostStandardOutput{-1};
 
 void PreserveHostStream(int standard, std::atomic<int>& slot) {
     if (slot.load() >= 0) return;
-#ifdef _WIN32
-    const int saved = WithoutParameterHandler([standard] { return ::_dup(standard); });
-#else
     const int saved = standard == 1 ? KeepHostStandardOutput_nid_no_patch() : KeepHostStandardError_nid_no_patch();
-#endif
     if (saved < 0) throw std::runtime_error(standard == 1 ? "dup2: cannot keep the host standard output" : "dup2: cannot keep the host standard error");
-    int expected = -1;
-    if (!slot.compare_exchange_strong(expected, saved)) {
-#ifdef _WIN32
-        _close(saved);
-#endif
-        return;
-    }
-#ifdef _WIN32
-    if (!AdoptHostStandardStream_nid_no_patch(standard, saved)) {
-        slot.store(-1);
-        _close(saved);
-        throw std::runtime_error(standard == 1 ? "dup2: cannot keep the host standard output" : "dup2: cannot keep the host standard error");
-    }
-#endif
+    slot.store(saved);
 }
 
 void PreserveHostStandardError() { PreserveHostStream(2, g_hostStandardError); }
@@ -814,6 +799,7 @@ int APS5_VABI dup_nid_postfix(int d) {
 #ifdef _WIN32
     const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
     if (duplicate >= 0) File::DuplicateDirectoryDescriptor(d, duplicate);
+    if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
 #else
     const int duplicate = ::dup(d);
 #endif
@@ -846,8 +832,10 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (from == to) return to;
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
+    auto positioned = File::LockPositionedTransfer(to);
     auto* const standard = HostStandardHandle_nid_no_patch(to);
-    const int duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
+    int duplicated = File::ReplaceSharedMemoryDescriptor_nid_no_patch(from, to);
+    if (duplicated == -2) duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
     KeepStandardHandle_nid_no_patch(to, standard);
     if (duplicated != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     EqueueDescriptorClosed(to);
@@ -856,7 +844,10 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     File::DuplicateDirectoryDescriptor(from, to);
     File::ForgetFileLock(to);
     File::ForgetRandomDevice(to);
+    File::ForgetSharedMemoryDescriptor_nid_no_patch(to);
+    File::DuplicateSharedMemoryDescriptor_nid_no_patch(from, to);
     if (sourceIsRandom) File::RememberRandomDevice(to);
+    positioned.unlock();
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
     return to;
@@ -1261,6 +1252,10 @@ int APS5_VABI getdirentries_nid_postfix(int fd, char* buf, int nbytes, int64_t* 
     return PosixResult(sceKernelGetdirentries(fd, buf, nbytes, basep));
 }
 
+int APS5_VABI _getdirentries_nid_postfix(int fd, char* buf, int nbytes, int64_t* basep) {
+    return getdirentries_nid_postfix(fd, buf, nbytes, basep);
+}
+
 int APS5_VABI getdents_nid_postfix(int fd, char* buf, int nbytes) {
     return PosixResult(sceKernelGetdents(fd, buf, nbytes));
 }
@@ -1575,6 +1570,10 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
+#ifdef _WIN32
+    const int sharedMemoryResult = File::SetSharedMemoryMode_nid_no_patch(d, mode);
+    if (sharedMemoryResult != -2) return sharedMemoryResult == 0 ? 0 : SceErrorFromErrno(errno);
+#endif
     if (NativeFchmod(d, mode & 07777) != 0) return SceErrorFromErrno(errno);
     return 0;
 }

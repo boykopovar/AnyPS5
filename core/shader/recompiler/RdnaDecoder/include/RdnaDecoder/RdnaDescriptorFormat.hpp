@@ -4,6 +4,7 @@
 #include "IntermediateRepresentation/IrMetadata.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace ShaderRecompiler {
@@ -21,6 +22,17 @@ enum class ImageType : std::uint32_t {
 
 [[nodiscard]] IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format);
 [[nodiscard]] bool IsFmaskTextureFormat(IrBufferFormat format);
+
+struct FmaskLayout {
+    std::uint32_t samples;
+    std::uint32_t fragments;
+    std::uint32_t sampleBits;
+    std::uint32_t storageBits;
+};
+
+inline constexpr IrBufferFormat FmaskExpansion = IrBufferFormat::Fmask8_S2_F1;
+
+[[nodiscard]] std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format);

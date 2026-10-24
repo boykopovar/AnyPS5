@@ -9,6 +9,10 @@ inline bool SubgroupControlBarrierUsable(VkDriverId driver) {
     return driver != VK_DRIVER_ID_AMD_PROPRIETARY;
 }
 
+inline bool WorkgroupScopeFenceUsable(VkDriverId driver) {
+    return driver != VK_DRIVER_ID_AMD_PROPRIETARY;
+}
+
 }
 
 #endif

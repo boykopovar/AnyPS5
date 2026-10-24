@@ -20,6 +20,8 @@ int APS5_VABI pthread_cond_init_nid_postfix(PthreadCond* cond, const PthreadCond
 int APS5_VABI pthread_cond_destroy_nid_postfix(PthreadCond* cond);
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
+int APS5_VABI pthread_cond_signalto_np_nid_postfix(PthreadCond* cond, Pthread thread);
+Pthread APS5_VABI scePthreadSelf();
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
 void APS5_VABI __pthread_cxa_finalize_nid_postfix(void*);
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds);
@@ -55,6 +57,7 @@ struct Signalled {
     PthreadCond cond = nullptr;
     bool ready = false;
     int trylock = SCE_OK;
+    Pthread target = nullptr;
 };
 
 static void* APS5_VABI Trylocker(void* arg) {
@@ -68,6 +71,15 @@ static void* APS5_VABI Signaller(void* arg) {
     Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
     signalled.ready = true;
     Require(scePthreadCondSignal(&signalled.cond) == SCE_OK);
+    Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+    return nullptr;
+}
+
+static void* APS5_VABI SignallerTo(void* arg) {
+    auto& signalled = *static_cast<Signalled*>(arg);
+    Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+    signalled.ready = true;
+    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, signalled.target) == 0);
     Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
     return nullptr;
 }
@@ -108,8 +120,29 @@ static void RelativeWait() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+static void SignalTo() {
+    Signalled signalled;
+    signalled.target = scePthreadSelf();
+    Require(scePthreadMutexInit(&signalled.mutex, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadCondInit(&signalled.cond, nullptr, nullptr) == SCE_OK);
+    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, signalled.target) == 0);
+    Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, SignallerTo, &signalled, nullptr) == SCE_OK);
+    const auto waitStart = std::chrono::steady_clock::now();
+    while (!signalled.ready)
+        Require(pthread_cond_reltimedwait_np_nid_postfix(&signalled.cond, &signalled.mutex, 10000000) == 0);
+    Require(std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(5));
+    Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+    Require(scePthreadCondDestroy(&signalled.cond) == SCE_OK);
+    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, signalled.target) == 22);
+    Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
+}
+
 int main() {
     RelativeWait();
+    SignalTo();
 
     Context context;
     PthreadCond cond = nullptr;

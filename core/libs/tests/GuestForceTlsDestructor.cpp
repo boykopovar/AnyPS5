@@ -57,7 +57,7 @@ void* APS5_VABI Worker(void*) {
 KernelModule ModuleOf(const void* address) {
     ModuleInfoEx info{};
     info.st_size = sizeof(ModuleInfoEx);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 2, &info) == 0);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 1, &info) == 0);
     return info.id;
 }
 

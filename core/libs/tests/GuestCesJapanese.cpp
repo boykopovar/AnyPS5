@@ -2,10 +2,21 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 extern "C" {
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
+void* APS5_VABI sceCesUcsProfileInitEucJpX0208(void*);
+void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2(void*);
+void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2Ss3(void*);
+void* APS5_VABI sceCesUcsProfileInitSJis1997X0208(void*);
+int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
+int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
+int APS5_VABI sceCesUcs2StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
+int APS5_VABI sceCesEucJpToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
+int APS5_VABI sceCesEucJpToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
 const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
 int APS5_VABI sceCesSJisToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
 int APS5_VABI sceCesSJisToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
@@ -36,14 +47,242 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 
+constexpr int invalidParameter = static_cast<int>(0x805C0001);
+constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
+constexpr int invalidEncode = static_cast<int>(0x805C0014);
+constexpr int unassignedCode = static_cast<int>(0x805C0020);
+constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
+constexpr std::uint32_t jisX0208Cells = 6878;
+constexpr std::uint32_t jisX0208Digest = 0xA614D6F6;
+constexpr std::uint32_t jisX0212Cells = 6067;
+constexpr std::uint32_t jisX0212Digest = 0x7C193A73;
+const std::string unsettledCell = "libSceCesCs: the console's mapping of JIS X 0208 cell 0x2140 (U+005C or U+FF3C) is unknown";
+const std::string unsettledByte = "libSceCesCs: the console's mapping of Shift-JIS bytes 0x5C and 0x7E (ASCII or JIS X 0201 Roman) is unknown";
+
+template <typename TCall>
+static bool Reports(const std::string& message, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return error.what() == message;
+    }
+    return false;
+}
+
+static std::uint32_t Digest(std::uint32_t hash, std::uint16_t value) {
+    hash = (hash ^ (value & 0xFF)) * 0x01000193u;
+    return (hash ^ (value >> 8)) * 0x01000193u;
+}
+
+static int EucToUcs2(const void* profile, const char* bytes, std::uint32_t size, std::uint16_t& ucs2) {
+    std::uint32_t used = 0;
+    return sceCesEucJpToUcs2(profile, Bytes(bytes), size, &used, &ucs2);
+}
+
+static int SJisToUcs2(const void* profile, const char* bytes, std::uint32_t size, std::uint16_t& ucs2) {
+    std::uint32_t used = 0;
+    return sceCesSJisToUcs2(profile, Bytes(bytes), size, &used, &ucs2);
+}
+
+static bool EucEncodes(const void* profile, std::uint16_t ucs2, const char* expected) {
+    std::uint8_t mbcs[4] = {};
+    std::uint32_t size = 0;
+    return sceCesUcs2ToEucJp(ucs2, profile, mbcs, sizeof(mbcs), &size) == 0 && size == std::strlen(expected) && std::memcmp(mbcs, expected, size) == 0;
+}
+
+static bool SJisEncodes(const void* profile, std::uint16_t ucs2, const char* expected) {
+    std::uint8_t mbcs[4] = {};
+    std::uint32_t size = 0;
+    return sceCesUcs2ToSJis(ucs2, profile, mbcs, sizeof(mbcs), &size) == 0 && size == std::strlen(expected) && std::memcmp(mbcs, expected, size) == 0;
+}
+
+static bool EncodeLeavesOutputs(int expected, const void* profile, std::uint16_t ucs2, bool sjis) {
+    std::uint8_t mbcs[4] = {0xEE, 0xEE, 0xEE, 0xEE};
+    std::uint32_t size = 77;
+    const int result = sjis ? sceCesUcs2ToSJis(ucs2, profile, mbcs, sizeof(mbcs), &size) : sceCesUcs2ToEucJp(ucs2, profile, mbcs, sizeof(mbcs), &size);
+    return result == expected && size == 77 && mbcs[0] == 0xEE && mbcs[1] == 0xEE && mbcs[2] == 0xEE;
+}
+
+static bool DecodeLeavesOutputs(int expected, const void* profile, const char* bytes, std::uint32_t size, bool sjis) {
+    std::uint32_t used = 77;
+    std::uint16_t ucs2 = 0xEEEE;
+    const int result = sjis ? sceCesSJisToUcs2(profile, Bytes(bytes), size, &used, &ucs2) : sceCesEucJpToUcs2(profile, Bytes(bytes), size, &used, &ucs2);
+    return result == expected && used == 77 && ucs2 == 0xEEEE;
+}
+
+static void SweepEucJisX0208(const void* profile) {
+    std::uint32_t assigned = 0;
+    std::uint32_t hash = 0x811C9DC5u;
+    for (std::uint32_t lead = 0xA1; lead <= 0xFE; ++lead) {
+        for (std::uint32_t trail = 0xA1; trail <= 0xFE; ++trail) {
+            const std::uint8_t cell[2] = {static_cast<std::uint8_t>(lead), static_cast<std::uint8_t>(trail)};
+            std::uint32_t used = 77;
+            std::uint16_t ucs2 = 0xEEEE;
+            std::uint16_t value = 0;
+            if (lead == 0xA1 && trail == 0xC0) {
+                Require(Reports(unsettledCell, [&] { sceCesEucJpToUcs2(profile, cell, 2, &used, &ucs2); }));
+            } else if (const int result = sceCesEucJpToUcs2(profile, cell, 2, &used, &ucs2); result == 0) {
+                Require(used == 2);
+                value = ucs2;
+                ++assigned;
+                std::uint8_t again[4] = {};
+                std::uint32_t size = 0;
+                Require(sceCesUcs2ToEucJp(ucs2, profile, again, sizeof(again), &size) == 0 && size == 2 && again[0] == lead && again[1] == trail);
+            } else {
+                Require(result == unassignedCode && used == 77 && ucs2 == 0xEEEE);
+            }
+            hash = Digest(hash, value);
+        }
+    }
+    Require(assigned == jisX0208Cells && hash == jisX0208Digest);
+}
+
+static void SweepSJisJisX0208(const void* profile) {
+    std::uint32_t assigned = 0;
+    std::uint32_t hash = 0x811C9DC5u;
+    for (int row = 1; row <= 94; ++row) {
+        for (int column = 1; column <= 94; ++column) {
+            std::uint16_t code = 0;
+            Require(sceCesJisX0208ToSJisCode(static_cast<std::uint8_t>(row), static_cast<std::uint8_t>(column), &code) == 0);
+            const std::uint8_t cell[2] = {static_cast<std::uint8_t>(code >> 8), static_cast<std::uint8_t>(code)};
+            std::uint32_t used = 77;
+            std::uint16_t ucs2 = 0xEEEE;
+            std::uint16_t value = 0;
+            if (row == 1 && column == 32) {
+                Require(Reports(unsettledCell, [&] { sceCesSJisToUcs2(profile, cell, 2, &used, &ucs2); }));
+            } else if (const int result = sceCesSJisToUcs2(profile, cell, 2, &used, &ucs2); result == 0) {
+                Require(used == 2);
+                value = ucs2;
+                ++assigned;
+                std::uint8_t again[4] = {};
+                std::uint32_t size = 0;
+                Require(sceCesUcs2ToSJis(ucs2, profile, again, sizeof(again), &size) == 0 && size == 2 && again[0] == cell[0] && again[1] == cell[1]);
+            } else {
+                Require(result == unassignedCode && used == 77 && ucs2 == 0xEEEE);
+            }
+            hash = Digest(hash, value);
+        }
+    }
+    Require(assigned == jisX0208Cells && hash == jisX0208Digest);
+}
+
+static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
+    alignas(8) std::uint8_t sheets[4][256] = {};
+    Require(sceCesUcsProfileInitEucJpX0208(nullptr) == nullptr && sceCesUcsProfileInitEucJpX0208Ss2(nullptr) == nullptr);
+    Require(sceCesUcsProfileInitEucJpX0208Ss2Ss3(nullptr) == nullptr && sceCesUcsProfileInitSJis1997X0208(nullptr) == nullptr);
+    const void* euc = sceCesUcsProfileInitEucJpX0208(sheets[0]);
+    const void* ss2 = sceCesUcsProfileInitEucJpX0208Ss2(sheets[1]);
+    const void* ss3 = sceCesUcsProfileInitEucJpX0208Ss2Ss3(sheets[2]);
+    const void* sjis = sceCesUcsProfileInitSJis1997X0208(sheets[3]);
+    Require(euc == sheets[0] && ss2 == sheets[1] && ss3 == sheets[2] && sjis == sheets[3]);
+    const void* strictEuc[3] = {euc, ss2, ss3};
+
+    std::uint16_t ucs2 = 0;
+    Require(EucToUcs2(sjis, "\xA4\xA2", 2, ucs2) == invalidParameter);
+    Require(SJisToUcs2(euc, "\x82\xA0", 2, ucs2) == invalidParameter);
+    Require(EncodeLeavesOutputs(invalidParameter, sjis, 0x3042, false) && EncodeLeavesOutputs(invalidParameter, ss3, 0x3042, true));
+
+    for (const void* profile : strictEuc) {
+        SweepEucJisX0208(profile);
+        Require(EucToUcs2(profile, "\\~", 2, ucs2) == 0 && ucs2 == 0x5C && EucEncodes(profile, 0x5C, "\\") && EucEncodes(profile, 0x7E, "~"));
+        Require(EucToUcs2(profile, "\xA1\xC1", 2, ucs2) == 0 && ucs2 == 0x301C && EucEncodes(profile, 0x301C, "\xA1\xC1"));
+        Require(EucToUcs2(profile, "\xA1\xC2", 2, ucs2) == 0 && ucs2 == 0x2016);
+        Require(EucToUcs2(profile, "\xA1\xDD", 2, ucs2) == 0 && ucs2 == 0x2212);
+        Require(EucToUcs2(profile, "\xA1\xF1", 2, ucs2) == 0 && ucs2 == 0x00A2);
+        Require(EucToUcs2(profile, "\xA1\xF2", 2, ucs2) == 0 && ucs2 == 0x00A3);
+        Require(EucToUcs2(profile, "\xA2\xCC", 2, ucs2) == 0 && ucs2 == 0x00AC);
+        for (const std::uint16_t cp932Form : {0xFF5E, 0x2225, 0xFF0D, 0xFFE0, 0xFFE1, 0xFFE2, 0x2460, 0x2170}) Require(EncodeLeavesOutputs(unassignedCode, profile, cp932Form, false));
+        Require(Reports(unsettledCell, [&] { EucEncodes(profile, 0xFF3C, ""); }));
+        Require(DecodeLeavesOutputs(unassignedCode, profile, "\xAD\xA1", 2, false) && DecodeLeavesOutputs(unassignedCode, profile, "\xF9\xA1", 2, false));
+        Require(DecodeLeavesOutputs(unassignedCode, profile, "\xA9\xA1", 2, false) && DecodeLeavesOutputs(unassignedCode, profile, "\xFE\xFE", 2, false));
+        Require(DecodeLeavesOutputs(invalidEncode, profile, "\xA4\x41", 2, false) && DecodeLeavesOutputs(invalidEncode, profile, "\xA4\xFF", 2, false));
+        Require(DecodeLeavesOutputs(invalidEncode, profile, "\x80", 1, false) && DecodeLeavesOutputs(invalidEncode, profile, "\xFF", 1, false));
+        Require(DecodeLeavesOutputs(srcBufferEnd, profile, "\xA4\xA2", 1, false));
+        std::uint8_t mbcs[4] = {0xEE, 0xEE, 0xEE, 0xEE};
+        std::uint32_t size = 77;
+        Require(sceCesUcs2ToEucJp(0x3042, profile, mbcs, 1, &size) == dstBufferEnd && size == 77 && mbcs[0] == 0xEE);
+    }
+    Require(EucToUcs2(cp51932, "\xA1\xC0", 2, ucs2) == 0 && ucs2 == 0xFF3C && EucEncodes(cp51932, 0xFF3C, "\xA1\xC0"));
+    Require(EucToUcs2(cp51932, "\xA1\xC1", 2, ucs2) == 0 && ucs2 == 0xFF5E && EucToUcs2(cp51932, "\xAD\xA1", 2, ucs2) == 0 && ucs2 == 0x2460);
+    Require(EucEncodes(cp51932, 0x7E8A, "\xF9\xA1") && EucEncodes(ss3, 0x7E8A, "\x8F\xD4\xE3"));
+    Require(EncodeLeavesOutputs(unassignedCode, euc, 0x7E8A, false) && EncodeLeavesOutputs(unassignedCode, ss2, 0x7E8A, false));
+
+    Require(DecodeLeavesOutputs(invalidEncode, euc, "\x8E\xB1", 2, false) && DecodeLeavesOutputs(invalidEncode, euc, "\x8E", 1, false));
+    Require(DecodeLeavesOutputs(invalidEncode, euc, "\x8F\xB0\xA1", 3, false) && DecodeLeavesOutputs(invalidEncode, ss2, "\x8F\xB0\xA1", 3, false));
+    Require(EncodeLeavesOutputs(unassignedCode, euc, 0xFF71, false));
+    Require(EncodeLeavesOutputs(unassignedCode, euc, 0x4E02, false) && EncodeLeavesOutputs(unassignedCode, ss2, 0x4E02, false));
+    for (const void* profile : {ss2, ss3}) {
+        for (std::uint32_t kana = 0xA1; kana <= 0xDF; ++kana) {
+            const char bytes[3] = {'\x8E', static_cast<char>(kana), 0};
+            Require(EucToUcs2(profile, bytes, 2, ucs2) == 0 && ucs2 == 0xFF61 + kana - 0xA1 && EucEncodes(profile, ucs2, bytes));
+        }
+        Require(DecodeLeavesOutputs(invalidEncode, profile, "\x8E\xE0", 2, false) && DecodeLeavesOutputs(invalidEncode, profile, "\x8E\xA0", 2, false));
+        Require(DecodeLeavesOutputs(srcBufferEnd, profile, "\x8E\xB1", 1, false));
+    }
+    std::uint32_t supplementary = 0;
+    std::uint32_t hash = 0x811C9DC5u;
+    for (std::uint32_t lead = 0xA1; lead <= 0xFE; ++lead) {
+        for (std::uint32_t trail = 0xA1; trail <= 0xFE; ++trail) {
+            const char bytes[4] = {'\x8F', static_cast<char>(lead), static_cast<char>(trail), 0};
+            std::uint16_t value = 0;
+            if (const int result = EucToUcs2(ss3, bytes, 3, ucs2); result == 0) {
+                value = ucs2;
+                ++supplementary;
+                Require(EucEncodes(ss3, ucs2, ucs2 == 0x7E ? "~" : bytes));
+            } else {
+                Require(result == unassignedCode);
+            }
+            hash = Digest(hash, value);
+        }
+    }
+    Require(supplementary == jisX0212Cells && hash == jisX0212Digest);
+    Require(DecodeLeavesOutputs(srcBufferEnd, ss3, "\x8F\xB0", 2, false) && DecodeLeavesOutputs(invalidEncode, ss3, "\x8F\xB0\x41", 3, false));
+    Require(EucEncodes(ss3, 0x4E02, "\x8F\xB0\xA1") && EucEncodes(ss2, 0xFF71, "\x8E\xB1"));
+
+    std::uint8_t utf8[4] = {};
+    std::uint32_t used = 0;
+    std::uint32_t produced = 0;
+    Require(sceCesEucJpToUtf8(euc, Bytes("\xA1\xC1"), 2, &used, utf8, sizeof(utf8), &produced) == 0 && used == 2 && produced == 3 && std::memcmp(utf8, "\xE3\x80\x9C", 3) == 0);
+    alignas(8) std::uint8_t context[256] = {};
+    std::uint16_t wide[8] = {};
+    Require(sceCesMbcsUcsContextInit(context, ss2) == 0);
+    Require(sceCesMbcsStrToUcs2Str(context, Bytes("A\xA4\xA2\x8E\xB1"), 5, &used, wide, 8, &produced) == 0 && used == 5 && produced == 3 && wide[1] == 0x3042 && wide[2] == 0xFF71);
+    Require(sceCesMbcsUcsContextInit(context, euc) == 0);
+    Require(sceCesMbcsStrToUcs2Str(context, Bytes("A\xA4\xA2\x8E\xB1"), 5, &used, wide, 8, &produced) == invalidEncode);
+
+    SweepSJisJisX0208(sjis);
+    Require(SJisToUcs2(sjis, "\x81\x60", 2, ucs2) == 0 && ucs2 == 0x301C && SJisEncodes(sjis, 0x301C, "\x81\x60"));
+    Require(SJisToUcs2(sjis, "\x81\x91", 2, ucs2) == 0 && ucs2 == 0x00A2 && SJisEncodes(sjis, 0x00AC, "\x81\xCA"));
+    for (const std::uint16_t cp932Form : {0xFF5E, 0x2225, 0xFF0D, 0xFFE0, 0xFFE1, 0xFFE2, 0x2460, 0x2170, 0x7E8A, 0x4E02}) Require(EncodeLeavesOutputs(unassignedCode, sjis, cp932Form, true));
+    for (const char* removed : {"\x87\x40", "\xED\x40", "\xEE\xFC", "\xFA\x40", "\xFC\x4B", "\xF0\x40", "\xEF\xFC"}) Require(DecodeLeavesOutputs(unassignedCode, sjis, removed, 2, true));
+    Require(SJisToUcs2(cp932, "\x87\x40", 2, ucs2) == 0 && ucs2 == 0x2460 && SJisToUcs2(cp932, "\xFA\x40", 2, ucs2) == 0 && ucs2 == 0x2170);
+    Require(SJisToUcs2(cp932, "\x81\x5F", 2, ucs2) == 0 && ucs2 == 0xFF3C && SJisToUcs2(cp932, "\\", 1, ucs2) == 0 && ucs2 == 0x5C);
+    Require(DecodeLeavesOutputs(invalidEncode, sjis, "\x82\x7F", 2, true) && DecodeLeavesOutputs(invalidEncode, sjis, "\x82\xFD", 2, true));
+    Require(DecodeLeavesOutputs(srcBufferEnd, sjis, "\x82\xA0", 1, true));
+    for (std::uint32_t byte = 0; byte <= 0xFF; ++byte) {
+        const char bytes[2] = {static_cast<char>(byte), 0};
+        if (byte == 0x5C || byte == 0x7E) {
+            Require(Reports(unsettledByte, [&] { SJisToUcs2(sjis, bytes, 1, ucs2); }));
+        } else if (byte < 0x80) {
+            Require(SJisToUcs2(sjis, bytes, 1, ucs2) == 0 && ucs2 == byte && (byte == 0 || SJisEncodes(sjis, ucs2, bytes)));
+        } else if (byte >= 0xA1 && byte <= 0xDF) {
+            Require(SJisToUcs2(sjis, bytes, 1, ucs2) == 0 && ucs2 == 0xFF61 + byte - 0xA1 && SJisEncodes(sjis, ucs2, bytes));
+        } else {
+            Require(DecodeLeavesOutputs(byte == 0x80 || byte == 0xA0 || byte >= 0xFD ? invalidEncode : srcBufferEnd, sjis, bytes, 1, true));
+        }
+    }
+    for (const std::uint16_t unsettled : {0x5C, 0x7E, 0xA5, 0x203E}) Require(Reports(unsettledByte, [&] { SJisEncodes(sjis, unsettled, ""); }));
+    Require(Reports(unsettledCell, [&] { SJisEncodes(sjis, 0xFF3C, ""); }));
+    Require(sceCesMbcsUcsContextInit(context, sjis) == 0);
+    const std::uint16_t text[] = {0x3042, 0x301C, 0xFF71, 0};
+    std::uint8_t mbcs[8] = {};
+    Require(sceCesUcs2StrToMbcsStr(context, text, 4, &used, mbcs, sizeof(mbcs), &produced) == 0 && used == 3 && produced == 5 && std::memcmp(mbcs, "\x82\xA0\x81\x60\xB1", 5) == 0);
+    Require(Reports(unsettledByte, [&] { sceCesMbcsStrToUcs2Str(context, Bytes("A\\"), 2, &used, wide, 8, &produced); }));
+}
+
 int main() {
-    constexpr int invalidParameter = static_cast<int>(0x805C0001);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
-    constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
-    constexpr int invalidEncode = static_cast<int>(0x805C0014);
-    constexpr int unassignedCode = static_cast<int>(0x805C0020);
     constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
-    constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
 
     alignas(8) std::uint8_t sjisSheet[64] = {};
     alignas(8) std::uint8_t eucSheet[64] = {};
@@ -166,5 +405,6 @@ int main() {
             Require(sceCesSJisCodeToJisX0208(sjisCode, &ku, &ten) == 0 && ku == row && ten == cell);
         }
     }
+    TestJisX0208Profiles(sjis, euc);
     return 0;
 }

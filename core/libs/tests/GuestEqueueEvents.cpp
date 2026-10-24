@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 #include <thread>
 
@@ -256,12 +257,64 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void RequireReported(KernelEqueue eq, int num, std::initializer_list<uintptr_t> expected) {
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    Require(sceKernelWaitEqueue(eq, events, num, &count, &poll) == SCE_OK);
+    Require(count == static_cast<int>(expected.size()));
+    int index = 0;
+    for (const uintptr_t id : expected) {
+        Require(sceKernelGetEventId(&events[index++]) == id);
+    }
+}
+
+static void VerifyReportedEventsMoveBehindWaitingOnes() {
+    KernelEqueue eq = 0;
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int payload = 0;
+    Require(sceKernelCreateEqueue(&eq, "rotate") == SCE_OK);
+    for (const int id : {1, 2}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {1});
+    RequireReported(eq, 1, {2});
+    RequireReported(eq, 1, {1});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate three") == SCE_OK);
+    for (const int id : {1, 2, 3}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 2, {1, 2});
+    RequireReported(eq, 2, {3, 1});
+    RequireReported(eq, 2, {2, 3});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate edge") == SCE_OK);
+    for (const int id : {7, 8}) {
+        Require(sceKernelAddUserEventEdge(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {7});
+    Require(sceKernelTriggerUserEvent(eq, 7, &payload) == SCE_OK);
+    RequireReported(eq, 1, {8});
+    RequireReported(eq, 1, {7});
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
     VerifyRepeatedAmprCompletionsAreNotLost();
+    VerifyReportedEventsMoveBehindWaitingOnes();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);
