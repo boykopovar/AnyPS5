@@ -561,7 +561,7 @@ static void CheckExp2Errno() {
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     double result = exp2_nid_postfix(1024.0);
-    Require(errno == 0);
+    Require(errno == ERANGE);
     Require(std::isinf(result) && result > 0);
     Require(std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
 }
@@ -681,6 +681,36 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckExp2ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x3ff0000000000000ull, 0}, {0x8000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3ff0000000000000ull, 0}, {0x3c90000000000000ull, 0x3ff0000000000000ull, 0},
+        {0xbc90000000000000ull, 0x3ff0000000000000ull, 0}, {0x3ff0000000000000ull, 0x4000000000000000ull, 0},
+        {0xbff0000000000000ull, 0x3fe0000000000000ull, 0}, {0x3fe0000000000000ull, 0x3ff6a09e667f3bcdull, 0},
+        {0x4024000000000000ull, 0x4090000000000000ull, 0}, {0xc024000000000000ull, 0x3f50000000000000ull, 0},
+        {0x408ff80000000000ull, 0x7fe0000000000000ull, 0}, {0x408fffffffffffffull, 0x7feffffffffffd3aull, 0},
+        {0x4090000000000000ull, 0x7ff0000000000000ull, ERANGE}, {0xc08ff00000000000ull, 0x0010000000000000ull, 0},
+        {0xc08ff40000000000ull, 0x000b504f333f9de6ull, 0}, {0xc090c80000000000ull, 0x0000000000000001ull, 0},
+        {0xc090ca0000000000ull, 0x0000000000000001ull, 0}, {0xc090cbffffffffffull, 0x0000000000000001ull, 0},
+        {0xc090cc0000000000ull, 0x0000000000000000ull, ERANGE}, {0x7fefffffffffffffull, 0x7ff0000000000000ull, ERANGE},
+        {0xffefffffffffffffull, 0x0000000000000000ull, ERANGE}, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0x0000000000000000ull, 0}, {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0xfff8000000000002ull, 0xfff8000000000002ull, 0}, {0x401c2caf278dc3f3ull, 0x40607dc899331269ull, 0},
+        {0x404ac26689a8dc7aull, 0x4346ec6938394318ull, 0}, {0xbf887a99bea50fb1ull, 0x3fefbc6911ca1674ull, 0},
+        {0x3ff790fb0ae85390ull, 0x400634ce999c9effull, 0}, {0x3fc07bc20a0c887eull, 0x3ff17e6da512eccaull, 0},
+        {0x4033ddceb4331e0aull, 0x412d2ba2089de518ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(exp2_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 static void CheckExpm1ConsoleBits() {
@@ -1668,6 +1698,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckExp2ConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
