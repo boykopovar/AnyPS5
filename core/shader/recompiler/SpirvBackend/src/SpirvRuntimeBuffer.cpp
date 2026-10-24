@@ -50,18 +50,52 @@ std::uint32_t nonzero(SpirvEmitterState& state, std::uint32_t value) {
     return Binary(state, spv::OpINotEqual, TypeBool(state), value, ConstantU32(state, 0u));
 }
 
+std::uint32_t gcnBufferFormat(SpirvEmitterState& state, std::uint32_t index) {
+    const auto u32 = TypeU32(state);
+    if (state.gcnBufferFormatFunction == 0u) {
+        const auto id = state.module.AllocateId();
+        struct Restore {
+            SpirvEmitterState& state;
+            std::uint32_t label;
+            ~Restore() {
+                state.module.EndHelperFunction();
+                state.currentLabel = label;
+            }
+        };
+        state.module.BeginHelperFunction();
+        const Restore restore{state, state.currentLabel};
+        state.module.AddName(id, "gcn_buffer_format");
+        state.module.AddFunction(spv::OpFunction, u32, id, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, u32, u32));
+        const auto parameter = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, u32, parameter);
+        EmitLabel(state, state.module.AllocateId());
+        const auto& formats = GcnBufferFormats();
+        std::vector<std::uint32_t> words;
+        for (std::size_t entry = 0; entry < formats.size(); entry += 4u) {
+            std::uint32_t packed = 0;
+            for (std::uint32_t byte = 0; byte < 4u; ++byte) packed |= static_cast<std::uint32_t>(formats[entry + byte]) << (byte * 8u);
+            words.push_back(ConstantU32(state, packed));
+        }
+        const auto word = Binary(state, spv::OpShiftRightLogical, u32, parameter, ConstantU32(state, 2u));
+        for (std::uint32_t bit = 0; words.size() > 1u; ++bit) {
+            const auto odd = nonzero(state, Binary(state, spv::OpBitwiseAnd, u32, word, ConstantU32(state, 1u << bit)));
+            std::vector<std::uint32_t> halves;
+            for (std::size_t pair = 0; pair < words.size(); pair += 2u) halves.push_back(words[pair] == words[pair + 1u] ? words[pair] : Select(state, u32, odd, words[pair + 1u], words[pair]));
+            words = std::move(halves);
+        }
+        const auto shift = Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, parameter, ConstantU32(state, 3u)), ConstantU32(state, 3u));
+        state.module.AddFunction(spv::OpReturnValue, EmitBitFieldUExtract(state, words.front(), shift, ConstantU32(state, 8u)));
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.gcnBufferFormatFunction = id;
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, u32, result, state.gcnBufferFormatFunction, index);
+    return result;
+}
+
 std::uint32_t gcnWord3(SpirvEmitterState& state, std::uint32_t word1, std::uint32_t word3) {
     const auto u32 = TypeU32(state);
-    const auto& formats = GcnBufferFormats();
-    std::array<std::uint32_t, 128> words{};
-    for (std::size_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, formats[index]);
-    const auto arrayType = state.module.Type(spv::OpTypeArray, u32, ConstantU32(state, static_cast<std::uint32_t>(words.size())));
-    if (state.gcnBufferFormatVariable == 0) state.gcnBufferFormatVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, arrayType), spv::StorageClassPrivate);
-    state.module.AddFunction(spv::OpStore, state.gcnBufferFormatVariable, state.module.Constant(spv::OpConstantComposite, arrayType, std::span<const std::uint32_t>(words)));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, u32), pointer, state.gcnBufferFormatVariable, field(state, word3, 12u, 7u));
-    const auto format = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, u32, format, pointer);
+    const auto format = gcnBufferFormat(state, field(state, word3, 12u, 7u));
     const auto outOfBounds = Select(state, u32, nonzero(state, field(state, word1, 16u, 14u)), ConstantU32(state, 1u << 28u), ConstantU32(state, 3u << 28u));
     const auto kept = Binary(state, spv::OpBitwiseAnd, u32, word3, ConstantU32(state, 0xc0e00fffu));
     return Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseOr, u32, kept, Binary(state, spv::OpShiftLeftLogical, u32, format, ConstantU32(state, 12u))), outOfBounds);
