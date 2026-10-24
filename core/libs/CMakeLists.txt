@@ -830,6 +830,18 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME MemoryPoolTest COMMAND MemoryPoolTest)
 
+    add_test_executable(guest_kernel_sys_swapcontext_tests tests/GuestKernelSysSwapcontext.cpp)
+    target_include_directories(guest_kernel_sys_swapcontext_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(guest_kernel_sys_swapcontext_tests PRIVATE -fno-omit-frame-pointer)
+    target_link_libraries(guest_kernel_sys_swapcontext_tests PRIVATE libkernel_sys libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_swapcontext_tests)
+    add_test(NAME guest_kernel_sys_swapcontext COMMAND guest_kernel_sys_swapcontext_tests)
+    set_tests_properties(guest_kernel_sys_swapcontext PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_swapcontext PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_acm_tests tests/GuestAcm.cpp)
     target_include_directories(guest_acm_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_acm_tests PRIVATE libSceAcm libc)
