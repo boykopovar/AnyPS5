@@ -14,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -725,6 +726,34 @@ String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* s
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return self->text->find(character, position); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return self->text->rfind(character, position); }
+char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t position) {
+    if (position >= self->text->size()) throw std::out_of_range("sce::Json::String::at: position past the end");
+    return (*self->text)[position];
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::find: null other");
+    return self->text->find(*other->text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null other");
+    return self->text->rfind(*other->text, position);
+}
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null text");
     return CompareText(self->text->c_str(), text);
@@ -737,6 +766,14 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    if (self == other) return self;
+    Array copy{};
+    CopyArray(copy, *other);
+    Destroy(*self);
+    *self = copy;
+    return self;
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);

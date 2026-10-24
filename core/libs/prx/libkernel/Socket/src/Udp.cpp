@@ -297,6 +297,15 @@ bool Address(const void* input, std::uint32_t length, sockaddr_storage& native, 
     Fail(47);
     return false;
 }
+int LongAddressError(const Socket& socket, const void* address, std::uint32_t length) {
+    if ((socket.family != 2 && socket.family != 28) || length <= (socket.family == 2 ? 16u : 28u)) return 0;
+    constexpr unsigned char mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    if (socket.family != 28 || socket.type != 2 || std::memcmp(static_cast<const unsigned char*>(address) + 8, mapped, sizeof(mapped)) != 0) return 22;
+    int ipv6Only = 0;
+    socklen_t size = sizeof(ipv6Only);
+    if (::getsockopt(socket.value, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&ipv6Only), &size)) return NativeError();
+    return ipv6Only ? 22 : 0;
+}
 std::uint16_t& PortOf(sockaddr_storage& address) {
     return address.ss_family == AF_INET ? reinterpret_cast<sockaddr_in&>(address).sin_port : reinterpret_cast<sockaddr_in6&>(address).sin6_port;
 }
@@ -1113,6 +1122,7 @@ int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
 }
 int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
+    if (!value && length != 0) return Fail(14);
     int netError = 0;
     if (!GuestSockets::IsOpen(descriptor) && KernelSetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
         return netError == 0 ? 0 : Fail(netError);
@@ -1124,7 +1134,7 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 6    ? GuestSockets::SetTcpLevelOption(native, socket->family != GuestUnix && socket->type == 1, option, value, length)
                       : level == 41 ? GuestSockets::SetIpv6LevelOption(native, socket->family == 28, option, value, length)
-                                    : GuestSockets::SetSocketLevelOption(native, socket->options, option, value, length);
+                                    : GuestSockets::SetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
     return error == 0 ? 0 : Fail(error);
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
@@ -1133,11 +1143,12 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     if (!socket) return -1;
     if (level != 0xffff && level != 6 && level != 41) return Fail(42);
     if (!length) return Fail(22);
+    if (!value) *length = 0;
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 6    ? GuestSockets::GetTcpLevelOption(native, socket->family != GuestUnix && socket->type == 1, option, value, length)
                       : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, length)
-                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->type, option, value, length);
+                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
     return error == 0 ? 0 : Fail(error);
 }
 int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
@@ -1235,6 +1246,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
     if (socket->type == 1 && Listening(*socket)) return Fail(45);
+    if (const int error = LongAddressError(*socket, address, length)) return Fail(error);
     if (ZeroPortConnect(*socket, address, length)) return -1;
     if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
     {
@@ -1271,6 +1283,10 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             accepted->options.noSignal = listener->options.noSignal;
             accepted->options.sendTimeout = listener->options.sendTimeout;
             accepted->options.receiveTimeout = listener->options.receiveTimeout;
+            accepted->options.sendBuffer = listener->options.sendBuffer;
+            accepted->options.receiveBuffer = listener->options.receiveBuffer;
+            accepted->options.sendLowWater = listener->options.sendLowWater;
+            accepted->options.receiveLowWater = listener->options.receiveLowWater;
         }
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));
@@ -1315,6 +1331,7 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(address, length, native, size)) return -1;
+    if (const int error = LongAddressError(*socket, address, length)) return Fail(error);
     return ::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(NativeError()) : 0;
 }
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
@@ -1401,6 +1418,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
         sockaddr_storage native{};
         socklen_t size;
         if (!Address(address, addressLength, native, size)) return -1;
+        if (socket->family == 28 && socket->type == 2 && addressLength > 28) return Fail(22);
         if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered) return answered;
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
@@ -1882,4 +1900,45 @@ std::int64_t GuestSockets::Writev(int descriptor, const Iovec* iov, int iovcnt) 
         copied += iov[i].length;
     }
     return Write(descriptor, buffer.data(), total);
+}
+
+extern "C" {
+int APS5_VABI _setsockopt_nid_postfix(int descriptor, int level, int option, const void* value, std::uint32_t length) {
+    return setsockopt_nid_postfix(descriptor, level, option, value, length);
+}
+int APS5_VABI _getsockopt_nid_postfix(int descriptor, int level, int option, void* value, std::uint32_t* length) {
+    return getsockopt_nid_postfix(descriptor, level, option, value, length);
+}
+int APS5_VABI _connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return connect_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _listen_nid_postfix(int descriptor, int backlog) {
+    return listen_nid_postfix(descriptor, backlog);
+}
+int APS5_VABI _accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return accept_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return bind_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getsockname_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getpeername_nid_postfix(descriptor, address, length);
+}
+std::int64_t APS5_VABI _sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
+    int flags, const void* address, std::uint32_t addressLength) {
+    return sendto_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
+}
+std::int64_t APS5_VABI _recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+    int flags, void* address, std::uint32_t* addressLength) {
+    return recvfrom_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
+}
+std::int64_t APS5_VABI _sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+    return sendmsg_nid_postfix(descriptor, message, flags);
+}
+std::int64_t APS5_VABI _recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+    return recvmsg_nid_postfix(descriptor, message, flags);
+}
 }

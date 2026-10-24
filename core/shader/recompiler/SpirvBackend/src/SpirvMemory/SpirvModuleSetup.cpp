@@ -235,7 +235,7 @@ void DefineModule(SpirvEmitterState& state) {
     DefineOutputs(state);
     DefineTessellationInterfaces(state);
     DefineDescriptors(state);
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.ldsVariable = state.module.AllocateId();
     }
     if (state.requirements.functionScratch) {
@@ -431,7 +431,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDerivativeGroupLinearKHR);
     }
     state.module.AddName(state.mainFunc, "main");
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
     if (state.requirements.functionScratch) {

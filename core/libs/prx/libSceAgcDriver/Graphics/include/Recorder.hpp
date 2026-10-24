@@ -222,6 +222,7 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
+    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -404,6 +405,7 @@ public:
     static std::uint64_t PublishGeneration();
     // labels waiting in completion actions (the CPU must reap their batch for them to land);
     static std::uint64_t PendingCompletionLabels();
+    static std::uint64_t PendingCompletionStores();
     // write-back completions (OnComplete) of unfinished batches: a reaper retires them when every
     // worker sleeps, as for the labels above;
     static std::uint64_t PendingWriteBackCompletions();
@@ -580,6 +582,7 @@ private:
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
         std::shared_ptr<void> samplePool;
+        std::vector<VkQueryPool> endedSamples;
         bool sampleActive = false;
         bool samplesDrawn = false;
         VkQueryPool segments = VK_NULL_HANDLE;
@@ -601,6 +604,7 @@ private:
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
+        std::uint32_t completionStoreCount = 0;
         // Write-back completions (OnComplete), likewise.
         std::uint32_t writeBackCompletionCount = 0;
         // The ranges of the completion labels also stored on the GPU, and whether each entered the

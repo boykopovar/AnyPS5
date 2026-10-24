@@ -47,6 +47,7 @@ void RequireThrows(F f, const char* message) {
 
 int main() {
     Require(sceAudio3dGetSpeakerArrayMemorySize(4, 1) == sceAudioOut2GetSpeakerArrayMemorySize(4, 1, 0), "memory size forwards to AudioOut2 without ambisonics");
+    RequireThrows([] { sceAudio3dGetSpeakerArrayMemorySize(0, 0); }, "zero speakers throws invalid_argument");
 
     const AudioOut2Position positions[4] = {{1, 1, 0}, {1, -1, 0}, {-1, 1, 0}, {-1, -1, 0}};
     alignas(16) unsigned char memory[1024] = {};
@@ -68,6 +69,7 @@ int main() {
     Require(sceAudio3dGetSpeakerArrayMixCoefficients2(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients2, 4, 1, 0.5f) == 0, "mix coefficients 2 succeed");
     Require(coefficients2[3] == 0.0f, "mix coefficients 2 are written");
     RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients, 3); }, "a coefficient count that differs from the array is rejected");
+    RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, nullptr, 4); }, "null coefficients pointer throws invalid_argument");
 
     Require(sceAudio3dDeleteSpeakerArray(handle) == 0, "delete succeeds");
     RequireThrows([&] { sceAudio3dDeleteSpeakerArray(handle); }, "a deleted array is no longer valid");

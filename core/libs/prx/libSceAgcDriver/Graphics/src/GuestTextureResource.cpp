@@ -180,12 +180,15 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     Require(baseLevel <= lastLevel, "guest texture descriptor has a base mip level past its last mip level");
 
     const bool fmask = ShaderRecompiler::IsFmaskTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format));
+    const auto fmaskLayout = ShaderRecompiler::FmaskLayoutOf(static_cast<ShaderRecompiler::IrBufferFormat>(format));
     if (fmask) {
-        Require(format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8), "guest FMASK format is not implemented");
+        Require(fmaskLayout.has_value(), "guest FMASK format is not implemented");
         Require(!writeCompress && (!metaCompress || metaAddr != 0u), "FMASK CMASK compression is not implemented without readable metadata");
         Require(!metaCompress || metaPipeAligned, "FMASK CMASK metadata must be pipe aligned");
+        Require(!metaCompress || format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8), "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
         Require((typeRaw == 9u || typeRaw == 13u) && tileModeRaw == 24u && baseLevel == 0u && lastLevel == 0u && maxMip == 0u, "FMASK reads require a single-mip 2D or 2D-array Z_64KB_X surface");
-        for (const auto selector : {dstSelX, dstSelY, dstSelZ, dstSelW}) Require(selector == 0u || selector == 1u || selector == 4u, "FMASK destination channel selector is not implemented");
+        const bool identity = format != static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8) && dstSelX == 4u && dstSelY == 5u && dstSelZ == 6u && dstSelW == 7u;
+        for (const auto selector : {dstSelX, dstSelY, dstSelZ, dstSelW}) Require(identity || selector == 0u || selector == 1u || selector == 4u, "FMASK destination channel selector is not implemented");
     }
 
     const auto describe = [&] { return " (format " + std::to_string(format) + ", " + std::to_string(width) + "x" + std::to_string(height) + "x" + std::to_string(depth + 1) + ", type " + std::to_string(typeRaw) + ", tile " + std::to_string(tileModeRaw) + ", mips " + std::to_string(baseLevel) + ".." + std::to_string(lastLevel) + " of " + std::to_string(maxMip + 1) + ")"; };
@@ -266,7 +269,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     result.lastLevel = lastLevel;
     result.tileMode = tileMode;
     result.dimension = dimension;
-    result.format = fmask ? static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32UInt) : format;
+    result.format = !fmask ? format : static_cast<std::uint32_t>(fmaskLayout->storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : fmaskLayout->storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : ShaderRecompiler::IrBufferFormat::Format32UInt);
     result.dstSelX = static_cast<std::uint8_t>(dstSelX);
     result.dstSelY = static_cast<std::uint8_t>(dstSelY);
     result.dstSelZ = static_cast<std::uint8_t>(dstSelZ);

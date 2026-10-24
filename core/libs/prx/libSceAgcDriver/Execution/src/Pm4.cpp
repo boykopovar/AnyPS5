@@ -450,7 +450,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x59:
             size(2);
-            require((packet[1] & 0x7fffffffu) == 0, "unsupported REWIND payload bits");
+            require((packet[1] & ~(RewindValid | RewindOffloadEnable)) == 0, "unsupported REWIND payload bits");
             break;
         case 0x3c: case 0x93: {
             size(opcode == 0x3c ? 7 : 9);

@@ -470,6 +470,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.runtimeAbiVersion);
     writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
     writer.Value(result.bdaAbiVersion);
+    writer.Value(result.windowLaneGuards);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
@@ -495,6 +496,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.instanceOffsetConflict);
     writer.Value(result.hostSubgroupSize);
     writer.Value(result.fullSubgroups);
+    writer.Value(result.functionLdsBuffer);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
     writer.List(result.fragmentParameters, [](Writer& out, const FragmentParameter& parameter) {
         out.Value(parameter.location);
@@ -523,6 +525,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     }
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
+    writer.Value(result.bdaWrites);
     writer.Value(result.stencilReferenceDword);
 }
 
@@ -530,6 +533,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.runtimeAbiVersion);
     result.spirv = reader.Spirv();
     reader.Value(result.bdaAbiVersion);
+    reader.Value(result.windowLaneGuards);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
@@ -555,6 +559,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.instanceOffsetConflict);
     reader.Value(result.hostSubgroupSize);
     reader.Value(result.fullSubgroups);
+    reader.Value(result.functionLdsBuffer);
     reader.Values(result.parameterExports);
     reader.List(result.fragmentParameters, 10, [](Reader& in, FragmentParameter& parameter) {
         in.Value(parameter.location);
@@ -587,6 +592,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     }
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
+    reader.Value(result.bdaWrites);
     reader.Value(result.stencilReferenceDword);
     result.variantId = 0;
 }

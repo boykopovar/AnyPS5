@@ -46,6 +46,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Spinlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
@@ -358,7 +359,8 @@ if(BUILD_TESTING)
         target_link_libraries(guest_host_standard_error_windows_tests PRIVATE libkernel libc)
         configure_windows_unwind(guest_host_standard_error_windows_tests)
         add_test(NAME guest_host_standard_error_windows COMMAND guest_host_standard_error_windows_tests)
-        set_tests_properties(guest_host_standard_error_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_host_standard_buffering_windows COMMAND guest_host_standard_error_windows_tests --buffering)
+        set_tests_properties(guest_host_standard_error_windows guest_host_standard_buffering_windows PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_truncate_tests ${LIBS_INCLUDE_DIR}/tests/GuestTruncate.cpp)
@@ -1560,6 +1562,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_socket_connect_listening PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_underscore_entry_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnderscoreEntries.cpp)
+    target_include_directories(guest_underscore_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_underscore_entry_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_underscore_entry_tests)
+    add_test(NAME guest_underscore_entries COMMAND guest_underscore_entry_tests)
+    set_tests_properties(guest_underscore_entries PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_underscore_entries PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_elf_phdr_match_tests ${LIBS_INCLUDE_DIR}/tests/GuestElfPhdrMatch.cpp)
     target_include_directories(guest_elf_phdr_match_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_elf_phdr_match_tests PRIVATE libkernel libc)
@@ -1610,6 +1622,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_memory guest_mmap_fixed_anonymous PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+        add_test_executable(guest_low_address_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestLowAddressMemory.cpp)
+        target_include_directories(guest_low_address_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_low_address_memory_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_low_address_memory_tests)
+        add_test(NAME guest_low_address_memory COMMAND guest_low_address_memory_tests)
+        set_tests_properties(guest_low_address_memory PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_low_address_memory PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endif()
     add_test_executable(guest_mprotect_unmapped_tests ${LIBS_INCLUDE_DIR}/tests/GuestMprotectUnmapped.cpp)
     target_include_directories(guest_mprotect_unmapped_tests PRIVATE ${LIBS_INCLUDE_DIR})

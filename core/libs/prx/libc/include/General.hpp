@@ -16,10 +16,10 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
-#ifndef _WIN32
 extern "C" int KeepHostStandardError_nid_no_patch();
-extern "C" int HostStandardError_nid_no_patch();
 extern "C" int KeepHostStandardOutput_nid_no_patch();
+#ifndef _WIN32
+extern "C" int HostStandardError_nid_no_patch();
 #else
 extern "C" bool AdoptHostStandardStream_nid_no_patch(int standard, int saved);
 extern "C" std::FILE* HostStandardOutputFile_nid_no_patch();

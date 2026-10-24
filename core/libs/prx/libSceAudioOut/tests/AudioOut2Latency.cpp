@@ -53,6 +53,8 @@ constexpr int errorInvalidParam = static_cast<int>(0x80268001);
 constexpr int errorInvalidPointer = static_cast<int>(0x8026800C);
 constexpr int errorMasteringInvalidApiParam = static_cast<int>(0x80268201);
 constexpr int errorMasteringInvalidStatesId = static_cast<int>(0x80268204);
+constexpr int errorMasteringNotInitialized = static_cast<int>(0x80268203);
+constexpr int errorMasteringInvalidFlag = static_cast<int>(0x80268205);
 
 void TestSet3DLatency() {
     Require(sceAudioOut2Set3DLatency(systemUser, 0) == errorInvalidParam, "output 0 for selector 255 must be refused");
@@ -68,18 +70,27 @@ void TestSet3DLatency() {
 }
 
 void TestMasteringInit() {
+    const std::uint32_t params[4] = {1u, 0u, 0u, 0u};
+    alignas(16) std::uint8_t storage[512] {};
+    Require(sceAudioOut2MasteringTerm() == errorMasteringNotInitialized, "termination before initialization is refused");
+    Require(sceAudioOut2MasteringSetParam(params, 0, 0) == errorMasteringNotInitialized, "parameters before initialization are refused");
+    Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorMasteringNotInitialized, "the initialization check comes before the null check");
+    Require(sceAudioOut2MasteringGetState(storage, 0, 0) == errorMasteringNotInitialized, "states before initialization are refused");
+    Require(sceAudioOut2MasteringInit(1) == errorMasteringInvalidApiParam, "flags 1 are refused");
+    Require(sceAudioOut2MasteringInit(0x80000000u) == errorMasteringInvalidApiParam, "sceAudioOut2MasteringInit accepts no flag");
     Require(sceAudioOut2MasteringInit(0) == 0, "flags 0 must be accepted");
-    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringInit(1); }), "flags 1 must throw");
-    Require(sceAudioOut2MasteringInitEx(0) == 0, "InitEx flags 0 must be accepted");
-    Require(sceAudioOut2MasteringInitEx(0x80000000u) == 0, "InitEx flag bit 31 must be accepted");
-    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringInitEx(1); }), "InitEx flag bit 0 must throw");
-    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringInitEx(0x40000000u); }), "InitEx flag bit 30 must throw");
+    Require(sceAudioOut2MasteringInit(1) == 0, "an initialized stage returns 0 before the flags are checked");
+    Require(sceAudioOut2MasteringInit(0) == 0, "a second initialization must be accepted");
 }
 
 void TestMasteringTerm() {
-    Require(sceAudioOut2MasteringInit(0) == 0, "a second initialization must be accepted");
     Require(sceAudioOut2MasteringTerm() == 0, "termination must be accepted");
-    Require(sceAudioOut2MasteringTerm() == 0, "termination must be accepted for each initialization");
+    Require(sceAudioOut2MasteringTerm() == errorMasteringNotInitialized, "initializations are not counted");
+    Require(sceAudioOut2MasteringInitEx(1) == errorMasteringInvalidApiParam, "sceAudioOut2MasteringInitEx refuses the low bits");
+    Require(sceAudioOut2MasteringInitEx(0x80000001u) == errorMasteringInvalidApiParam, "sceAudioOut2MasteringInitEx refuses the low bits with the mode bit");
+    Require(sceAudioOut2MasteringInitEx(0x80000000u) == 0, "sceAudioOut2MasteringInitEx accepts the mode bit");
+    Require(sceAudioOut2MasteringTerm() == 0, "termination after sceAudioOut2MasteringInitEx must be accepted");
+    Require(sceAudioOut2MasteringInitEx(0) == 0, "sceAudioOut2MasteringInitEx accepts flags 0");
 }
 
 void TestMasteringSetParam() {
@@ -87,11 +98,14 @@ void TestMasteringSetParam() {
     Require(sceAudioOut2MasteringSetParam(params, 0, 0) == 0, "mastering parameters must be accepted");
     Require(sceAudioOut2MasteringSetParam(params, 2, 0) == 0, "mastering parameters for output 2 must be accepted");
     Require(sceAudioOut2MasteringSetParam(nullptr, 0, 0) == errorMasteringInvalidApiParam, "null mastering parameters return the invalid API parameter error");
+    Require(sceAudioOut2MasteringSetParam(nullptr, 0, 2) == errorMasteringInvalidApiParam, "the null check comes before the flag check");
+    Require(sceAudioOut2MasteringSetParam(params, 0, 1) == 0, "flags 1 must be accepted");
+    Require(sceAudioOut2MasteringSetParam(params, 0, 2) == errorMasteringInvalidFlag, "flags above 1 are refused");
 }
 
 void TestMasteringGetState() {
     alignas(16) std::uint8_t storage[512];
-    Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorMasteringInvalidApiParam, "a null state returns the invalid API parameter error");
+    Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorInvalidPointer, "a null state returns the invalid pointer error");
     auto* header = reinterpret_cast<std::uint32_t*>(storage);
     auto* words = reinterpret_cast<std::uint32_t*>(storage);
     *header = 1u;

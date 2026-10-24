@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstring>
+#include <atomic>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -7,6 +8,21 @@ namespace {
 
 constexpr int SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM = static_cast<int>(0x80268201);
 constexpr int SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_STATES_ID = static_cast<int>(0x80268204);
+constexpr int SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED = static_cast<int>(0x80268203);
+constexpr int SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_FLAG = static_cast<int>(0x80268205);
+constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_POINTER = static_cast<int>(0x8026800C);
+constexpr std::uint32_t AUDIO_OUT2_MASTERING_INIT_EX_MODE = 0x80000000u;
+constexpr std::uint32_t AUDIO_OUT2_MASTERING_SET_PARAM_FLAGS_MAX = 1;
+
+std::atomic<bool> g_masteringInitialized{false};
+
+int InitializeMastering(uint32_t flags, uint32_t accepted) {
+    if (g_masteringInitialized.load()) return 0;
+    if ((flags & ~accepted) != 0) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM;
+    g_masteringInitialized.store(true);
+    return 0;
+}
+
 constexpr std::uint32_t AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT = 1;
 constexpr std::uint32_t AUDIO_OUT2_MASTERING_STATES_ID_V2 = 2;
 constexpr std::uint32_t AUDIO_OUT2_MASTERING_STRUCT_ID_COMPRESSOR_DEFAULT = 0x01010001;
@@ -18,23 +34,23 @@ constexpr std::uint32_t AUDIO_OUT2_MASTERING_STRUCT_ID_LIMITER_DEFAULT = 0x01010
 extern "C" {
 
 int APS5_VABI sceAudioOut2MasteringInit(uint32_t flags) {
-    if (flags != 0) NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return InitializeMastering(flags, 0);
 }
 
 int APS5_VABI sceAudioOut2MasteringInitEx(uint32_t flags) {
-    if ((flags & 0x7FFFFFFFu) != 0) NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return InitializeMastering(flags, AUDIO_OUT2_MASTERING_INIT_EX_MODE);
 }
 
 int APS5_VABI sceAudioOut2MasteringTerm(void) {
+    if (!g_masteringInitialized.exchange(false)) return SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED;
     return 0;
 }
 
 int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* state, uint32_t output, AudioOut2UserHandle user) {
     (void)output;
     (void)user;
-    if (state == nullptr) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM;
+    if (!g_masteringInitialized.load()) return SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED;
+    if (state == nullptr) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
     switch (state->states_id) {
         case AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT: {
             auto* full = static_cast<AudioOut2MasteringStates*>(static_cast<void*>(state));
@@ -63,8 +79,9 @@ int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* stat
 
 int APS5_VABI sceAudioOut2MasteringSetParam(const AudioOut2MasteringParamsHeader* param, uint32_t output, uint32_t flags) {
     (void)output;
-    (void)flags;
+    if (!g_masteringInitialized.load()) return SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED;
     if (param == nullptr) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM;
+    if (flags > AUDIO_OUT2_MASTERING_SET_PARAM_FLAGS_MAX) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_FLAG;
     return 0;
 }
 
