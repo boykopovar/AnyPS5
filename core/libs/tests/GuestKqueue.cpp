@@ -30,6 +30,7 @@ int APS5_VABI dup_nid_postfix(int);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI fcntl_nid_postfix(int, int, ...);
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
+int APS5_VABI socket_nid_postfix(int, int, int);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
@@ -59,6 +60,7 @@ static constexpr int SetStatusFlags = 4;
 static constexpr int NonBlocking = 0x0004;
 static constexpr std::int64_t PipeAtomic = 512;
 static constexpr int Unix = 1;
+static constexpr int Inet = 2;
 static constexpr int Stream = 1;
 static constexpr int FirstSocket = 0x10000000;
 static constexpr std::int16_t EvfiltRead = -1;
@@ -782,6 +784,35 @@ static void SocketWriteLowWaterWhileFilling() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+#endif
+
+static void EdgeTriggeredTcpWriteLowWater() {
+    const int kq = kqueue_nid_postfix();
+    const int tcp = socket_nid_postfix(Inet, Stream, 0);
+    Require(tcp >= 0);
+    const auto writer = static_cast<std::uintptr_t>(tcp);
+    const char* const expected = "EV_CLEAR EVFILT_WRITE with NOTE_LOWAT above 1 on a TCP socket";
+    Require(ThrownMessage([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 2)); }).find(expected) != std::string::npos);
+    RequireFailure(Apply(kq, Change(writer, EvfiltWrite, EvDelete)), GuestEnoent);
+#ifdef __linux__
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 1)) == 0);
+    Require(ThrownMessage([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 2)); }).find(expected) != std::string::npos);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 2)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 3)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const auto local = static_cast<std::uintptr_t>(pair[1]);
+    Require(Apply(kq, Change(local, EvfiltWrite, EvAdd | EvClear, NoteLowat, 2)) == 0);
+    Require(Apply(kq, Change(local, EvfiltWrite, EvDelete)) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+#endif
+    Require(close_nid_postfix(tcp) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+#ifdef __linux__
 static void EdgeTriggeredPipeRead() {
     const int kq = kqueue_nid_postfix();
     int pipe[2];
@@ -1316,6 +1347,7 @@ int main() {
     EdgeTriggeredPipeRead();
     EdgeTriggeredDispatch();
 #endif
+    EdgeTriggeredTcpWriteLowWater();
     DisableAndDispatch();
     Errors();
     LowWaterMarks();
