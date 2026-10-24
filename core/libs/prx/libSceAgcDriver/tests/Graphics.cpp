@@ -6745,9 +6745,11 @@ void hostImportBudgetTests() {
     memory.memoryHeaps[2] = {256 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
     Require(HostImportBudget(memory, 16 * GiB) == 4064 * MiB, "imports on a 16 GiB machine take more than half its 8128 MiB host heap");
     memory.memoryHeaps[1].size = 16 * GiB;
-    Require(HostImportBudget(memory, 32 * GiB) == 8 * GiB, "imports on a 32 GiB machine take more than half its 16 GiB host heap");
+    Require(HostImportBudget(memory, 32 * GiB) == 12 * GiB, "a 32 GiB machine does not keep 4 GiB of its 16 GiB host heap from imports");
+    memory.memoryHeaps[1].size = 15911 * MiB;
+    Require(HostImportBudget(memory, 32 * GiB) == 11815 * MiB, "imports on a 32 GiB machine leave no room for the 10466 MiB a title holds at once");
     memory.memoryHeaps[1].size = 32 * GiB;
-    Require(HostImportBudget(memory, 64 * GiB) == 16 * GiB, "imports on a 64 GiB machine take more than half its 32 GiB host heap");
+    Require(HostImportBudget(memory, 64 * GiB) == 28 * GiB, "a 64 GiB machine does not keep 4 GiB of its 32 GiB host heap from imports");
     memory.memoryHeaps[1].size = 3 * GiB;
     Require(HostImportBudget(memory, 16 * GiB) == 1 * GiB, "a 3 GiB host heap does not keep its 2 GiB reserve");
     memory.memoryHeaps[1].size = 8128 * MiB;
