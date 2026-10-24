@@ -40,4 +40,12 @@ std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector* vector) {
     return FT_Vector_Length(&native);
 }
 
+void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector* vector, std::int64_t angle) {
+    if (!vector) return;
+    FT_Vector native = HostVector(*vector, __func__);
+    FT_Vector_Rotate(&native, HostValue(angle, __func__));
+    GuestArena::HostWrite write(vector, sizeof(*vector));
+    *vector = {native.x, native.y};
+}
+
 }
