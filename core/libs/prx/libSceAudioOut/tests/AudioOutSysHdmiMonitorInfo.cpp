@@ -59,13 +59,14 @@ int main() {
     Require(sceAudioOutSysGetHdmiMonitorInfo(monitorTypeHdmi, nullptr, infoSize) == invalidPointer,
         "a null buffer must report an invalid pointer");
 
-    Require(Throws(monitorTypeHdmi, infoSize - 1,
-        "sceAudioOutSysGetHdmiMonitorInfo: size 383 not supported"), "a short buffer must throw");
-    Require(Throws(monitorTypeHdmi, infoSize + 1,
-        "sceAudioOutSysGetHdmiMonitorInfo: size 385 not supported"), "a long buffer must throw");
+    buffer.fill(untouched);
+    for (const std::uint32_t size : {0u, infoSize - 1, infoSize + 1, 0xffffffffu}) {
+        Require(sceAudioOutSysGetHdmiMonitorInfo(monitorTypeHdmi, buffer.data(), size) == static_cast<int>(0x80260006), "exact size required");
+        Require(sceAudioOutSysGetHdmiMonitorInfo(0, nullptr, size) == invalidPointer, "pointer checked before size and type");
+        for (const auto value : buffer) Require(value == untouched, "failure preserves output");
+    }
+    for (const int type : {0, 2, -1, 17}) Require(sceAudioOutSysGetHdmiMonitorInfo(type, buffer.data(), infoSize) == static_cast<int>(0x8026000C), "unsupported type");
     Require(Throws(0x10, infoSize,
-        "sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported"), "monitor type 0x10 must throw");
-    Require(Throws(0, infoSize,
-        "sceAudioOutSysGetHdmiMonitorInfo: monitor type 0 not supported"), "monitor type 0 must throw");
+        "sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported"), "unimplemented device query");
     return 0;
 }

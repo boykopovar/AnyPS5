@@ -63,16 +63,16 @@ void* Map(std::size_t bytes = BlockBytes) {
     return result;
 }
 
-void CheckPattern(const void* pointer) {
+void CheckPattern(const void* pointer, std::size_t bytes = FillBytes) {
     const auto* data = static_cast<const std::byte*>(pointer);
-    for (std::size_t offset = 0; offset < FillBytes; offset += sizeof(Pattern))
+    for (std::size_t offset = 0; offset < bytes; offset += sizeof(Pattern))
         Require(std::memcmp(data + offset, Pattern.data(), sizeof(Pattern)) == 0, "guest mutation lost the pending GPU fill");
 }
 
-void Fill(AgcDriver::VulkanDevice& device, void* pointer) {
+void Fill(AgcDriver::VulkanDevice& device, void* pointer, std::size_t bytes = FillBytes) {
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-    Require(device.FillBuffer(Address(pointer), FillBytes, Pattern), "Vulkan device did not import the guest allocation");
-    Require(Imported(device, pointer), "GPU fill did not create a host import");
+    Require(device.FillBuffer(Address(pointer), bytes, Pattern), "Vulkan device did not import the guest allocation");
+    Require(Imported(device, pointer, bytes), "GPU fill did not create a host import");
 }
 
 void CheckMappings(AgcDriver::VulkanDevice& device) {
@@ -105,14 +105,25 @@ void CheckMappings(AgcDriver::VulkanDevice& device) {
     Require(!Imported(device, mapping), "host import survived guest munmap");
 
     mapping = Map(3 * BlockBytes);
-    Fill(device, mapping);
+    Fill(device, mapping, 3 * BlockBytes);
     auto* middle = static_cast<std::uint8_t*>(mapping) + BlockBytes;
     Require(mprotect_nid_postfix(middle, BlockBytes, 1) == 0, "guest partial protection failed");
-    Require(!Imported(device, mapping), "whole host import survived partial protection change");
-    CheckPattern(mapping);
-    Fill(device, mapping);
+    Require(!Imported(device, mapping, 3 * BlockBytes), "whole host import survived partial protection change");
+    CheckPattern(mapping, 3 * BlockBytes);
+    Require(munmap_nid_postfix(middle, BlockBytes) == 0, "guest middle unmap after protection change failed");
+    Require(!Imported(device, mapping, 3 * BlockBytes), "host import still covered the protected and unmapped middle range");
+    Require(munmap_nid_postfix(mapping, BlockBytes) == 0, "guest prefix unmap after protection change failed");
+    Require(munmap_nid_postfix(middle + BlockBytes, BlockBytes) == 0, "guest suffix unmap after protection change failed");
+
+    mapping = Map(3 * BlockBytes);
+    Fill(device, mapping, 3 * BlockBytes);
+    Require(Imported(device, mapping, 3 * BlockBytes), "whole host import did not cover the three-block mapping before middle unmap");
+    middle = static_cast<std::uint8_t*>(mapping) + BlockBytes;
     Require(munmap_nid_postfix(middle, BlockBytes) == 0, "guest middle unmap failed");
-    Require(Imported(device, mapping), "unrelated prefix import was retired by middle unmap");
+    Require(!Imported(device, mapping, 3 * BlockBytes), "middle unmap left a host import spanning the unmapped range");
+    Require(!Imported(device, mapping), "middle unmap retained the prefix of the retired host import");
+    Fill(device, mapping);
+    Require(Imported(device, mapping), "the retained prefix was not imported again after middle unmap");
     Require(munmap_nid_postfix(mapping, BlockBytes) == 0, "guest prefix unmap failed");
     Require(!Imported(device, mapping), "prefix host import survived guest munmap");
     Require(munmap_nid_postfix(middle + BlockBytes, BlockBytes) == 0, "guest suffix unmap failed");

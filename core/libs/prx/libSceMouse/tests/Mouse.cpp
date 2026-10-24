@@ -34,6 +34,9 @@ int main() {
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_ALREADY_OPENED);
     Require(sceMouseResetAbsolutePosition(42, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_OK);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1919, 1079) == MOUSE_OK);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1920, 1079) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1919, 1080) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseRead(42, data, 1) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseRead(MOUSE_HANDLE, nullptr, 1) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseRead(MOUSE_HANDLE, data, 65) == MOUSE_ERROR_INVALID_ARG);

@@ -1,11 +1,13 @@
 #include "Ngs2Test.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iterator>
 #include <numbers>
 #include <stdexcept>
@@ -262,10 +264,32 @@ static void TestPan() {
     work.speaker_angles[0] = -INFINITY;
     Require(PanThrows(&work, &front, 1, 2));
     Require(sceNgs2PanInit(&work, nullptr, 360.0f, 2) == SCE_NGS2_OK);
-    Require(PanInitThrows(nullptr, nullptr, 360.0f, 2));
-    for (std::uint32_t count : {0u, 1u, 3u, 6u, 8u}) Require(PanInitThrows(&work, nullptr, 360.0f, count));
+    Ngs2PanWork marked;
+    std::memset(&marked, 0x5a, sizeof(marked));
+    Ngs2PanWork expected;
+    std::memcpy(&expected, &marked, sizeof(marked));
+    const auto unchanged = [&] { return std::memcmp(&marked, &expected, sizeof(marked)) == 0; };
     const float pair[] = {-30.0f, 30.0f};
-    Require(PanInitThrows(&work, pair, 180.0f, 2) && !PanInitThrows(&work, pair, 2.0f * pi, 2));
+    Require(sceNgs2PanInit(nullptr, nullptr, 360.0f, 2) == static_cast<int>(0x804A8010));
+    Require(sceNgs2PanInit(nullptr, pair, 180.0f, 3) == static_cast<int>(0x804A8010));
+    Require(sceNgs2PanInit(nullptr, nullptr, 100.0f, 3) == static_cast<int>(0x804A8010));
+    for (std::uint32_t count : {1u, 3u, 6u, 8u, 255u}) {
+        Require(sceNgs2PanInit(&marked, nullptr, 360.0f, count) == static_cast<int>(0x804A8451));
+        Require(unchanged());
+    }
+    Require(PanInitThrows(&marked, nullptr, 360.0f, 0));
+    Require(unchanged());
+    for (std::uint32_t count : {0u, 1u, 3u, 6u, 8u, 255u}) {
+        Require(sceNgs2PanInit(&marked, pair, 360.0f, count) == static_cast<int>(0x804A8451));
+        Require(sceNgs2PanInit(&marked, pair, 2.0f * pi, count) == static_cast<int>(0x804A8451));
+        Require(unchanged());
+    }
+    for (const float unitAngle : {180.0f, 0.0f, 359.0f, 361.0f, 90.0f, pi}) {
+        Require(sceNgs2PanInit(&marked, pair, unitAngle, 2) == static_cast<int>(0x804A8450));
+        Require(sceNgs2PanInit(&marked, pair, unitAngle, 3) == static_cast<int>(0x804A8450));
+        Require(unchanged());
+    }
+    Require(sceNgs2PanInit(&work, pair, 2.0f * pi, 2) == SCE_NGS2_OK);
     const float invalid[] = {0.0f, NAN};
     Require(PanInitThrows(&work, invalid, 360.0f, 2));
     const float onUnit[] = {720.0f, 30.0f};
@@ -663,6 +687,73 @@ static void TestReverb() {
     }
 }
 
+static std::vector<float> RenderReverbChannels(std::uint32_t inputs, std::uint32_t outputs, const Ngs2ReverbI3DL2Param& params, const std::vector<std::int16_t>& pcm, std::uint32_t frames) {
+    const auto firstBuffer = usedBuffers;
+    const auto system = CreateSystem();
+    Require(sceNgs2SystemSetGrainSamples(system, 256) == SCE_NGS2_OK);
+    const auto master = Mastering(system, outputs);
+    const auto reverb = Voice(CreateRack(system, SCE_NGS2_RACK_ID_REVERB));
+    Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, inputs, outputs, 0, 0});
+    Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_I3DL2, Ngs2ReverbVoiceI3DL2Param{{}, params});
+    Patch(reverb, master);
+    Event(reverb, SCE_NGS2_VOICE_EVENT_PLAY);
+    const auto sampler = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, inputs, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size() / inputs), 0, 0};
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    Patch(sampler, reverb);
+    std::vector<float> identity(inputs * inputs, 0.0f);
+    for (std::uint32_t c = 0; c < inputs; c++) identity[c * inputs + c] = 1.0f;
+    Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, inputs * inputs, identity.data()});
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::vector<float> all;
+    std::vector<float> out(256 * outputs);
+    for (std::uint32_t grain = 0; grain * 256 < frames; grain++) {
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, outputs};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        all.insert(all.end(), out.begin(), out.end());
+    }
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    usedBuffers = firstBuffer;
+    return all;
+}
+
+static void TestReverbConversion() {
+    Ngs2ReverbI3DL2Param mixed{1.0f, 1.0f, -1000, 0, 0, 2.91f, 1.3f, -602, 0.015f, -302, 0.022f, 100.0f, 100.0f, 5000.0f, {}};
+    std::vector<std::int16_t> stereo(4096 * 2, 0);
+    std::uint32_t seed = 1;
+    for (std::uint32_t i = 0; i < 3000 * 2; i++) {
+        seed = seed * 1664525u + 1013904223u;
+        stereo[i] = static_cast<std::int16_t>(static_cast<std::int32_t>((seed >> 16) & 0x3fff) - 0x2000);
+    }
+    const auto same = RenderReverbChannels(2, 2, mixed, stereo, 8192);
+    for (std::uint32_t outputs : {6u, 8u}) {
+        const auto surround = RenderReverbChannels(2, outputs, mixed, stereo, 8192);
+        float sides = 0.0f;
+        float lfe = 0.0f;
+        for (std::uint32_t frame = 0; frame < 8192; frame++) {
+            for (std::uint32_t c = 0; c < 2; c++) Require(std::fabs(surround[frame * outputs + c] - same[frame * 2 + c]) <= 1e-7f + std::fabs(same[frame * 2 + c]) * 1e-5f);
+            for (std::uint32_t c = 2; c < outputs; c++) {
+                if (c != 3) sides = std::max(sides, std::fabs(surround[frame * outputs + c]));
+            }
+            lfe = std::max(lfe, std::fabs(surround[frame * outputs + 3]));
+        }
+        Require(sides > 1e-4f && lfe == 0.0f);
+    }
+
+    auto dry = mixed;
+    dry.wet = 0.0f;
+    const std::int16_t levels[6] = {8192, 4096, 2048, 1024, 512, 256};
+    std::vector<std::int16_t> six(4096 * 6);
+    for (std::size_t i = 0; i < six.size(); i++) six[i] = levels[i % 6];
+    const auto down = RenderReverbChannels(6, 2, dry, six, 2048);
+    const float half = std::numbers::sqrt2_v<float> / 2.0f;
+    const float left = (8192.0f + 2048.0f * half + 512.0f * 0.5f) / 32768.0f;
+    const float right = (4096.0f + 2048.0f * half + 256.0f * 0.5f) / 32768.0f;
+    Require(std::fabs(down[1024 * 2] - left) <= left * 1e-5f && std::fabs(down[1024 * 2 + 1] - right) <= right * 1e-5f);
+}
+
 static void TestReverbSetup() {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 2);
@@ -672,12 +763,12 @@ static void TestReverbSetup() {
         try { Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, channels, channels, 0, 0}); } catch (const std::invalid_argument&) { rejected = true; }
         Require(rejected);
     }
-    bool conversion = false;
-    try { Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, 1, 2, 0, 0}); } catch (const std::runtime_error&) { conversion = true; }
-    Require(conversion);
-    bool flags = false;
-    try { Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, 2, 2, 1, 0}); } catch (const std::runtime_error&) { flags = true; }
-    Require(flags);
+    for (const auto& counts : {std::array<std::uint32_t, 2>{3, 2}, std::array<std::uint32_t, 2>{2, 7}}) {
+        bool rejected = false;
+        try { Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, counts[0], counts[1], 0, 0}); } catch (const std::invalid_argument&) { rejected = true; }
+        Require(rejected);
+    }
+    Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, 1, 2, 0, 0});
     Control(reverb, SCE_NGS2_REVERB_VOICE_PARAM_SETUP, Ngs2ReverbVoiceSetupParam{{}, 2, 2, 0, 0});
     Ngs2ReverbI3DL2Param invalid{1.0f, 0.0f, 0, 0, 0, 1.0f, 1.0f, 0, 0.0f, 0, 0.0f, 100.0f, 100.0f, 5000.0f, {}};
     invalid.decay_time = NAN;
@@ -700,10 +791,7 @@ static void TestReverbSetup() {
     Require(loudest > 0.0f && loudest < 1e-8f);
     Ngs2VoiceState state{};
     Require(sceNgs2VoiceGetState(reverb, &state, sizeof(state)) == SCE_NGS2_OK && (state.state_flags & SCE_NGS2_VOICE_STATE_FLAG_INUSE) != 0);
-    Require(sceNgs2SystemSetSampleRate(system, 7000) == SCE_NGS2_OK);
-    bool lowRate = false;
-    try { sceNgs2SystemRender(system, &info, 1); } catch (const std::runtime_error&) { lowRate = true; }
-    Require(lowRate);
+    Require(sceNgs2SystemSetSampleRate(system, 7000) == SCE_NGS2_ERROR_INVALID_SAMPLE_RATE);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 
     Ngs2ReverbRackOption option{};
@@ -728,13 +816,7 @@ static void TestReverbSetup() {
 static void TestSampleRate() {
     const auto system = CreateSystem();
     Require(sceNgs2SystemSetSampleRate(0x1234, 96000) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
-    bool threw = false;
-    try {
-        sceNgs2SystemSetSampleRate(system, 0);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(sceNgs2SystemSetSampleRate(system, 0) == SCE_NGS2_ERROR_INVALID_SAMPLE_RATE);
     Require(sceNgs2SystemSetSampleRate(system, 96000) == SCE_NGS2_OK);
     Ngs2SystemInfo info{};
     Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK && info.sample_rate == 96000);
@@ -748,6 +830,41 @@ static void TestSampleRate() {
     const auto out = RenderI16(system);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == expected[i]);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static bool SystemOptionThrows(const Ngs2SystemOption& option) {
+    Ngs2ContextBufferInfo query{};
+    try {
+        sceNgs2SystemQueryBufferSize(&option, &query);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestSystemOptionFlags() {
+    Ngs2SystemOption option{};
+    Require(sceNgs2SystemResetOption(&option) == SCE_NGS2_OK && option.flags == 0);
+    option.flags = 0x2;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2SystemQueryBufferSize(&option, &query) == SCE_NGS2_OK && query.host_buffer_size != 0);
+    const auto info = Buffer(query);
+    uintptr_t system = 0;
+    Require(sceNgs2SystemCreate(&option, &info, &system) == SCE_NGS2_OK && system != 0);
+    Require(sceNgs2SystemSetGrainSamples(system, Grain) == SCE_NGS2_OK);
+    const auto master = Mastering(system, 1);
+    const std::vector<std::int16_t> pcm{1000, 2000, 3000, 4000};
+    const auto sampler = Sampler(system, pcm, 1);
+    Patch(sampler, master);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    const auto out = RenderI16(system);
+    Require(std::equal(pcm.begin(), pcm.end(), out.begin()));
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+
+    for (const std::uint32_t flags : {0x1u, 0x3u, 0x4u, 0x80000000u, 0x80000002u}) {
+        option.flags = flags;
+        Require(SystemOptionThrows(option));
+    }
 }
 
 static void TestUserData() {
@@ -1407,6 +1524,81 @@ static void TestRenderCapacity(std::uint32_t waveformType, std::uint32_t channel
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestRenderBufferCount() {
+    const auto system = CreateSystem();
+    std::vector<int16_t> out(Grain);
+    Ngs2RenderBufferInfo infos[32];
+    for (int i = 0; i < 32; i++) {
+        infos[i] = Ngs2RenderBufferInfo{out.data(), out.size() * sizeof(int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
+    }
+    Require(sceNgs2SystemRender(system, infos, 31) == SCE_NGS2_OK);
+    Require(sceNgs2SystemRender(system, infos, 32) == SCE_NGS2_ERROR_INVALID_NUM_RENDER_BUFFERS);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRenderBufferTypeValidation() {
+    const auto system = CreateSystem();
+    std::vector<int16_t> out(Grain);
+    Ngs2RenderBufferInfo info0{out.data(), out.size() * sizeof(int16_t), 0x50, 1};
+    Require(sceNgs2SystemRender(system, &info0, 1) == SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE);
+    Ngs2RenderBufferInfo valid{out.data(), out.size() * sizeof(int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
+    Ngs2RenderBufferInfo infos[2];
+    infos[0] = valid;
+    infos[1] = Ngs2RenderBufferInfo{out.data(), out.size() * sizeof(int16_t), 0x50, 1};
+    Require(sceNgs2SystemRender(system, infos, 2) == SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRenderBufferTypeBeforeNull() {
+    const auto system = CreateSystem();
+    std::vector<int16_t> out(Grain);
+    Ngs2RenderBufferInfo info{nullptr, out.size() * sizeof(int16_t), 0x50, 1};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRenderBufferNull() {
+    const auto system = CreateSystem();
+    std::vector<int16_t> out(Grain);
+    Ngs2RenderBufferInfo info{nullptr, out.size() * sizeof(int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_ERROR_INVALID_RENDER_BUFFER);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRenderRefusedDoesNotRender() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 1);
+    std::vector<std::int16_t> pcm(Grain, 16384);
+    const auto sampler = Sampler(system, pcm, 0);
+    Patch(sampler, master);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::vector<int16_t> out(Grain * 2, 123);
+    Ngs2RenderBufferInfo infos[2];
+    infos[0] = Ngs2RenderBufferInfo{out.data(), out.size() * sizeof(int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
+    infos[1] = Ngs2RenderBufferInfo{out.data() + Grain, out.size() * sizeof(int16_t), 0x50, 1};
+    Require(sceNgs2SystemRender(system, infos, 2) == SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE);
+    Require(std::all_of(out.begin(), out.end(), [](int16_t value) { return value == 123; }));
+    Ngs2SamplerVoiceState state{};
+    Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+    Require(state.num_decoded_samples == 0);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRenderBigEndianThrows() {
+    const auto system = CreateSystem();
+    std::vector<int16_t> out(Grain);
+    Ngs2RenderBufferInfo infoI16B{out.data(), out.size() * sizeof(int16_t), SCE_NGS2_WAVEFORM_TYPE_PCM_I16B, 1};
+    bool i16bThrows = false;
+    try { sceNgs2SystemRender(system, &infoI16B, 1); } catch (const std::runtime_error&) { i16bThrows = true; }
+    Require(i16bThrows);
+    std::vector<float> outF(Grain);
+    Ngs2RenderBufferInfo infoF32B{outF.data(), outF.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32B, 1};
+    bool f32bThrows = false;
+    try { sceNgs2SystemRender(system, &infoF32B, 1); } catch (const std::runtime_error&) { f32bThrows = true; }
+    Require(f32bThrows);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestSilentRenderValidation() {
     const auto system = CreateSystem();
     std::vector<float> out(Grain, 123.0f);
@@ -1425,12 +1617,12 @@ static void TestSilentRenderValidation() {
     invalid();
     info.num_channels = 1;
     info.waveform_type = UINT32_MAX;
-    bool unsupported = false;
-    try { sceNgs2SystemRender(system, &info, 1); } catch (const std::runtime_error&) { unsupported = true; }
-    Require(unsupported);
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE);
     Require(std::all_of(out.begin(), out.end(), [](float value) { return value == 123.0f; }));
-    info = {};
-    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    info.waveform_type = SCE_NGS2_WAVEFORM_TYPE_PCM_F32L;
+    info.buffer = nullptr;
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_ERROR_INVALID_RENDER_BUFFER);
+    Require(std::all_of(out.begin(), out.end(), [](float value) { return value == 123.0f; }));
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -1465,7 +1657,9 @@ int main() {
     TestSubmixerMatrix();
     TestReverb();
     TestReverbSetup();
+    TestReverbConversion();
     TestSampleRate();
+    TestSystemOptionFlags();
     TestUserData();
     TestPcmCallbackReset();
     TestPcmCallbackRefill();
@@ -1488,6 +1682,12 @@ int main() {
     TestRenderCapacity<float>(SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2);
     TestRenderCapacity<std::int16_t>(SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1);
     TestRenderCapacity<std::int16_t>(SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2);
+    TestRenderBufferCount();
+    TestRenderBufferTypeValidation();
+    TestRenderBufferTypeBeforeNull();
+    TestRenderBufferNull();
+    TestRenderRefusedDoesNotRender();
+    TestRenderBigEndianThrows();
     TestSilentRenderValidation();
     TestAllocator();
     exitSystem = CreateSystem();

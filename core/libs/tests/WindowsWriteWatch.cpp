@@ -172,6 +172,149 @@ void CheckPrivate() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+MEMORY_BASIC_INFORMATION RegionAt(const void* address) {
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "private commit query failed");
+    return info;
+}
+
+void CheckPrivateCommitCarvesPlaceholders() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Pages = 256;
+    constexpr std::size_t Span = Pages * Page;
+    constexpr std::size_t Reserved = std::size_t{1} << 30;
+    auto* holder = static_cast<unsigned char*>(mappings.Reserve(nullptr, Reserved));
+    Require(holder != nullptr, "cannot reserve a placeholder for private commits");
+    auto* memory = holder + Page;
+    const auto page = [&](std::size_t index) { return memory + index * Page; };
+    const auto at = [](const unsigned char* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+    auto before = Mappings::MemoryQueries();
+    auto created = mappings.Commit(memory, Span, PAGE_READWRITE, Page, true);
+    const auto queries = Mappings::MemoryQueries() - before;
+    Require(queries == 1, ("committing 256 fresh pages queried the address space " + std::to_string(queries) + " times").c_str());
+    Require(created.size() == 1 && created[0].first == at(memory) && created[0].second == Span, "a fresh commit did not report its range as one created range");
+    for (std::size_t index = 0; index < Pages; ++index) {
+        const auto info = RegionAt(page(index));
+        Require(info.State == MEM_COMMIT && info.Type == MEM_PRIVATE && info.AllocationBase == page(index) && info.RegionSize == Page && info.Protect == PAGE_READWRITE, "a committed page is not a read-write allocation of its own");
+    }
+    const auto prefix = RegionAt(holder);
+    Require(prefix.State == MEM_RESERVE && prefix.AllocationBase == holder && prefix.RegionSize == Page, "the placeholder before the commit changed");
+    const auto suffix = RegionAt(page(Pages));
+    Require(suffix.State == MEM_RESERVE && suffix.AllocationBase == page(Pages) && suffix.RegionSize == Reserved - Page - Span, "the placeholder after the commit changed");
+    for (std::size_t index = 0; index < Pages; ++index) page(index)[8] = static_cast<unsigned char>(index + 1);
+    mappings.Reset(page(11), Page);
+    const auto released = RegionAt(page(11));
+    Require(released.State == MEM_RESERVE && released.AllocationBase == page(11) && released.RegionSize == Page, "a released page did not become a placeholder of its own");
+    before = Mappings::MemoryQueries();
+    created = mappings.Commit(page(11), Page, PAGE_READWRITE, Page, true);
+    Require(Mappings::MemoryQueries() - before <= 1 && created.size() == 1 && created[0].first == at(page(11)) && created[0].second == Page && page(11)[8] == 0, "recommitting a released page was not one fresh allocation");
+    for (std::size_t index = 0; index < Pages; ++index) {
+        if (index != 11) Require(page(index)[8] == static_cast<unsigned char>(index + 1), "a release or commit changed a neighbouring page");
+    }
+    created = mappings.Commit(memory, Span, PAGE_READONLY, Page, true);
+    Require(created.empty() && RegionAt(page(0)).Protect == PAGE_READONLY && RegionAt(page(Pages - 1)).Protect == PAGE_READONLY, "a protection change reported fresh memory or missed a page");
+    mappings.Commit(memory, Span, PAGE_READWRITE, Page, true);
+    std::array<void*, 32> written{};
+    std::size_t count = written.size();
+    mappings.Collect(at(page(40)), 4 * Page, written.data(), &count, true);
+    page(41)[4096 + 3] = 1;
+    count = written.size();
+    Require(mappings.Collect(at(page(40)), 4 * Page, written.data(), &count, true, Collection::Armed) && count == 1 && written[0] == page(41) + 4096, "a carved page lost its write watch");
+    mappings.Reset(page(20), 2 * Page);
+    mappings.Reset(page(22), 2 * Page);
+    created = mappings.Commit(page(20), 4 * Page, PAGE_READWRITE, 4 * Page, true);
+    Require(created.size() == 1 && created[0].second == 4 * Page && RegionAt(page(23)).AllocationBase == page(20), "a commit over two placeholders was not one allocation");
+    mappings.Reset(memory, Span);
+    Require(VirtualFree(holder, Reserved, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) && VirtualFree(holder, 0, MEM_RELEASE), "cannot release the private commit placeholder");
+}
+
+void CheckPrivateCommitEdgeLayouts() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Pages = 32;
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Pages * Page));
+    Require(memory != nullptr, "cannot reserve a placeholder for private commit edges");
+    const auto page = [&](std::size_t index) { return memory + index * Page; };
+    const auto range = [&](std::size_t first, std::size_t count) { return std::make_pair(reinterpret_cast<std::uintptr_t>(page(first)), count * Page); };
+    const auto region = [&](std::size_t first, std::size_t count, DWORD state) {
+        const auto info = RegionAt(page(first));
+        return info.State == state && info.AllocationBase == page(first) && info.RegionSize == count * Page;
+    };
+    const auto ownPages = [&](std::size_t first, std::size_t count) {
+        for (auto index = first; index < first + count; ++index) {
+            if (!region(index, 1, MEM_COMMIT)) return false;
+        }
+        return true;
+    };
+    auto before = Mappings::MemoryQueries();
+    auto created = mappings.Commit(page(2), 4 * Page, PAGE_READWRITE, 4 * Page, true);
+    Require(Mappings::MemoryQueries() - before <= 1 && created.size() == 1 && created[0] == range(2, 4), "a whole-range granule inside a placeholder was not one created range from one query");
+    Require(region(0, 2, MEM_RESERVE) && region(2, 4, MEM_COMMIT) && region(6, Pages - 6, MEM_RESERVE), "a whole-range granule inside a placeholder was not one allocation between two placeholders");
+    page(2)[8] = 0x5a;
+    before = Mappings::MemoryQueries();
+    created = mappings.Commit(page(0), 8 * Page, PAGE_READWRITE, Page, true);
+    Require(Mappings::MemoryQueries() - before <= 3 && created.size() == 2 && created[0] == range(0, 2) && created[1] == range(6, 2), "a commit around a committed piece did not create exactly the placeholders around it");
+    Require(ownPages(0, 2) && region(2, 4, MEM_COMMIT) && page(2)[8] == 0x5a && ownPages(6, 2) && region(8, Pages - 8, MEM_RESERVE), "a commit around a committed piece changed the piece or the layout");
+    for (std::size_t index = 0; index < 8; ++index) page(index)[8] = static_cast<unsigned char>(index + 1);
+    mappings.Reset(page(6), 2 * Page);
+    Require(region(6, 2, MEM_RESERVE) && ownPages(0, 2) && region(2, 4, MEM_COMMIT) && page(1)[8] == 2 && page(5)[8] == 6 && region(8, Pages - 8, MEM_RESERVE), "a partial release of carved pages changed a neighbour");
+    mappings.Reset(page(2), 4 * Page);
+    before = Mappings::MemoryQueries();
+    created = mappings.Commit(page(2), 4 * Page, PAGE_READWRITE, Page, true);
+    Require(Mappings::MemoryQueries() - before <= 1 && created.size() == 1 && created[0] == range(2, 4) && ownPages(2, 4) && page(2)[8] == 0 && page(5)[8] == 0, "a fixed remap was not carved into fresh pages");
+    Require(page(1)[8] == 2 && region(6, 2, MEM_RESERVE), "a fixed remap changed a neighbour");
+    before = Mappings::MemoryQueries();
+    created = mappings.Commit(page(6), 4 * Page, PAGE_READWRITE, Page, true);
+    Require(Mappings::MemoryQueries() - before <= 2 && created.size() == 1 && created[0] == range(6, 4) && ownPages(6, 4) && region(10, Pages - 10, MEM_RESERVE), "a commit over adjacent placeholders was not carved page by page");
+    bool refused = false;
+    try {
+        mappings.Commit(page(12), Page, PAGE_READWRITE, 0, true);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && region(10, Pages - 10, MEM_RESERVE), "a zero commit granule was accepted or changed the placeholder");
+    mappings.Commit(page(10), 3 * Page, PAGE_READWRITE, 3 * Page, true);
+    mappings.Reset(page(10), 3 * Page);
+    created = mappings.Commit(page(10), 4 * Page, PAGE_READWRITE, 2 * Page, true);
+    Require(created.size() == 1 && created[0] == range(10, 4) && region(10, 2, MEM_COMMIT) && region(12, 2, MEM_COMMIT) && region(14, Pages - 14, MEM_RESERVE), "a granule crossing the end of a carved placeholder did not take the coalescing path");
+    mappings.Reset(memory, 14 * Page);
+    Require(VirtualFree(memory, Pages * Page, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) && VirtualFree(memory, 0, MEM_RELEASE), "cannot release the private commit edge placeholder");
+}
+
+void CheckPrivateCommitTails() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Pages = 8;
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Pages * Page));
+    Require(memory != nullptr, "cannot reserve a placeholder for private commit tails");
+    const auto page = [&](std::size_t index) { return memory + index * Page; };
+    const auto at = [](const unsigned char* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+    const auto allocation = [](const unsigned char* base, std::size_t bytes, DWORD state) {
+        const auto info = RegionAt(base);
+        return info.State == state && info.AllocationBase == base && info.RegionSize == bytes;
+    };
+    const auto unwatched = [](unsigned char* base) {
+        std::array<void*, 4> written{};
+        ULONG_PTR count = written.size();
+        DWORD granularity = 0;
+        return GetWriteWatch(0, base, Small, written.data(), &count, &granularity) != 0;
+    };
+    auto before = Mappings::MemoryQueries();
+    auto created = mappings.Commit(page(1), 2 * Page + Small, PAGE_READWRITE, Page, false);
+    Require(Mappings::MemoryQueries() - before == 1 && created.size() == 1 && created[0].first == at(page(1)) && created[0].second == 2 * Page + Small, "a commit with a short last piece was not one created range from one query");
+    Require(allocation(page(0), Page, MEM_RESERVE) && allocation(page(1), Page, MEM_COMMIT) && allocation(page(2), Page, MEM_COMMIT) && allocation(page(3), Small, MEM_COMMIT) && allocation(page(3) + Small, (Pages - 3) * Page - Small, MEM_RESERVE), "a short last piece was not its own allocation before the rest of the placeholder");
+    page(3)[Small - 1] = 7;
+    Require(unwatched(page(1)) && unwatched(page(3)), "an unwatched commit carved write-watched pages");
+    before = Mappings::MemoryQueries();
+    created = mappings.Commit(page(5), 3 * Page, PAGE_READWRITE, Page, true);
+    Require(Mappings::MemoryQueries() - before == 1 && created.size() == 1 && created[0].first == at(page(5)) && created[0].second == 3 * Page, "a commit to the end of a placeholder was not one created range from one query");
+    Require(allocation(page(3) + Small, 2 * Page - Small, MEM_RESERVE) && allocation(page(5), Page, MEM_COMMIT) && allocation(page(6), Page, MEM_COMMIT) && allocation(page(7), Page, MEM_COMMIT) && page(3)[Small - 1] == 7, "a commit to the end of a placeholder changed the placeholder before it or a neighbour");
+    mappings.Reset(page(1), 2 * Page + Small);
+    mappings.Reset(page(5), 3 * Page);
+    Require(VirtualFree(memory, Pages * Page, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) && VirtualFree(memory, 0, MEM_RELEASE), "cannot release the private commit tail placeholder");
+}
+
 void CheckForgottenSectionKeepsNoPages() {
     auto& mappings = Mappings::Get();
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
@@ -230,6 +373,9 @@ int main() {
         CheckPrivate();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
+        CheckPrivateCommitCarvesPlaceholders();
+        CheckPrivateCommitEdgeLayouts();
+        CheckPrivateCommitTails();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

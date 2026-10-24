@@ -17,12 +17,15 @@
 #include "prx/libc/include/FileLock.hpp"
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
+extern "C" void PrepareStandardStreams_nid_no_patch();
 struct UcrtStreamState {
     char* pointer;
     char* base;
     int count;
     long flags;
 };
+extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor));
+extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
 #else
 #include <unistd.h>
 #endif
@@ -66,10 +69,14 @@ class FileStream {
     bool _dynamic;
     bool guestError = false;
     bool randomDevice = false;
+    bool directory = false;
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
+#ifdef _WIN32
+        PrepareStandardStreams_nid_no_patch();
+#endif
         _guest.flags = handle == stdin ? 4 : handle == stdout || handle == stderr ? 8 : 0x10;
 #ifdef _WIN32
         const int descriptor = _fileno(handle);
@@ -130,6 +137,14 @@ public:
         return randomDevice;
     }
 
+    void MarkDirectory() {
+        directory = true;
+    }
+
+    bool IsDirectory() const {
+        return directory;
+    }
+
     bool Reopen(const std::filesystem::path& filename, const char* mode,
         [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr) {
         auto* previous = GetHandle();
@@ -140,6 +155,7 @@ public:
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
         const int replaced = previous ? _fileno(previous) : -1;
+        if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(replaced);
         auto* const standard = HostStandardHandle_nid_no_patch(replaced);
         GuestFileLockForget_nid_no_patch(replaced);
         if (open && !filename.empty()) {
@@ -200,27 +216,29 @@ public:
         _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
         return true;
     }
+    void PublishStatus(bool endOfFile, bool error) {
+        __atomic_store_n(&_guest.readRemaining, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&_guest.writeRemaining, 0, __ATOMIC_RELAXED);
+        auto old = __atomic_load_n(&_guest.flags, __ATOMIC_RELAXED);
+        std::int16_t next;
+        do next = static_cast<std::int16_t>((old & ~0x60) | (endOfFile ? 0x20 : 0) | (error ? 0x40 : 0));
+        while (!__atomic_compare_exchange_n(&_guest.flags, &old, next, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    }
     void SyncStatus() {
         if (!_handle) return;
-        _guest.readRemaining = 0;
-        _guest.writeRemaining = 0;
-        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
-            (std::feof(GetHandle()) ? 0x20 : 0) | (std::ferror(GetHandle()) || guestError ? 0x40 : 0));
+        PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
         if (!_handle) return;
-        _guest.readRemaining = 0;
-        _guest.writeRemaining = 0;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
         const bool error = std::ferror(GetHandle()) != 0;
 #else
-        const bool endOfFile = ::feof_unlocked(GetHandle()) != 0;
-        const bool error = ::ferror_unlocked(GetHandle()) != 0;
+        const bool endOfFile = feof_unlocked(GetHandle()) != 0;
+        const bool error = ferror_unlocked(GetHandle()) != 0;
 #endif
-        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
-            (endOfFile ? 0x20 : 0) | (error || guestError ? 0x40 : 0));
+        PublishStatus(endOfFile, error || guestError);
     }
 
     bool SwitchToReading() {
@@ -260,6 +278,10 @@ public:
 #endif
     }
 
+    void KeepDirectoryReadError(bool failed) {
+        if (failed && directory && (_guest.flags & 0x40) != 0) errno = 21;
+    }
+
     void SetError() {
         guestError = true;
         SyncStatus();
@@ -276,6 +298,7 @@ public:
         GetHandle();
 #ifdef _WIN32
         GuestFileLockForget_nid_no_patch(::_fileno(_handle));
+        if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(::_fileno(_handle));
 #endif
         const int result = std::fclose(std::exchange(_handle, nullptr));
         _guest.flags = 0;

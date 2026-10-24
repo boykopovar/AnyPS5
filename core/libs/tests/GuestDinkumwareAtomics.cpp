@@ -29,6 +29,20 @@ void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char*, std::size_t, vo
 void APS5_VABI _Atomic_exchange_nid_postfix(volatile unsigned char*, std::size_t, volatile void*, volatile void*, int);
 int APS5_VABI _Atomic_compare_exchange_strong_nid_postfix(volatile unsigned char*, std::size_t, volatile void*, void*, const void*, int, int);
 int APS5_VABI _Atomic_compare_exchange_weak_nid_postfix(volatile unsigned char*, std::size_t, volatile void*, void*, const void*, int, int);
+std::uint8_t APS5_VABI __atomic_load_1_nid_postfix(const volatile std::uint8_t*, int);
+std::uint64_t APS5_VABI __atomic_load_8_nid_postfix(const volatile std::uint64_t*, int);
+void APS5_VABI __atomic_store_2_nid_postfix(volatile std::uint16_t*, std::uint16_t, int);
+void APS5_VABI __atomic_store_8_nid_postfix(volatile std::uint64_t*, std::uint64_t, int);
+std::uint32_t APS5_VABI __atomic_exchange_4_nid_postfix(volatile std::uint32_t*, std::uint32_t, int);
+int APS5_VABI __atomic_compare_exchange_1_nid_postfix(volatile std::uint8_t*, std::uint8_t*, std::uint8_t, int, int);
+int APS5_VABI __atomic_compare_exchange_8_nid_postfix(volatile std::uint64_t*, std::uint64_t*, std::uint64_t, int, int);
+std::uint16_t APS5_VABI __atomic_fetch_add_2_nid_postfix(volatile std::uint16_t*, std::uint16_t, int);
+std::uint64_t APS5_VABI __atomic_exchange_8_nid_postfix(volatile std::uint64_t*, std::uint64_t, int);
+std::uint64_t APS5_VABI __atomic_fetch_add_8_nid_postfix(volatile std::uint64_t*, std::uint64_t, int);
+std::uint32_t APS5_VABI __atomic_fetch_sub_4_nid_postfix(volatile std::uint32_t*, std::uint32_t, int);
+std::uint8_t APS5_VABI __atomic_fetch_and_1_nid_postfix(volatile std::uint8_t*, std::uint8_t, int);
+std::uint16_t APS5_VABI __atomic_fetch_or_2_nid_postfix(volatile std::uint16_t*, std::uint16_t, int);
+std::uint64_t APS5_VABI __atomic_fetch_xor_8_nid_postfix(volatile std::uint64_t*, std::uint64_t, int);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -111,8 +125,45 @@ static void CheckConcurrentGeneric() {
     Require(counter.parts[0] == 2 * Iterations && counter.parts[1] == 4 * Iterations && counter.parts[2] == 6 * Iterations);
 }
 
+static void CheckSized() {
+    std::uint8_t byte = 0xa5;
+    Require(__atomic_load_1_nid_postfix(&byte, Acquire) == 0xa5);
+    std::uint16_t half = 0;
+    __atomic_store_2_nid_postfix(&half, 0x1234, Release);
+    Require(half == 0x1234);
+    Require(__atomic_fetch_add_2_nid_postfix(&half, 0xffff, Relaxed) == 0x1234 && half == 0x1233);
+    Require(__atomic_fetch_or_2_nid_postfix(&half, 0x8000, SeqCst) == 0x1233 && half == 0x9233);
+    std::uint32_t word = 5;
+    Require(__atomic_exchange_4_nid_postfix(&word, 9, AcqRel) == 5 && word == 9);
+    Require(__atomic_fetch_sub_4_nid_postfix(&word, 10, SeqCst) == 9 && word == 0xffffffffu);
+    Require(__atomic_fetch_and_1_nid_postfix(&byte, 0x0f, SeqCst) == 0xa5 && byte == 0x05);
+    std::uint8_t expectedByte = 4;
+    Require(__atomic_compare_exchange_1_nid_postfix(&byte, &expectedByte, 7, SeqCst, Relaxed) == 0 && expectedByte == 5 && byte == 5);
+    Require(__atomic_compare_exchange_1_nid_postfix(&byte, &expectedByte, 7, SeqCst, Relaxed) == 1 && expectedByte == 5 && byte == 7);
+    std::uint64_t wide = 0;
+    __atomic_store_8_nid_postfix(&wide, 0x0123456789abcdefull, SeqCst);
+    Require(__atomic_load_8_nid_postfix(&wide, SeqCst) == 0x0123456789abcdefull);
+    Require(__atomic_fetch_xor_8_nid_postfix(&wide, 0xffffffff00000000ull, SeqCst) == 0x0123456789abcdefull && wide == 0xfedcba9889abcdefull);
+    std::uint64_t expectedWide = 0xfedcba9889abcdefull;
+    Require(__atomic_compare_exchange_8_nid_postfix(&wide, &expectedWide, 1, SeqCst, SeqCst) == 1 && wide == 1);
+    Require(__atomic_exchange_8_nid_postfix(&wide, 2, 6) == 1 && wide == 2);
+    Require(__atomic_load_8_nid_postfix(&wide, Release) == 2 && __atomic_load_8_nid_postfix(&wide, AcqRel) == 2 && __atomic_load_8_nid_postfix(&wide, -1) == 2);
+    Require(__atomic_fetch_add_8_nid_postfix(&wide, 1, 7) == 2 && wide == 3);
+
+    std::uint64_t counter = 0;
+    std::thread threads[4];
+    for (auto& thread : threads) {
+        thread = std::thread([&counter] {
+            for (int i = 0; i < 100000; ++i) __atomic_fetch_add_8_nid_postfix(&counter, 1, Relaxed);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    Require(counter == 400000);
+}
+
 int main() {
     CheckTyped();
+    CheckSized();
     CheckFlagsAndFences();
     CheckGeneric();
     CheckConcurrentGeneric();

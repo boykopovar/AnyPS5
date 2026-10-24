@@ -33,7 +33,7 @@ int main() {
     auto run = Convert(text, 0, 0, false);
     Require(run.status == 0 && run.result == 3 && run.source == text);
     run = Convert(wide, 0, Huge, false);
-    Require(run.status == 86 && run.result == Failed && run.source == wide);
+    Require(run.status == 0 && run.result == 4 && run.source == wide);
     run = Convert(text, 5, 1, false);
     Require(run.status == 22 && run.result == Failed && run.source == text);
 
@@ -54,7 +54,7 @@ int main() {
     Require(run.status == 34 && run.result == Failed && run.source == text + 1 && std::memcmp(run.out, "\0x", 2) == 0);
 
     run = Convert(wide, 8, 8);
-    Require(run.status == 86 && run.result == Failed && run.source == wide && std::memcmp(run.out, "a\0xx", 4) == 0);
+    Require(run.status == 0 && run.result == 4 && run.source == nullptr && std::memcmp(run.out, "a\xc4\x80" "b\0", 5) == 0);
 
     run = Convert(text, 0, 8);
     Require(run.status == 22 && run.result == Failed && run.source == text && run.out[0] == 'x');
@@ -92,6 +92,9 @@ int main() {
     Require(wcstombs_s_nid_postfix(&result, narrow, sizeof(narrow), nullptr, sizeof(narrow)) == 22);
     Require(result == Failed && narrow[0] == '\0');
     std::memset(narrow, 'x', sizeof(narrow));
-    Require(wcstombs_s_nid_postfix(&result, narrow, sizeof(narrow), wide, sizeof(narrow)) == 86 && result == Failed);
-    Require(std::memcmp(narrow, "a\0xx", 4) == 0);
+    Require(wcstombs_s_nid_postfix(&result, narrow, sizeof(narrow), wide, sizeof(narrow)) == 0 && result == 4);
+    Require(std::memcmp(narrow, "a\xc4\x80" "b\0x", 6) == 0);
+    std::memset(narrow, 'x', sizeof(narrow));
+    Require(wcstombs_s_nid_postfix(&result, narrow, sizeof(narrow), wide, 2) == 0 && result == 1);
+    Require(std::memcmp(narrow, "a\0x", 3) == 0);
 }

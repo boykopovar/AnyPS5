@@ -1,3 +1,4 @@
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -55,12 +56,23 @@ struct UserSemaphore {
 };
 
 struct AddressWaiter {
-    TimedWait::Condition condition;
+    TimedWait::SingleWaiterCondition condition;
     bool woken = false;
 };
 
-std::mutex g_waitersLock;
-std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> g_waiters;
+constexpr std::size_t kBucketCount = 64;
+
+struct alignas(64) WaiterBucket {
+    std::mutex mutex;
+    std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> waiters;
+};
+
+std::array<WaiterBucket, kBucketCount> g_buckets;
+
+WaiterBucket& BucketOf(std::uintptr_t address) {
+    const auto hashed = (address >> 2) * UINT64_C(0x9e3779b97f4a7c15);
+    return g_buckets[hashed >> 58];
+}
 
 template <class TValue>
 bool IsAlignedAddress(std::uintptr_t address) {
@@ -69,27 +81,24 @@ bool IsAlignedAddress(std::uintptr_t address) {
 
 template <class TFunction>
 void DeferringDelivery(TFunction function) {
-#ifdef _WIN32
     {
         TimedWait::DeliveryDeferral deferral;
         function();
     }
     TimedWait::DeliverDeferred();
-#else
-    function();
-#endif
 }
 
 template <class TReady>
 std::optional<std::chrono::nanoseconds> WaitOnKeyLocked(std::uintptr_t key, TReady ready, std::optional<std::uint64_t> deadlineNanos, bool& woken) {
-    std::unique_lock<std::mutex> lock(g_waitersLock);
+    auto& bucket = BucketOf(key);
+    std::unique_lock<std::mutex> lock(bucket.mutex);
     if (ready()) {
         woken = true;
         return std::nullopt;
     }
 
     AddressWaiter waiter;
-    auto& queue = g_waiters[key];
+    auto& queue = bucket.waiters[key];
     const auto position = queue.insert(queue.end(), &waiter);
     const auto isWoken = [&] { return waiter.woken; };
     const auto waitStart = std::chrono::steady_clock::now();
@@ -104,7 +113,7 @@ std::optional<std::chrono::nanoseconds> WaitOnKeyLocked(std::uintptr_t key, TRea
     if (!woken) {
         queue.erase(position);
         if (queue.empty()) {
-            g_waiters.erase(key);
+            bucket.waiters.erase(key);
         }
     }
     return waited;
@@ -133,9 +142,10 @@ int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeou
 }
 
 void WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
-    std::lock_guard<std::mutex> lock(g_waitersLock);
-    const auto entry = g_waiters.find(key);
-    if (entry == g_waiters.end()) {
+    auto& bucket = BucketOf(key);
+    std::lock_guard<std::mutex> lock(bucket.mutex);
+    const auto entry = bucket.waiters.find(key);
+    if (entry == bucket.waiters.end()) {
         return;
     }
     auto& queue = entry->second;
@@ -146,7 +156,7 @@ void WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wakesAtLeast
         waiter->condition.NotifyOne();
     }
     if (queue.empty()) {
-        g_waiters.erase(entry);
+        bucket.waiters.erase(entry);
     }
 }
 
@@ -241,9 +251,10 @@ int UmtxNwakePrivate(void* object, std::uint64_t value) {
 }
 
 void WakeSemaphoreLocked(std::uintptr_t key, UserSemaphore* semaphore) {
-    std::lock_guard<std::mutex> lock(g_waitersLock);
-    const auto entry = g_waiters.find(key);
-    if (entry == g_waiters.end()) {
+    auto& bucket = BucketOf(key);
+    std::lock_guard<std::mutex> lock(bucket.mutex);
+    const auto entry = bucket.waiters.find(key);
+    if (entry == bucket.waiters.end()) {
         return;
     }
     auto& queue = entry->second;
@@ -255,7 +266,7 @@ void WakeSemaphoreLocked(std::uintptr_t key, UserSemaphore* semaphore) {
     waiter->woken = true;
     waiter->condition.NotifyOne();
     if (queue.empty()) {
-        g_waiters.erase(entry);
+        bucket.waiters.erase(entry);
     }
 }
 

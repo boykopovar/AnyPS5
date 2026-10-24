@@ -13,6 +13,7 @@
 extern "C" {
 int APS5_VABI sceUltInitialize();
 int APS5_VABI sceUltFinalize();
+std::uint64_t APS5_VABI sceUltWaitingQueueResourcePoolGetWorkAreaSize(std::uint32_t, std::uint32_t);
 std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t, std::uint64_t, std::uint32_t);
 int APS5_VABI sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
@@ -81,7 +82,7 @@ static void Validation() {
     CHECK(sceUltQueueTryPop(&fixture.first, &saved) == 0 && saved == value);
     CHECK(sceUltQueueCreate(&extra, nullptr, 9, nullptr, &fixture.pool, nullptr, 0) == Invalid);
     CHECK(sceUltQueueCreate(&extra, nullptr, 8, &extra, &fixture.pool, nullptr, 0) == Invalid);
-    CHECK(sceUltQueueCreate(&extra, nullptr, 8, nullptr, &fixture.pool, nullptr, 0) == Again);
+    CHECK(sceUltQueueCreate(&extra, nullptr, 8, nullptr, &fixture.pool, nullptr, 0) == Busy);
     CHECK(sceUltQueueCreate(nullptr, nullptr, 8, nullptr, &fixture.pool, nullptr, 0) == Null);
     CHECK(sceUltQueueCreate(extra.bytes.data() + 1, nullptr, 8, nullptr, &fixture.pool, nullptr, 0) == Alignment);
     CHECK(sceUltQueueCreate(&extra, nullptr, 0, nullptr, &fixture.pool, nullptr, 0) == Range);
@@ -93,7 +94,11 @@ static void Validation() {
     CHECK(sceUltQueueDataResourcePoolDestroy(&fixture.pool) == Busy);
     CHECK(sceUltQueueDataResourcePoolDestroy(nullptr) == Null);
     CHECK(sceUltQueueDestroy(nullptr) == Null);
-    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(3, 9, 2) == 1072);
+    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(3, 9, 2) == 379);
+    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(0, 0, 0) == 96);
+    CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0) == 64);
+    CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(3, 2) == 320);
+    CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0x08000000u) == 0x100000040ull);
     bool overflow = false;
     try { sceUltQueueDataResourcePoolGetWorkAreaSize(1, UINT64_MAX, 1); }
     catch (const std::out_of_range&) { overflow = true; }
@@ -151,13 +156,13 @@ static void Blocking() {
     CHECK(sceUltQueuePush(&fixture.first, &first) == 0);
     auto producer = std::async(std::launch::async, [&] { return sceUltQueuePush(&fixture.first, &second); });
     WaitUntilBlocked(producer);
-    CHECK(sceUltQueueDestroy(&fixture.first) == Busy);
+    CHECK(sceUltQueueDestroy(&fixture.first) == State);
     CHECK(sceUltQueuePop(&fixture.first, &output) == 0 && output == first);
     CHECK(producer.get() == 0);
     CHECK(sceUltQueuePop(&fixture.first, &output) == 0 && output == second);
     auto consumer = std::async(std::launch::async, [&] { return sceUltQueuePop(&fixture.first, &output); });
     WaitUntilBlocked(consumer);
-    CHECK(sceUltQueueDestroy(&fixture.first) == Busy);
+    CHECK(sceUltQueueDestroy(&fixture.first) == State);
     CHECK(sceUltQueuePush(&fixture.first, &first) == 0);
     CHECK(consumer.get() == 0 && output == first);
     fixture.Destroy();
@@ -175,7 +180,7 @@ static void SharedPool() {
     CHECK(sceUltQueueTryPop(&fixture.second, &output) == Again);
     auto producer = std::async(std::launch::async, [&] { return sceUltQueuePush(&fixture.second, &second); });
     WaitUntilBlocked(producer);
-    CHECK(sceUltQueueDestroy(&fixture.second) == Busy);
+    CHECK(sceUltQueueDestroy(&fixture.second) == State);
     CHECK(sceUltQueueDestroy(&fixture.first) == 0);
     CHECK(producer.get() == 0);
     CHECK(consumer.get() == 0 && output == second);
@@ -196,8 +201,8 @@ static void Finalize() {
     auto consumer = std::async(std::launch::async, [&] { return sceUltQueuePop(&fixture.second, &output); });
     WaitUntilBlocked(producer);
     WaitUntilBlocked(consumer);
-    CHECK(sceUltQueueDestroy(&fixture.first) == Busy);
-    CHECK(sceUltQueueDestroy(&fixture.second) == Busy);
+    CHECK(sceUltQueueDestroy(&fixture.first) == State);
+    CHECK(sceUltQueueDestroy(&fixture.second) == State);
     CHECK(sceUltFinalize() == 0);
     CHECK(producer.get() == State);
     CHECK(consumer.get() == State && output == 123);

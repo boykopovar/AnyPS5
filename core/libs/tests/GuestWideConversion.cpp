@@ -69,7 +69,7 @@ static void CheckStoul() {
     CheckStoul(u"017", 0, 15, 3, 0, "octal with base 0");
     CheckStoul(u"z", 36, 35, 1, 0, "base 36");
     CheckStoul(u"0b1", 0, 0, 1, 0, "no binary prefix");
-    CheckStoul(u"0xg", 16, 0, 1, 0, "prefix without digits");
+    CheckStoul(u"0xg", 16, 0, 0, 0, "prefix without digits");
     CheckStoul(u"12é3", 10, 12, 2, 0, "stops at a non-ASCII unit");
     CheckStoul(u"　5", 10, 0, 0, 0, "non-ASCII space is not skipped");
     CheckStoul(u"", 10, 0, 0, 0, "empty string");
@@ -134,18 +134,25 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"x", u"%2lc", pair, std::size_t{2}) == 0, "%2lc short input");
     Require(swscanf_s_nid_postfix(u"cab12", u"%l[abc]%d", text, std::size_t{6}, &first) == 2 && std::u16string(text) == u"cab" && first == 12, "%l[");
     Require(swscanf_s_nid_postfix(u"été!", u"%l[^!]", text, std::size_t{6}) == 1 && std::u16string(text) == u"été", "%l[^");
+    char16_t untouched[4] = {u'?', u'?', u'?', u'?'};
+    Require(swscanf_s_nid_postfix(u"Āb cd", u"%S", untouched, std::size_t{4}) == 0 && untouched[0] == u'?', "%S is an invalid conversion");
+    Require(swscanf_s_nid_postfix(u"7 Āb", u"%d%lS", &first, untouched, std::size_t{4}) == 1 && first == 7 && untouched[0] == u'?', "%lS stops after the earlier assignment");
+    Require(swscanf_s_nid_postfix(u"Āyz", u"%2C", untouched, std::size_t{4}) == 0 && untouched[0] == u'?', "%C is an invalid conversion");
+    Require(swscanf_s_nid_postfix(u"5 6", u"%hC%d", &first) == 0 && first == 7, "%hC stops before later conversions");
     std::int64_t count = -1;
     Require(swscanf_s_nid_postfix(u" 12 ab", u"%d %ln", &first, &count) == 1 && count == 4, "%ln");
 
     double real = 0;
     Require(swscanf_s_nid_postfix(u"1.5e3", u"%lf", &real) == 1 && real == 1500.0, "%lf");
-    Require(swscanf_s_nid_postfix(u"1e+x", u"%lf", &real) == 0, "%lf incomplete exponent is a matching failure");
+    Require(swscanf_s_nid_postfix(u"1e+", u"%lf", &real) == 1 && real == 1.0, "%lf converts the mantissa of an incomplete exponent");
     long double extended = 0;
     Require(swscanf_s_nid_postfix(u"2.25", u"%Lf", &extended) == 1 && extended == 2.25L, "%Lf");
     float single = 0;
     Require(swscanf_s_nid_postfix(u"-inf", u"%f", &single) == 1 && single == -std::numeric_limits<float>::infinity(), "%f infinity");
 
     Require(swscanf_s_nid_postfix(u"a", u"b%d", &first) == 0, "literal mismatch is a matching failure");
+    Require(swscanf_s_nid_postfix(u"", u"x") == 0, "literal at end of input returns zero");
+    Require(swscanf_s_nid_postfix(u"", u"%%") == -1, "percent literal at end of input is an input failure");
     Require(swscanf_s_nid_postfix(u"", u"%d", &first) == -1, "empty input is an input failure");
     Require(swscanf_s_nid_postfix(u"   ", u"%ls", text, std::size_t{6}) == -1, "white space only is an input failure");
     Require(swscanf_s_nid_postfix(u"5", u"%d%d", &first, &second) == 1, "input failure after a conversion");
@@ -155,7 +162,7 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"5", nullptr) == -1, "null format");
     Require(Throws([&] { swscanf_s_nid_postfix(u"abc", u"%l[a-c]", text, std::size_t{6}); }), "scanset range throws");
     Require(Throws([&] { swscanf_s_nid_postfix(u"5", u"%Ld", &wide); }), "%Ld throws");
-    Require(Throws([&] { swscanf_s_nid_postfix(u"Ā", u"%s", narrow, std::size_t{4}); }), "unconvertible narrow %s throws");
+    Require(swscanf_s_nid_postfix(u"Ā", u"%s", narrow, std::size_t{4}) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "narrow %s stores UTF-8");
 }
 
 static void CheckUnsizedScan() {
@@ -193,6 +200,11 @@ static void CheckUnsizedScan() {
     Require(swscanf_nid_postfix(u" q7", u"%c%d", &letter, &first) == 1 && letter == ' ', "swscanf %c does not skip white space");
     Require(swscanf_nid_postfix(u"cab12", u"%l[abc]%d", text, &first) == 2 && std::u16string(text) == u"cab" && first == 12, "swscanf %l[");
     Require(swscanf_nid_postfix(u"été!", u"%l[^!]", text) == 1 && std::u16string(text) == u"été", "swscanf %l[^");
+    char16_t untouched[4] = {u'?', u'?', u'?', u'?'};
+    Require(swscanf_nid_postfix(u"Āb cd", u"%S", untouched) == 0 && untouched[0] == u'?', "swscanf %S is an invalid conversion");
+    Require(swscanf_nid_postfix(u"7 Āb 9", u"%d%3S%d", &first, untouched, &second) == 1 && first == 7 && untouched[0] == u'?', "swscanf stops at %S");
+    Require(swscanf_nid_postfix(u"Āyz", u"%lC", untouched) == 0 && untouched[0] == u'?', "swscanf %lC is an invalid conversion");
+    Require(swscanf_nid_postfix(u"abc", u"%*S") == 0, "swscanf suppressed %S is an invalid conversion");
     Require(swscanf_nid_postfix(u"key=val", u"%[^=]=%s", narrow, narrow + 4) == 2 && std::strcmp(narrow, "key") == 0 && std::strcmp(narrow + 4, "val") == 0, "swscanf %[^");
     std::int64_t count = -1;
     Require(swscanf_nid_postfix(u" 12 ab", u"%d %ln", &first, &count) == 1 && count == 4, "swscanf %ln");
@@ -203,13 +215,15 @@ static void CheckUnsizedScan() {
 
     double real = 0;
     Require(swscanf_nid_postfix(u"1.5e3", u"%lf", &real) == 1 && real == 1500.0, "swscanf %lf");
-    Require(swscanf_nid_postfix(u"1e+x", u"%lf", &real) == 0, "swscanf %lf incomplete exponent is a matching failure");
+    Require(swscanf_nid_postfix(u"1e+", u"%lf", &real) == 1 && real == 1.0, "swscanf %lf converts the mantissa of an incomplete exponent");
     long double extended = 0;
     Require(swscanf_nid_postfix(u"2.25", u"%Lf", &extended) == 1 && extended == 2.25L, "swscanf %Lf");
     float single = 0;
     Require(swscanf_nid_postfix(u"-inf", u"%f", &single) == 1 && single == -std::numeric_limits<float>::infinity(), "swscanf %f infinity");
 
     Require(swscanf_nid_postfix(u"a", u"b%d", &first) == 0, "swscanf literal mismatch is a matching failure");
+    Require(swscanf_nid_postfix(u"", u"x") == 0, "swscanf literal at end of input returns zero");
+    Require(swscanf_nid_postfix(u"", u"%%") == -1, "swscanf percent literal at end of input is an input failure");
     Require(swscanf_nid_postfix(u"3 x", u"%d%d", &first, &second) == 1 && first == 3, "swscanf partial match");
     Require(swscanf_nid_postfix(u"", u"%d", &first) == -1, "swscanf empty input is an input failure");
     Require(swscanf_nid_postfix(u"", u"%ls", text) == -1, "swscanf empty input before %ls");
@@ -220,7 +234,7 @@ static void CheckUnsizedScan() {
     Require(Throws([&] { swscanf_nid_postfix(u"abc", u"%l[a-c]", text); }), "swscanf scanset range throws");
     Require(Throws([&] { swscanf_nid_postfix(u"5", u"%Ld", &wide); }), "swscanf %Ld throws");
     Require(Throws([&] { swscanf_nid_postfix(u"1", u"%lp", &pointer); }), "swscanf %lp throws");
-    Require(Throws([&] { swscanf_nid_postfix(u"Ā", u"%s", narrow); }), "swscanf unconvertible narrow %s throws");
+    Require(swscanf_nid_postfix(u"Ā", u"%s", narrow) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "swscanf narrow %s stores UTF-8");
 }
 
 int main() {

@@ -5,10 +5,13 @@
 #else
 #include <unistd.h>
 #endif
+
 extern "C" {
 int APS5_VABI getpid_nid_postfix(void);
 int APS5_VABI getppid_nid_postfix(void);
 int APS5_VABI getsid_nid_postfix(int);
+int APS5_VABI setpgid_nid_postfix(int, int);
+int APS5_VABI setpgrp_nid_postfix(int, int);
 int* APS5_VABI __error_nid_postfix();
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -20,6 +23,72 @@ int main() {
     Require(getsid_nid_postfix(123456) == -1);
     Require(*__error_nid_postfix() == 3);
     Require(getsid_nid_postfix(-1) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(0, 0) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(self, 0) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(0, self) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(self, self) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(0, 123456) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(self, 123456) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(-1, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(0, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(self, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(-1, 0) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(setpgid_nid_postfix(123456, 0) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(0, 0) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(self, 0) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(0, self) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(self, self) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(0, 123456) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(self, 123456) == -1);
+    Require(*__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(-1, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(0, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(self, -1) == -1);
+    Require(*__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(-1, 0) == -1);
+    Require(*__error_nid_postfix() == 3);
+    *__error_nid_postfix() = 0;
+    Require(setpgrp_nid_postfix(123456, 0) == -1);
     Require(*__error_nid_postfix() == 3);
     const int parent = getppid_nid_postfix();
     Require(parent > 0 && parent != getpid_nid_postfix());

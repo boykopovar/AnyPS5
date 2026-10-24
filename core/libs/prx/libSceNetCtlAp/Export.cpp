@@ -7,6 +7,7 @@
 
 namespace {
 
+constexpr int NET_CTL_AP_ERROR_INVALID_OPT_STR = static_cast<int>(0x80412901);
 constexpr int NET_CTL_AP_ERROR_NOT_STARTED = static_cast<int>(0x8041298F);
 constexpr int NET_CTL_AP_ERROR_INVALID_TYPE = static_cast<int>(0x80412990);
 constexpr int NET_CTL_AP_ERROR_INVALID_ADDR = static_cast<int>(0x80412991);
@@ -76,6 +77,7 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
             return 0;
         }
     }
+    *cid = -1;
     return NET_CTL_AP_ERROR_CALLBACK_MAX;
 }
 
@@ -91,8 +93,8 @@ int APS5_VABI sceNetCtlApUnregisterCallback(int cid) {
 int APS5_VABI sceNetCtlApGetResult(int eventType, int* errorCode) {
     std::lock_guard lock(g_lock);
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
-    if (!ValidEventType(eventType)) return NET_CTL_AP_ERROR_INVALID_TYPE;
     if (!errorCode) return NET_CTL_AP_ERROR_INVALID_ADDR;
+    if (!ValidEventType(eventType)) return NET_CTL_AP_ERROR_INVALID_TYPE;
     *errorCode = 0;
     return 0;
 }
@@ -118,10 +120,14 @@ int APS5_VABI sceNetCtlApStop() {
     return g_initialized ? NET_CTL_AP_ERROR_NOT_STARTED : NET_CTL_AP_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceNetCtlApGetConnectInfo(std::uint8_t* optStr, void* connectInfo) {
-    (void)optStr;
+int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo) {
     std::lock_guard lock(g_lock);
     if (!g_initialized) return NET_CTL_AP_ERROR_NOT_INITIALIZED;
+    if (optStr != nullptr) {
+        std::size_t length = 0;
+        while (length < 9 && optStr[length] != 0) ++length;
+        if (length > 8) return NET_CTL_AP_ERROR_INVALID_OPT_STR;
+    }
     if (!connectInfo) return NET_CTL_AP_ERROR_INVALID_ADDR;
     if (*static_cast<const std::uint64_t*>(connectInfo) != NET_CTL_AP_CONNECT_INFO_SIZE) return NET_CTL_AP_ERROR_INVALID_SIZE;
     return NET_CTL_AP_ERROR_NOT_STARTED;

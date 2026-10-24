@@ -851,14 +851,15 @@ std::uint32_t ReadBigEndian(const std::uint8_t* data, std::size_t bytes) {
 
 int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame);
 
-void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint32_t header, AjmDecMp3ParseFrame* frame) {
+void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint32_t header, AjmDecMp3ParseFrame* frame, int parseOfl) {
     const std::size_t end = std::min<std::size_t>(streamSize, frame->frame_size);
-    if (end <= 4) return;
-    const std::size_t available = end - 4;
+    const std::size_t sideInfoStart = 4 + (((header >> 16u) & 1u) == 0 ? 2u : 0u);
+    if (end <= sideInfoStart) return;
+    const std::size_t available = end - sideInfoStart;
     std::size_t bit = 0;
     const auto readBits = [&](std::uint32_t count) {
         std::uint32_t value = 0;
-        for (std::uint32_t i = 0; i < count; ++i, ++bit) value = (value << 1u) | (bit / 8 < available ? (stream[4 + bit / 8] >> (7 - bit % 8)) & 1u : 0u);
+        for (std::uint32_t i = 0; i < count; ++i, ++bit) value = (value << 1u) | (bit / 8 < available ? (stream[sideInfoStart + bit / 8] >> (7 - bit % 8)) & 1u : 0u);
         return value;
     };
     const bool mpeg1 = ((header >> 19u) & 3u) == 3u;
@@ -872,11 +873,20 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
         }
     }
     bit += mainDataBits;
-    std::size_t at = 4 + std::min<std::size_t>((bit + 7) / 8, available);
+    std::size_t at = sideInfoStart + std::min<std::size_t>((bit + 7) / 8, available);
 
-    if (at + 8 <= end && (std::memcmp(stream + at, "Xing", 4) == 0 || std::memcmp(stream + at, "Info", 4) == 0)) {
-        const std::uint8_t flags = stream[at + 7];
-        std::size_t field = at + 8;
+    std::size_t tagAt = at;
+    if (tagAt + 8 > end || (std::memcmp(stream + tagAt, "Xing", 4) != 0 && std::memcmp(stream + tagAt, "Info", 4) != 0)) {
+        const std::size_t fixedOffset = mpeg1 ? (mono ? 21u : 36u) : (mono ? 13u : 21u);
+        tagAt = 0;
+        if (fixedOffset + 8 <= end && (std::memcmp(stream + fixedOffset, "Xing", 4) == 0 || std::memcmp(stream + fixedOffset, "Info", 4) == 0)) {
+            tagAt = fixedOffset;
+        }
+    }
+
+    if (tagAt != 0) {
+        const std::uint8_t flags = stream[tagAt + 7];
+        std::size_t field = tagAt + 8;
         std::uint32_t frames = 0;
         if (flags & 0x01u) {
             if (field + 4 > end) return;
@@ -903,30 +913,34 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
             frame->encoder_delay = frame->samples_per_channel + delay + 529;
             frame->ofl_type = MP3_OFL_LAME;
         }
-    } else if (at != 36 && end >= 40 && std::memcmp(stream + 36, "VBRI", 4) == 0) {
-        NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (VBRI header outside MPEG-1 stereo)");
-    } else if (at + 26 <= end && std::memcmp(stream + at, "VBRI", 4) == 0) {
-        frame->encoder_delay = ReadBigEndian(stream + at + 6, 2);
+        return;
+    }
+
+    const std::size_t vbriAt = end >= 40 && std::memcmp(stream + 36, "VBRI", 4) == 0 ? 36 : at;
+    if (vbriAt + 26 <= end && std::memcmp(stream + vbriAt, "VBRI", 4) == 0) {
+        frame->encoder_delay = ReadBigEndian(stream + vbriAt + 6, 2);
         frame->ofl_type = MP3_OFL_VBRI;
-        if (frame->frame_size <= streamSize) {
+        if (parseOfl == 1 && frame->frame_size <= streamSize) {
             AjmDecMp3ParseFrame next{};
-            if (ParseMp3Header(stream + frame->frame_size, streamSize - static_cast<std::uint32_t>(frame->frame_size), 1, &next) == 0 && next.ofl_type == MP3_OFL_FGH) {
+            if (ParseMp3Header(stream + frame->frame_size, streamSize - static_cast<std::uint32_t>(frame->frame_size), 2, &next) == 0 && next.ofl_type == MP3_OFL_FGH) {
                 frame->encoder_delay += next.encoder_delay;
                 frame->total_samples = next.total_samples;
                 frame->ofl_type = MP3_OFL_VBRI_AND_FGH;
             }
         }
-    } else if (at + 10 <= end) {
-        while (at + 9 < end && stream[at] != 0xB4u) ++at;
-        if (at + 9 >= end) return;
-        std::uint8_t crc = 0xFF;
-        for (std::size_t i = 0; i < 9; ++i) {
-            for (int shift = 7; shift >= 0; --shift) {
-                const bool same = ((crc >> 7u) & 1u) == ((stream[at + i] >> shift) & 1u);
-                crc = static_cast<std::uint8_t>(same ? (crc << 1u) ^ 0x45u : crc << 1u);
-            }
+        return;
+    }
+
+    while (at + 9 < end && stream[at] != 0xB4u) ++at;
+    if (at + 9 >= end) return;
+    std::uint8_t crc = 0xFF;
+    for (std::size_t i = 0; i < 9; ++i) {
+        for (int shift = 7; shift >= 0; --shift) {
+            const bool same = ((crc >> 7u) & 1u) == ((stream[at + i] >> shift) & 1u);
+            crc = static_cast<std::uint8_t>(same ? (crc << 1u) ^ 0x45u : crc << 1u);
         }
-        if (stream[at + 9] != crc) return;
+    }
+    if (stream[at + 9] == crc) {
         frame->encoder_delay = ReadBigEndian(stream + at + 1, 2);
         frame->total_samples = ReadBigEndian(stream + at + 3, 4);
         frame->ofl_type = MP3_OFL_FGH;
@@ -944,13 +958,13 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     };
     const std::uint32_t header = (std::uint32_t{stream[0]} << 24u) | (std::uint32_t{stream[1]} << 16u) | (std::uint32_t{stream[2]} << 8u) | stream[3];
     const std::uint32_t version = (header >> 19u) & 3u;
+    const std::uint32_t layer = (header >> 17u) & 3u;
     const std::uint32_t sampleRate = sampleRates[version][(header >> 10u) & 3u];
     const std::uint32_t bitrate = kbps[version][(header >> 12u) & 15u] * 1000u;
-    const bool valid = (header >> 21u) == 0x7FFu && sampleRate != 0 && bitrate != 0;
+    const bool valid = (header >> 21u) == 0x7FFu && layer != 0 && sampleRate != 0 && bitrate != 0;
     AJM_TRACE("[ajm] parse mp3 frame %02x %02x %02x %02x (%u bytes, parse ofl %d) -> %s, %u Hz, %u bps\n", stream[0], stream[1], stream[2], stream[3], streamSize, parseOfl, valid ? "ok" : "invalid", sampleRate, bitrate);
     if (!valid) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    if (parseOfl && ((header >> 17u) & 3u) != 1u) NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (original file length lookup outside layer III)");
-    if (parseOfl && ((header >> 16u) & 1u) == 0) NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (original file length lookup in a CRC-protected frame)");
+    if (parseOfl && layer != 1u) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const bool mpeg1 = version == 3;
     frame->frame_size = (mpeg1 ? 144u : 72u) * bitrate / sampleRate + ((header >> 9u) & 1u);
     frame->num_channels = ((header >> 6u) & 3u) == 3u ? 1u : 2u;
@@ -961,7 +975,7 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     frame->num_frames = 0;
     frame->total_samples = 0;
     frame->ofl_type = MP3_OFL_NONE;
-    if (parseOfl) ParseMp3Ofl(stream, streamSize, header, frame);
+    if (parseOfl) ParseMp3Ofl(stream, streamSize, header, frame, parseOfl);
     return 0;
 }
 

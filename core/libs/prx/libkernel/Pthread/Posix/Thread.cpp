@@ -18,9 +18,29 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 int APS5_VABI scePthreadDetach(Pthread thread);
 void APS5_VABI scePthreadExit(void* retval);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const KernelTimespec* abstime);
 int APS5_VABI scePthreadRename(Pthread thread, const char* name);
 int APS5_VABI scePthreadGetname(Pthread thread, char* name);
 Pthread APS5_VABI scePthreadSelf();
+int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2);
+int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void));
+int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
+int APS5_VABI scePthreadKeyDelete(PthreadKey key);
+void* APS5_VABI scePthreadGetspecific(PthreadKey key);
+int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
+int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
+int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
+int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
+int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
+int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond);
 int APS5_VABI scePthreadCancel(Pthread thread);
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type);
@@ -125,26 +145,28 @@ struct GuestRtPrio {
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22;
-    constexpr std::uint16_t Normal = 3;
+    constexpr int GuestEsrch = 3, GuestEfault = 14;
+    constexpr int GuestSchedFifo = 1, GuestSchedRr = 3;
+    constexpr std::uint16_t Realtime = 2, Normal = 3, Fifo = 10;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (function != Lookup && function != Set) return fail(GuestEinval);
+    if (function != Lookup && function != Set) return fail(GuestEsrch);
     if (priority == nullptr) return fail(GuestEfault);
     auto* self = scePthreadSelf();
-    if (lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid)) {
-        if (!LiveGuestThreadExists(lwpid)) return fail(GuestEsrch);
-        NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
-    }
-    const int policy = self->schedPolicy.load(std::memory_order_relaxed);
-    if (policy == 1 || policy == 3) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
+    int policy = self->schedPolicy.load(std::memory_order_relaxed);
+    int schedPriority = self->priority.load(std::memory_order_relaxed);
+    const bool other = lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid);
+    if (other && !GetLiveGuestThreadSched_nid_no_patch(lwpid, policy, schedPriority)) return fail(GuestEsrch);
+    const bool realTime = policy == GuestSchedFifo || policy == GuestSchedRr;
     if (function == Lookup) {
-        priority->type = Normal;
-        priority->prio = 0;
+        priority->type = realTime ? (policy == GuestSchedFifo ? Fifo : Realtime) : Normal;
+        priority->prio = realTime ? static_cast<std::uint16_t>(schedPriority) : 0;
         return 0;
     }
+    if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
+    if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
     if (priority->type == Normal && priority->prio == 0) return 0;
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
@@ -235,12 +257,48 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
     return PosixThread::ToErrno(scePthreadJoin(thread, value));
 }
 
+int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, const KernelTimespec* abstime) {
+    if (abstime == nullptr || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
+        return PosixThread::GUEST_EINVAL;
+    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, abstime));
+}
+
 namespace {
 struct RegisterPthreadOnLoad {
     RegisterPthreadOnLoad() {
         RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(pthread_create_nid_postfix));
         RegisterPthreadJoin_nid_no_patch(reinterpret_cast<PthreadJoinFn_nid_no_patch>(pthread_join_nid_postfix));
         RegisterPthreadDetach_nid_no_patch(reinterpret_cast<PthreadDetachFn_nid_no_patch>(pthread_detach_nid_postfix));
+        static const ThreadForwards_nid_no_patch forwards{
+            reinterpret_cast<decltype(forwards.once)>(scePthreadOnce),
+            reinterpret_cast<decltype(forwards.keyCreate)>(scePthreadKeyCreate),
+            scePthreadKeyDelete,
+            scePthreadGetspecific,
+            scePthreadSetspecific,
+            reinterpret_cast<decltype(forwards.equal)>(scePthreadEqual),
+            reinterpret_cast<decltype(forwards.self)>(scePthreadSelf),
+            scePthreadExit,
+        };
+        RegisterThreadForwards_nid_no_patch(&forwards);
+        static const PthreadSyncForwards_nid_no_patch sync{
+            reinterpret_cast<decltype(sync.mutexattrInit)>(scePthreadMutexattrInit),
+            reinterpret_cast<decltype(sync.mutexattrSettype)>(scePthreadMutexattrSettype),
+            reinterpret_cast<decltype(sync.mutexattrDestroy)>(scePthreadMutexattrDestroy),
+            reinterpret_cast<decltype(sync.mutexInit)>(scePthreadMutexInit),
+            reinterpret_cast<decltype(sync.mutexDestroy)>(scePthreadMutexDestroy),
+            reinterpret_cast<decltype(sync.mutexLock)>(scePthreadMutexLock),
+            reinterpret_cast<decltype(sync.mutexTrylock)>(scePthreadMutexTrylock),
+            reinterpret_cast<decltype(sync.mutexUnlock)>(scePthreadMutexUnlock),
+            reinterpret_cast<decltype(sync.condInit)>(scePthreadCondInit),
+            reinterpret_cast<decltype(sync.condDestroy)>(scePthreadCondDestroy),
+            reinterpret_cast<decltype(sync.condWait)>(scePthreadCondWait),
+            reinterpret_cast<decltype(sync.condSignal)>(scePthreadCondSignal),
+            reinterpret_cast<decltype(sync.condBroadcast)>(scePthreadCondBroadcast),
+            reinterpret_cast<decltype(sync.detach)>(scePthreadDetach),
+            reinterpret_cast<decltype(sync.join)>(scePthreadJoin),
+            scePthreadYield,
+        };
+        RegisterPthreadSyncForwards_nid_no_patch(&sync);
     }
 };
 const RegisterPthreadOnLoad gRegisterPthread;

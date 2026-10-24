@@ -53,10 +53,15 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
     // AnyPS5 implements the C runtime in libc.prx. Windows GetProcAddress
     // does not search a module's dependencies as ELF symbol lookup does.
     // Keep the requested module first, then make its shared runtime visible.
-    if ((unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx")) && !unique.contains("libc.prx"))
-        result.push_back("libc.prx");
-    if (unique.contains("libkernel_web.prx") && !unique.contains("libkernel.prx"))
-        result.push_back("libkernel.prx");
+    const auto addIfMissing = [&](const char* library) {
+        if (unique.insert(library).second) result.emplace_back(library);
+    };
+    if (unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx"))
+        addIfMissing("libc.prx");
+    if (unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx")) {
+        addIfMissing("libkernel.prx");
+        addIfMissing("libc.prx");
+    }
     return result;
 }
 

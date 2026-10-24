@@ -1,4 +1,6 @@
 from pathlib import Path
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -13,6 +15,32 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_bracket_arguments_ignore_only_one_initial_newline(self):
+        values = (("path", "path"), ("\npath", "path"), ("\n\npath", "\npath"),
+                  ("\n path", " path"), (" \npath", " \npath"), ("\\npath", "\\npath"),
+                  ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"subdirs([{equals}[{content}]{equals}])\n"
+                    self.assertEqual(list(check_test_registration.commands(command)), [("subdirs", [expected])])
+        self.assertEqual(list(check_test_registration.commands('subdirs("\npath")\n')),
+                         [("subdirs", ["\npath"])])
+
+    def test_bracket_initial_newlines_do_not_hide_disabled_tests(self):
+        content = ('add_test([=[\nbounds]=] "/build/tests/buffer_bounds_tests")\n'
+                   'set_tests_properties(bounds PROPERTIES DISABLED [=[\nTRUE]=])\n')
+        self.assertNotIn("buffer_bounds_tests", self.registered(content))
+
+    def test_bracket_initial_newline_in_subdirectory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs([=[\nnested]=])\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+
     def test_literal_prefixes_cannot_expose_commands_inside_arguments(self):
         prefixes = (r"\#", r"\(", '"prefix" ', '"" ', '"line\nprefix" ', "[[prefix]] ",
                     "[=[prefix]=] ", "[===[line\nprefix]===] ")
@@ -309,6 +337,11 @@ class ScriptRegistrationTests(unittest.TestCase):
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
 
+    def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
+        self.assertEqual(self.unrun({
+            "CMakeLists.txt": "add_test(NAME a COMMAND python [=[\ntools/tests/test_a.py]=])\n",
+            "tools/tests/test_a.py": ""}), [])
+
     def test_unregistered_script_is_reported(self):
         self.assertEqual(self.unrun({
             "CMakeLists.txt": "add_test(NAME a COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_a.py)\n",
@@ -341,6 +374,52 @@ class ScriptRegistrationTests(unittest.TestCase):
             "tools/tests/test_d.py": "", "tools/tests/test_e.py": "", "tools/tests/test_f.py": ""}),
             ["tools/tests/test_a.py", "tools/tests/test_b.py", "tools/tests/test_c.py", "tools/tests/test_d.py",
              "tools/tests/test_f.py"])
+
+
+class CheckRegistrationCliTests(unittest.TestCase):
+    def test_cache_with_utf8_bom_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            cache = build / "CMakeCache.txt"
+            cache.write_text("\ufeffCMAKE_MAKE_PROGRAM:FILEPATH=ninja\nCMAKE_GENERATOR:INTERNAL=Ninja\n", encoding="utf-8")
+            output = "tests/dummy_tests: EXECUTABLE\n"
+            with patch.object(check_test_registration.subprocess, "run", side_effect=lambda command, **kwargs: SimpleNamespace(
+                    stdout="Build file encoding: UTF-8\n" if command[-1] == "wincodepage" else output)):
+                names = check_test_registration.built(build)
+                self.assertEqual(names, {"dummy_tests"})
+
+    def test_main_scripts_with_explicit_argv(self):
+        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = check_test_registration.main(["--scripts"])
+            self.assertEqual(code, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(check_test_registration.sys, "stdout", out), patch.object(check_test_registration.sys, "stderr", err):
+            try:
+                check_test_registration.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

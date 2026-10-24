@@ -4,6 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 
+struct UserServiceInitParam {
+ std::int32_t priority;
+};
+
+static_assert(sizeof(UserServiceInitParam) == 4);
+
 constexpr int USER_SERVICE_OK = 0;
 constexpr int USER_SERVICE_ERROR_NOT_INITIALIZED = static_cast<int>(0x80960002u);
 constexpr int USER_SERVICE_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80960003u);

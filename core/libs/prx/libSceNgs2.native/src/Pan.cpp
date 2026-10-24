@@ -55,10 +55,13 @@ static void AddBetweenSpeakers(const Ngs2PanWork& work, std::uint32_t speaker, f
 }
 
 int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
-    if (work == nullptr) APS5_INVALID_ARG_EX;
-    if (speaker_angles != nullptr && !IsUnitAngle(unit_angle)) APS5_INVALID_ARG_EX;
+    if (work == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (speaker_angles != nullptr && !IsUnitAngle(unit_angle)) return SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE;
     const auto* layout = LayoutFor(num_speakers);
-    if (layout == nullptr) APS5_INVALID_ARG_EX;
+    if (layout == nullptr) {
+        if (speaker_angles == nullptr && num_speakers == 0) APS5_INVALID_ARG_EX;
+        return SCE_NGS2_ERROR_INVALID_PAN_SPEAKER;
+    }
     *work = {};
     work->num_speakers = num_speakers;
     if (speaker_angles == nullptr) {

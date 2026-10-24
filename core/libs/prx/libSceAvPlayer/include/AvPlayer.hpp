@@ -51,6 +51,13 @@ public:
     virtual void OnError() = 0;
 };
 
+struct StartInfo {
+    std::uint64_t size;
+    std::uint64_t startTime;
+};
+
+static_assert(sizeof(StartInfo) == 16);
+
 struct SourceSettings {
     AvPlayerMemAllocator memory;
     AvPlayerFileReplacement file;
@@ -66,7 +73,7 @@ public:
     virtual bool EnableStream(std::uint32_t index) = 0;
     virtual bool DisableStream(std::uint32_t index) = 0;
     virtual bool ChangeStream(std::uint32_t from, std::uint32_t to) = 0;
-    virtual int Start() = 0;
+    virtual int Start(std::uint64_t startTime) = 0;
     virtual void Stop() = 0;
     virtual void Pause() = 0;
     virtual void Resume() = 0;
@@ -79,11 +86,14 @@ public:
     virtual bool GetAudioData(AvPlayerFrameInfo& info) = 0;
     virtual std::uint64_t CurrentTime() = 0;
     virtual bool Finished() = 0;
+    virtual void SetClockTimeForTest(double milliseconds) = 0;
 };
 
 std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::string& path, ISourceEvents& events);
 
 std::uint32_t DetectSourceType(std::string_view path);
+
+void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
 
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
@@ -100,7 +110,7 @@ public:
     int EnableStream(std::uint32_t index);
     int DisableStream(std::uint32_t index);
     int ChangeStream(std::uint32_t from, std::uint32_t to);
-    int Start();
+    int Start(std::uint64_t startTime = 0);
     int Stop();
     int Pause();
     int Resume();
@@ -113,6 +123,7 @@ public:
     bool GetAudioData(AvPlayerFrameInfo& info);
     bool IsActive();
     std::uint64_t CurrentTime();
+    void SetClockTimeForTest(double milliseconds);
 
 private:
     enum class State { Initial, Ready, Play, Pause, Stop, EndOfFile, Error };
@@ -132,7 +143,7 @@ private:
     void autoStart();
     void checkEndOfFile();
     bool readyLocked() const;
-    int startLocked();
+    int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
 
     AvPlayerFileReplacement file{};

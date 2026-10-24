@@ -113,7 +113,7 @@ void movesTheNamedImportFirst() {
 void movesTheImportInAFile(const std::filesystem::path& directory) {
     const auto path = directory / "moved.dll";
     writeFile(path, image({"kernel32.dll", "mimalloc-redirect.dll"}));
-    Allocator::MoveImportFirstInFile(path.string(), "mimalloc-redirect.dll");
+    Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     const auto moved = readFile(path);
     require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll", "the file's import did not move first");
 }
@@ -122,7 +122,7 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
     const auto path = directory / (what + ".dll");
     writeFile(path, bytes);
     try {
-        Allocator::MoveImportFirstInFile(path.string(), "mimalloc-redirect.dll");
+        Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     } catch (const std::exception& error) {
         require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
         require(readFile(path) == bytes, what + ": the file changed although the move failed");
@@ -134,7 +134,8 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
 }
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() / ("aps5-pe-import-first-" + std::to_string(std::random_device{}()));
+    auto directory = std::filesystem::temp_directory_path() / std::filesystem::path(u8"aps5-pe-import-first-a\u00e7\u00e3o-\u65e5\u672c-");
+    directory += std::to_string(std::random_device{}());
     try {
         std::filesystem::create_directories(directory);
         movesTheNamedImportFirst();

@@ -20,6 +20,10 @@ inline int ToErrno(int sceResult) {
     return sceResult == 0 ? 0 : static_cast<int>(static_cast<std::uint32_t>(sceResult) & 0xFFFFu);
 }
 
+inline int ToSce(int error) {
+    return error == 0 ? 0 : static_cast<int>(0x80020000u | static_cast<std::uint32_t>(error));
+}
+
 // Converts an absolute deadline on the guest clock into a relative wait, clamped to what the sce layer accepts.
 inline bool RelativeMicroseconds(int clockId, const KernelTimespec* abstime, KernelUseconds* usec) {
     if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <initializer_list>
 
 extern "C" {
 int APS5_VABI sceFontCreateWritingLine(const FontMemory*, std::int32_t, const void*, void**);
@@ -32,11 +33,27 @@ static bool Throws(F f) {
     return false;
 }
 
-struct WritingLineDetail {
-    std::uint16_t detailId;
-    std::uint16_t reserved[3];
-    void* reservedPointers[3];
+struct AllocationState {
+    std::size_t live = 0;
+    std::uint32_t lastSize = 0;
+    bool fail = false;
 };
+
+static void* APS5_VABI Allocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<AllocationState*>(object);
+    state.lastSize = size;
+    if (state.fail) return nullptr;
+    void* allocation = std::malloc(size);
+    if (allocation) ++state.live;
+    return allocation;
+}
+
+static void APS5_VABI Deallocate(void* object, void* allocation) {
+    auto& state = *static_cast<AllocationState*>(object);
+    Require(allocation && state.live > 0);
+    --state.live;
+    std::free(allocation);
+}
 
 constexpr std::uint64_t SPACE_BEFORE = std::uint64_t{1} << 30;
 constexpr std::uint64_t SPACE_AFTER = std::uint64_t{1} << 31;
@@ -80,15 +97,27 @@ static bool OrderIs(void* line, const std::uint64_t* levels, const std::size_t* 
 }
 
 int main() {
+    AllocationState allocations;
+    FontMemoryInterface memoryInterface{};
+    memoryInterface.alloc = Allocate;
+    memoryInterface.dealloc = Deallocate;
     FontMemory memory{};
     void* line = nullptr;
-    Require(Throws([&] { sceFontCreateWritingLine(&memory, 0x10, nullptr, nullptr); }));
-    Require(Throws([&] { sceFontCreateWritingLine(&memory, 0x13, nullptr, &line); }) && line == nullptr);
-    Require(Throws([&] { sceFontCreateWritingLine(&memory, 0, nullptr, &line); }) && line == nullptr);
-    WritingLineDetail detail{0x0FD4, {}, {}};
-    Require(Throws([&] { sceFontCreateWritingLine(&memory, 0x10, &detail, &line); }) && line == nullptr);
-    detail.detailId = 0x0FD5;
-    Require(sceFontCreateWritingLine(&memory, 0x10, &detail, &line) == SCE_FONT_OK && line != nullptr);
+    Require(sceFontCreateWritingLine(nullptr, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_MEMORY);
+    memory.mem_kind = 0xF00;
+    memory.mspace_handle = &allocations;
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_MEMORY);
+    memory.iface = &memoryInterface;
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (int form : {0, 0x10, 0x13}) Require(sceFontCreateWritingLine(&memory, form, nullptr, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
+    std::uint16_t detail = 0x0FD5;
+    Require(sceFontCreateWritingLine(&memory, 0x12, &detail, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
+    allocations.fail = true;
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_ALLOCATION_FAILED && !line);
+    allocations.fail = false;
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_OK && line);
+    Require(allocations.lastSize == 2208 && allocations.live == 1);
     void* ltr = nullptr;
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &ltr) == SCE_FONT_OK && ltr != nullptr && ltr != line);
     void* rtl = nullptr;
@@ -108,14 +137,19 @@ int main() {
     const FontWritingMetrics runC{8.0f, 0.0f, {-4.0f, 1.0f, 2.0f, 5.0f}};
     const FontWritingMetrics runD{4.0f, 0.0f, {-4.0f, 1.0f, 0.0f, 20.0f}};
 
-    Require(Throws([&] { sceFontWritingLineWritesOrder(nullptr, Attribute(0), &runA, &a); }));
-    Require(Throws([&] { sceFontWritingLineWritesOrder(line, 1, &runA, &a); }));
-    Require(Throws([&] { sceFontWritingLineWritesOrder(line, 0x1FB, &runA, &a); }));
-    Require(Throws([&] { sceFontWritingLineWritesOrder(line, Attribute(0), &runA, nullptr); }));
-    Require(Throws([&] { sceFontWritingLineWritesOrder(line, Attribute(0x7F), &runA, &a); }));
+    Require(sceFontWritingLineWritesOrder(nullptr, Attribute(0), &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineWritesOrder(line, 1, &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineWritesOrder(line, 0x1FB, &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runA, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0x7F), &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontWritingLineRefersRenderStep(line) == nullptr);
 
-    Require(sceFontWritingLineWritesOrder(line, 0, &runA, &a) == SCE_FONT_OK);
+    Require(sceFontWritingLineWritesOrder(line, 0, &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    allocations.fail = true;
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runA, &a) == SCE_FONT_ERROR_ALLOCATION_FAILED);
+    allocations.fail = false;
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runA, &a) == SCE_FONT_OK);
+    Require(allocations.lastSize == 64);
     Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runB, &b) == SCE_FONT_OK);
     Require(SpaceIs(line, 16.0f, 1.0f, 0.0f, 1.0f));
     Require(sceFontWritingLineGetRenderMetrics(line, &metrics) == SCE_FONT_OK && Same(metrics, {}));
@@ -221,26 +255,37 @@ int main() {
     float space = 7.0f;
     Require(sceFontWritingLineGetOrderingSpace(rtl, nullptr, nullptr, &space, nullptr) == SCE_FONT_OK && space == 15.0f);
     Require(Throws([&] { sceFontWritingLineGetOrderingSpace(rtl, &space, &space, &space, nullptr); }));
-    Require(Throws([&] { sceFontWritingLineGetOrderingSpace(nullptr, &space, nullptr, nullptr, nullptr); }));
-    Require(Throws([&] { sceFontWritingLineGetRenderMetrics(nullptr, &metrics); }));
-    Require(Throws([&] { sceFontWritingLineGetRenderMetrics(rtl, nullptr); }));
-    Require(Throws([&] { sceFontWritingLineClear(nullptr); }));
+    Require(sceFontWritingLineGetOrderingSpace(nullptr, &space, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && space == 0.0f);
+    Require(sceFontWritingLineGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && Same(metrics, {}));
+    Require(sceFontWritingLineGetRenderMetrics(rtl, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineClear(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
 
     int notALine = 0;
     Require(sceFontWritingLineRefersRenderStep(nullptr) == nullptr);
-    Require(Throws([&] { sceFontWritingLineClear(&notALine); }));
-    Require(Throws([&] { sceFontWritingLineRefersRenderStep(&notALine); }));
-    Require(Throws([&] { sceFontWritingLineGetOrderingSpace(&notALine, &space, &space, &space, &space); }));
+    Require(sceFontWritingLineClear(&notALine) == SCE_FONT_ERROR_INVALID_WRITING);
+    Require(sceFontWritingLineRefersRenderStep(&notALine) == nullptr);
+    space = 7.0f;
+    Require(sceFontWritingLineGetOrderingSpace(&notALine, &space, &space, &space, &space) == SCE_FONT_ERROR_INVALID_WRITING && space == 0.0f);
+    metrics = runA;
+    Require(sceFontWritingLineGetRenderMetrics(&notALine, &metrics) == SCE_FONT_ERROR_INVALID_WRITING && Same(metrics, {}));
+    Require(sceFontWritingLineWritesOrder(&notALine, 0, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineWritesOrder(&notALine, Attribute(0), nullptr, &a) == SCE_FONT_ERROR_INVALID_WRITING);
     void* bogus = &notALine;
-    Require(Throws([&] { sceFontDestroyWritingLine(&bogus); }) && bogus == &notALine);
+    Require(sceFontDestroyWritingLine(&bogus) == SCE_FONT_ERROR_INVALID_WRITING && bogus == &notALine);
 
+    memory.mem_kind = 0;
+    Require(sceFontWritingLineClear(line) == SCE_FONT_ERROR_INVALID_WRITING);
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontDestroyWritingLine(&line) == SCE_FONT_ERROR_INVALID_WRITING && line);
+    memory.mem_kind = 0xF00;
     void* destroyed = line;
     Require(sceFontDestroyWritingLine(&line) == SCE_FONT_OK && line == nullptr);
-    Require(sceFontDestroyWritingLine(&line) == SCE_FONT_OK && line == nullptr);
-    Require(sceFontDestroyWritingLine(nullptr) == SCE_FONT_OK);
-    Require(Throws([&] { sceFontWritingLineClear(destroyed); }));
-    Require(Throws([&] { sceFontWritingLineWritesOrder(destroyed, Attribute(0), &runA, &a); }));
+    Require(sceFontDestroyWritingLine(&line) == SCE_FONT_ERROR_INVALID_PARAMETER && line == nullptr);
+    Require(sceFontDestroyWritingLine(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingLineClear(destroyed) == SCE_FONT_ERROR_INVALID_WRITING);
+    Require(sceFontWritingLineWritesOrder(destroyed, Attribute(0), &runA, &a) == SCE_FONT_ERROR_INVALID_WRITING);
     Require(sceFontDestroyWritingLine(&ltr) == SCE_FONT_OK && ltr == nullptr);
     Require(sceFontDestroyWritingLine(&rtl) == SCE_FONT_OK && rtl == nullptr);
+    Require(allocations.live == 0);
     std::puts("font writing line: ok");
 }

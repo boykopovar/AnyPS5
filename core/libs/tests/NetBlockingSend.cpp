@@ -107,13 +107,16 @@ int main(int argc, char** argv) {
     }
     {
         Connection connection;
+#ifndef _WIN32
+        SetOption(connection.receiver, NET_SO_RCVBUF, 4096);
+#endif
         SetOption(connection.sender, 0x1105, 100000);
         auto started = std::chrono::steady_clock::now();
         const auto partial = Send(api, connection.sender, bytes);
         Require(partial > 0 && partial < static_cast<std::int64_t>(bytes.size()), "timeout must return queued bytes");
         Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(80), "partial send returned before its timeout");
         bool emptyTimeout = false;
-        for (int attempt = 0; attempt < 16; ++attempt) {
+        for (int attempt = 0; attempt < 64; ++attempt) {
             const auto result = Send(api, connection.sender, bytes);
             if (result < 0) {
                 Require(*sceNetErrnoLoc() == NET_EAGAIN, "timeout without progress must return EAGAIN");

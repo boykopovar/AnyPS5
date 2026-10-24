@@ -5,6 +5,7 @@
 - Follow the [coding conventions](docs/dev/CONVENTIONS.md): naming, no comments except [technical debt](docs/dev/TechnicalDebt.md), Conventional Commits.
 - Every function either does exactly what it is supposed to or throws. Unimplemented exports call `NotImplemented_nid_no_patch(__func__)` (see [libSceAudioIn](core/libs/prx/libSceAudioIn/Export.cpp)).
 - Pull requests that add or change shader instruction semantics say where they come from: measured on hardware (which GPU and what was checked, e.g. with the [hardware oracle](docs/dev/HW_ORACLE.md)) or the exact source (ISA section, LLVM, ACO or Mesa file). Reviewers check the semantics on hardware. Cases the source doesn't settle throw, and behaviour not verified on hardware is recorded in [technical debt](docs/dev/TechnicalDebt.md).
+- An export's signature or behaviour taken from a title's call sites or from a library's disassembly follows [reading titles and libraries](docs/dev/REVERSE_ENGINEERING.md): a call site settles the arguments, not what the library does.
 - A silent stub is allowed only when it unblocks a title and only affects the UI; add it under Silent stubs in its library's [technical debt](docs/dev/debt/) file.
 - Missing imports fail at startup with a clear error; don't replace them with fallbacks that keep running.
 - Implement the general behaviour of a function, not what one title happens to need.
@@ -41,7 +42,7 @@ This manual run also builds and tests the relinker on Linux, Windows and macOS w
 
 With `--field full=false`, the manual run skips the full builds and runs only the relinker matrix on Linux, Windows and macOS, if the pull request changes a file the relinker-only build uses, such as the Python tools and their tests in `tools/`.
 
-The Conventions check runs automatically for every contributor, including first-time contributors. It uses the base branch checker and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
+The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
 
 ```
 python3 tools/check_conventions.py --base origin/main

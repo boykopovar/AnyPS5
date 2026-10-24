@@ -16,15 +16,15 @@ int APS5_VABI sceVoiceQoSDisconnect(std::int32_t);
 int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(std::int32_t, std::int32_t, const void*, std::int32_t);
 int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute(std::int32_t, std::int32_t, const void*, std::int32_t);
 int APS5_VABI sceVoiceQoSGetLocalEndpointAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(std::int32_t, std::int32_t, const void*, std::int32_t);
+int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
 int APS5_VABI sceVoiceQoSGetConnectionAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
 int APS5_VABI sceVoiceQoSGetLocalEndpoint(std::int32_t, std::int32_t*);
 int APS5_VABI sceVoiceQoSGetRemoteEndpoint(std::int32_t, std::int32_t*);
 int APS5_VABI sceVoiceQoSEnableChat();
 int APS5_VABI sceVoiceQoSDisableChat();
 int APS5_VABI sceVoiceQoSGetStatus(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSDebugGetStatus();
-int APS5_VABI sceVoiceQoSInitHQ();
+int APS5_VABI sceVoiceQoSDebugGetStatus(std::int32_t, std::int32_t, void*, std::int32_t);
+int APS5_VABI sceVoiceQoSInitHQ(void*, std::uint32_t, std::int32_t);
 int APS5_VABI sceVoiceQoSSetMode();
 int APS5_VABI sceVoiceQoSTerminate();
 int APS5_VABI sceVoiceQoSReadPacket(std::int32_t, void*, std::uint32_t*);
@@ -70,10 +70,10 @@ int main(int argc, char** argv) {
     std::int32_t remote = -1;
     std::int32_t connection = -1;
     Require(sceVoiceQoSCreateLocalEndpoint(nullptr, 1, 0, 0) == argumentInvalid);
-    Require(sceVoiceQoSCreateLocalEndpoint(&local, 1, 0, 0) == 0 && local > 0);
-    Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote > 0 && remote != local);
-    Require(sceVoiceQoSConnect(&connection, remote, local) == argumentInvalid);
-    Require(sceVoiceQoSConnect(&connection, local, remote) == 0 && connection > 0);
+    Require(sceVoiceQoSCreateLocalEndpoint(&local, 1, 0, 0) == 0 && local == 0);
+    Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 0);
+    Require(sceVoiceQoSConnect(&connection, 1, remote) == argumentInvalid);
+    Require(sceVoiceQoSConnect(&connection, local, remote) == 0 && connection == 0);
     std::int32_t queriedLocal = -1;
     std::int32_t queriedRemote = -1;
     Require(sceVoiceQoSGetLocalEndpoint(connection, nullptr) == argumentInvalid);
@@ -86,32 +86,22 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSConnect(&duplicate, local, remote) == 0 && duplicate > 0 && duplicate != connection);
     Require(sceVoiceQoSDisconnect(duplicate) == 0);
 
-    std::int32_t otherLocal = -1;
-    std::int32_t otherConnection = -1;
-    Require(sceVoiceQoSCreateLocalEndpoint(&otherLocal, 1, 0, 0) == 0);
-    Require(sceVoiceQoSConnect(&otherConnection, otherLocal, remote) == 0);
-    Require(sceVoiceQoSDeleteLocalEndpoint(otherLocal) == 0);
-    Require(sceVoiceQoSDeleteLocalEndpoint(otherLocal) == argumentInvalid);
-    Require(sceVoiceQoSDisconnect(otherConnection) == 0);
+    constexpr int limitReached = static_cast<int>(0x804E0907);
+    std::int32_t otherLocal = 12;
+    Require(sceVoiceQoSCreateLocalEndpoint(&otherLocal, 1, 0, 0) == limitReached && otherLocal == -1);
+    Require(sceVoiceQoSCreateLocalEndpoint(&otherLocal, 2, 0, 0) == limitReached && otherLocal == -1);
 
     const std::uint32_t level = 0x1234;
-    std::uint32_t readLevel = 0;
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &readLevel, sizeof(readLevel)) == 0 && readLevel == 0);
-    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, sizeof(level)) == 0);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &readLevel, sizeof(readLevel)) == 0 && readLevel == level);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, nullptr, sizeof(readLevel)) == argumentInvalid);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &readLevel, 0) == argumentInvalid);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &readLevel, -1) == argumentInvalid);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local + 100, 3, &readLevel, sizeof(readLevel)) == argumentInvalid);
+    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, sizeof(level)) == argumentInvalid);
     Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, nullptr, sizeof(level)) == argumentInvalid);
-    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, 0) == 0);
-    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, -1) == 0);
+    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, 0) == argumentInvalid);
+    Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &level, -1) == argumentInvalid);
     Require(sceVoiceQoSSetLocalEndpointAttribute(local + 100, 3, &level, sizeof(level)) == argumentInvalid);
 
-    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, sizeof(level)) == 0);
+    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, sizeof(level)) == argumentInvalid);
     Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, nullptr, sizeof(level)) == argumentInvalid);
-    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, 0) == 0);
-    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, -1) == 0);
+    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, 0) == argumentInvalid);
+    Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, -1) == argumentInvalid);
     Require(sceVoiceQoSSetRemoteEndpointAttribute(remote + 100, 3, &level, sizeof(level)) == argumentInvalid);
 
     std::vector<std::uint8_t> packet(1024, 0);
@@ -127,15 +117,21 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSWritePacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
 
+    Require(NotImplemented([&] { sceVoiceQoSSetLocalEndpointAttribute(local, 0, &level, 4); }));
+    Require(NotImplemented([&] { sceVoiceQoSSetRemoteEndpointAttribute(remote, 7, &level, 1); }));
     Require(sceVoiceQoSDisconnect(connection) == 0);
-    Require(sceVoiceQoSDisconnect(connection) == argumentInvalid);
-    Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == argumentInvalid);
-    Require(sceVoiceQoSGetRemoteEndpoint(connection, &queriedRemote) == argumentInvalid);
+    Require(sceVoiceQoSDisconnect(connection) == 0);
+    Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == 0 && queriedLocal == -1);
+    Require(sceVoiceQoSGetRemoteEndpoint(connection, &queriedRemote) == 0 && queriedRemote == -1);
     Require(sceVoiceQoSDeleteLocalEndpoint(local) == 0);
     Require(sceVoiceQoSDeleteLocalEndpoint(local) == argumentInvalid);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == 0);
 
-    Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0);
+    const int endpointLimit = appType == 0x10000000 ? 15 : 7;
+    for (int index = 0; index < endpointLimit; ++index) Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == index);
+    Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == limitReached && remote == -1);
+    Require(sceVoiceQoSDeleteRemoteEndpoint(2) == 0);
+    Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 2);
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);
     Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == notInitialized);
@@ -143,7 +139,6 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == notInitialized);
     Require(sceVoiceQoSCreateLocalEndpoint(&local, 1, 0, 0) == notInitialized);
     Require(sceVoiceQoSSetRemoteEndpointAttribute(remote, 3, &level, sizeof(level)) == notInitialized);
-    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &readLevel, sizeof(readLevel)) == notInitialized);
     Require(sceVoiceQoSReadPacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSInit(memory.data(), 0x40000, appType) == 0);
@@ -152,13 +147,14 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSEnd() == notInitialized);
     Require(sceVoiceQoSInit(nullptr, 0x40000, appType) == argumentInvalid);
 
+    Require(NotImplemented([] { sceVoiceQoSGetLocalEndpointAttribute(0, 0, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSGetRemoteEndpointAttribute(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSGetConnectionAttribute(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSEnableChat(); }));
     Require(NotImplemented([] { sceVoiceQoSDisableChat(); }));
     Require(NotImplemented([] { sceVoiceQoSGetStatus(1, 1, nullptr, 0); }));
-    Require(NotImplemented([] { sceVoiceQoSDebugGetStatus(); }));
-    Require(NotImplemented([] { sceVoiceQoSInitHQ(); }));
+    Require(NotImplemented([] { sceVoiceQoSDebugGetStatus(0, 200, nullptr, 4); }));
+    Require(NotImplemented([] { sceVoiceQoSInitHQ(nullptr, 0xc0000, 0x80000); }));
     Require(NotImplemented([] { sceVoiceQoSSetMode(); }));
     Require(NotImplemented([] { sceVoiceQoSTerminate(); }));
 }

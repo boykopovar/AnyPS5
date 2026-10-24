@@ -69,6 +69,10 @@ void APS5_VABI Record(void* arg, const ImeEvent* event) {
     if (g_closeOnPressClose && event->id == EventPressClose) g_reentrantClose = sceImeClose_nid_postfix();
 }
 
+std::int32_t APS5_VABI TextFilter(char16_t*, std::uint32_t*, const char16_t*, std::uint32_t) {
+    std::abort();
+}
+
 void APS5_VABI Other(void*, const ImeEvent*) {
     std::abort();
 }

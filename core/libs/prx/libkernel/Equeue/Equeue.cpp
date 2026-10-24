@@ -16,6 +16,13 @@ static std::unordered_map<KernelEqueue, KernelEqueueRef> g_equeues;
 static std::mutex g_equeueMutex;
 static uint64_t g_nextEqueue = 1;
 
+struct KernelEqueuePrivate::WaitSet {
+    std::vector<GuestSockets::Interest> interests;
+    std::vector<std::shared_ptr<void>> held;
+    std::vector<std::shared_ptr<KernelEqueuePrivate>> queues;
+    uint64_t nearestTimerNs = std::numeric_limits<uint64_t>::max();
+};
+
 extern "C" {
 
 KernelEqueuePrivate::KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait) : m_handle(handle), m_reportOncePerWait(reportOncePerWait) {}
@@ -97,24 +104,77 @@ void KernelEqueuePrivate::WakePollers() {
     }
 }
 
-void KernelEqueuePrivate::WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos) {
-    std::vector<GuestSockets::Interest> interests;
-    std::vector<std::shared_ptr<void>> held;
+void KernelEqueuePrivate::GatherInterests(WaitSet& wait, std::uintptr_t waker, bool nested) {
     for (const auto& e : m_events) {
-        if (!e.enabled || e.filter.pollFunc == nullptr) {
+        if (!e.enabled) {
             continue;
         }
-        if (e.filter.waitDescriptor >= 0) {
-            interests.push_back({e.filter.waitDescriptor, false});
-            held.push_back(e.filter.owner);
+        if (nested && !e.triggered && e.deadlineNs != 0) {
+            wait.nearestTimerNs = std::min(wait.nearestTimerNs, e.deadlineNs);
+        }
+        if (e.filter.pollFunc == nullptr) {
+            continue;
+        }
+        if (e.filter.watched) {
+            GatherWatched(wait, e.filter.watched, waker);
+        } else if (e.filter.waitDescriptor >= 0) {
+            wait.interests.push_back({e.filter.waitDescriptor, false});
+            wait.held.push_back(e.filter.owner);
         } else {
-            interests.push_back({static_cast<int>(e.event.ident), e.event.filter == EVFILT_WRITE});
+            wait.interests.push_back({static_cast<int>(e.event.ident), e.event.filter == EVFILT_WRITE});
         }
     }
+}
+
+void KernelEqueuePrivate::GatherWatched(WaitSet& wait, const std::shared_ptr<KernelEqueuePrivate>& queue, std::uintptr_t waker) {
+    std::lock_guard lock(queue->m_mutex);
+    if (queue->m_closed) {
+        return;
+    }
+    queue->m_pollers.push_back(waker);
+    wait.queues.push_back(queue);
+    queue->GatherInterests(wait, waker, true);
+}
+
+void KernelEqueuePrivate::ReleaseWatched(WaitSet& wait, std::uintptr_t waker) {
+    for (const auto& queue : wait.queues) {
+        std::lock_guard lock(queue->m_mutex);
+        const auto found = std::find(queue->m_pollers.begin(), queue->m_pollers.end(), waker);
+        if (found != queue->m_pollers.end()) {
+            queue->m_pollers.erase(found);
+        }
+    }
+    wait.queues.clear();
+}
+
+void KernelEqueuePrivate::WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos) {
     const auto waker = GuestSockets::CurrentWaker();
+    WaitSet wait;
+    GatherInterests(wait, waker, false);
     m_pollers.push_back(waker);
+    if (!wait.queues.empty()) {
+        PollEvents();
+        if (std::any_of(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; })) {
+            m_pollers.erase(std::find(m_pollers.begin(), m_pollers.end(), waker));
+            ReleaseWatched(wait, waker);
+            return;
+        }
+        if (wait.nearestTimerNs != std::numeric_limits<uint64_t>::max()) {
+            const uint64_t nowMonotonic = MonotonicNs();
+            const uint64_t remainingNs = wait.nearestTimerNs > nowMonotonic ? wait.nearestTimerNs - nowMonotonic : 0;
+            const uint64_t timerDeadline = TimedWait::NowNanos() + std::clamp<uint64_t>(remainingNs, 1000, static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) * 1000ULL);
+            deadlineNanos = deadlineNanos == 0 ? timerDeadline : std::min(deadlineNanos, timerDeadline);
+        }
+    }
     lock.unlock();
-    const bool waited = GuestSockets::WaitAny(interests, deadlineNanos);
+    bool waited = false;
+    try {
+        waited = GuestSockets::WaitAny(wait.interests, deadlineNanos);
+    } catch (...) {
+        ReleaseWatched(wait, waker);
+        throw;
+    }
+    ReleaseWatched(wait, waker);
     lock.lock();
     m_pollers.erase(std::find(m_pollers.begin(), m_pollers.end(), waker));
     if (!waited) {
@@ -127,9 +187,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         return CollectOncePerWait(ev, num);
     }
     int ret = 0;
+    std::list<KernelEqueueEvent> requeued;
     for (auto it = m_events.begin(); it != m_events.end() && ret < num;) {
         auto& e = *it;
-        if (!e.enabled) {
+        if (!e.triggered || !e.enabled) {
             ++it;
             continue;
         }
@@ -161,8 +222,15 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
             e.pendingEvents.pop_front();
             e.triggered = true;
         }
-        it = erase ? m_events.erase(it) : std::next(it);
+        const auto next = std::next(it);
+        if (erase) {
+            m_events.erase(it);
+        } else {
+            requeued.splice(requeued.end(), m_events, it);
+        }
+        it = next;
     }
+    m_events.splice(m_events.end(), requeued);
     return ret;
 }
 
@@ -217,13 +285,28 @@ int KernelEqueuePrivate::GetTriggeredEvents(KernelEvent* ev, int num) {
 }
 
 bool KernelEqueuePrivate::HasTriggeredEvents() {
+    return CountTriggeredEvents() != 0;
+}
+
+std::size_t KernelEqueuePrivate::CountTriggeredEvents() {
     std::unique_lock lock(m_mutex);
     if (m_closed) {
-        return false;
+        return 0;
     }
     TriggerExpiredTimers(MonotonicNs());
     PollEvents();
-    return std::any_of(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; });
+    return static_cast<std::size_t>(std::count_if(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; }));
+}
+
+std::vector<std::shared_ptr<KernelEqueuePrivate>> KernelEqueuePrivate::WatchedQueues() {
+    std::unique_lock lock(m_mutex);
+    std::vector<std::shared_ptr<KernelEqueuePrivate>> queues;
+    for (const auto& event : m_events) {
+        if (event.filter.watched) {
+            queues.push_back(event.filter.watched);
+        }
+    }
+    return queues;
 }
 
 int KernelEqueuePrivate::WaitForEvents(KernelEvent* ev, int num, uint32_t micros) {
@@ -338,6 +421,9 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
     std::unique_lock lock(m_mutex);
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
+    }
+    if (filter == EVFILT_TIMER) {
+        TriggerExpiredTimers(MonotonicNs());
     }
     auto it = std::find_if(m_events.begin(), m_events.end(),
         [ident, filter](const auto& e) {

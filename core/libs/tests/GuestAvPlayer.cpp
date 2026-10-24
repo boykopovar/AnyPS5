@@ -21,7 +21,9 @@
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 
 extern "C" {
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData*);
@@ -36,7 +38,9 @@ int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal*, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal*, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerStart(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const void*);
+int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const AvPlayer::StartInfo*);
+int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal*, std::uint32_t, const void*);
+int APS5_VABI sceAvPlayerDisableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerPause(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerResume(AvPlayerInternal*);
@@ -1071,12 +1075,25 @@ void TestExtendedExports() {
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
     Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
-    Check(sceAvPlayerStartEx(player, nullptr) == 0, "extended start failed");
+    Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    AvPlayer::StartInfo startInfo{0, 700};
+    Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
+    startInfo.size = sizeof(startInfo);
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended start failed");
     Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
     AvPlayerFrameInfoEx frame{};
     Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
     CheckVideoFrame(frame);
+    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "extended start ignored the requested position");
+    Check(!events.Seen(EventWarning, JumpComplete), "extended start reported a jump");
+    Check(sceAvPlayerStop(player) == 0, "extended stop failed");
+    startInfo.startTime = 0;
+    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended restart failed");
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
+    Check(frame.timestamp <= 67, "zero-position start did not restart playback");
     Check(sceAvPlayerClose(player) == 0, "close failed");
+    Check(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
+    Check(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
 }
 
 void TestWithoutAllocators() {
@@ -1581,6 +1598,29 @@ void TestCloseFromEventCallback(std::int32_t event) {
     Check(allocations.blocks.empty(), "callback close leaked media allocations");
 }
 
+void TestVideoSyncTolerance() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync tolerance init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync tolerance source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync tolerance ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync tolerance video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync tolerance start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "sync tolerance play missing");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync tolerance first frame missing");
+    Check(FrameIndex(frame.timestamp) == 0, "first frame not index 0");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 5.0);
+    Check(!WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 200), "frame beyond sync tolerance delivered prematurely");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 10.0);
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "frame within sync tolerance was not delivered");
+    Check(FrameIndex(frame.timestamp) == 1, "unexpected second frame index");
+    Check(sceAvPlayerClose(player) == 0, "sync tolerance close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1619,6 +1659,7 @@ int main(int argc, char** argv) {
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
+        TestVideoSyncTolerance();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

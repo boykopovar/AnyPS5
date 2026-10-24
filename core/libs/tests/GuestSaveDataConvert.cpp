@@ -15,6 +15,7 @@ int APS5_VABI sceSaveDataConvert(const SaveDataConvert*);
 int APS5_VABI sceSaveDataGetConvertProgress(float*);
 int APS5_VABI sceSaveDataInitialize3(const void*);
 int APS5_VABI sceSaveDataTerminate();
+int APS5_VABI sceSaveDataGetEventResult(const void*, SaveDataEvent*);
 }
 
 namespace {
@@ -67,6 +68,11 @@ int main() {
     Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");
     Check(progress == 0.0f, "convert progress reports 0.0f after failed convert");
     Check(Convert("kept", sizeof("kept")) == 0, "an existing save converts");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "successful conversion queues completion");
+    Check(event.type == 5 && event.error_code == 0, "conversion event reports successful conversion");
+    Check(event.user_id == 0x10000000 && std::strcmp(event.dir_name.data, "kept") == 0, "conversion event identifies the user and save");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "conversion event is delivered once");
     Check(Read(kept) == std::vector<char>{'d', 'a', 't', 'a'}, "the converted save keeps its files");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after successful convert");
     Check(progress == 1.0f, "convert progress reports 1.0f after successful convert");

@@ -291,8 +291,9 @@ static int SleepForRequest(const KernelTimespec* rqtp) {
     constexpr int guestInvalid = 22;
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
+    constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
-        CancellableSleep(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
+        CancellableSleep(static_cast<std::uint64_t>(std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) * 1000000000ULL +
                          static_cast<std::uint64_t>(rqtp->tv_nsec));
     }
     return 0;

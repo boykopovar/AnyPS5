@@ -85,6 +85,8 @@ int main() {
     const int check = open_nid_postfix(FileName, ReadOnly, 0);
     Require(check >= 0 && lseek_nid_postfix(check, 0, 2) == Length, "truncate by path left the wrong size");
     Require(close_nid_postfix(check) == 0, "close failed");
+    Require(truncate_nid_postfix(FileName, -1) == -1 && *__error_nid_postfix() == 22, "truncate by path with negative length must fail with EINVAL (22)");
+    Require(truncate_nid_postfix(FileName, -100) == -1 && *__error_nid_postfix() == 22, "truncate by path with negative length must fail with EINVAL (22)");
     Cleanup();
     return 0;
 }

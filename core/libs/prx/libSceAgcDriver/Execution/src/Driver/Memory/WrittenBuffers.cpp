@@ -181,10 +181,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
     }
     if (stages.empty() || stages.front().program == nullptr) return ranges;
     for (const auto& attribute : stages.front().program->vertexAttributes) {
-        if (Graphics::NullVertexDescriptor(attribute) || Graphics::VertexFetchOutOfRange(attribute)) continue;
+        if (Graphics::NullVertexDescriptor(attribute)) continue;
         const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
         std::uint64_t bytes = 0;
         try {
+            if (Graphics::VertexFetchOutOfRange(attribute)) continue;
             bytes = Graphics::VertexBufferExtent(attribute);
         } catch (const std::runtime_error&) {
             continue;

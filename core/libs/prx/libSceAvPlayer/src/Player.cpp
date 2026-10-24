@@ -265,15 +265,15 @@ int Player::ChangeStream(std::uint32_t from, std::uint32_t to) {
     return SCE_OK;
 }
 
-int Player::Start() {
+int Player::Start(std::uint64_t startTime) {
     std::lock_guard lock(mutex);
-    return startLocked();
+    return startLocked(startTime);
 }
 
-int Player::startLocked() {
+int Player::startLocked(std::uint64_t startTime) {
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    const int result = source->Start();
+    const int result = source->Start(startTime);
     if (result != SCE_OK) {
         previous = state;
         state = State::Error;
@@ -384,6 +384,11 @@ bool Player::IsActive() {
 std::uint64_t Player::CurrentTime() {
     std::lock_guard lock(mutex);
     return source ? source->CurrentTime() : 0;
+}
+
+void Player::SetClockTimeForTest(double milliseconds) {
+    std::lock_guard lock(mutex);
+    if (source) source->SetClockTimeForTest(milliseconds);
 }
 
 }

@@ -108,6 +108,7 @@ void TextureDetiler::release() noexcept {
     for (const auto pool : readbackDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
     for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
+    if (multisampleUploadModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, multisampleUploadModule, nullptr);
     if (readbackPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, readbackPipelineLayout, nullptr);
     if (readbackDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, readbackDescriptorLayout, nullptr);
     for (const auto pool : cmaskDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
