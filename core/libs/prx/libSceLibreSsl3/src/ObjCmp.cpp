@@ -20,8 +20,9 @@ extern "C" int APS5_VABI OBJ_cmp_nid_postfix(const void* first, const void* seco
     if (!first || !second) throw std::invalid_argument(std::string(__func__) + ": null object");
     const auto* left = static_cast<const Object*>(first);
     const auto* right = static_cast<const Object*>(second);
+    if (left->length < 0 || right->length < 0) throw std::invalid_argument(std::string(__func__) + ": negative encoded length");
     if (const int difference = left->length - right->length) return difference;
-    if (left->length < 0 || (left->length > 0 && (!left->data || !right->data))) throw std::invalid_argument(std::string(__func__) + ": invalid encoded data");
+    if (left->length > 0 && (!left->data || !right->data)) throw std::invalid_argument(std::string(__func__) + ": invalid encoded data");
     for (int index = 0; index < left->length; ++index) {
         if (left->data[index] != right->data[index]) return static_cast<int>(left->data[index]) - static_cast<int>(right->data[index]);
     }

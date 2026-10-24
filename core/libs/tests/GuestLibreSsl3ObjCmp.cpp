@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 
 extern "C" int APS5_VABI OBJ_cmp_nid_postfix(const void*, const void*);
@@ -60,6 +61,10 @@ int main() {
     Require(throws(nullptr, &a) && throws(&a, nullptr), "null objects are rejected");
     const Object missing{nullptr, nullptr, 0, 3, nullptr, 0};
     const Object negative{nullptr, nullptr, 0, -1, short1, 0};
-    Require(throws(&missing, &missing) && throws(&negative, &negative), "missing data and negative lengths are rejected");
+    const Object empty{nullptr, nullptr, 0, 0, nullptr, 0};
+    const Object minimum{nullptr, nullptr, 0, std::numeric_limits<int>::min(), nullptr, 0};
+    const Object one{nullptr, nullptr, 0, 1, short1, 0};
+    Require(throws(&missing, &missing) && throws(&negative, &negative) && throws(&negative, &empty), "missing data and negative lengths are rejected");
+    Require(throws(&minimum, &one), "extreme negative lengths are rejected without overflowing");
     return 0;
 }
