@@ -30,6 +30,7 @@ struct Push {
     std::uint32_t columnBegin;
     std::uint32_t rowBegin;
     std::uint32_t pipeBankXor;
+    std::uint32_t splitStride;
 };
 
 Push decodePush(const std::vector<std::byte>& bytes) {

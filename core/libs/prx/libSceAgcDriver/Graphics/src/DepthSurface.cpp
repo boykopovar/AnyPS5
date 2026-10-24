@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
@@ -1232,6 +1233,7 @@ public:
     std::shared_ptr<Texture> Refresh(std::span<const DepthPlaneSlice> slices, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer) {
         Require(slices.size() == layers, "depth plane copy slices do not match its layers");
         const auto geometry = DescribeSurface(resource);
+        Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
         const bool guestFill = std::any_of(slices.begin(), slices.end(), [](const auto& slice) { return slice.image == VK_NULL_HANDLE; });
         if (guestFill && (geometry.layers != layers || geometry.sliceLinearBytes < sliceBytes() || geometry.mips.empty())) {
             char text[320];
@@ -2401,6 +2403,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     }
     std::vector<DepthPlaneSlice> slices;
     const auto geometry = DescribeSurface(resource);
+    Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
     for (std::uint32_t layer = 0; layer < layers; ++layer) {
         const auto address = base.address + geometry.GuestLayerOffset(layer);
         auto* slice = depthSlice(context.device, address, base);
@@ -2450,8 +2453,10 @@ VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile) {
 }
 
 std::uint64_t HtileMetadataBytes(VkExtent2D extent) {
-    const auto blocks = static_cast<std::uint64_t>((extent.width + 1023u) / 1024u) * ((extent.height + 511u) / 512u);
-    return blocks * 32768u;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    const std::uint32_t blockWidth = gcn ? 512u : 1024u;
+    const auto blocks = static_cast<std::uint64_t>((extent.width + blockWidth - 1u) / blockWidth) * ((extent.height + 511u) / 512u);
+    return blocks * (gcn ? 16384u : 32768u);
 }
 
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes) {
@@ -2536,6 +2541,8 @@ std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, Dept
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto bytesPerTexel = d16 ? 2u : 4u;
     surface.RequireStorable(resource);
+    const auto geometry = DescribeSurface(resource);
+    Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
     auto& entry = layeredStorages()[{context.device, resource.baseAddress, resource.width, resource.height, layers, resource.format, static_cast<int>(resource.tileMode), static_cast<int>(resource.dimension), resource.baseArray}];
     if (entry == nullptr) entry = std::make_unique<LayeredDepthStorage>(context, resource, target, bytesPerTexel, resource.baseArray, layers);
     else static_cast<void>(entry->storage->Refresh());
