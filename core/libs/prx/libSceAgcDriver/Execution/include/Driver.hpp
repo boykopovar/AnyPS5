@@ -33,6 +33,8 @@ extern "C" void AgcDriverSuspendPoint_nid_postfix();
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed);
 extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait* waits, std::size_t capacity);
 extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix();
+extern "C" std::uint64_t AgcDriverDispatchesRejectedAhead_nid_postfix();
+extern "C" void AgcDriverSetAheadAdoptHook_nid_postfix(void (*hook)());
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader);
 extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
 extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);

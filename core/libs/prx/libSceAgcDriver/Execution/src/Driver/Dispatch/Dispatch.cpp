@@ -16,6 +16,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -55,6 +56,19 @@ void ReportDispatchItems(bool profile) {
         drained += item;
     }
     std::fprintf(stderr, "[dispatch-item] %llu commit items (%llu recipes rebuilt on the committer); drained instead, cumulative:%s\n", static_cast<unsigned long long>(itemCommits.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemRebuilds.load(std::memory_order_relaxed)), drained.c_str());
+}
+
+bool CapturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderSnapshot& code) {
+    for (const auto& region : captured) {
+        const auto address = region.guestAddress;
+        const auto bytes = region.bytes.size();
+        if (bytes == 0 || (address >= code.codeAddress && address < code.codeAddress + code.code.size() * sizeof(std::uint32_t)) || (!code.header.empty() && address >= code.headerAddress && address < code.headerAddress + code.header.size())) continue;
+        if (Driver::QueryPendingSpan(address, bytes, {}) != ShaderMemory::PendingWrite::None || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return false;
+        GuestMemory::GuardRead(address, bytes);
+        GuestMemory::FlushGpuWrites(address, bytes);
+        if (std::memcmp(region.bytes.data(), reinterpret_cast<const void*>(address), bytes) != 0) return false;
+    }
+    return true;
 }
 
 }
@@ -280,6 +294,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (fromAhead && key != ahead.key) {
         fromAhead = false;
         ++groupStats.keyMismatches;
+    }
+    if (fromAhead) {
+        if (const auto hook = aheadAdoptHook.load(std::memory_order_acquire)) hook();
+        if (!CapturedCurrent(ahead.captured, snapshot)) {
+            fromAhead = false;
+            ++dispatchesRejectedAhead;
+            ++groupStats.memoryMismatches;
+        }
     }
     phaseTiming.Phase(PhaseKey);
     timing.Mark("decode_key_device_setup");
