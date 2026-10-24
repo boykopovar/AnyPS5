@@ -298,16 +298,34 @@ void testWorkloadStreams() {
     check(sceAgcDriverRegisterWorkloadStream(1, record) == 0, "workload stream registration failed");
     Storage registered;
     registered.words.fill(0xdeadbeefu);
-    const auto untouched = registered.words;
     expectFailure([&] { sceAgcDcbSetWorkloadStreamInactive(&registered.buffer, 1); });
-    expectFailure([&] { sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 2); });
-    expectFailure([&] { sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3); });
-    expectFailure([&] { sceAgcAcbSetWorkloadStreamInactive(&registered.buffer, 1); });
-    check(registered.words == untouched && registered.buffer.cursor_up == registered.words.data(), "a workload call that threw modified the buffer");
+    const auto* acbActive = sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 2);
+    check(acbActive == registered.words.data() && acbActive[0] == Agc::Command::Header(0x10, 18, 0) && acbActive[1] == 1 && acbActive[2] == 0x18 && acbActive[3] == 0, "ACB workloads active packet");
+    for (std::uint32_t word = 4; word < 18; ++word) check(acbActive[word] == 0, "ACB workloads active packet tail is not zero");
+    const auto* acbComplete = sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 33);
+    check(acbComplete == registered.words.data() + 18 && acbComplete[0] == Agc::Command::Header(0x10, 12, 0) && acbComplete[1] == 1 && acbComplete[2] == 33 && acbComplete[3] == 0xffffffffu && acbComplete[4] == 0xfffffffdu, "ACB workload complete packet");
+    for (std::uint32_t word = 5; word < 12; ++word) check(acbComplete[word] == 0, "ACB workload complete packet tail is not zero");
+    const auto* acbInactive = sceAgcAcbSetWorkloadStreamInactive(&registered.buffer, 1);
+    check(acbInactive == registered.words.data() + 30 && acbInactive[0] == Agc::Command::Header(0x10, 9, 0) && acbInactive[1] == 1, "ACB workload stream inactive packet");
+    for (std::uint32_t word = 2; word < 9; ++word) check(acbInactive[word] == 0, "ACB workload stream inactive packet tail is not zero");
+    check(registered.buffer.cursor_up == registered.words.data() + 39, "incorrect ACB workload cursor advance");
+    const std::uint32_t duplicate[2] = {5, 5};
+    const std::uint32_t outOfRange[1] = {64};
+    const std::uint32_t top[1] = {63};
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, duplicate, 2) == nullptr, "ACB duplicate workload ids accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, outOfRange, 1) == nullptr, "ACB workload id 64 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, top, 1) != nullptr, "ACB workload id 63 rejected");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, ids, 0) == nullptr, "ACB workload count 0 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, nullptr, 2) == nullptr, "ACB null workload ids accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 0, ids, 2) == nullptr, "ACB stream id 0 accepted");
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 32, ids, 2) == nullptr, "ACB stream id 32 accepted");
+    check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 64) == nullptr, "ACB workload complete id 64 accepted");
+    check(sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr, "ACB null command buffer accepted for active");
     check(sceAgcDcbSetWorkloadStreamInactive(nullptr, 1) == nullptr && sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr &&
         sceAgcAcbSetWorkloadComplete(nullptr, 1, 3) == nullptr && sceAgcAcbSetWorkloadStreamInactive(nullptr, 1) == nullptr,
         "a workload call with a null command buffer for a registered stream returned a packet");
     check(sceAgcDriverUnregisterWorkloadStream(1) == 0, "workload stream unregistration failed");
+    check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3) == nullptr, "ACB workload complete packet after unregistration");
 }
 
 void testIndexBuffer() {
