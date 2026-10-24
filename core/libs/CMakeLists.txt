@@ -830,6 +830,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
 
+    add_subdirectory(tests/floating_prefix)
+
     add_test_executable(MemoryPoolTest
         tests/MemoryPoolTest.cpp
         prx/libkernel/DirectMemory/MemoryPool.cpp
