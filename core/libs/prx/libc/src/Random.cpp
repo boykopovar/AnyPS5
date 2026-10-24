@@ -118,7 +118,7 @@ std::uint64_t NextRand48(std::uint16_t* seed, const char* function) {
 extern "C" {
 
 double APS5_VABI erand48_nid_postfix(std::uint16_t* seed) {
-    return std::ldexp(static_cast<double>(NextRand48(seed, __func__)), -48);
+    return std::ldexp(static_cast<double>(NextRand48(seed, __func__) >> 16), -32);
 }
 
 std::int64_t APS5_VABI nrand48_nid_postfix(std::uint16_t* seed) {
@@ -131,7 +131,7 @@ std::int64_t APS5_VABI jrand48_nid_postfix(std::uint16_t* seed) {
 
 double APS5_VABI drand48_nid_postfix() {
     std::lock_guard lock(g_randomLock);
-    return std::ldexp(static_cast<double>(NextRand48(g_rand48Seed, __func__)), -48);
+    return std::ldexp(static_cast<double>(NextRand48(g_rand48Seed, __func__) >> 16), -32);
 }
 
 std::int64_t APS5_VABI lrand48_nid_postfix() {
