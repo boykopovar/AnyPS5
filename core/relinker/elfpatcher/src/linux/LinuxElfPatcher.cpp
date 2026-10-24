@@ -22,6 +22,8 @@ namespace Elfpatcher::Linux {
 namespace {
 
 constexpr std::uint64_t kLinuxUserAddressEnd = 0x800000000000;
+constexpr std::uint64_t kLazyPltGotBytes = 24;
+constexpr std::uint64_t kPltGotEntryBytes = 8;
 
 std::string Hex(const std::uint64_t value) {
     std::ostringstream text;
@@ -100,6 +102,31 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
 void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
     if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
         throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
+}
+
+void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std::uint64_t address, const std::uint64_t size, const std::uint32_t flags, const std::string& what) {
+    for (const auto& header : headers)
+        if (header.Type == PT_LOAD && (header.Flags & flags) == flags && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
+            return;
+    const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
+    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+}
+
+std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry, const std::vector<std::uint8_t>& symbols) {
+    const auto info = Io::ReadU64(relocations, entry + 8);
+    switch (static_cast<std::uint32_t>(info)) {
+    case R_X86_64_PC32:
+    case R_X86_64_32:
+        return 4;
+    case R_X86_64_COPY: {
+        const auto symbol = info >> 32;
+        if (symbol >= symbols.size() / kSymEntrySize)
+            throw Domain::RelinkerException("COPY relocation symbol index " + std::to_string(symbol) + " is outside the dynamic symbol table");
+        return std::max<std::uint64_t>(Io::ReadU64(symbols, static_cast<std::size_t>(symbol * kSymEntrySize + 16)), 1);
+    }
+    default:
+        return 8;
+    }
 }
 
 void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
@@ -357,6 +384,13 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");
     if (_fixedBase)
         RequireOnlyDependencies(dynSection.DynamicSegmentData);
+    RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
+    for (const auto& [relocationTable, name] : {std::pair{&dynSection.RelaData, "RELA r_offset"}, std::pair{&dynSection.RelaPltData, "JMPREL r_offset"}})
+        for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize)
+            if (static_cast<std::uint32_t>(Io::ReadU64(*relocationTable, entry + 8)) != R_X86_64_NONE)
+                RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry, dynSection.DynSymData), 0, name);
+    if (!dynSection.RelaPltData.empty())
+        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, 0, "DT_PLTGOT");
     const auto traced = _traceImports ? TracedImports(dynSection) : std::vector<TracedImport>{};
     const std::uint64_t base = _fixedBase.value_or(0);
     const auto address = [this, base](const std::uint64_t vaddr) {
