@@ -39,6 +39,7 @@ extern "C" {
 TestSession* APS5_VABI SSL_get_session_nid_postfix(const TestSsl*);
 const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const TestSsl*);
 void* APS5_VABI SSL_get_certificate_nid_postfix(const TestSsl*);
+void* APS5_VABI SSL_get_privatekey_nid_postfix(const TestSsl*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -94,9 +95,29 @@ static void TestGetCertificate() {
     Require(SSL_get_certificate_nid_postfix(&ssl) == &x509);
 }
 
+static void TestGetPrivateKey() {
+    int x509 = 0;
+    int key = 0;
+    int other = 0;
+    TestCert cert {};
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get_privatekey_nid_postfix(nullptr); });
+    Require(SSL_get_privatekey_nid_postfix(&ssl) == nullptr);
+    ssl.cert = &cert;
+    RequireThrows([&] { SSL_get_privatekey_nid_postfix(&ssl); });
+    cert.pkeys[0].privatekey = &other;
+    cert.pkeys[3].x509 = &x509;
+    cert.pkeys[3].privatekey = &key;
+    cert.key = &cert.pkeys[1];
+    Require(SSL_get_privatekey_nid_postfix(&ssl) == nullptr);
+    cert.key = &cert.pkeys[3];
+    Require(SSL_get_privatekey_nid_postfix(&ssl) == &key);
+}
+
 int main() {
     TestGetSession();
     TestCurrentCipher();
     TestGetCertificate();
+    TestGetPrivateKey();
     return 0;
 }

@@ -69,4 +69,9 @@ void* APS5_VABI SSL_get_certificate_nid_postfix(const LibreSslSessionConnection*
     return key ? key->x509 : nullptr;
 }
 
+void* APS5_VABI SSL_get_privatekey_nid_postfix(const LibreSslSessionConnection* ssl) {
+    const LibreSslCertKey* key = CurrentKey(ssl, __func__);
+    return key ? key->privatekey : nullptr;
+}
+
 }
