@@ -7,10 +7,10 @@ namespace Elfpatcher::Windows {
 
 WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const bool requireEntry, const std::uint64_t imageBase) : imageBase(imageBase) {
     if (source.size() < 64 || Io::ReadU32(source, 0) != 0x464c457f || source[4] != 2 || source[5] != 1 || source[6] != 1 || Io::ReadU16(source, 18) != 62)
-        throw Domain::RelinkerException("Windows output requires a little-endian ELF64 x86-64 image");
+        throw Domain::RelinkerException("This target requires a little-endian ELF64 x86-64 image");
     const auto type = Io::ReadU16(source, 16);
     if (type != 3 && type != 0xfe10 && type != 0xfe18)
-        throw Domain::RelinkerException("Windows output requires a position-independent ELF image");
+        throw Domain::RelinkerException("This target requires a position-independent ELF image");
     for (const auto& header : headers) {
         if (header.Type != 1)
             continue;

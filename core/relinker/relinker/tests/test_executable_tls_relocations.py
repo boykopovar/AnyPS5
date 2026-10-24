@@ -5,7 +5,8 @@ against a defined STT_TLS symbol is folded the same way, and one against an impo
 STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically against their block,
 AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
 rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
-ld.so does not apply."""
+ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
+PC32 and 32."""
 
 from pathlib import Path
 import struct
@@ -148,6 +149,10 @@ def main():
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),
             ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
+            ("windows-pc32", [(0x1000, 2, NULL, 0)], True, ("--windows",), "Relocation type 2 is not supported for this target"),
+            ("windows-32", [(0x1000, 10, NULL, 0)], True, ("--windows",), "Relocation type 10 is not supported for this target"),
+            ("macos-pc32", [(0x1000, 2, NULL, 0)], True, ("--macos",), "Relocation type 2 is not supported for this target"),
+            ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "Relocation type 10 is not supported for this target"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
         ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x}")

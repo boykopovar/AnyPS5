@@ -82,7 +82,7 @@ def object_type_cases(relinker, directory):
         for filter_level in (0, 1, 2):
             for object_type, error in cases:
                 if object_type == 2 and ("--windows" in flags or "--macos" in flags):
-                    continue
+                    error = "This target requires a position-independent ELF image"
                 case = Path(directory) / f"type-{mode}-{filter_level}-{object_type}"
                 case.mkdir()
                 source = case / "input.elf"
