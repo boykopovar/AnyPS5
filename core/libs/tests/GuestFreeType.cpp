@@ -6,6 +6,7 @@
 #include FT_FREETYPE_H
 #include FT_GASP_H
 #include FT_OUTLINE_H
+#include FT_CID_H
 
 #include <algorithm>
 #include <array>
@@ -298,6 +299,166 @@ struct Finalizers {
     std::vector<int> calls;
 };
 
+extern "C" {
+int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(GuestFaceRec*, const char**, const char**, std::int32_t*);
+int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(GuestFaceRec*, std::uint8_t*);
+int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t*);
+}
+
+static std::vector<unsigned char> CidMetadataFont(bool keyed, const std::string& registry, const std::string& ordering,
+                                                int supplement, unsigned cid) {
+    const auto index = [](const std::vector<std::vector<unsigned char>>& objects) {
+        std::vector<unsigned char> result;
+        Put16(result, objects.size());
+        if (objects.empty()) return result;
+        result.insert(result.end(), {1, 1});
+        unsigned offset = 1;
+        for (const auto& object : objects) {
+            offset += object.size();
+            Require(offset < 256);
+            result.push_back(static_cast<unsigned char>(offset));
+        }
+        for (const auto& object : objects) result.insert(result.end(), object.begin(), object.end());
+        return result;
+    };
+    const auto integer = [](std::vector<unsigned char>& dict, int value) {
+        dict.push_back(29);
+        Put32(dict, static_cast<std::uint32_t>(value));
+    };
+    const auto bytes = [](const std::string& text) { return std::vector<unsigned char>(text.begin(), text.end()); };
+    std::array<int, 5> offsets{};
+    std::vector<unsigned char> font;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        std::vector<unsigned char> top;
+        for (const int value : {0, 0, 700, 800}) integer(top, value);
+        top.push_back(5);
+        if (keyed) {
+            for (const int value : {391, 392, supplement}) integer(top, value);
+            top.insert(top.end(), {12, 30});
+            integer(top, cid + 1);
+            top.insert(top.end(), {12, 34});
+        }
+        integer(top, offsets[0]); top.push_back(15);
+        integer(top, offsets[1]); top.push_back(17);
+        if (keyed) {
+            integer(top, offsets[3]); top.insert(top.end(), {12, 36});
+            integer(top, offsets[2]); top.insert(top.end(), {12, 37});
+        }
+        font = {1, 0, 4, 4};
+        const auto append = [&](const std::vector<std::vector<unsigned char>>& objects) {
+            const auto data = index(objects);
+            font.insert(font.end(), data.begin(), data.end());
+        };
+        append({bytes(keyed ? "TestCID" : "TestNamed")});
+        append({top});
+        append({bytes(registry), bytes(ordering)});
+        append({});
+        offsets[0] = static_cast<int>(font.size());
+        font.push_back(0); Put16(font, cid);
+        offsets[2] = static_cast<int>(font.size());
+        font.insert(font.end(), {0, 0, 0});
+        offsets[1] = static_cast<int>(font.size());
+        append({{248, 236, 14}, {248, 236, 239, 139, 21, 248, 136, 139, 139, 249, 80, 252, 136, 139, 139, 253, 80, 5, 14}});
+        offsets[3] = static_cast<int>(font.size());
+        std::vector<unsigned char> privateDict;
+        integer(privateDict, 0); integer(privateDict, offsets[4]); privateDict.push_back(18);
+        append({privateDict});
+        offsets[4] = static_cast<int>(font.size());
+    }
+    return font;
+}
+
+static bool SameCidString(const char* a, const char* b) { return a && b ? std::strcmp(a, b) == 0 : a == b; }
+
+static unsigned cidQueries = 0;
+
+static void CheckCidQueries(GuestFaceRec* face, FT_Face native, int kind, unsigned cid, int supplement,
+                            const char* registry, const char* ordering) {
+    for (unsigned mask = 0; mask < 8; ++mask) {
+        struct Result {
+            std::uint64_t before = 0x123456789ABCDEF0;
+            const char* registry = "registry sentinel";
+            const char* ordering = "ordering sentinel";
+            std::int32_t supplement = 0x12345678;
+            std::uint32_t after = 0xFEDCBA98;
+        } actual, expected;
+        const int error = FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(face, mask & 1 ? &actual.registry : nullptr,
+                            mask & 2 ? &actual.ordering : nullptr, mask & 4 ? &actual.supplement : nullptr);
+        Require(error == FT_Get_CID_Registry_Ordering_Supplement(native, mask & 1 ? &expected.registry : nullptr,
+                            mask & 2 ? &expected.ordering : nullptr, mask & 4 ? &expected.supplement : nullptr));
+        Require(error == (kind > 0 ? 0 : FT_Err_Invalid_Argument));
+        Require(SameCidString(actual.registry, expected.registry) && SameCidString(actual.ordering, expected.ordering));
+        Require(actual.supplement == expected.supplement && actual.before == 0x123456789ABCDEF0 && actual.after == 0xFEDCBA98);
+        if (mask & 1) Require(SameCidString(actual.registry, kind > 0 ? registry : nullptr));
+        if (mask & 2) Require(SameCidString(actual.ordering, kind > 0 ? ordering : nullptr));
+        if (mask & 4) Require(actual.supplement == (kind > 0 ? supplement : 0));
+        ++cidQueries;
+    }
+    const char* alias = "sentinel";
+    const char* nativeAlias = "sentinel";
+    Require(FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(face, &alias, &alias, nullptr) ==
+            FT_Get_CID_Registry_Ordering_Supplement(native, &nativeAlias, &nativeAlias, nullptr));
+    Require(SameCidString(alias, nativeAlias) && SameCidString(alias, kind > 0 ? ordering : nullptr));
+    ++cidQueries;
+    for (const bool output : {false, true}) {
+        struct Result { std::uint8_t before = 0x12; std::uint8_t value = 0xA5; std::array<std::uint8_t, 3> after{0x34, 0x56, 0x78}; } actual, expected;
+        const int error = FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(face, output ? &actual.value : nullptr);
+        Require(error == FT_Get_CID_Is_Internally_CID_Keyed(native, output ? &expected.value : nullptr));
+        Require(error == (kind >= 0 ? 0 : FT_Err_Invalid_Argument));
+        Require(actual.value == expected.value && (!output || actual.value == (kind > 0 ? 1 : 0)));
+        Require(actual.before == 0x12 && actual.after == expected.after);
+        ++cidQueries;
+        for (const unsigned glyph : {0u, 1u, 2u, 41u, 65535u, UINT32_MAX}) {
+            struct Mapping { std::uint32_t before = 0x12345678; std::uint32_t value = 0xDEADBEEF; std::uint32_t after = 0x87654321; } actualCid, nativeCid;
+            const int mappingError = FT_Get_CID_From_Glyph_Index_nid_postfix(face, glyph, output ? &actualCid.value : nullptr);
+            Require(mappingError == FT_Get_CID_From_Glyph_Index(native, glyph, output ? &nativeCid.value : nullptr));
+            Require(mappingError == (kind > 0 && glyph < 2 ? 0 : FT_Err_Invalid_Argument));
+            Require(actualCid.value == nativeCid.value && (!output || actualCid.value == (mappingError == 0 && glyph == 1 ? cid : 0)));
+            Require(actualCid.before == 0x12345678 && actualCid.after == 0x87654321);
+            ++cidQueries;
+        }
+    }
+}
+
+static void CheckCidMetadata() {
+    CheckCidQueries(nullptr, nullptr, -2, 0, 0, nullptr, nullptr);
+    struct Fixture { std::vector<unsigned char> bytes; int kind; unsigned cid; int supplement; const char* registry; const char* ordering; unsigned renderGlyph; };
+    const std::array<Fixture, 4> fixtures{{
+        {CidMetadataFont(true, "Adobe", "Identity", 7, 41), 1, 41, 7, "Adobe", "Identity", 41},
+        {CidMetadataFont(true, "TestRegistry", "TestOrdering", 9, 65535), 1, 65535, 9, "TestRegistry", "TestOrdering", 65535},
+        {CidMetadataFont(false, "Adobe", "Identity", 0, 41), 0, 0, 0, nullptr, nullptr, 1},
+        {SquareGlyphFont('A', 700), -1, 0, 0, nullptr, nullptr, 1}}};
+    for (const auto& fixture : fixtures) {
+        void* library = nullptr;
+        GuestFaceRec* face = nullptr;
+        FT_Library nativeLibrary = nullptr;
+        FT_Face native = nullptr;
+        Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+        Require(FT_New_Memory_Face_nid_postfix(library, fixture.bytes.data(), fixture.bytes.size(), 0, &face) == 0);
+        Require(FT_New_Memory_Face(nativeLibrary, fixture.bytes.data(), static_cast<FT_Long>(fixture.bytes.size()), 0, &native) == 0);
+        CheckCidQueries(face, native, fixture.kind, fixture.cid, fixture.supplement, fixture.registry, fixture.ordering);
+        const char* registry = nullptr;
+        const char* ordering = nullptr;
+        if (fixture.kind > 0) Require(FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(face, &registry, &ordering, nullptr) == 0);
+        Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 32) == 0 && FT_Set_Pixel_Sizes(native, 0, 32) == 0);
+        Require(FT_Load_Glyph_nid_postfix(face, fixture.renderGlyph, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) == 0);
+        Require(FT_Load_Glyph(native, fixture.renderGlyph, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) == 0);
+        Require(FT_Render_Glyph_nid_postfix(face->glyph, FT_RENDER_MODE_NORMAL) == 0 && FT_Render_Glyph(native->glyph, FT_RENDER_MODE_NORMAL) == 0);
+        SlotMatches(face->glyph, native->glyph);
+        Require(face->glyph->bitmap.width > 0 && face->glyph->bitmap.rows > 0);
+        if (fixture.kind > 0) {
+            const char* againRegistry = nullptr;
+            const char* againOrdering = nullptr;
+            Require(FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(face, &againRegistry, &againOrdering, nullptr) == 0);
+            Require(registry == againRegistry && ordering == againOrdering);
+            Require(SameCidString(registry, fixture.registry) && SameCidString(ordering, fixture.ordering));
+        }
+        Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+        Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+    }
+    std::printf("FreeType CID metadata: %u query scenarios, 4 fonts and 4 rendered glyphs passed\n", cidQueries);
+}
+
 static void NativeSlotFinalizer(void* object) {
     auto* slot = static_cast<FT_GlyphSlot>(object);
     Require(slot->face->glyph == nullptr);
@@ -443,6 +604,7 @@ int main() {
         file.write(reinterpret_cast<const char*>(font.data()), static_cast<std::streamsize>(font.size()));
     }
     const auto previous = std::filesystem::current_path();
+    CheckCidMetadata();
     std::filesystem::current_path(root);
     CheckOutlineOrientation();
 

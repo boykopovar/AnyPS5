@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include FT_GASP_H
+#include FT_CID_H
 
 #include <algorithm>
 #include <bit>
@@ -17,6 +18,8 @@
 #include <vector>
 
 using namespace FreeType;
+
+static_assert(sizeof(FT_Bool) == 1 && sizeof(FT_Int) == 4 && sizeof(FT_UInt) == 4);
 
 namespace {
 
@@ -199,6 +202,22 @@ int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec* face, std::uint32_t glyph_
     const FT_Error error = FT_Load_Glyph(owner ? owner->host : nullptr, glyph_index, load_flags);
     if (owner) SyncSlot(*owner);
     return error;
+}
+
+int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(GuestFaceRec* face, const char** registry,
+                                                               const char** ordering, std::int32_t* supplement) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Get_CID_Registry_Ordering_Supplement(owner ? owner->host : nullptr, registry, ordering, supplement);
+}
+
+int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(GuestFaceRec* face, std::uint8_t* isCid) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Get_CID_Is_Internally_CID_Keyed(owner ? owner->host : nullptr, isCid);
+}
+
+int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Get_CID_From_Glyph_Index(owner ? owner->host : nullptr, glyphIndex, cid);
 }
 
 int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec* face, std::uint32_t ppem) {
