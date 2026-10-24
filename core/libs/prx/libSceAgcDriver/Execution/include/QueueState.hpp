@@ -256,6 +256,15 @@ inline Registers InitialContextRegisters() {
     return initial;
 }
 
+inline Registers ClearStateContextRegisters() {
+    static const Registers& cleared = *new Registers([] {
+        auto registers = BuildInitialContextRegisters();
+        registers[0x1b6] = 2;
+        return registers;
+    }());
+    return cleared;
+}
+
 struct Predication {
     std::uint64_t address = 0;
     std::uint32_t operation = 0;
@@ -279,7 +288,7 @@ struct QueueState {
     Predication predication;
 
     void ClearContext() {
-        context = InitialContextRegisters();
+        context = ClearStateContextRegisters();
     }
 
     std::span<const std::uint32_t> ConstantRam() const {
