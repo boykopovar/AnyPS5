@@ -106,12 +106,23 @@ extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
 
 namespace LibcUnwind {
 #ifdef _WIN32
+static bool Readable(Word address, std::size_t size) {
+    for (Word cursor = address; cursor - address < size;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+        if (memory.RegionSize == 0 || memory.State != MEM_COMMIT || (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 || (memory.Protect & 0xff) == PAGE_EXECUTE) return false;
+        cursor = reinterpret_cast<Word>(memory.BaseAddress) + memory.RegionSize;
+    }
+    return true;
+}
+
 static Word ResolveImport(Word address) {
     const auto* code = reinterpret_cast<const Byte*>(address);
-    if (code[0] == 0xff && code[1] == 0x25) {
+    if (Readable(address, 6) && code[0] == 0xff && code[1] == 0x25) {
         std::int32_t displacement;
         std::memcpy(&displacement, code + 2, sizeof(displacement));
-        std::memcpy(&address, code + 6 + displacement, sizeof(address));
+        const Word slot = address + 6 + displacement;
+        if (Readable(slot, sizeof(address))) std::memcpy(&address, reinterpret_cast<const void*>(slot), sizeof(address));
     }
     return address;
 }
