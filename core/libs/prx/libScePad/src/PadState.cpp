@@ -237,7 +237,7 @@ PadData Pad::ReadState() {
     if (!initialized) throw std::runtime_error("Pad: read before initialization");
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = InjectedInput(now);
-    PadData data = BuildData(state, timestamp, now, injected);
+    PadData data = BuildData(state, now, now, injected);
     if (pressedSinceRead != 0 && now - pressedAt <= kLatchExpiry) {
         data.buttons |= pressedSinceRead;
         if (pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, pressedAnalogL2);
@@ -256,7 +256,7 @@ int Pad::Read(PadData* data, int num) {
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = InjectedInput(now);
     if (queue.empty()) {
-        data[0] = BuildData(state, timestamp, now, injected);
+        data[0] = BuildData(state, now, now, injected);
         return 1;
     }
     int count = 0;
