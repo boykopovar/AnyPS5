@@ -823,6 +823,63 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
+void changedCopyTests(const Device& device, Recorder& recorder) {
+    Require(recorder.Idle(), "the changed copy test needs an idle recorder");
+    constexpr std::uint32_t words = 70000;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto result = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto snapshot = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto target = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    if (result->DeviceAddress() == 0 || snapshot->DeviceAddress() == 0 || target->DeviceAddress() == 0) {
+        std::cout << "changed copy tests skipped: no buffer device addresses\n";
+        return;
+    }
+    std::vector<std::uint32_t> uploaded(words), shader(words), held(words);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        uploaded[i] = i * 2654435761u;
+        shader[i] = i % 7 == 0 ? uploaded[i] ^ 0x5a5a5a5au : uploaded[i];
+        held[i] = i % 5 == 0 ? 0xc0ffee00u + i : uploaded[i];
+    }
+    std::memcpy(snapshot->Bytes().data(), uploaded.data(), words * 4u);
+    std::memcpy(result->Bytes().data(), shader.data(), words * 4u);
+    std::memcpy(target->Bytes().data(), held.data(), words * 4u);
+    Require(recorder.RecordChangedCopy(recorder.Commands(), result->DeviceAddress(), snapshot->DeviceAddress(), target->DeviceAddress(), words), "the changed copy kernel is unavailable");
+    recorder.Keep(result);
+    recorder.Keep(snapshot);
+    recorder.Keep(target);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    std::vector<std::uint32_t> stored(words);
+    std::memcpy(stored.data(), target->Bytes().data(), words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        const auto expected = i % 7 == 0 && i % 5 != 0 ? shader[i] : held[i];
+        Require(stored[i] == expected, "changed copy word " + std::to_string(i) + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected) + (i % 7 == 0 && i % 5 != 0 ? " (the shader's result)" : " (the target's own word)"));
+    }
+    constexpr std::uint64_t lead = 0x1000;
+    auto imported = std::make_shared<Buffer>(device.GetContext(), lead + words * 4u, usage);
+    std::memset(imported->Bytes().data(), 0xa5, lead);
+    std::memcpy(imported->Bytes().data() + lead, held.data(), words * 4u);
+    HostImport import{};
+    import.base = 0x7f0000011000ull;
+    import.bytes = words * 4u;
+    import.address = imported->DeviceAddress() + lead;
+    import.lead = lead;
+    const auto start = HostImportBufferStart(import);
+    Require(start.guest == import.base - lead && start.device == imported->DeviceAddress() && HostImportOffset(import, import.base) == lead, "the copy source of an import with a lead does not start at the import's buffer");
+    Require(recorder.RecordChangedCopy(recorder.Commands(), result->DeviceAddress(), snapshot->DeviceAddress(), start.device + (import.base - start.guest), words), "the changed copy kernel is unavailable");
+    recorder.Keep(imported);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    for (std::uint64_t i = 0; i < lead; ++i) Require(imported->Bytes()[i] == std::byte{0xa5}, "the changed copy into an import with a lead wrote byte " + std::to_string(i) + " of the lead");
+    std::memcpy(stored.data(), imported->Bytes().data() + lead, words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        const auto expected = i % 7 == 0 && i % 5 != 0 ? shader[i] : held[i];
+        Require(stored[i] == expected, "changed copy word " + std::to_string(i) + " after a lead: " + std::to_string(stored[i]) + ", expected " + std::to_string(expected));
+    }
+}
+
 void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 16), "a fresh recorder reports a read");
@@ -11047,6 +11104,10 @@ int main(int argc, char** argv) {
             parkedImportUnmapTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--changed-copy-only") {
+            changedCopyTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -11207,6 +11268,7 @@ int main(int argc, char** argv) {
         readListTests(device, recorder);
         overlappedRangeTests(recorder);
         spaceWriteSyncTests(device, recorder);
+        changedCopyTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
