@@ -2349,11 +2349,6 @@ int APS5_VABI setlogin_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI settimeofday_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sigqueue_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

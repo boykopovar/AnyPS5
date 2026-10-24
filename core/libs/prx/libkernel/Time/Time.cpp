@@ -507,6 +507,9 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     return 0;
 }
 
+static std::mutex guestTimezoneMutex;
+static KernelTimezone guestTimezone{0, 0};
+
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     KernelTimeval ignoredTime{};
     if (tv == nullptr) tv = &ignoredTime;
@@ -526,8 +529,8 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     tv->tv_usec = static_cast<std::int64_t>(native.tv_usec);
 #endif
     if (tz != nullptr) {
-        tz->tz_minuteswest = 0;
-        tz->tz_dsttime = 0;
+        std::lock_guard lock(guestTimezoneMutex);
+        *tz = guestTimezone;
     }
     return 0;
 }
@@ -628,6 +631,23 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
     char requested[48];
     std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(tp->tv_sec), static_cast<long long>(tp->tv_nsec));
     throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+}
+
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    if (tv != nullptr && (tv->tv_usec < 0 || tv->tv_usec >= 1000000 || tv->tv_sec < 0)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (tv != nullptr) {
+        char requested[48];
+        std::snprintf(requested, sizeof(requested), "%lld.%06lld", static_cast<long long>(tv->tv_sec), static_cast<long long>(tv->tv_usec));
+        throw std::runtime_error(std::string("settimeofday: setting the time to ") + requested + " is not supported, the host clock is not changed");
+    }
+    if (tz != nullptr) {
+        std::lock_guard lock(guestTimezoneMutex);
+        guestTimezone = *tz;
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -492,6 +492,12 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     return 0;
 }
 
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
+
+int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return SetTimeOfDay_nid_no_patch(tv, tz);
+}
+
 int APS5_VABI chroot_nid_postfix(const char* path) {
     if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
     if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
