@@ -329,23 +329,36 @@ struct Context {
         return type;
     }
 
-    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
-        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return type;
+    struct HeapReport {
+        VkDeviceSize budget = 0;
+        VkDeviceSize usage = 0;
+        bool Fits(VkDeviceSize bytes) const { return budget == 0 || (usage < budget && bytes <= budget - usage); }
+    };
+
+    HeapReport ReportedHeap(std::uint32_t heap) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return {};
         VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
         VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
         properties.pNext = &reported;
         memoryProperties2(physical, &properties);
+        return {reported.heapBudget[heap], reported.heapUsage[heap]};
+    }
+
+    bool DeviceLocalFits(std::uint32_t mask, VkDeviceSize bytes) const {
+        return ReportedHeap(memory.memoryTypes[MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)].heapIndex).Fits(bytes);
+    }
+
+    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
+        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         const auto heap = memory.memoryTypes[type].heapIndex;
-        const auto budget = reported.heapBudget[heap];
-        const auto usage = reported.heapUsage[heap];
-        if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
+        const auto report = ReportedHeap(heap);
+        if (report.Fits(bytes)) return type;
         const auto host = HostMemoryType(mask);
         if (!host) return type;
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
         const auto total = placedBytes.fetch_add(bytes) + bytes;
-        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(report.usage >> 20u), static_cast<unsigned long long>(report.budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
         return *host;
     }
 

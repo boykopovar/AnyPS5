@@ -146,12 +146,21 @@ void Buffer::Invalidate() {
 DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
     Require(size != 0, "zero-sized device buffer");
     cache = GetBufferPool(context);
-    if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-        buffer = allocation->buffer;
-        memory = allocation->memory;
-        allocationBytes = allocation->allocationBytes;
-        capacity = allocation->bytes;
-        if (allocation->bufferBytes == size) {
+    auto pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!pooled) {
+        pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
+        if (pooled && context.DeviceLocalFits(~0u, capacity)) {
+            cache->Put(*pooled);
+            pooled.reset();
+        }
+    }
+    if (pooled) {
+        hostPlaced = pooled->hostPlaced;
+        buffer = pooled->buffer;
+        memory = pooled->memory;
+        allocationBytes = pooled->allocationBytes;
+        capacity = pooled->bytes;
+        if (pooled->bufferBytes == size) {
             ready = true;
             return;
         }
@@ -195,8 +204,10 @@ DeviceBuffer::~DeviceBuffer() {
 }
 
 void DeviceBuffer::release() noexcept {
-    if (ready && buffer && memory && cache && !hostPlaced) {
-        cache->Put({buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size});
+    if (ready && buffer && memory && cache) {
+        BufferAllocation allocation{buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size};
+        allocation.hostPlaced = hostPlaced;
+        cache->Put(allocation);
         return;
     }
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
