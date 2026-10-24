@@ -14,6 +14,7 @@ using namespace FreeType;
 extern "C" {
 int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline*, std::int64_t);
 int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline*, std::int64_t, std::int64_t);
+void APS5_VABI FT_Outline_Transform_nid_postfix(const GuestOutline*, const GuestMatrix*);
 }
 
 static void Check(bool value, int line) {
@@ -98,7 +99,28 @@ static void TestEmboldenXY() {
     Require(FT_Outline_EmboldenXY_nid_postfix(nullptr, 64, 32) == FT_Outline_EmboldenXY(nullptr, 64, 32));
 }
 
+static void TestTransform() {
+    const GuestMatrix matrices[] = {{0x10000, 0, 0, 0x10000}, {0x8000, 0, 0, 0x20000}, {0, -0x10000, 0x10000, 0}, {0x10000, 0x4000, 0, 0x10000},
+                                    {-0x12345, 0x6789, -0x2468, 0x13579}};
+    for (const GuestMatrix& matrix : matrices) {
+        for (const auto& make : {+[] { return Square(false); }, +[] { return Frame(); }, +[] { return Curved(); }}) {
+            Pair pair(make());
+            const FT_Matrix native{matrix.xx, matrix.xy, matrix.yx, matrix.yy};
+            FT_Outline_Transform_nid_postfix(&pair.guest, &matrix);
+            FT_Outline_Transform(&pair.native, &native);
+            pair.Matches();
+        }
+    }
+    Pair pair(Square(false));
+    FT_Outline_Transform_nid_postfix(nullptr, &matrices[0]);
+    FT_Outline_Transform_nid_postfix(&pair.guest, nullptr);
+    pair.Matches();
+    GuestOutline noPoints{};
+    FT_Outline_Transform_nid_postfix(&noPoints, &matrices[0]);
+}
+
 int main() {
     TestEmbolden();
     TestEmboldenXY();
+    TestTransform();
 }
