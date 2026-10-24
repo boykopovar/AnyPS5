@@ -107,6 +107,10 @@ static void OpenDevice(AudioOut2Context& context) {
         AUDIOOUT2_TRACE("SDL audio init failed: %s\n", SDL_GetError());
         return;
     }
+    if (SDL_GetNumAudioDevices(0) == 0) {
+        AUDIOOUT2_TRACE("SDL reports no audio output device\n");
+        return;
+    }
     SDL_AudioSpec desired{};
     desired.freq = static_cast<int>(AUDIO_OUT2_SAMPLE_RATE);
     desired.format = AUDIO_F32SYS;
