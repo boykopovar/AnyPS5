@@ -868,6 +868,7 @@ bool importsStale(const Context& context, const HostImports& state);
 constexpr std::uint64_t settleFloorBytes = 0x100000;
 #ifdef _WIN32
 constexpr std::uint64_t settleBlockBytes = 0x10000;
+constexpr std::uint64_t settlePageBytes = 0x1000;
 constexpr auto settlePollPeriod = std::chrono::microseconds(100);
 std::atomic<bool> deferredSettles{std::getenv("APS5_NO_DEFERRED_SETTLES") == nullptr};
 #endif
@@ -1094,8 +1095,22 @@ void reapSettleBatches(const Context& context, HostImports& state) {
     }
 }
 
+bool comparedImportShares(const HostImports& state, std::uint64_t own, std::uint64_t begin, std::uint64_t end) {
+    const auto shares = [&](const HostImport& entry) { return entry.unwatched && entry.memoryBase < end && begin < entry.memoryBase + entry.pinnedBytes; };
+    for (const auto& [base, entry] : state.imports) {
+        if (base != own && shares(entry)) return true;
+    }
+    for (const auto& [device, list] : state.parked) {
+        for (const auto& retired : list) {
+            if (shares(retired->node.mapped())) return true;
+        }
+    }
+    return false;
+}
+
 void rewatchSettledImports(HostImports& state) {
     if (state.settleReady.empty()) return;
+    std::vector<std::uint64_t> bases;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     for (const auto base : state.settleReady) {
         const auto settle = state.pendingSettles.find(base);
@@ -1103,19 +1118,23 @@ void rewatchSettledImports(HostImports& state) {
         state.pendingSettles.erase(settle);
         const auto import = state.imports.find(base);
         if (import == state.imports.end() || !import->second.unwatched) continue;
-        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{base, base + import->second.bytes}}};
+        const auto first = base & ~(settleBlockBytes - 1);
+        const auto stop = (base + import->second.bytes + settleBlockBytes - 1) & ~(settleBlockBytes - 1);
+        if ((first != base || stop != base + import->second.bytes) && comparedImportShares(state, base, first, stop)) continue;
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{first, stop}}};
         if (StorageTexture::AnyLiveOverlaps(span)) {
             ++state.settlesKeptCompared;
             continue;
         }
-        ranges.push_back(span.front());
+        bases.push_back(base);
+        ranges.emplace_back(base & ~(settlePageBytes - 1), (base + import->second.bytes + settlePageBytes - 1) & ~(settlePageBytes - 1));
     }
     state.settleReady.clear();
     if (ranges.empty()) return;
     GuestMemory::Rewatch(ranges);
-    for (const auto& [begin, end] : ranges) {
-        const auto import = state.imports.find(begin);
-        if (import == state.imports.end() || !GuestMemory::Watched(begin, static_cast<std::size_t>(end - begin))) continue;
+    for (const auto base : bases) {
+        const auto import = state.imports.find(base);
+        if (import == state.imports.end() || !GuestMemory::Watched(base, static_cast<std::size_t>(import->second.bytes))) continue;
         import->second.unwatched = false;
         ++state.settlesRewatched;
     }
@@ -1129,6 +1148,49 @@ void settleUnwatchedImports(const Context& context, HostImports& state) {
     reapSettleBatches(context, state);
     rewatchSettledImports(state);
     submitSettleBatch(context, state);
+}
+
+void settleImportsNow(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    if (context.settleQueue == VK_NULL_HANDLE || context.settleQueueMutex == nullptr || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    std::vector<std::uint64_t> needed;
+    auto it = state.imports.lower_bound(begin);
+    if (it != state.imports.begin()) --it;
+    for (; it != state.imports.end() && it->first < end; ++it) {
+        auto& entry = it->second;
+        if (entry.base + entry.bytes <= begin || !entry.unwatched) continue;
+        auto settle = state.pendingSettles.find(it->first);
+        if (settle == state.pendingSettles.end()) {
+            if (!entry.settleOnDemand || !deferredSettles.load(std::memory_order_relaxed)) continue;
+            entry.settleOnDemand = false;
+            settle = state.pendingSettles.insert_or_assign(it->first, PendingSettle{}).first;
+        }
+        if (settle->second.phase == SettlePhase::Wanted) {
+            std::erase(state.settleWanted, it->first);
+            state.settleWanted.insert(state.settleWanted.begin(), it->first);
+        }
+        needed.push_back(it->first);
+    }
+    if (needed.empty()) return;
+    auto& deviceSettle = settleFor(context, state);
+    const auto wanted = [&] {
+        return std::any_of(needed.begin(), needed.end(), [&](std::uint64_t base) {
+            const auto settle = state.pendingSettles.find(base);
+            return settle != state.pendingSettles.end() && settle->second.phase == SettlePhase::Wanted;
+        });
+    };
+    while (wanted()) {
+        if (std::all_of(deviceSettle.batches.begin(), deviceSettle.batches.end(), [](const SettleBatch& batch) { return batch.busy; })) {
+            for (const auto& batch : deviceSettle.batches) waitSettleBatch(deviceSettle, context.device, batch);
+            reapSettleBatches(context, state);
+        }
+        submitSettleBatch(context, state);
+    }
+    for (const auto base : needed) {
+        const auto settle = state.pendingSettles.find(base);
+        if (settle != state.pendingSettles.end() && settle->second.phase == SettlePhase::Submitted && settle->second.device == context.device) waitSettleBatch(deviceSettle, context.device, deviceSettle.batches[settle->second.batch]);
+    }
+    reapSettleBatches(context, state);
+    rewatchSettledImports(state);
 }
 #endif
 
@@ -1948,8 +2010,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     entry.joined = joined;
     entry.lastUse = ++state.useCounter;
 #ifdef _WIN32
-    if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable && base % settleBlockBytes == 0 && bytes % settleBlockBytes == 0) {
-        if (entry.unwatched) {
+    if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable) {
+        if (base % settleBlockBytes != 0 || bytes % settleBlockBytes != 0) {
+            entry.settleOnDemand = entry.unwatched;
+        } else if (entry.unwatched) {
             state.pendingSettles.insert_or_assign(base, PendingSettle{});
             state.settleWanted.push_back(base);
         } else if (settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
@@ -3714,6 +3778,22 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     std::lock_guard lock(state.mutex);
     if (importsStale(context, state)) return nullptr;
     return findImport(state, address, address + bytes);
+}
+
+bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    if (context.hostImportAlignment != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address && GuestMemory::GpuMutex().HeldByThisThread()) {
+        ensurePinWaiter();
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        if (importsStale(context, state)) {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            refreshImports(context, state, lease);
+        }
+        settleImportsNow(context, state, address, address + bytes);
+    }
+#endif
+    return GuestMemory::Watched(address, bytes);
 }
 
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
