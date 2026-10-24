@@ -33,7 +33,7 @@ int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockatt
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name);
 int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
 }
 
@@ -424,7 +424,7 @@ static void* APS5_VABI AddressWaking(void* arg) {
     auto& worker = *static_cast<Worker*>(arg);
     worker.id = std::this_thread::get_id();
     worker.started.store(true);
-    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) == 0);
+    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) >= 0);
     return nullptr;
 }
 
