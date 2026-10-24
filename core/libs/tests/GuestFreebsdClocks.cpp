@@ -28,7 +28,13 @@ static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_VIRTUAL = 1;
 static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
+static constexpr int GUEST_CLOCK_UPTIME = 5;
+static constexpr int GUEST_CLOCK_UPTIME_PRECISE = 7;
+static constexpr int GUEST_CLOCK_UPTIME_FAST = 8;
 static constexpr int GUEST_CLOCK_REALTIME_PRECISE = 9;
+static constexpr int GUEST_CLOCK_REALTIME_FAST = 10;
+static constexpr int GUEST_CLOCK_MONOTONIC_PRECISE = 11;
+static constexpr int GUEST_CLOCK_MONOTONIC_FAST = 12;
 static constexpr int GUEST_CLOCK_SECOND = 13;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
@@ -125,6 +131,13 @@ static void RequireNeverDecreases(int clockId) {
         Require(current >= previous);
         previous = current;
     }
+}
+
+static void WallAndUptimeClocksReportSubsecondResolutions() {
+    const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
+                          GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
+                          GUEST_CLOCK_UPTIME_FAST};
+    for (const int clockId : clocks) ResolutionNanos(clockId);
 }
 
 static void SecondClockReportsWholeSeconds() {
@@ -317,6 +330,7 @@ int main() {
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
     SecondClockReportsWholeSeconds();
+    WallAndUptimeClocksReportSubsecondResolutions();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
