@@ -136,6 +136,21 @@ def build_pe(names):
     return bytes(image) + raw + b"\xc3" * (16 * max(1, len(names)))
 
 
+def with_pe_optional_header(image, magic, size, count):
+    image = bytearray(image)
+    optional = 0x58
+    directory = 96 if magic == 0x10b else 112
+    exports = bytes(image[optional + 112:optional + 120])
+    sections = bytes(image[optional + 240:optional + 320])
+    image[optional + 96:optional + 320] = bytes(224)
+    struct.pack_into("<H", image, 0x40 + 20, size)
+    struct.pack_into("<H", image, optional, magic)
+    struct.pack_into("<I", image, optional + directory - 4, count)
+    image[optional + directory:optional + directory + 8] = exports
+    image[optional + size:optional + size + 80] = sections
+    return bytes(image)
+
+
 def build_pe_with_imports(dlls, names=()):
     idata_rva, edata_rva, text_rva, raw_offset = 0x1000, 0x2000, 0x3000, 0x200
     directory, strings = b"", b""
@@ -1544,6 +1559,41 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<I", image, 0x58 + 108, 0)
         with self.assertRaises(import_audit.AuditError):
             import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_pe_data_directories_must_fit_inside_optional_header(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size, count in ((directory + 8, 2), (directory + 15, 2),
+                                (directory + 128, 17), (directory + 8, 0xffffffff)):
+                image = with_pe_optional_header(build_pe(["alpha"]), magic, size, count)
+                for reader in (import_audit.pe_exports, import_audit.pe_imports):
+                    with self.subTest(magic=magic, size=size, count=count, reader=reader.__name__):
+                        with self.assertRaisesRegex(import_audit.AuditError, "data directory count.*optional header"):
+                            reader(Path("lib.prx"), image)
+
+    def test_pe_variable_optional_headers_keep_declared_directories(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size, count in ((directory + 8, 1), (directory + 15, 1),
+                                (directory + 16, 2), (directory + 128, 16)):
+                with self.subTest(magic=magic, size=size, count=count):
+                    image = with_pe_optional_header(build_pe(["alpha"]), magic, size, count)
+                    self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+                    self.assertEqual(import_audit.pe_imports(Path("lib.prx"), image), set())
+
+    def test_invalid_pe_directory_count_preserves_audit_report(self):
+        work = self.work
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        library = work.libs / "libSceA.prx"
+        previous = b'{"previous":"complete report"}\n'
+        for magic, size in ((0x10b, 224), (0x20b, 240)):
+            with self.subTest(magic=magic):
+                library.write_bytes(with_pe_optional_header(build_pe(["AAAAAAAAAAA"]), magic, size, 17))
+                result.write_bytes(previous)
+                code, out, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("data directory count", err)
+                self.assertIn(str(library), err)
+                self.assertEqual(result.read_bytes(), previous)
 
     def test_pe_null_export_address_is_not_an_export(self):
         image = bytearray(build_pe(["alpha"]))

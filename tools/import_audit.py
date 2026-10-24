@@ -235,6 +235,8 @@ def pe_headers(path, data):
     count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
     if count == 0:
         raise AuditError(f"{path}: PE file declares no data directories")
+    if count > (optional_size - directory) // 8:
+        raise AuditError(f"{path}: PE data directory count {count} exceeds optional header size {optional_size}")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
