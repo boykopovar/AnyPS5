@@ -1213,6 +1213,13 @@ static bool HostIpv6LoopbackUnavailable() {
 #endif
 }
 
+static void CheckRejectedAddressText(const char* text) {
+    std::array<std::uint8_t, 16> address;
+    address.fill(0xa5);
+    Require(sceNetInetPton(28, text, address.data()) == 0);
+    Require(address[0] == 0xa5 && address[15] == 0xa5);
+}
+
 static void CheckLinkLocalAllNodesIpv6() {
     Require(reinterpret_cast<std::uintptr_t>(sce_net_in6addr_linklocal_allnodes) % alignof(std::uint32_t) == 0);
     std::array<std::uint8_t, 16> address{};
@@ -1702,6 +1709,11 @@ int main() {
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
+    CheckAddressText(28, "::ffff:0.0.0.1");
+    CheckAddressText(28, "::ffff:0:102:304");
+    CheckAddressText(28, "fe80::5efe:102:304");
+    CheckRejectedAddressText("::01.2.3.4");
+    CheckRejectedAddressText("::ffff:01.2.3.4");
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckInetPtonWhitespace();
     CheckInetPtonExParts();
