@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -28,7 +29,42 @@ void Bind(AgcDriver::QueueState& queue, const void* code, std::uint32_t program,
     queue.shader[resources] = 16u << 1u;
 }
 
+void CheckRetainedDecode() {
+    using namespace AgcDriver::DriverDetail;
+    alignas(256) static std::array<std::uint32_t, 64> code{0xbf810000u};
+    alignas(256) static std::array<std::uint32_t, 64> tail{0xbf810000u};
+    alignas(256) static std::array<std::array<std::uint32_t, 64>, 4097> others{};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    DrawProgram program{};
+    program.snapshot = ReadRawShader(address);
+    program.tailContinuation = ReadRawShader(reinterpret_cast<std::uintptr_t>(tail.data()));
+    DrawDecode decode{};
+    decode.programs.push_back(std::move(program));
+    const ShaderRegistry registry;
+    Require(DecodeProgramsCurrent(decode, registry), "a newly captured raw draw decode is not current");
+    for (auto& other : others) {
+        other.fill(0xbf810000u);
+        static_cast<void>(ReadRawShader(reinterpret_cast<std::uintptr_t>(other.data())));
+    }
+    const auto reread = ReadRawShader(address);
+    Require(reread != decode.programs.front().snapshot, "raw snapshot churn did not evict the retained snapshot");
+    Require(reread->code == decode.programs.front().snapshot->code, "raw snapshot churn changed the shader contents");
+    std::cout << "retained raw snapshot evicted=" << (reread != decode.programs.front().snapshot) << '\n';
+    Require(DecodeProgramsCurrent(decode, registry), "an unchanged retained raw draw decode was invalidated by snapshot cache eviction");
+    code[0] = 0xbf800000u;
+    code[1] = 0xbf810000u;
+    Require(!DecodeProgramsCurrent(decode, registry), "a retained raw draw decode ignored changed main code");
+    code[0] = 0xbf810000u;
+    Require(DecodeProgramsCurrent(decode, registry), "restoring raw main code did not restore its retained decode");
+    tail[0] = 0xbf800000u;
+    tail[1] = 0xbf810000u;
+    Require(!DecodeProgramsCurrent(decode, registry), "a retained raw draw decode ignored changed tail code");
+    tail[0] = 0xbf810000u;
+    Require(DecodeProgramsCurrent(decode, registry), "restoring raw tail code did not restore its retained decode");
+}
+
 void Check(AgcDriver::VulkanDevice& device) {
+    CheckRetainedDecode();
     using namespace AgcDriver::DriverDetail;
     using namespace ShaderRecompiler;
     AgcDriver::QueueState queue{};

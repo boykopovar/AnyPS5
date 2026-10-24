@@ -195,7 +195,7 @@ struct ShaderSnapshot {
 };
 
 
-std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address);
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address, const std::shared_ptr<const ShaderSnapshot>& retained = {});
 std::shared_ptr<const ShaderSnapshot> ReadUserDataTailContinuation(std::span<const std::uint32_t> code, std::uint32_t userDataBase, std::span<const std::uint32_t> userData);
 std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address, std::initializer_list<std::uint8_t> types);
 void NoteRawGraphicsDraw(const ShaderSnapshot& snapshot);

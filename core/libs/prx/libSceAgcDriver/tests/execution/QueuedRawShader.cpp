@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -22,6 +24,12 @@ void QueuedCode(bool cached) {
     code[0] = 0x7e000200u;
     const auto address = reinterpret_cast<std::uintptr_t>(code.data());
     const auto before = cached ? ReadRawShader(address) : nullptr;
+    DrawDecode decode{};
+    if (before != nullptr) {
+        DrawProgram program{};
+        program.snapshot = before;
+        decode.programs.push_back(std::move(program));
+    }
     std::atomic<bool> finished{false};
     std::atomic<bool> started{false};
     struct Restore {
@@ -42,6 +50,9 @@ void QueuedCode(bool cached) {
     }, {{address, address + sizeof(std::uint32_t)}});
     while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
     DrawPipeline::Active() = true;
+    if (before != nullptr && DecodeProgramsCurrent(decode, ShaderRegistry{})) {
+        throw std::runtime_error("a retained raw draw decode ignored a queued write to its code");
+    }
     const auto after = ReadRawShader(address);
     finished.store(true, std::memory_order_release);
     DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
