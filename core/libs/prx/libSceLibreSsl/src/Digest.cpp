@@ -340,8 +340,6 @@ int Sha512Final(unsigned char* digest, Sha512Context& c) {
     StoreBig64(buffer + 120, c.Nl);
     Sha512Block(c, buffer);
     if (!digest) return 0;
-    if (c.mdLength == Sha224Length || c.mdLength == Sha256Length)
-        NotImplemented_nid_no_patch("SHA512_Final: SHA-512/224 and SHA-512/256 digest lengths");
     if (c.mdLength != Sha384Length && c.mdLength != Sha512Length) return 0;
     for (std::size_t i = 0; i < c.mdLength / 8; ++i) StoreBig64(digest + 8 * i, c.h[i]);
     return 1;
@@ -490,8 +488,9 @@ int APS5_VABI SHA224_Final_nid_postfix(unsigned char* digest, Sha256Context* con
 }
 
 unsigned char* APS5_VABI SHA256_nid_postfix(const unsigned char* data, std::size_t length, unsigned char* digest) {
+    static unsigned char buffer[Sha256Length];
     RequireInput(data, length, __func__);
-    if (!digest) NotImplemented_nid_no_patch("SHA256: null digest buffer");
+    if (!digest) digest = buffer;
     Sha256Context c;
     SHA256_Init_nid_postfix(&c);
     if (length) Update32(c, data, length, Sha256Block);

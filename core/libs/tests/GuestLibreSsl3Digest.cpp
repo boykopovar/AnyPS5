@@ -18,8 +18,8 @@ static void Require(bool condition, std::source_location location = std::source_
     std::abort();
 }
 
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
+template<typename TAction> static void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::invalid_argument&) { return; } catch (const std::exception&) {}
     Require(false, location);
 }
 
@@ -46,9 +46,9 @@ int main() {
     Require(SHA1_nid_postfix(abc, 3, digest) == digest && Hex(digest, 20) == "a9993e364706816aba3e25717850c26c9cd0d89d" && digest[20] == 0xee);
     Require(SHA1_nid_postfix(nullptr, 0, digest) == digest && Hex(digest, 20) == "da39a3ee5e6b4b0d3255bfef95601890afd80709");
     Require(SHA1_nid_postfix(many, million.size(), digest) == digest && Hex(digest, 20) == "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
-    RequireThrows([&] { MD5_nid_postfix(abc, 3, nullptr); });
-    RequireThrows([&] { SHA1_nid_postfix(abc, 3, nullptr); });
-    RequireThrows([&] { SHA1_nid_postfix(nullptr, 1, digest); });
+    RequireInvalidArgument([&] { MD5_nid_postfix(abc, 3, nullptr); });
+    RequireInvalidArgument([&] { SHA1_nid_postfix(abc, 3, nullptr); });
+    RequireInvalidArgument([&] { SHA1_nid_postfix(nullptr, 1, digest); });
 
     std::puts("libSceLibreSsl3 digest tests passed");
 }
