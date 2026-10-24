@@ -56,6 +56,12 @@ struct ThreadArgs {
 #endif
 };
 
+#ifdef __APPLE__
+static void KeepHostFaultSignalsUnblocked(sigset_t& mask) {
+    for (const int signal : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP}) sigdelset(&mask, signal);
+}
+#endif
+
 static std::atomic<thread_dtors_func_t> threadDtors{nullptr};
 static std::atomic<get_thread_atexit_count_func_t> threadAtexitCount{nullptr};
 static std::atomic<thread_atexit_report_func_t> threadAtexitReport{nullptr};
@@ -663,7 +669,13 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #endif
     args.reset();
 #ifndef _WIN32
+#ifdef __APPLE__
+    sigset_t hostMask = signalMask;
+    KeepHostFaultSignalsUnblocked(hostMask);
+    pthread_sigmask(SIG_SETMASK, &hostMask, nullptr);
+#else
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
+#endif
 #endif
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
     CurrentGuestState().current = nullptr;
@@ -895,6 +907,9 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (created == 0) {
         sigset_t allSignals;
         sigfillset(&allSignals);
+#ifdef __APPLE__
+        KeepHostFaultSignalsUnblocked(allSignals);
+#endif
         pthread_sigmask(SIG_BLOCK, &allSignals, nullptr);
         created = pthread_create(&p->hostThread, &nativeAttr, StartNativeThread, native.get());
         pthread_sigmask(SIG_SETMASK, &creatorMask, nullptr);
