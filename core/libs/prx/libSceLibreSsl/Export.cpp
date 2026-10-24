@@ -892,11 +892,6 @@ int APS5_VABI OCSP_response_status_str_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_single_get0_status_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
