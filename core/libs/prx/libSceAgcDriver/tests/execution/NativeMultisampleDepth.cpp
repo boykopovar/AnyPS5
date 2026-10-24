@@ -663,6 +663,39 @@ void CheckDrawFeedback() {
     std::puts("Native depth feedback refused through the draw resource path; a written surface refused and a depth-tested one retired on guest read");
 }
 
+void CheckDepthAttachmentAlias() {
+    const auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "native depth attachment alias requires Vulkan");
+    const auto context = device->graphicsContext();
+    constexpr VkExtent2D extent{5u, 3u};
+    constexpr std::uint32_t samples = 4u;
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    TargetMemory memory(bytes), firstMetadata(65536u), secondMetadata(65536u);
+    std::memset(memory.Data(), 0x3c, bytes);
+    std::memset(firstMetadata.Data(), 0, 65536u);
+    std::memset(secondMetadata.Data(), 0, 65536u);
+    struct Cleanup {
+        AgcDriver::VulkanDevice& device;
+        ~Cleanup() { device.WaitIdle(); ClearCachedTextures(device.Device()); ClearDepthSurfaces(device.Device()); }
+    } cleanup{*device};
+    DepthTarget first{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, firstMetadata.Address(), false, samples};
+    first.depthSwizzle = 24u;
+    first.iterate256 = first.htilePipeAligned = first.htileDepthOnly = true;
+    const auto firstView = DepthSurfaceView(context, first);
+    const auto words = DepthSampleWords(first);
+    auto kept = DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
+    Require(kept != nullptr, "attachment alias fixture has no held native depth view");
+    auto second = first;
+    second.extent.width = 6u;
+    second.htileAddress = secondMetadata.Address();
+    Require(MultisampledDepthBytes_nid_no_patch(second.extent, 4u, samples) <= bytes, "attachment alias fixture exceeds its backing");
+    const auto secondView = DepthSurfaceView(context, second);
+    Require(secondView != VK_NULL_HANDLE && secondView != firstView, "an aliased depth attachment reused the previous layout's view");
+    Require(DepthSurfaceView(context, second) == secondView, "an unchanged native depth attachment was not reused");
+    for (std::size_t offset = 0u; offset < bytes; ++offset) Require(memory.Data()[offset] == std::byte{0x3c}, "retiring an unwritten attachment alias changed guest bytes");
+    std::puts("native depth attachment alias changes layout while retaining held GPU views");
+}
+
 enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite };
 
 void CheckClearDispatch() {
@@ -918,10 +951,10 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     Require(probe[0] == std::byte{0xa5}, "resident depth guard blocked an unrelated read");
     auto alias = target;
     alias.htileAddress += 65536u;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
     alias = target;
     alias.htileDepthOnly = !target.htileDepthOnly;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
     auto resource = DecodeTextureResource(words);
     for (std::uint32_t field = 0u; field < 18u; ++field) {
         auto changed = resource;
@@ -1033,7 +1066,7 @@ void CheckHtileRouting(Context context, VkFormat format, std::uint32_t fragments
     auto alias = target;
     alias.samples = 1u;
     alias.address = single.Address();
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    Require(DepthSurfaceView(context, alias) != VK_NULL_HANDLE, "a single-sample bind could not retire an unwritten native HTILE owner");
     Require(untouched(), "a single-sample bind over a native owner's HTILE stored expanded words into it");
     std::printf("Native depth format=%u samples=%u: binds over the owner's HTILE left its words alone\n", static_cast<std::uint32_t>(format), fragments);
 }
@@ -1295,6 +1328,7 @@ int main(int argc, char** argv) {
         }
         CheckDrawFeedback();
         const auto context = device->GetContext();
+        if (argc == 1) CheckDepthAttachmentAlias();
         std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
         Require(DepthSupported(context, VK_FORMAT_D32_SFLOAT, 4u), "the native depth regression requires sampled D32 with four samples");
         if (argc == 2 && std::string_view(argv[1]) == "--clear-refusals") {
