@@ -93,6 +93,7 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
     if (!live) return SCE_KERNEL_ERROR_ESRCH;
     (*attr)->_stacksize = thread->stackSize;
     (*attr)->stackAddress = thread->stackAddress;
+    if (thread->callerStack) (*attr)->_guardsize = 0;
     (*attr)->_detachstate = thread->_detached ? DETACH_DETACHED : DETACH_JOINABLE;
     (*attr)->_schedpriority = thread->priority.load(std::memory_order_relaxed);
     (*attr)->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);

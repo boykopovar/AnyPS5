@@ -22,6 +22,8 @@ constexpr std::size_t DeallocationStackOffset = 0x1478;
 
 std::mutex rangesLock;
 std::map<std::uintptr_t, std::uintptr_t> ranges;
+thread_local StackBounds threadStack{};
+thread_local StackBounds hostStack{};
 
 StackBounds CurrentBounds() {
     auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
@@ -36,6 +38,12 @@ void ApplyBounds(const StackBounds& bounds) {
     tib->StackBase = reinterpret_cast<void*>(bounds.base);
     tib->StackLimit = reinterpret_cast<void*>(bounds.limit);
     *reinterpret_cast<std::uintptr_t*>(teb + DeallocationStackOffset) = bounds.deallocation;
+}
+
+bool ThreadBounds(std::uintptr_t stackPointer, StackBounds& bounds) {
+    if (stackPointer < threadStack.limit || stackPointer >= threadStack.base) return false;
+    bounds = threadStack;
+    return true;
 }
 
 bool RegisteredBounds(std::uintptr_t stackPointer, StackBounds& bounds) {
@@ -80,11 +88,36 @@ void GuestStackRegister_nid_no_patch(const void* pointer, std::size_t bytes) {
 #endif
 }
 
+void GuestStackEnter_nid_no_patch(const void* pointer, std::size_t bytes) {
+#ifdef _WIN32
+    const auto low = reinterpret_cast<std::uintptr_t>(pointer);
+    hostStack = CurrentBounds();
+    threadStack = {low + bytes, low, low};
+    GuestArena::GuestArenaPinWritable_nid_postfix(pointer, bytes);
+    ApplyBounds(threadStack);
+#else
+    (void)pointer;
+    (void)bytes;
+#endif
+}
+
+void GuestStackLeave_nid_no_patch() {
+#ifdef _WIN32
+    ApplyBounds(hostStack);
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(reinterpret_cast<const void*>(threadStack.limit), threadStack.base - threadStack.limit);
+    threadStack = {};
+#endif
+}
+
 void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
 #ifdef _WIN32
+    StackBounds target{};
+    if (ThreadBounds(stackPointer, target)) {
+        ApplyBounds(target);
+        return;
+    }
     const auto current = CurrentBounds();
     if (stackPointer >= current.deallocation && stackPointer < current.base) return;
-    StackBounds target{};
     if (RegisteredBounds(stackPointer, target) || HostBounds(stackPointer, target)) ApplyBounds(target);
 #else
     (void)stackPointer;
