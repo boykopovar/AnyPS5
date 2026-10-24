@@ -408,6 +408,19 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     std::vector<std::byte> mask(bytes);
     GuestMemory::Read(address, mask, CmaskLayout::Alignment);
     const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
+    if (color.coverageSamples > color.samples) {
+        for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
+            for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
+                const auto nibble = layout.Nibble(tileX, tileY);
+                const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
+                if (code != 0u && (code >> 2u) != 3u) {
+                    char text[128];
+                    std::snprintf(text, sizeof(text), "AGC graphics: CMASK code 0x%x of a one-fragment color target is not implemented", code);
+                    throw std::runtime_error(text);
+                }
+            }
+        }
+    }
     if (uniform(std::byte{0xff})) return CmaskState::Expanded;
     if (uniform(std::byte{0})) return CmaskState::Cleared;
     for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
@@ -464,6 +477,10 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     const auto bytes = layout.Bytes();
     Require(color.cmaskBytes == bytes, "CMASK size differs from the color target's CMASK layout");
     if (cmaskProved(color.cmaskAddress, bytes)) return false;
+    if (color.coverageSamples > color.samples) {
+        std::vector<std::uint32_t> codes;
+        static_cast<void>(readCmask(color, layout, codes));
+    }
     auto* recorder = Recorder::Active();
     if (resident != nullptr && context.detiler != nullptr && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) {
         const auto* import = HostImportFor(context, color.cmaskAddress, bytes);
@@ -2519,6 +2536,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
         static_cast<void>(FlushDepthPlanes(color.address, colorLayout.Bytes(), DepthPlaneScope::Whole));
         RetireDepthSurfaces(context.device, color.address, colorLayout.Bytes());
+        if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
         constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         timer.phase(PhaseSetup);
         // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
@@ -3233,6 +3251,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     targets.reserve(recipe.targets.size());
     for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
         timer.phase(PhaseSetup);
+        if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
         auto stored = recipe.targets[index].lock();
         if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, state.colors[index].dccAddress)) return miss(DrawRecipeMiss::TargetGone);
         auto resident = refreshResidentTarget(context, state, state.colors[index], outcome, profile, [&] {

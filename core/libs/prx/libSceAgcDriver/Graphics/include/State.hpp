@@ -67,6 +67,7 @@ struct ColorTarget {
     bool uintExport = false;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
+    std::uint32_t coverageSamples = 1;
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
@@ -293,7 +294,7 @@ inline constexpr std::array<DrawKeyRange, 50> DrawKeyRegisters{{
     // PA_SU_VTX_CNTL, the sample masks, PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
     {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x286, 2}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2af, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x2fe, 16}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
     // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, DCC_BASE_EXT, ATTRIB2, ATTRIB3.
-    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 8}, {RegisterBank::Context, 0x3a8, 0x18},
+    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 0x10}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
     // the hull user pointer, program address, RSRC2 and user words; the local program address.
