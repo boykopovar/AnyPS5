@@ -121,7 +121,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferAtomicOnly == right.bufferAtomicOnly && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -222,6 +222,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
     binding.imageSamplers = {0x5u, 0u, 0x80000000u};
     binding.bufferRead = {true, false, false, true, true, false};
+    binding.bufferAtomicOnly = {false, true, seed % 2 == 0};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
     return binding;
 }
@@ -1364,7 +1365,7 @@ void verifyBindingPlanSelection() {
     BindingAllocationResult full;
     builder.Populate(full, compiled, plan, 0u, snapshot, {});
     require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
-    require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
+    require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true} && full.bindings[0].bufferAtomicOnly == std::vector<bool>{true, false}, "binding plan lost buffer access metadata");
     const std::array liveBindings{full.bindings[0].binding, full.bindings[0].binding, full.bindings[3].binding};
     const auto selected = builder.Select(plan, liveBindings);
     snapshot.userData.clear();
@@ -1878,7 +1879,7 @@ IrResourcePlan handBuiltPlan() {
     plan.requiresSpecializationMemory = true;
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
-    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u}};
+    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, true, 0x7u, true, 4u}};
     ImageResource image{};
     image.source = 1u;
     image.resourceClass = ImageResourceClass::Sampled;

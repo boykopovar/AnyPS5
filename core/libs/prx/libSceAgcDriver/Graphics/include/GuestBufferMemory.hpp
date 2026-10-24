@@ -328,6 +328,7 @@ public:
     void WriteBack();
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const;
+    bool WrittenInPlace(std::uint64_t address, std::size_t bytes) const;
     // Guest ranges the shader may write through descriptors, as [begin, end).
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& Writes() const { return writes; }
     // Whether any written range lives in a copied buffer, so a write-back must run once the GPU is done.

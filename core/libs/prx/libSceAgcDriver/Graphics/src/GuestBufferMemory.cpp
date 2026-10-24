@@ -5515,6 +5515,18 @@ bool GuestBufferMemory::CopiedWritesOverlap(std::uint64_t address, std::size_t b
     return false;
 }
 
+bool GuestBufferMemory::WrittenInPlace(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return false;
+    bool any = false;
+    for (const auto& [begin, end] : writes) {
+        if (!(address < end && begin < address + bytes)) continue;
+        const auto* found = owner(begin, end);
+        if (found == nullptr || found->direct == nullptr) return false;
+        any = true;
+    }
+    return any;
+}
+
 void GuestBufferMemory::MarkDirectWrites() const {
     for (const auto& [begin, end] : writes) {
         const auto* found = owner(begin, end);

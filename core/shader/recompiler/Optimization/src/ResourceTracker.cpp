@@ -1859,6 +1859,7 @@ private:
         resource.read = resource.read || !write || atomic;
         resource.written = resource.written || write;
         resource.atomic = resource.atomic || atomic;
+        resource.plain = resource.plain || !atomic;
         resource.formatted = resource.formatted || memory.formatted;
         resource.descriptorFormatted = resource.descriptorFormatted || (memory.formatted && !memory.typed);
         if (memory.formatted && memory.typed) {
