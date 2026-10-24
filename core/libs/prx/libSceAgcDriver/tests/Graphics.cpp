@@ -5532,6 +5532,79 @@ void bufferBudgetPlacementTests() {
     }
 }
 
+bool copyFailureArmed = false;
+
+VKAPI_ATTR void VKAPI_CALL mockFailureCopy(VkCommandBuffer commands, VkBuffer source, VkBuffer destination, std::uint32_t count, const VkBufferCopy* regions) {
+    mockCmdCopyBuffer(commands, source, destination, count, regions);
+    if (copyFailureArmed && count == 1 && regions[0].size == 32 && (mock.bufferUsage.at(destination) & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0) {
+        copyFailureArmed = false;
+        mock.memoryLimit = 0;
+    }
+}
+
+PFN_vkVoidFunction VKAPI_CALL mockCopyFailureProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCmdCopyBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(mockFailureCopy);
+    return mockProc(device, name);
+}
+
+void copyInputFailureLifetimeTests() {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t bytes = 32;
+    constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    auto block = std::unique_ptr<std::byte[], void(*)(std::byte*)>(static_cast<std::byte*>(::operator new(piece, std::align_val_t{piece})), [](std::byte* value) { ::operator delete(value, std::align_val_t{piece}); });
+    std::fill_n(block.get(), piece, std::byte{0});
+    const auto base = reinterpret_cast<std::uint64_t>(block.get());
+    bool refused = false;
+    bool earlyReuse = false;
+    mock = MockVulkan{};
+    mock.deferFences = true;
+    {
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.deviceProc = mockCopyFailureProc;
+        context.bufferDeviceAddress = true;
+        context.hostImportAlignment = piece;
+        context.limits.minStorageBufferOffsetAlignment = 256;
+        context.limits.nonCoherentAtomSize = piece;
+        context.limits.maxMemoryAllocationCount = 4096;
+        SetImportWatch(context, ImportWatch::Unwatch);
+        const auto pool = GetBufferPool(context);
+        GuestAllocations::Mutation().Add(block.get(), piece, true, false, true);
+        const auto unregister = [&](std::byte*) { GuestAllocations::Mutation().Remove(block.get()); };
+        std::unique_ptr<std::byte, decltype(unregister)> registered(block.get(), unregister);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            recorder.Activate();
+            copyFailureArmed = true;
+            try {
+                GuestBufferMemory memory(context);
+                memory.AddReadable(base + 4, bytes);
+                memory.Upload(false);
+            } catch (const std::exception&) {
+                refused = true;
+            }
+            Require(refused && !copyFailureArmed && mock.bufferCopies.size() == 1, "diagnostic readback pressure was not exercised after the copy command");
+            const auto destination = mock.bufferCopies.front().destination;
+            std::vector<BufferAllocation> taken;
+            while (const auto allocation = pool->Take(bytes, usage, properties)) {
+                earlyReuse |= allocation->buffer == destination;
+                taken.push_back(*allocation);
+            }
+            for (const auto& allocation : taken) pool->Put(allocation);
+            mock.memoryLimit.reset();
+            recorder.Sync();
+        }
+        registered.reset();
+        ClearHostImports(context.device);
+    }
+    Require(mock.live == 0, "copy failure lifetime test leaked an object");
+    std::cout << "diagnostic pressure refused=" << refused << " destination_reusable_before_fence=" << earlyReuse << '\n';
+    Require(!earlyReuse, "recorded copy destination became reusable before its fence after readback pressure");
+}
+
 void copyInputKeptBytesTests() {
     using namespace AgcDriver::Graphics;
     constexpr std::size_t piece = 65536;
@@ -11731,6 +11804,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-lazy-buffer-pool") {
             pipelineStoreLazyBufferPoolTests();
             std::cout << "cached pipelines survive lazy buffer pool creation\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--copy-input-failure-lifetime") {
+            copyInputFailureLifetimeTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--copy-input-kept-bytes") {
