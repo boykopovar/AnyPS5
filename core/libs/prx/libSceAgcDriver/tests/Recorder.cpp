@@ -9332,6 +9332,185 @@ void singleCubeTests(const Device& device, Recorder& recorder) {
     }
 }
 
+bool snapshotReadIntoStagingTests(const Device& device, Recorder& recorder) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "skipped, guest memory has no write watch\n";
+        return false;
+    }
+    const auto& context = device.GetContext();
+    TextureDetiler detiler(context);
+    SampleProgram program(context, recorder);
+    auto cacheContext = context;
+    cacheContext.detiler = &detiler;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t compareBytes = 256u << 10u;
+    struct Surface {
+        std::uint8_t* data = nullptr;
+        std::size_t bytes = 0;
+        Surface(const Surface&) = delete;
+        Surface& operator=(const Surface&) = delete;
+        explicit Surface(std::size_t size, std::size_t holeBegin = 0, std::size_t holeEnd = 0) : bytes((size + unit - 1) / unit * unit) {
+#ifdef _WIN32
+            data = static_cast<std::uint8_t*>(holeBegin < holeEnd ? GuestArena::GuestArenaAllocate_nid_postfix(bytes, unit) : AllocateWatched(bytes, unit));
+#else
+            data = static_cast<std::uint8_t*>(AllocateWatched(bytes, unit));
+#endif
+            Require(data != nullptr, "cannot allocate a watched surface for the staging snapshot test");
+            if (holeBegin < holeEnd) {
+#ifdef _WIN32
+                GuestArena::GuestArenaCommit_nid_postfix(data, holeBegin, PAGE_READWRITE, holeBegin);
+                GuestArena::GuestArenaCommit_nid_postfix(data + holeEnd, bytes - holeEnd, PAGE_READWRITE, bytes - holeEnd);
+#else
+                GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data + holeBegin, holeEnd - holeBegin);
+                Require(mmap(data + holeBegin, holeEnd - holeBegin, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot leave the centre of the staging snapshot surface uncommitted");
+#endif
+                Require(!AgcDriver::GuestMemory::Accessible(data + holeBegin, holeEnd - holeBegin) && AgcDriver::GuestMemory::Watched(Address(), holeBegin) && AgcDriver::GuestMemory::Watched(Address() + holeEnd, bytes - holeEnd), "the staging snapshot surface is not watched around its uncommitted centre");
+            }
+            GuestAllocations::Mutation().Add(data, bytes, true, true, true);
+        }
+        ~Surface() {
+            GuestAllocations::Mutation().Remove(data);
+            ReleaseWatched(data, bytes);
+        }
+        std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(data); }
+    };
+    std::vector<std::unique_ptr<Surface>> surfaces;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+        }
+    } clear{context, recorder};
+    const auto allocate = [&](std::size_t bytes, std::size_t holeBegin = 0, std::size_t holeEnd = 0) -> Surface& {
+        surfaces.push_back(std::make_unique<Surface>(bytes, holeBegin, holeEnd));
+        return *surfaces.back();
+    };
+    const auto lookup = [&](const std::array<std::uint32_t, 8>& words, const std::string& what) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        auto texture = CachedSampledTexture(cacheContext, words);
+        Require(texture != nullptr && !texture->ViewsStorageImage(), "the " + what + " surface was not sampled through a snapshot");
+        return texture;
+    };
+    const auto spare = [](std::size_t entries, std::uint64_t bytes) {
+        const auto use = TextureCacheUsage();
+        return use.spareEntries == entries && use.spareBytes == bytes;
+    };
+    const auto mark = [](std::uint8_t* data, const auto& mip, std::uint8_t value) {
+        for (std::uint32_t row = mip.height / 2 - 1; row <= mip.height / 2; ++row) std::fill_n(data + static_cast<std::size_t>(row) * mip.pitchBytes + (mip.width / 2 - 1) * 4u, 8, value);
+    };
+    const auto dropped = [&](const std::string& what, const std::array<std::uint32_t, 8>& words, const std::vector<std::uint8_t>& levels) {
+        const auto bytes = static_cast<std::size_t>(DescribeSurface(DecodeTextureResource(words)).guestBytes);
+        Require(bytes > compareBytes, "the " + what + " surface is too small for its snapshot to be dropped");
+        const void* poisoned = nullptr;
+        {
+            Buffer stale(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            std::fill(stale.Bytes().begin(), stale.Bytes().end(), std::byte{0xee});
+            poisoned = stale.Bytes().data();
+        }
+        const auto texture = lookup(words, what);
+        Require(spare(0, 0), "the dropped snapshot of the " + what + " surface parked a vector in the spare pool");
+        {
+            Buffer probe(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            Require(probe.Bytes().data() != poisoned, "the dropped snapshot of the " + what + " surface was not uploaded from the reused pooled staging buffer");
+        }
+        for (std::size_t level = 0; level < levels.size(); ++level) expectRed(program.Red(texture->View(), texture->Layout(), static_cast<float>(level)), levels[level] / 255.0f, ("the dropped snapshot of the " + what + " surface read into a reused pooled staging buffer sampled the wrong bytes in level " + std::to_string(level)).c_str());
+        AgcDriver::GuestMemory::MarkWritten(DecodeTextureResource(words).baseAddress + 0x200, 4);
+        Require(lookup(words, what) != texture, "the snapshot of the " + what + " surface kept its bytes to compare after a driver store of the bytes already there");
+        std::cout << "dropped snapshot read into its staging buffer, " << what << ": passed\n";
+    };
+    ClearCachedTextures(context.device);
+    Require(spare(0, 0), "clearing the texture caches left spare snapshot vectors");
+    {
+        auto& surface = allocate(std::size_t{512} * 512 * 4);
+        const auto words = linearTextureWords(surface.Address(), 512, 512, 56);
+        const auto geometry = DescribeSurface(DecodeTextureResource(words));
+        std::memset(surface.data, 0x10, static_cast<std::size_t>(geometry.guestBytes));
+        mark(surface.data, geometry.mips[0], 0x40);
+        dropped("linear", words, {0x40});
+    }
+    {
+        auto& surface = allocate(std::size_t{512} * 512 * 4);
+        auto words = linearTextureWords(surface.Address(), 512, 512, 56);
+        words[3] |= 0x1bu << 20u;
+        const auto resource = DecodeTextureResource(words);
+        Require(resource.tileMode == TextureTileMode::kR64KBX, "the tiled staging snapshot surface is not 64KB_R_X");
+        std::memset(surface.data, 0x90, static_cast<std::size_t>(DescribeSurface(resource).guestBytes));
+        dropped("tiled", words, {0x90});
+    }
+    {
+        const auto padded = DescribeSurface(DecodeTextureResource(linearTextureWords(0x100000, 600, 300, 56)));
+        auto& surface = allocate(static_cast<std::size_t>(padded.guestBytes));
+        const auto words = linearTextureWords(surface.Address(), 600, 300, 56);
+        const auto geometry = DescribeSurface(DecodeTextureResource(words));
+        Require(geometry.mips[0].pitchBytes != geometry.mips[0].width * 4u, "the padded staging snapshot surface has no row padding");
+        std::memset(surface.data, 0x10, static_cast<std::size_t>(geometry.guestBytes));
+        mark(surface.data, geometry.mips[0], 0x70);
+        dropped("padded linear", words, {0x70});
+    }
+    {
+        const auto threeLevels = [](std::uint64_t address) {
+            auto words = linearTextureWords(address, 512, 512, 56);
+            words[3] |= 2u << 16u;
+            words[5] |= 2u << 4u;
+            return words;
+        };
+        const auto geometry = DescribeSurface(DecodeTextureResource(threeLevels(0x100000)));
+        const auto& mip = geometry.mips[1];
+        const auto holeBegin = (static_cast<std::size_t>(mip.tiledOffset) + static_cast<std::size_t>(mip.height / 2 - 1) * mip.pitchBytes) / unit * unit;
+        const auto holeEnd = (static_cast<std::size_t>(mip.tiledOffset) + static_cast<std::size_t>(mip.height / 2 + 1) * mip.pitchBytes + unit - 1) / unit * unit;
+        const auto bytes = static_cast<std::size_t>(geometry.guestBytes);
+        Require(geometry.mips.size() == 3 && geometry.mips[2].tiledOffset + geometry.mips[2].tiledSize <= holeBegin && geometry.mips[0].tiledOffset >= holeEnd, "the partially committed staging snapshot surface has no committed level before and after its uncommitted centre");
+        auto& surface = allocate(bytes, holeBegin, holeEnd);
+        std::memset(surface.data, 0x10, holeBegin);
+        std::memset(surface.data + holeEnd, 0x10, bytes - holeEnd);
+        mark(surface.data + geometry.mips[0].tiledOffset, geometry.mips[0], 0x40);
+        dropped("partially committed", threeLevels(surface.Address()), {0x40, 0x00, 0x10});
+    }
+    constexpr std::size_t bigBytes = std::size_t{512} * 512 * 4;
+    const auto fastCleared = [&](const std::string& what) {
+        auto& keyed = allocate(bigBytes + unit);
+        std::memset(keyed.data, 0x10, bigBytes);
+        std::memset(keyed.data + bigBytes, 0, unit);
+        auto keyedWords = linearTextureWords(keyed.Address(), 512, 512, 56);
+        const auto keys = keyed.Address() + bigBytes;
+        keyedWords[6] = (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u);
+        keyedWords[7] = static_cast<std::uint32_t>(keys >> 16u);
+        Require(DecodeTextureResource(keyedWords).dccAddress == keys, "the " + what + " staging snapshot surface does not name its keys");
+        const auto cleared = lookup(keyedWords, what);
+        Require(spare(1, bigBytes), "the dropped snapshot of the " + what + " surface did not park its vector in the spare pool");
+        expectRed(program.Red(cleared->View(), cleared->Layout(), 0.0f), 0.0f, ("the snapshot of the " + what + " surface did not read its clear").c_str());
+    };
+    fastCleared("fast-cleared");
+    for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
+    auto& later = allocate(bigBytes);
+    std::memset(later.data, 0x50, bigBytes);
+    const auto uncompressed = lookup(linearTextureWords(later.Address(), 512, 512, 56), "uncompressed");
+    Require(spare(1, bigBytes), "the dropped snapshot of an uncompressed surface parked a vector beside the spare of its size");
+    expectRed(program.Red(uncompressed->View(), uncompressed->Layout(), 0.0f), 0x50 / 255.0f, "the dropped snapshot of an uncompressed surface sampled the wrong bytes");
+    Recorder::CountPresent();
+    auto& small = allocate(compareBytes);
+    std::memset(small.data, 0x30, compareBytes);
+    static_cast<void>(lookup(linearTextureWords(small.Address(), 256, 256, 56), "small"));
+    Require(spare(0, 0), "the dropped snapshot of an uncompressed surface took the spare of its size and parked it again, so it outlived " + std::to_string(SpareSnapshotPresents) + " presents without a use");
+    std::cout << "dropped snapshot leaves the spare snapshot pool alone: passed\n";
+    fastCleared("second fast-cleared");
+    const auto droppedHalf = [&](const std::string& what) {
+        auto& surface = allocate(bigBytes / 2);
+        std::memset(surface.data, 0x60, bigBytes / 2);
+        static_cast<void>(lookup(linearTextureWords(surface.Address(), 512, 256, 56), what));
+    };
+    for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
+    droppedHalf("half-size");
+    Require(spare(1, bigBytes), "a dropped snapshot made " + std::to_string(SpareSnapshotPresents) + " presents after a spare was parked freed it");
+    Recorder::CountPresent();
+    droppedHalf("second half-size");
+    Require(spare(0, 0), "a dropped snapshot made " + std::to_string(SpareSnapshotPresents + 1) + " presents after a spare was parked did not free it");
+    std::cout << "dropped snapshot expires idle spare snapshots: passed\n";
+    return true;
+}
+
 void cubeExtraSliceTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
@@ -11275,6 +11454,11 @@ int main(int argc, char** argv) {
             }
             sampleDumpTests(device, recorder);
             std::cout << "Occlusion counter dump tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--snapshot-read-into-staging-only") {
+            if (!snapshotReadIntoStagingTests(device, recorder)) return 77;
+            std::cout << "Snapshot read into staging tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {

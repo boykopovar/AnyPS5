@@ -329,7 +329,7 @@ private:
     std::uint8_t* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
@@ -337,13 +337,13 @@ std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t sid
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
-        0u,
-        0u,
+        keys != 0 ? (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u) : 0u,
+        static_cast<std::uint32_t>(keys >> 16u),
     };
 }
 
-std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
-    const auto words = Descriptor(address, side, format);
+std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint64_t keys = 0) {
+    const auto words = Descriptor(address, side, format, keys);
     return CachedSampledTexture(context, words);
 }
 
@@ -691,12 +691,14 @@ void recycleTests(const Context& context) {
     Require(Sampled(context, address) == third, "an unchanged surface did not serve its remade snapshot");
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     const WatchedSurface watchedFirst(context, BigBytes);
     const WatchedSurface watchedSecond(context, BigBytes);
-    const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
-    const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not take the parked spare of its size");
+    const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide, Format32UInt, keys);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big fast-cleared snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
+    const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide, Format32UInt, keys);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not take the parked spare of its size");
 }
 
 void spareAgeTests(const Context& context) {
@@ -704,10 +706,12 @@ void spareAgeTests(const Context& context) {
     ClearCachedTextures(context.device);
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const auto keys = block.Surface(Surfaces - 1);
+    std::memset(reinterpret_cast<void*>(keys), 0, SurfaceBytes);
     {
         const WatchedSurface watched(context, BigBytes);
-        const auto first = Sampled(context, watched.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big snapshot did not park its dropped buffer in the spare pool");
+        const auto first = Sampled(context, watched.Address(), BigSide, Format32UInt, keys);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present <= SpareSnapshotPresents; ++present) Recorder::CountPresent();
         const auto small = Sampled(context, block.Surface(0));
         Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a spare idle for " + std::to_string(SpareSnapshotPresents + 1u) + " presents was not released");
@@ -716,10 +720,10 @@ void spareAgeTests(const Context& context) {
     {
         const WatchedSurface watchedFirst(context, BigBytes);
         const WatchedSurface watchedSecond(context, BigBytes);
-        const auto second = Sampled(context, watchedFirst.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not park its dropped buffer in the spare pool");
+        const auto second = Sampled(context, watchedFirst.Address(), BigSide, Format32UInt, keys);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big fast-cleared snapshot did not park its dropped buffer in the spare pool");
         for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
-        const auto third = Sampled(context, watchedSecond.Address(), BigSide);
+        const auto third = Sampled(context, watchedSecond.Address(), BigSide, Format32UInt, keys);
         Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare taken within " + std::to_string(SpareSnapshotPresents) + " presents was released instead of reused");
     }
 }

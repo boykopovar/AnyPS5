@@ -1759,14 +1759,19 @@ if(BUILD_TESTING)
     set_tests_properties(agc_shadowed_key_stores PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_sample_dumps COMMAND agc_driver_recorder_tests --sample-dumps-only)
     set_tests_properties(agc_sample_dumps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_snapshot_read_into_staging COMMAND agc_driver_recorder_tests --snapshot-read-into-staging-only)
+    set_tests_properties(agc_snapshot_read_into_staging PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_uncounted_passes COMMAND agc_driver_recorder_tests --uncounted-passes-only)
     set_tests_properties(agc_uncounted_passes PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_draw_descriptors COMMAND agc_driver_recorder_tests --draw-descriptors-only)
     set_tests_properties(agc_draw_descriptors PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_uncounted_passes agc_draw_descriptors PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_pending_key_stores agc_shadowed_key_stores agc_sample_dumps agc_snapshot_read_into_staging agc_uncounted_passes agc_draw_descriptors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    set_property(TEST agc_snapshot_read_into_staging APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "APS5_SYNC_TEXTURE_UPLOAD=unset:" "APS5_DUMP_TEXTURE=unset:" "APS5_NO_TEXTURE_CACHE=unset:"
+        "APS5_BUFFER_POOL_SLOTS=unset:" "APS5_BUFFER_POOL_SHARED=unset:" "APS5_NO_BUFFER_CLASSES=unset:" "APS5_STAGING_POOL_MIB=unset:")
     add_test(NAME agc_driver_host_import_lifetime COMMAND agc_driver_recorder_tests --host-import-lifetime-only)
     add_test(NAME agc_driver_host_import_mutation_race COMMAND agc_driver_recorder_tests --host-import-mutation-race-only)
     set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race PROPERTIES
