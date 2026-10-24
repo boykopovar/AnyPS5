@@ -47,6 +47,8 @@ constexpr std::size_t BlockBytes = TexturesOffset + 2 * 65536;
 constexpr std::size_t UnimportableBytes = BlockBytes - 256;
 constexpr std::uint64_t CpuWriteResolutions = 1;
 
+bool chained = false;
+
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
@@ -209,6 +211,10 @@ void ExpectWrites(const AgcDriver::Graphics::ImageTableReuseCounts& before, std:
     const auto now = AgcDriver::Graphics::ImageTableReuses();
     const auto keptNow = now.writesKept - before.writesKept;
     const auto madeNow = now.writesMade - before.writesMade;
+    if (chained) {
+        Require(keptNow == 0u && madeNow == 0u, "image table reuse: " + what + ": table descriptors were recorded for a set from the shared pool chain");
+        return;
+    }
     if (!keptSets) {
         Require(keptNow == 0u && madeNow == kept + made, "image table reuse: " + what + ": table descriptors were kept with kept sets turned off");
         return;
@@ -261,11 +267,15 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
 
     std::vector<std::uint32_t> unbumped[2];
     auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto pools = device.graphicsContext().descriptorCache->Counters();
     std::thread thread([&] {
         unbumped[0] = Dispatch(device, result, 3);
         unbumped[1] = Dispatch(device, result, 3);
     });
     thread.join();
+    const auto poolsNow = device.graphicsContext().descriptorCache->Counters();
+    chained = poolsNow.dedicatedPools + poolsNow.reusedSets == pools.dedicatedPools + pools.reusedSets;
+    if (chained) std::puts("the table's descriptor set fits the shared pool chain: kept table sets are not tested");
     Require(unbumped[0] == Row(block.Texels(3)) && unbumped[1] == Row(block.Texels(3)), "image table reuse: a thread without a collect epoch sampled the wrong entry");
     Expect(before, 0, 2, "a thread without a collect epoch");
 
