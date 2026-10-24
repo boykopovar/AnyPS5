@@ -56,7 +56,7 @@ def build_elf(symbols, needed=()):
     return bytes(image)
 
 
-def build_sectionless_elf(symbols, needed=(), gnu_hash=False):
+def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -73,8 +73,9 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False):
     symbol_table = b"".join(entries)
     hash_offset = (symbols_offset + len(symbol_table) + 3) & ~3
     if gnu_hash:
-        hash_table = struct.pack("<IIII", 1, 1, 1, 0) + bytes(8)
-        hash_table += struct.pack("<I", 1) + b"".join(struct.pack("<I", 1 if index == len(entries) - 1 else 0) for index in range(1, len(entries)))
+        hash_table = struct.pack("<IIII", len(gnu_buckets), 1, 1, 0) + bytes(8)
+        hash_table += b"".join(struct.pack("<I", index) for index in gnu_buckets)
+        hash_table += b"".join(struct.pack("<I", 1 if index == len(entries) - 1 else 0) for index in range(1, len(entries)))
         hash_tag = 0x6ffffef5
     else:
         hash_table = struct.pack("<II", 1, len(entries)) + struct.pack("<I", 0) + bytes(4 * len(entries))
@@ -1039,6 +1040,51 @@ class ImportAuditTests(unittest.TestCase):
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
                          ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+
+    def test_sectionless_elf_gnu_hash_reads_each_chain_entry_once(self):
+        symbols = [(f"symbol{index}", int(index != 0), GLOBAL_FUNCTION) for index in range(32)]
+        expected = ({"symbol0": False}, {name for name, section, _ in symbols if section}, {"libSceA.prx"})
+        for buckets, terminator in (((1,) * 32, None), (tuple(range(32, 0, -1)), None), ((17, 1, 0, 17), 16)):
+            with self.subTest(buckets=buckets, terminator=terminator):
+                image = bytearray(build_sectionless_elf(symbols, ["libSceA.prx"], gnu_hash=True, gnu_buckets=buckets))
+                dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+                tags = dict(struct.unpack_from("<qQ", image, position)
+                            for position in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+                chain_offset = tags[0x6ffffef5] - 0x400000 + 24 + len(buckets) * 4
+                if terminator is not None:
+                    struct.pack_into("<I", image, chain_offset + (terminator - 1) * 4, 1)
+                with patch.object(import_audit, "unpack", wraps=import_audit.unpack) as unpack:
+                    self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image), expected)
+                chain_reads = [call.args[2] for call in unpack.call_args_list if call.args[4] == "GNU hash chain entry"]
+                self.assertEqual(len(chain_reads), len(symbols))
+                self.assertEqual(set(chain_reads), set(range(chain_offset, chain_offset + len(symbols) * 4, 4)))
+
+    def test_sectionless_elf_gnu_hash_empty_buckets(self):
+        for buckets in ((), (0,), (0, 0, 0)):
+            with self.subTest(buckets=buckets):
+                image = build_sectionless_elf([], gnu_hash=True, gnu_buckets=buckets)
+                with patch.object(import_audit, "unpack", wraps=import_audit.unpack) as unpack:
+                    self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image), ({}, set(), set()))
+                self.assertFalse(any(call.args[4] == "GNU hash chain entry" for call in unpack.call_args_list))
+
+    def test_sectionless_elf_gnu_hash_overlapping_buckets_require_file_backed_chains(self):
+        symbols = [(f"symbol{index}", 1, GLOBAL_FUNCTION) for index in range(4)]
+        for buckets in ((1, 1), (3, 1, 2)):
+            for terminated in (False, True):
+                image = bytearray(build_sectionless_elf(symbols, gnu_hash=True, gnu_buckets=buckets))
+                dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+                tags = dict(struct.unpack_from("<qQ", image, position)
+                            for position in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+                chain_offset = tags[0x6ffffef5] - 0x400000 + 24 + len(buckets) * 4
+                chain_end = chain_offset + len(symbols) * 4
+                if not terminated:
+                    struct.pack_into("<I", image, chain_end - 4, 0)
+                file_size = chain_end - int(terminated)
+                struct.pack_into("<QQ", image, 64 + 32, file_size, file_size)
+                for reader in (import_audit.elf_exports, import_audit.elf_imports):
+                    with self.subTest(buckets=buckets, terminated=terminated, reader=reader.__name__):
+                        with self.assertRaisesRegex(import_audit.AuditError, "GNU hash chain.*outside file-backed"):
+                            reader(Path("unmapped-chain.prx"), image)
 
     def test_sectionless_hash_metadata_must_be_file_backed(self):
         for gnu_hash in (False, True):
