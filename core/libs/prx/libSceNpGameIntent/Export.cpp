@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -10,7 +11,13 @@ namespace {
 constexpr int NpGameIntentErrorInvalidArgument = -2141898748;
 constexpr int NpGameIntentErrorIntentNotFound = -2141898746;
 constexpr int NpGameIntentErrorValueNotFound = -2141898745;
+constexpr int NpGameIntentErrorNotInitialized = -2141898750;
 constexpr int NpGameIntentUserIdInvalid = -1;
+
+std::atomic_bool& AppLauncherInitialized() {
+    static std::atomic_bool initialized{false};
+    return initialized;
+}
 
 
 }
@@ -76,15 +83,20 @@ int APS5_VABI sceNpGameIntentVshTerminate(void) {
 
 int APS5_VABI sceNpAppLauncherInitialize(const void* initParam) {
     (void)initParam;
+    AppLauncherInitialized() = true;
     return 0;
 }
 
-int APS5_VABI sceNpAppLauncherLaunchApp() {
+int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, const char* arg3) {
+    (void)arg0;
+    if (!AppLauncherInitialized()) return NpGameIntentErrorNotInitialized;
+    if (arg2 == nullptr || *arg2 == '\0' || (arg3 != nullptr && std::memchr(arg3, '\0', 0x2001) == nullptr)) return NpGameIntentErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpAppLauncherTerminate() {
+    AppLauncherInitialized() = false;
     return 0;
 }
 
