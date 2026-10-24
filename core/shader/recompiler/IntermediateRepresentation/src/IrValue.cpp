@@ -9,22 +9,6 @@ IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode
     arguments.reserve(IrOpcodeOperandCount(opcode));
 }
 
-std::uint32_t IrValue::Id() const {
-    return id;
-}
-
-const std::vector<IrValue*>& IrValue::Arguments() const {
-    return arguments;
-}
-
-IrBlock* IrValue::Parent() const {
-    return parent;
-}
-
-std::uint32_t IrValue::ImmediateU32() const {
-    return static_cast<std::uint32_t>(immediateBits);
-}
-
 void IrValue::AddArgument(IrValue* argument) {
     arguments.push_back(argument);
     if (argument == nullptr) {
@@ -92,20 +76,8 @@ bool IrValue::IsEmpty() const {
     return opcode == IrOpcode::Void;
 }
 
-bool IrValue::IsPhi() const {
-    return opcode == IrOpcode::Phi;
-}
-
 bool IrValue::MayHaveSideEffects() const {
     return IrOpcodeHasSideEffects(opcode);
-}
-
-bool IrValue::HasUses() const {
-    return !operandUses.empty();
-}
-
-std::size_t IrValue::UseCount() const {
-    return operandUses.size();
 }
 
 std::size_t IrValue::PhiBlockCount() const {
