@@ -2088,7 +2088,7 @@ private:
         resource = AddImage(source, memory, op, flags.pc);
         NoteBlockImage(resource);
         if (resource == std::numeric_limits<std::uint32_t>::max()) {
-            fail("image resource limit exceeded");
+            fail("image resource limit exceeded (" + std::to_string(m_info.images.size() + 1u) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
         }
         AddHandlePatch(handle, resource);
         std::uint32_t sampler = 0;

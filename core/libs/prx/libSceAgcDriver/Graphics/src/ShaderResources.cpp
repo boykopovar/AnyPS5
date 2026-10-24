@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <memory>
 #include <mutex>
 #include <array>
@@ -1842,7 +1843,7 @@ struct ReusedTable {
     std::vector<ReusedTableElement> elements;
     std::vector<GuestMemory::UnchangedQuery> queries;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
-    std::vector<std::uint32_t> imageSamplers;
+    std::vector<std::uint64_t> imageSamplers;
     std::vector<std::uint32_t> samplers;
     std::vector<std::string> bound;
     bool replayable = false;
@@ -2691,7 +2692,10 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
-        for (const auto sampler : binding.imageSamplers) visit(sampler);
+        for (const auto sampler : binding.imageSamplers) {
+            visit(static_cast<std::uint32_t>(sampler));
+            visit(static_cast<std::uint32_t>(sampler >> 32u));
+        }
         visit(static_cast<std::uint32_t>(binding.imageShapes.size()));
         for (const auto shape : binding.imageShapes) visit(static_cast<std::uint32_t>(shape));
     }
@@ -2712,7 +2716,7 @@ void ShaderResources::AppendContentKey(const CompiledShader& shader, bool dataWo
     };
     for (const auto& binding : shader.program->bindings) {
         addWords(20);
-        addWords(binding.imageSamplers.size());
+        addWords(binding.imageSamplers.size() * 2u);
         addWords(binding.imageShapes.size());
         if ((dataWords && !movableBuffers) || !DataRole(binding.role)) addWords(binding.guestDescriptor.size());
         for (const auto* bits : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) addWords(bits->size() / 32u + (bits->size() % 32u != 0 ? 1u : 0u));
@@ -4871,8 +4875,9 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             if (!shaderSamplers.empty()) {
                 const bool singleLevel = DescriptorSingleLevel(words);
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
-                for (std::uint32_t sampler = 0; sampler < shaderSamplers.size() && sampler < 32u; ++sampler) {
-                    if (((binding.imageSamplers[element] >> sampler) & 1u) == 0) continue;
+                for (auto mask = binding.imageSamplers[element]; mask != 0u; mask &= mask - 1u) {
+                    const auto sampler = static_cast<std::uint32_t>(std::countr_zero(mask));
+                    if (sampler >= shaderSamplers.size()) break;
                     auto& source = samplerSources.at(firstSampler + sampler);
                     (singleLevel ? source.singleLevelImage : source.mipmappedImage) = true;
                 }
@@ -5118,8 +5123,9 @@ void ShaderResources::resolveImageTables() {
                 RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers.at(element), stageSamplers);
                 const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
                 const bool integerImage = numeric == ShaderRecompiler::IrTextureNumericClass::Uint || numeric == ShaderRecompiler::IrTextureNumericClass::Sint;
-                for (std::uint32_t sampler = 0; sampler < stageSamplers.size() && sampler < 32u; ++sampler) {
-                    if (((binding.imageSamplers.at(element) >> sampler) & 1u) == 0) continue;
+                for (auto mask = binding.imageSamplers.at(element); mask != 0u; mask &= mask - 1u) {
+                    const auto sampler = static_cast<std::uint32_t>(std::countr_zero(mask));
+                    if (sampler >= stageSamplers.size()) break;
                     const auto& source = samplerSources.at(table.firstSampler + sampler);
                     const auto descriptor = DecodeSamplerResource(source.words, source.unnormalized, true, source.integerBorder);
                     const bool border = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
