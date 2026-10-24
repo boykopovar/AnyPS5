@@ -1233,7 +1233,7 @@ void MemoryAccountingChecks() {
         second.reset();
         Expect(find(slab).retained == bytes, "a fully retained slab still reports active bytes");
         first = std::make_unique<Buffer>(context, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Expect(find(slab).retained == bytes - 256, "taking a pooled slab buffer did not remove its retained charge");
+        Expect(find(slab).retained == bytes - 256 && find(slab).category == "vkAllocateMemory buffer slab", "taking a pooled slab buffer changed its block category or retained charge");
     }
     context.bufferPool.reset();
     Expect(MemoryAccounting::Read(context.device).allocations.empty() && mock.liveBytes == 0, "slab destruction left accounted memory");
@@ -1253,6 +1253,48 @@ void MemoryAccountingChecks() {
     context.bufferPool.reset();
     other.bufferPool.reset();
     Expect(MemoryAccounting::Read(context.device).allocations.empty() && MemoryAccounting::Read(other.device).allocations.empty(), "one device's cleanup left allocations counted");
+}
+
+void MemoryAccountingBufferReuse() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    context.device = reinterpret_cast<VkDevice>(std::uintptr_t{105});
+    context.memoryProperties2 = nullptr;
+    const auto find = [&](VkDeviceMemory memory) {
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Expect(snapshot.complete && snapshot.allocations.size() == 1, "buffer reuse changed the allocation count or made accounting incomplete");
+        const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& entry) { return entry.memory == memory; });
+        if (found == snapshot.allocations.end()) throw std::runtime_error("a reused buffer is missing from memory accounting");
+        return *found;
+    };
+    for (const auto bytes : {2 * MiB, MiB + MiB / 4}) {
+        const auto allocations = mock.allocations;
+        VkDeviceMemory memory;
+        {
+            DeviceBuffer first(context, 2 * MiB, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            memory = MemoryOf(first.Handle());
+            const auto entry = find(memory);
+            Expect(entry.bytes == 2 * MiB && entry.heap == 0 && entry.retained == 0 && entry.category == "vkAllocateMemory device buffer", "a new device buffer has the wrong memory charge");
+        }
+        Expect(find(memory).retained == 2 * MiB, "a released device buffer is not fully retained");
+        {
+            Buffer reused(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            const auto entry = find(memory);
+            Expect(MemoryOf(reused.Handle()) == memory && mock.allocations == allocations + 1, "Buffer did not reuse DeviceBuffer's allocation");
+            Expect(entry.bytes == 2 * MiB && entry.heap == 0 && entry.retained == 0 && entry.category == "vkAllocateMemory buffer", "Buffer reuse preserved DeviceBuffer's category or changed its memory charge");
+        }
+        Expect(find(memory).retained == 2 * MiB && find(memory).category == "vkAllocateMemory buffer", "a retained Buffer has the wrong category or charge");
+        {
+            DeviceBuffer reused(context, 2 * MiB, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            const auto entry = find(memory);
+            Expect(MemoryOf(reused.Handle()) == memory && mock.allocations == allocations + 1, "DeviceBuffer did not reuse Buffer's allocation");
+            Expect(entry.bytes == 2 * MiB && entry.heap == 0 && entry.retained == 0 && entry.category == "vkAllocateMemory device buffer", "DeviceBuffer reuse preserved Buffer's category or changed its memory charge");
+        }
+        Expect(find(memory).retained == 2 * MiB && find(memory).category == "vkAllocateMemory device buffer", "a retained DeviceBuffer has the wrong category or charge");
+        context.bufferPool.reset();
+        Expect(MemoryAccounting::Read(context.device).allocations.empty() && mock.liveBytes == 0 && mock.liveBuffers.empty(), "buffer reuse cleanup left a Vulkan or ledger allocation");
+    }
+    if (failures == 0) std::puts("pooled buffer category changes and exact-size rebinding passed");
 }
 
 void MemoryAccountingIdleReclaim() {
@@ -1308,6 +1350,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting") {
             MemoryAccountingChecks();
+            MemoryAccountingBufferReuse();
             MemoryAccountingIdleReclaim();
             return failures == 0 ? 0 : 1;
         }

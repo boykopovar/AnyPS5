@@ -399,7 +399,7 @@ BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlag
     return !sharedTiers() && capacity < classLimit ? smallTier : largeTier;
 }
 
-std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
+std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, const char* category) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto capacity = Capacity(bytes);
     std::lock_guard lock(mutex);
@@ -432,7 +432,7 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
     tier.retainedBytes -= result.allocationBytes;
     ++tier.hits;
     if (result.slab) MemoryAccounting::RetainPart(device, result.memory, result.allocationBytes, false);
-    else MemoryAccounting::Use(device, result.memory);
+    else MemoryAccounting::Use(device, result.memory, category);
     return result;
 }
 
