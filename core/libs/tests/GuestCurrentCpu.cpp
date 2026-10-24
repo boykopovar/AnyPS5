@@ -44,6 +44,7 @@ int main() {
     const KernelCpumask available = sceKernelGetAvailableCpumask();
     Require(sceKernelGetMainSocId() == 0 && sceKernelGetCpumode() == 0);
     Require(sceKernelGetCpuFrequency() > 0 && static_cast<std::uint64_t>(sceKernelGetCpuFrequency()) == sceKernelGetTscFrequency());
+    Require(sceKernelGetTscFrequency() >= 100000000u && sceKernelGetTscFrequency() <= 10000000000u);
 
     const std::array<KernelCpumask, 8> affinities{available, 0x1FFB, 0x3, 0x3F, 0x1000, 0x1, 0xFFFF, 0x10000};
     for (const KernelCpumask affinity : affinities) {

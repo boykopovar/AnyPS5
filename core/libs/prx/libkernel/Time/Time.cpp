@@ -33,6 +33,8 @@
 #ifdef __linux__
 #include <dlfcn.h>
 #include <link.h>
+#include <pthread.h>
+#include <sched.h>
 #endif // __linux__
 #endif
 
@@ -168,6 +170,45 @@ static const bool g_timerSelfTest = [] {
     return true;
 }();
 #endif
+
+namespace {
+
+class CurrentCpuPin {
+public:
+    CurrentCpuPin() {
+#ifdef _WIN32
+        previous = SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << GetCurrentProcessorNumber());
+#elif defined(__linux__)
+        const int cpu = sched_getcpu();
+        if (cpu < 0 || cpu >= CPU_SETSIZE || pthread_getaffinity_np(pthread_self(), sizeof(previous), &previous) != 0) return;
+        cpu_set_t one;
+        CPU_ZERO(&one);
+        CPU_SET(cpu, &one);
+        pinned = pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0;
+#endif
+    }
+
+    ~CurrentCpuPin() {
+#ifdef _WIN32
+        if (previous != 0) SetThreadAffinityMask(GetCurrentThread(), previous);
+#elif defined(__linux__)
+        if (pinned) pthread_setaffinity_np(pthread_self(), sizeof(previous), &previous);
+#endif
+    }
+
+    CurrentCpuPin(const CurrentCpuPin&) = delete;
+    CurrentCpuPin& operator=(const CurrentCpuPin&) = delete;
+
+private:
+#ifdef _WIN32
+    DWORD_PTR previous = 0;
+#elif defined(__linux__)
+    cpu_set_t previous{};
+    bool pinned = false;
+#endif
+};
+
+}
 
 extern "C" {
 
@@ -728,6 +769,7 @@ uint64_t APS5_VABI sceKernelReadTsc(void) {
 
 uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
     static const std::uint64_t frequency = [] {
+        const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
         const std::uint64_t startTicks = __rdtsc();
         TimedWait::SleepNanos(20000000ULL);
