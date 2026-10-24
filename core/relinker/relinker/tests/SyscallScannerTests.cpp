@@ -76,6 +76,57 @@ const Bytes kSdkGenericStub = {
     0x0F, 0x05, 0xC3,
 };
 
+const Bytes kSignExtendedStub = {
+    0x48, 0xC7, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x49, 0x89, 0xCA,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kImm64Stub = {
+    0x48, 0xB8, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x49, 0x89, 0xCA,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kImm64NegativeStub = {
+    0x48, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x49, 0x89, 0xCA,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kZeroedStub = {
+    0x31, 0xC0,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kWideZeroedStub = {
+    0x48, 0x31, 0xC0,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kWordZeroedStub = {
+    0x66, 0x31, 0xC0,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kExtendedRegisterZeroedStub = {
+    0x45, 0x31, 0xC0,
+    0x0F, 0x05,
+    0xC3,
+};
+
+const Bytes kExtendedSourceXorStub = {
+    0x44, 0x31, 0xC0,
+    0x0F, 0x05,
+    0xC3,
+};
+
 std::string RunScanner(const std::string& binary, const Bytes& code) {
     const TempDirectory directory;
     const auto input = directory.Path() / "input.elf";
@@ -141,11 +192,19 @@ int main(const int argc, char** argv) {
         RequireNumber(binary, kConstantStub, "syscall number 9", "64-bit constant stub");
         RequireNumber(binary, kUnsignedStub, "syscall number 57", "32-bit constant stub");
         RequireNumber(binary, kInt80Stub, "syscall number 11", "int 0x80 stub");
+        RequireNumber(binary, kSignExtendedStub, "syscall number 18446744073709551615", "negative 32-bit constant stub");
+        RequireNumber(binary, kImm64Stub, "syscall number 9", "64-bit immediate stub");
+        RequireNumber(binary, kImm64NegativeStub, "syscall number 18446744073709551615", "negative 64-bit immediate stub");
+        RequireNumber(binary, kZeroedStub, "syscall number 0", "zeroed stub");
+        RequireNumber(binary, kWideZeroedStub, "syscall number 0", "wide zeroed stub");
 
         RequireNoNumber(binary, kRegisterStub, "stub that loads the number from a register");
         RequireNoNumber(binary, kSysenterStub, "sysenter stub");
         RequireNoNumber(binary, kSysretStub, "sysret stub with a constant load in front of it");
         RequireNoNumber(binary, kClobberedStub, "stub whose intervening instruction writes rax");
+        RequireNoNumber(binary, kWordZeroedStub, "stub that zeroes only ax");
+        RequireNoNumber(binary, kExtendedRegisterZeroedStub, "stub that zeroes r8d");
+        RequireNoNumber(binary, kExtendedSourceXorStub, "stub that xors eax with r8d");
 
         RequireNumber(binary, kPrefixedConstantStub, "syscall number 9", "prefixed constant stub");
         RequireNoNumber(binary, kPrefixedClobberedStub, "prefixed stub whose intervening instruction writes rax");
