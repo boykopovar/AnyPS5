@@ -723,6 +723,27 @@ int main() {
     Require(close_nid_postfix(flaggedKqueue) == 0);
     const int flaggedRoot = sceKernelOpen(root.string().c_str(), 0x20000, 0);
     Require(flaggedRoot >= 0 && fchflags_nid_postfix(flaggedRoot, 0) == 0 && sceKernelClose(flaggedRoot) == 0);
+    const auto exclusiveLink = root / "exclusive.link";
+    const auto exclusiveTarget = root / "exclusive-target.txt";
+#ifdef _WIN32
+    const bool exclusiveLinked = CreateSymbolicLinkW(exclusiveLink.wstring().c_str(), L"exclusive-target.txt",
+        SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
+    std::error_code exclusiveLinkError;
+    std::filesystem::create_symlink("exclusive-target.txt", exclusiveLink, exclusiveLinkError);
+    const bool exclusiveLinked = !exclusiveLinkError;
+#endif
+    if (exclusiveLinked) {
+        Require(open_nid_postfix(exclusiveLink.string().c_str(), 0xa01, 0644) == -1 && *__error_nid_postfix() == 17);
+        Require(sceKernelOpen(exclusiveLink.string().c_str(), 0xa01, 0644) == static_cast<int>(0x80020011u));
+        Require(!std::filesystem::exists(exclusiveTarget));
+        const int exclusiveCreated = open_nid_postfix(exclusiveLink.string().c_str(), 0x201, 0644);
+        Require(exclusiveCreated >= 0 && close_nid_postfix(exclusiveCreated) == 0 && std::filesystem::is_regular_file(exclusiveTarget));
+        Require(open_nid_postfix(exclusiveLink.string().c_str(), 0xa01, 0644) == -1 && *__error_nid_postfix() == 17);
+        Require(unlink_nid_postfix(exclusiveLink.string().c_str()) == 0 && unlink_nid_postfix(exclusiveTarget.string().c_str()) == 0);
+    } else {
+        std::fprintf(stderr, "symbolic links unavailable: the O_EXCL link cases not tested\n");
+    }
     int flaggedPipe[2];
     Require(pipe_nid_postfix(flaggedPipe) == 0);
     Require(fchflags_nid_postfix(flaggedPipe[0], 0) == -1 && *__error_nid_postfix() == 22);
