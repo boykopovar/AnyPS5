@@ -1,0 +1,13 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_image_memory_tests tests/ImageMemory.cpp Graphics/src/BufferPool.cpp tests/AllocationFailure.cpp)
+    target_include_directories(agc_image_memory_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(agc_image_memory_tests PRIVATE libSceAgcDriver libc)
+    set_target_properties(agc_image_memory_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_image_memory_tests)
+    add_test(NAME agc_image_memory COMMAND agc_image_memory_tests)
+    set_tests_properties(agc_image_memory PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_image_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
