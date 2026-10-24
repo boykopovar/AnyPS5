@@ -420,7 +420,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     resolveDrawDecode(queue, submission, localDevice->graphicsContext(), decode, registerKey, drawKey, profile);
     const auto& graphics = decode->state;
-    if (const auto targets = Graphics::LateTestMergeSplitTargets(graphics); targets != 0) {
+    const auto writesMemory = [](const DrawProgram& program) { return ProgramWritesMemory(*program.snapshot, program.codeOffset) || (program.tailContinuation != nullptr && ProgramWritesMemory(*program.tailContinuation, 0)); };
+    if (const auto targets = Graphics::LateTestMergeSplitTargets(graphics); targets != 0 && std::ranges::none_of(decode->programs, writesMemory)) {
         lateTestSplitTargets = targets;
         return DrawVerdict::Split;
     }

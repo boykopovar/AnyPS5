@@ -80,6 +80,12 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80020005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 9> CountingVertexCode{
+    0x7e0c0281, 0xe0c80000, 0x80030600, 0xe0382000, 0x80020005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
+};
+
+alignas(16) std::array<std::uint32_t, 4> Counter{};
+
 using Vertex = std::array<float, 4>;
 
 constexpr std::array<Vertex, 3> Screen(float z) {
@@ -98,14 +104,15 @@ alignas(256) constexpr auto Middle = Screen(0.5f);
 alignas(256) constexpr auto ProbeLess = Screen(0.75f);
 alignas(256) constexpr auto ProbeGreater = Screen(0.25f);
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 4> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 6> Programs{};
 
 struct RegisteredShader {
     Shader shader;
     ShaderUserData userData;
 };
 RegisteredShader VertexShader{};
-std::array<RegisteredShader, 4> PixelShaders{};
+RegisteredShader CountingVertexShader{};
+std::array<RegisteredShader, 6> PixelShaders{};
 
 void Register(RegisteredShader& registered, const void* code, std::uint32_t bytes, std::uint8_t type) {
     registered.shader.file_header = 0x34333231u;
@@ -118,11 +125,14 @@ void Register(RegisteredShader& registered, const void* code, std::uint32_t byte
     AgcDriverRegisterShader_nid_postfix(&registered.shader);
 }
 
-const std::uint32_t* PixelProgram(std::size_t index, std::array<float, 4> rgba, bool kill) {
+const std::uint32_t* PixelProgram(std::size_t index, std::array<float, 4> rgba, bool kill, bool counting = false) {
     auto& code = Programs[index];
     std::size_t at = 0;
     if (kill) {
         for (const auto word : CheckerboardKill) code[at++] = word;
+    }
+    if (counting) {
+        for (const auto word : {0x7e100281u, 0xe0c80000u, 0x80000800u}) code[at++] = word;
     }
     for (std::uint32_t vgpr = 0; vgpr < 4u; ++vgpr) {
         code[at++] = 0x7e0002ffu | ((4u + vgpr) << 17u);
@@ -172,6 +182,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
+std::array<std::uint32_t, 4> CounterDescriptor() {
+    const auto address = reinterpret_cast<std::uintptr_t>(Counter.data());
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Counter), 0x31016facu};
+}
+
 void SetRegister(std::vector<std::uint32_t>& words, std::uint32_t opcode, std::uint32_t offset, std::uint32_t value) {
     words.push_back(0xc0010000u | (opcode << 8u));
     words.push_back(offset);
@@ -185,12 +200,14 @@ struct Pass {
     std::uint32_t shaderControl;
     std::uint32_t targetMask;
     std::uint32_t blendControl;
+    const std::uint32_t* vertex = VertexCode.data();
+    bool counter = false;
 };
 
 void Submit(const Pass& pass, const char* what) {
     const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory);
     const auto depth = reinterpret_cast<std::uintptr_t>(DepthMemory.data());
-    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
+    const auto vertex = reinterpret_cast<std::uintptr_t>(pass.vertex);
     const auto pixel = reinterpret_cast<std::uintptr_t>(pass.pixel);
     const auto extent = (Height << 16u) | Width;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -221,12 +238,19 @@ void Submit(const Pass& pass, const char* what) {
     for (const auto& [offset, value] : context) SetRegister(words, SetContextReg, offset, value);
     SetRegister(words, SetShReg, 0x008, static_cast<std::uint32_t>(pixel >> 8u));
     SetRegister(words, SetShReg, 0x009, static_cast<std::uint32_t>(pixel >> 40u));
-    SetRegister(words, SetShReg, 0x00b, 0u);
+    SetRegister(words, SetShReg, 0x00b, pass.counter ? 4u << 1u : 0u);
     SetRegister(words, SetShReg, 0x0c8, static_cast<std::uint32_t>(vertex >> 8u));
     SetRegister(words, SetShReg, 0x0c9, static_cast<std::uint32_t>(vertex >> 40u));
-    SetRegister(words, SetShReg, 0x08b, 4u << 1u);
+    SetRegister(words, SetShReg, 0x08b, (pass.counter ? 8u : 4u) << 1u);
     const auto descriptor = BufferDescriptor(pass.vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(pass.vertices.size()));
     for (std::uint32_t i = 0; i < descriptor.size(); ++i) SetRegister(words, SetShReg, 0x08c + i, descriptor[i]);
+    if (pass.counter) {
+        const auto counter = CounterDescriptor();
+        for (std::uint32_t i = 0; i < counter.size(); ++i) {
+            SetRegister(words, SetShReg, 0x00c + i, counter[i]);
+            SetRegister(words, SetShReg, 0x090 + i, counter[i]);
+        }
+    }
     words.insert(words.end(), {0xc0000000u | (1u << 16u) | (DrawIndexAuto << 8u), static_cast<std::uint32_t>(pass.vertices.size()), 2u});
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, std::string("DCB submission failed for ") + what);
@@ -240,6 +264,34 @@ std::vector<std::uint32_t> ReadBack(std::size_t bytes) {
     std::vector<std::uint32_t> stored(bytes / 4u);
     AgcDriver::GuestMemory::Read(address, std::as_writable_bytes(std::span(stored)), 1);
     return stored;
+}
+
+std::uint32_t Counted() {
+    std::uint32_t counted = 0;
+    AgcDriver::GuestMemory::Read(reinterpret_cast<std::uintptr_t>(Counter.data()), std::as_writable_bytes(std::span(&counted, 1)), 1);
+    return counted;
+}
+
+void RunCounting(bool vertexCounts) {
+    const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);
+    const auto* plain = PixelProgram(1, {0.0f, 0.0f, 0.0f, 1.0f}, false);
+    const auto* countingPlain = PixelProgram(3, {0.0f, 0.0f, 0.0f, 1.0f}, false, true);
+    const auto* countingKilling = PixelProgram(4, {0.5f, 0.25f, 0.125f, 0.5f}, true, true);
+    const auto* vertex = vertexCounts ? CountingVertexCode.data() : VertexCode.data();
+    const std::string what = std::string("a late-test merge split whose ") + (vertexCounts ? "vertex" : "pixel") + " shader adds to a counter";
+    Submit({Middle, vertexCounts ? plain : countingPlain, DepthTest | DepthWrite | Always, 0u, 0xfu, 0u, vertex, true}, (what + ", the counted draw").c_str());
+    const auto counted = Counted();
+    Require(counted != 0u, what + ": the draw without a merge did not add to the counter");
+    bool refused = false;
+    try {
+        Submit({Middle, vertexCounts ? killing : countingKilling, DepthTest | DepthWrite | Less, LateKill, 0xfu, PremultipliedOver, vertex, true}, (what + ", the split draw").c_str());
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        Require(message.find("kills pixels under late tests of a draw writing depth or stencil") != std::string::npos, what + " failed on another refusal: " + message);
+        refused = true;
+    }
+    Require(refused, what + " was split and drawn twice");
+    Require(Counted() == counted, what + " added to the counter before it was refused");
 }
 
 struct Case {
@@ -283,7 +335,7 @@ void Run(const ColorTargetLayout& layout, const Case& run, const std::uint32_t* 
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         {
             const auto device = OpenVulkanTestDevice();
@@ -297,6 +349,14 @@ int main() {
         Require(layout.Bytes() <= BlockBytes, "the 11_11_10 target fits one watched block");
         ColorMemory = AllocateWatched(BlockBytes);
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
+        Register(CountingVertexShader, CountingVertexCode.data(), sizeof(CountingVertexCode), 2);
+        if (argc == 2 && (std::string(argv[1]) == "--counting-pixel" || std::string(argv[1]) == "--counting-vertex")) {
+            const bool vertexCounts = std::string(argv[1]) == "--counting-vertex";
+            RunCounting(vertexCounts);
+            try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
+            std::printf("a late-test merge split whose %s shader adds to a counter was refused before either pass\n", vertexCounts ? "vertex" : "pixel");
+            return 0;
+        }
         const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);
         const auto* plain = PixelProgram(1, {0.0f, 0.0f, 0.0f, 1.0f}, false);
         const auto* probe = PixelProgram(2, {1.0f, 0.5f, 0.25f, 1.0f}, false);
