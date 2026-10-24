@@ -1,4 +1,4 @@
-add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
+add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL src/Geometry.cpp
         Export.cpp
         src/Outline.cpp
         src/Charmap.cpp
@@ -41,6 +41,19 @@ if(BUILD_TESTING)
     add_test(NAME guest_freetype_charmap_info COMMAND guest_freetype_charmap_info_tests)
     add_test_executable(guest_freetype_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeType.cpp)
     target_include_directories(guest_freetype_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    if(Python3_Interpreter_FOUND)
+        add_test_executable(guest_freetype_geometry_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeGeometry.cpp)
+        target_include_directories(guest_freetype_geometry_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_freetype_geometry_tests PRIVATE libSceFreeType freetype libc)
+        configure_windows_unwind(guest_freetype_geometry_tests)
+        add_test(NAME guest_freetype_geometry COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/tests/test_guest_freetype_geometry.py $<TARGET_FILE:guest_freetype_geometry_tests>)
+        set_tests_properties(guest_freetype_geometry PROPERTIES TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(guest_freetype_geometry PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+        endif()
+    endif()
     target_link_libraries(guest_freetype_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_tests)
     add_test(NAME guest_freetype COMMAND guest_freetype_tests)

@@ -184,6 +184,8 @@ static_assert(sizeof(GuestSizeRequestRec) == 32 && offsetof(GuestSizeRequestRec,
 static_assert(offsetof(GuestSizeRequestRec, horiResolution) == 24 && offsetof(GuestSizeRequestRec, vertResolution) == 28);
 static_assert(sizeof(GuestBitmap) == 40 && offsetof(GuestBitmap, buffer) == 16 && offsetof(GuestBitmap, palette) == 32);
 static_assert(sizeof(GuestOutline) == 40 && offsetof(GuestOutline, points) == 8 && offsetof(GuestOutline, flags) == 32);
+static_assert(sizeof(GuestVector) == 16 && alignof(GuestVector) == 8 && offsetof(GuestVector, y) == 8);
+static_assert(alignof(GuestMatrix) == 8 && offsetof(GuestMatrix, xx) == 0);
 static_assert(offsetof(GuestGlyphSlotRec, glyph_index) == 0x18 && offsetof(GuestGlyphSlotRec, metrics) == 0x30);
 static_assert(offsetof(GuestGlyphSlotRec, advance) == 0x80 && offsetof(GuestGlyphSlotRec, format) == 0x90);
 static_assert(offsetof(GuestGlyphSlotRec, bitmap) == 0x98 && offsetof(GuestGlyphSlotRec, bitmap_left) == 0xc0 && offsetof(GuestGlyphSlotRec, bitmap_top) == 0xc4);

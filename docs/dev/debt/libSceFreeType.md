@@ -1,6 +1,7 @@
 # libSceFreeType technical debt
 
 ### Unknown function info
+- [FT_Vector_Transform, FT_Matrix_Multiply and FT_Matrix_Invert](../../../core/libs/prx/libSceFreeType/src/Geometry.cpp) - console signatures, build options and wider-input results are unverified. Names and NIDs follow the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFreeTypeOt.c); records follow the existing LP64 guest ABI. Geometry follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftcalc.c) built for x86-64 LP64, including on Windows: multiplication narrows operands and individual products to signed 32 bits, then adds or subtracts in 64 bits; inversion uses unsigned 64-bit wrapping division intermediates. FreeType documents arithmetic outside signed 32-bit inputs as potentially undefined; these results have not been measured on a console.
 
 - [FT_Get_Sfnt_Name_Count, FT_Get_Sfnt_Name](../../../core/libs/prx/libSceFreeType/src/Names.cpp) (libSceFreeType) - console signatures, record layout and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftsnames.c) and assumes the public LP64 `FT_SfntName` layout (24 bytes, string pointer at 8, byte length at 16). Strings retain their original encoding, borrow native face storage and remain valid only while the face is alive
 
