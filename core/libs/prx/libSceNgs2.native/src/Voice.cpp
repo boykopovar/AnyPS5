@@ -62,6 +62,7 @@ void Ngs2Voice::ResetSetup() {
     atrac9 = {};
     pitch = 1.0f;
     phase = 0;
+    for (auto& block : blocks) Ngs2RecyclePcm(*this, block);
     blocks.clear();
     acceptsBlocks = true;
     decodedSamples = 0;
@@ -221,6 +222,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     if (!voice.acceptsBlocks && !reset) throw std::invalid_argument("NGS2: the voice waveform was already closed");
     if (reset) {
         ++voice.waveformRevision;
+        for (auto& block : voice.blocks) Ngs2RecyclePcm(voice, block);
         voice.blocks.clear();
         voice.phase = 0;
         voice.waveformEnd = nullptr;
