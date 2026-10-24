@@ -35,4 +35,16 @@ void* APS5_VABI EVP_PKEY_new_nid_postfix(void) {
     return pkey;
 }
 
+void APS5_VABI EVP_PKEY_free_nid_postfix(void* value) {
+    if (!value) return;
+    auto* pkey = static_cast<Pkey*>(value);
+    auto references = std::atomic_ref<int>(pkey->references);
+    if (references.fetch_sub(1, std::memory_order_acq_rel) - 1 > 0) return;
+    if (pkey->ameth || pkey->engine || pkey->key || pkey->attributes) {
+        references.fetch_add(1, std::memory_order_relaxed);
+        NotImplemented_nid_no_patch("EVP_PKEY_free of a key that holds algorithm data");
+    }
+    free_nid_postfix(pkey);
+}
+
 }
