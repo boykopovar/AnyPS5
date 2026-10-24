@@ -359,6 +359,20 @@ int main() {
     Require(sceFontUnbindRenderer(mixed) == SCE_FONT_OK);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
 
+    const auto hangulFonts = root / "hangul-fonts";
+    std::filesystem::create_directories(hangulFonts);
+    for (const auto* name : {"SST-Light.otf", "SST-Roman.otf", "SST-Bold.otf", "SSTJpPro-Regular.otf"}) {
+        WriteFile(hangulFonts / name, SquareGlyphFont('A', 600));
+    }
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Light.otf", SquareGlyphFont(0xAC00, 400));
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Medium.otf", SquareGlyphFont(0xAC00, 650));
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Bold.otf", SquareGlyphFont(0xAC00, 800));
+    SetFontDirectory(hangulFonts);
+    Require(SetAdvanceOf(library, 0x1A072543u, 0xAC00) == 40.0f);
+    Require(SetAdvanceOf(library, 0x1A082543u, 0xAC00) == 40.0f);
+    Require(SetAdvanceOf(library, 0x18072444u, 0xAC00) == 65.0f);
+    Require(SetAdvanceOf(library, 0x18072447u, 0xAC00) == 80.0f);
+
     for (FontHandle handle : {font, instance, substitute, memoryFont, mixed, mixedInstance}) Require(sceFontCloseFont(handle) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);
