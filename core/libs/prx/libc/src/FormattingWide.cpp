@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -218,8 +219,6 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
 
 extern "C" {
 extern FileStream* __stdoutp_nid_postfix;
-std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream);
-int APS5_VABI ferror_nid_postfix(FileStream* stream);
 
 int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
     if (buffer == nullptr || size == 0) { errno = 22; return -1; }
@@ -399,7 +398,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
-    if (buffer == nullptr || stream == nullptr || size <= 0) {
+    if (size < 2) return nullptr;
+    if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();
         errno = 22;
         return nullptr;
@@ -407,14 +407,11 @@ char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* s
     int count = 0;
     while (count < size - 1) {
         const std::int32_t character = fgetwc_nid_postfix(stream);
-        if (character == -1) {
-            if (count == 0) return nullptr;
-            break;
-        }
+        if (character == -1) break;
         buffer[count++] = static_cast<char16_t>(character);
         if (character == static_cast<std::int32_t>(u'\n')) break;
     }
-    if (ferror_nid_postfix(stream) != 0) return nullptr;
+    if (count == 0) return nullptr;
     buffer[count] = 0;
     return buffer;
 }

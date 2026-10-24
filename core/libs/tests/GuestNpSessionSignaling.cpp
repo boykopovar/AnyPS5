@@ -1,21 +1,10 @@
+#include "prx/libSceNpSessionSignaling/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <array>
-
-extern "C" {
-int APS5_VABI sceNpSessionSignalingInitialize(void* param);
-int APS5_VABI sceNpSessionSignalingCreateContext(const void* param, std::uint32_t* contextId);
-int APS5_VABI sceNpSessionSignalingCreateContext2(const void* param, std::uint32_t* contextId);
-int APS5_VABI sceNpSessionSignalingDestroyContext(std::uint32_t contextId);
-int APS5_VABI sceNpSessionSignalingDeactivate(std::uint32_t contextId, std::uint32_t connectionId);
-std::int32_t APS5_VABI sceNpSessionSignalingGetLocalNetInfo(std::int32_t contextId, void* info);
-int APS5_VABI sceNpSessionSignalingRequestPrepare(std::uint32_t contextId, std::uint32_t* requestId);
-std::int32_t APS5_VABI sceNpSessionSignalingGetConnectionStatus(std::int32_t contextId, std::int32_t connectionId, std::int32_t* status, void* peerAddress, std::uint16_t* peerPort);
-int APS5_VABI sceNpSessionSignalingTerminate(void);
-}
 
 namespace {
 
@@ -43,10 +32,10 @@ int main() {
     Require(sceNpSessionSignalingCreateContext2(nullptr, nullptr) == NotInitialized, "initialization check precedes context arguments");
     Require(sceNpSessionSignalingGetConnectionStatus(0, 0, nullptr, nullptr, nullptr) == NotInitialized, "status before initialize");
     Require(sceNpSessionSignalingInitialize(nullptr) == InvalidArgument, "null initialize parameter");
-    Require(sceNpSessionSignalingInitialize(initializeParam) == InvalidArgument, "zero pool size");
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == InvalidArgument, "zero pool size");
     const std::uint64_t poolSize = 4 * 1024 * 1024;
     std::memcpy(initializeParam + 8, &poolSize, sizeof(poolSize));
-    Require(sceNpSessionSignalingInitialize(initializeParam) == 0, "initialize failed");
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "initialize failed");
     Require(sceNpSessionSignalingInitialize(nullptr) == AlreadyInitialized, "initialization check precedes initialize arguments");
     alignas(8) unsigned char contextParam[56] = {};
     std::uint32_t contextId = 0;
@@ -54,24 +43,24 @@ int main() {
     Require(contextId == 0, "invalid context parameter wrote an id");
     Require(sceNpSessionSignalingCreateContext2(nullptr, &contextId) == InvalidArgument, "null context2 parameter");
     Require(contextId == 0, "invalid context2 parameter wrote an id");
-    Require(sceNpSessionSignalingCreateContext(contextParam, nullptr) == InvalidArgument, "null context id");
-    Require(sceNpSessionSignalingCreateContext2(contextParam, nullptr) == InvalidArgument, "null context2 id");
-    Require(sceNpSessionSignalingCreateContext2(contextParam, &contextId) == 0, "context creation failed");
+    Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(contextParam), nullptr) == InvalidArgument, "null context id");
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), nullptr) == InvalidArgument, "null context2 id");
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == 0, "context creation failed");
     const auto firstId = contextId;
-    Require(sceNpSessionSignalingCreateContext2(contextParam, &contextId) == ContextLimit, "duplicate user context");
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "duplicate user context");
     Require(contextId == firstId, "duplicate context modified output");
     std::array<std::uint32_t, 9> otherContexts{};
     for (std::int32_t userId = 1; userId <= 9; ++userId) {
         std::memcpy(contextParam, &userId, sizeof(userId));
-        Require(sceNpSessionSignalingCreateContext2(contextParam, &otherContexts[userId - 1]) == 0, "create remaining contexts");
+        Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &otherContexts[userId - 1]) == 0, "create remaining contexts");
     }
     const std::int32_t overflowUser = 10;
     std::memcpy(contextParam, &overflowUser, sizeof(overflowUser));
-    Require(sceNpSessionSignalingCreateContext2(contextParam, &contextId) == ContextLimit, "context limit");
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "context limit");
     Require(contextId == firstId, "context limit modified output");
     Require(sceNpSessionSignalingDestroyContext(firstId) == 0, "destroy first context");
     Require(sceNpSessionSignalingDestroyContext(firstId) == ContextNotFound, "destroy stale context");
-    Require(sceNpSessionSignalingCreateContext2(contextParam, &contextId) == 0, "reuse context slot");
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == 0, "reuse context slot");
     Require(contextId != firstId, "reused context kept stale id");
 
     std::uint32_t requestId = 0xa5a5a5a5u;
@@ -87,7 +76,7 @@ int main() {
     unsigned char untouched[sizeof(info)];
     std::memcpy(untouched, info, sizeof(info));
     Require(sceNpSessionSignalingGetLocalNetInfo(netContextId, nullptr) == InvalidArgument, "null info");
-    Require(sceNpSessionSignalingGetLocalNetInfo(netContextId, info) == Unavailable, "local net info without network");
+    Require(sceNpSessionSignalingGetLocalNetInfo(netContextId, reinterpret_cast<SessionSignalingLocalNetInfo*>(info)) == Unavailable, "local net info without network");
     Require(std::memcmp(info, untouched, sizeof(info)) == 0, "failed query modified the info");
 
     std::int32_t status = 0x5a5a5a5a;
@@ -101,10 +90,42 @@ int main() {
     Require(sceNpSessionSignalingDeactivate(firstId, 1) == ContextNotFound, "deactivate stale context");
     Require(sceNpSessionSignalingDeactivate(contextId, 1) == GroupNotFound, "deactivate nonexistent group");
 
+    Require(sceNpSessionSignalingGetGroupInfo(netContextId, 1, nullptr) == InvalidArgument, "null group info");
+    Require(sceNpSessionSignalingGetGroupInfo(netContextId, 1, reinterpret_cast<SessionSignalingGroupInfo*>(info)) == GroupNotFound, "group info without a session");
+    Require(std::memcmp(info, untouched, sizeof(info)) == 0, "failed group query modified the info");
+
+    const unsigned char sessionId[48] = {};
+    const unsigned char peer[40] = {};
+    std::int32_t found = 0x5a5a5a5a;
+    Require(sceNpSessionSignalingGetGroupFromSessionId(netContextId, nullptr, reinterpret_cast<std::uint32_t*>(&found)) == InvalidArgument, "null session id");
+    Require(sceNpSessionSignalingGetGroupFromSessionId(netContextId, reinterpret_cast<const char*>(sessionId), nullptr) == InvalidArgument, "null group id");
+    Require(sceNpSessionSignalingGetGroupFromSessionId(netContextId, reinterpret_cast<const char*>(sessionId), reinterpret_cast<std::uint32_t*>(&found)) == GroupNotFound, "group from session id without a session");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress(netContextId, 0x0100007fu, 3658, nullptr) == InvalidArgument, "null connection id from net address");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress(netContextId, 0x0100007fu, 3658, reinterpret_cast<std::uint32_t*>(&found)) == ConnectionNotFound, "connection from net address without a session");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress2(netContextId, 1, 0x0100007fu, 3658, nullptr) == InvalidArgument, "null connection id from group net address");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress2(netContextId, 1, 0x0100007fu, 3658, reinterpret_cast<std::uint32_t*>(&found)) == GroupNotFound, "connection from group net address without a session");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, nullptr, reinterpret_cast<std::uint32_t*>(&found)) == InvalidArgument, "null peer address");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, reinterpret_cast<const SessionSignalingPeerAddress*>(peer), nullptr) == InvalidArgument, "null connection id from peer address");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, reinterpret_cast<const SessionSignalingPeerAddress*>(peer), reinterpret_cast<std::uint32_t*>(&found)) == ConnectionNotFound, "connection from peer address without a session");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress2(netContextId, 1, nullptr, reinterpret_cast<std::uint32_t*>(&found)) == InvalidArgument, "null group peer address");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress2(netContextId, 1, reinterpret_cast<const SessionSignalingPeerAddress*>(peer), nullptr) == InvalidArgument, "null connection id from group peer address");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress2(netContextId, 1, reinterpret_cast<const SessionSignalingPeerAddress*>(peer), reinterpret_cast<std::uint32_t*>(&found)) == GroupNotFound, "connection from group peer address without a session");
+    Require(sceNpSessionSignalingGetGroupInfo(firstId, 1, reinterpret_cast<SessionSignalingGroupInfo*>(info)) == ContextNotFound, "group info stale context");
+    Require(sceNpSessionSignalingGetGroupFromSessionId(firstId, reinterpret_cast<const char*>(sessionId), reinterpret_cast<std::uint32_t*>(&found)) == ContextNotFound, "group from session id stale context");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress(firstId, 0x0100007fu, 3658, reinterpret_cast<std::uint32_t*>(&found)) == ContextNotFound, "connection from net address stale context");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress2(firstId, 1, 0x0100007fu, 3658, reinterpret_cast<std::uint32_t*>(&found)) == ContextNotFound, "connection from group net address stale context");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress(firstId, reinterpret_cast<const SessionSignalingPeerAddress*>(peer), reinterpret_cast<std::uint32_t*>(&found)) == ContextNotFound, "connection from peer address stale context");
+    Require(found == 0x5a5a5a5a, "a failed lookup wrote an id");
+
     Require(sceNpSessionSignalingTerminate() == 0, "terminate failed");
     Require(sceNpSessionSignalingDestroyContext(contextId) == NotInitialized, "destroy after terminate");
+    Require(sceNpSessionSignalingGetGroupInfo(netContextId, 1, nullptr) == NotInitialized, "group info after terminate");
+    Require(sceNpSessionSignalingGetGroupFromSessionId(netContextId, nullptr, nullptr) == NotInitialized, "group from session id after terminate");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress(netContextId, 0, 0, nullptr) == NotInitialized, "connection from net address after terminate");
+    Require(sceNpSessionSignalingGetConnectionFromNetAddress2(netContextId, 1, 0, 0, nullptr) == NotInitialized, "connection from group net address after terminate");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, nullptr, nullptr) == NotInitialized, "connection from peer address after terminate");
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "repeated terminate");
-    Require(sceNpSessionSignalingInitialize(initializeParam) == 0, "reinitialize");
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "reinitialize");
     Require(sceNpSessionSignalingRequestPrepare(contextId, &requestId) == ContextNotFound, "reinitialize retained a context");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate");
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceSysUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

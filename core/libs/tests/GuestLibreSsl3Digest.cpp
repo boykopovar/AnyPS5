@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -6,11 +7,6 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-unsigned char* APS5_VABI MD5_nid_postfix(const unsigned char*, std::size_t, unsigned char*);
-unsigned char* APS5_VABI SHA1_nid_postfix(const unsigned char*, std::size_t, unsigned char*);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;

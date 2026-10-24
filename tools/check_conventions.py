@@ -343,7 +343,7 @@ class Check:
         doc = "docs/dev/ENVIRONMENT.md"
         added, removed, dropped = {}, set(), set()
         path, number, in_hunk = "", 0, False
-        for line in git("diff", "-U0", self.base, self.head, "--", "core", doc).splitlines():
+        for line in git("diff", "-U0", self.base, self.head, "--", ":(top)core", f":(top){doc}").splitlines():
             if line.startswith("diff --git"):
                 path, in_hunk = "", False
             elif line.startswith("@@"):
@@ -361,14 +361,14 @@ class Check:
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
                 path = line[6:]
-        result = subprocess.run(["git", "grep", "-nE", env_reference.GREP, self.head, "--", "core"],
+        result = subprocess.run(["git", "grep", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
         for line in result.stdout.splitlines():
             reads.update(match.group("name") for _, match in env_reference.line_reads(line))
         pattern = env_reference.documented_pattern(env_reference.PREFIXES)
         documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
-        if git("ls-tree", "--name-only", self.target, "--", doc).strip() == doc:
+        if git("ls-tree", "--full-tree", "--name-only", self.target, "--", doc).strip() == doc:
             documented |= set(pattern.findall(git("show", f"{self.target}:{doc}"))) - dropped
         for name, (source, line) in sorted(added.items()):
             if name not in documented:

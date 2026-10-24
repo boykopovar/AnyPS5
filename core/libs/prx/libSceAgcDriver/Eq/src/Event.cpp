@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -20,7 +21,7 @@ struct Registration {
     int id;
 };
 
-std::mutex g_mutex;
+AgcDriver::Mutex g_mutex;
 std::vector<Registration> g_registrations;
 
 }
