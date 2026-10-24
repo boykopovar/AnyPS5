@@ -36,6 +36,7 @@
 
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
+static constexpr int GUEST_EINVAL = 22;
 
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
@@ -471,6 +472,7 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
     const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
+    if (attr) inheritSched = attr->_inheritsched;
     const int inheritedPolicy = parent ? parent->schedPolicy.load(std::memory_order_relaxed) : schedPolicy.load(std::memory_order_relaxed);
     schedPolicy.store(explicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
     const int attrPriority = attr ? attr->_schedpriority : DEFAULT_THREAD_PRIORITY;
@@ -903,6 +905,8 @@ static void* StartNativeThread(void* opaque) {
 
 extern "C" {
 
+int* APS5_VABI __error_nid_postfix();
+
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
     if (name && std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
@@ -1275,6 +1279,13 @@ void APS5_VABI scePthreadTestcancel() {
 
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
+    const auto level = static_cast<std::uint32_t>(prio) & 0xffffu;
+    if (!((level >= 256 && level <= 767) || (level >= 896 && level <= 959))) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
     thread->priority.store(prio, std::memory_order_relaxed);
     return SCE_OK;
 }

@@ -216,6 +216,10 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
 }
 
 int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
+    if (!thread) {
+        *__error_nid_postfix() = PosixThread::GUEST_EINVAL;
+        return -1;
+    }
     const auto lock = LockLiveGuestThread(thread);
     if (!lock.owns_lock()) {
         *__error_nid_postfix() = PosixThread::GUEST_ESRCH;
