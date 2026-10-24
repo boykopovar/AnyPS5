@@ -123,8 +123,8 @@ void testRegisters() {
         check(registers.at(0x10) == 43 && registers.at(0x11) == 42, "indirect register order or bank lost");
         pairs[0] = 0x12;
         pairs[4] = 0xffffffffu;
-        expectFailure([&] { execute(state, packet); }, "sentinel");
-        check(!registers.contains(0x12), "invalid indirect packet partially changed state");
+        execute(state, packet);
+        check(registers.at(0x12) == 41 && registers.at(0x11) == 42, "the 0xffffffff register sentinel entry was not skipped");
         std::array<std::uint32_t, 2> values{0x11223344, 0x55667788};
         execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x0a, 2}));
         check(registers.at(0x0a) == 0x11223344 && registers.at(0x0b) == 0x55667788, "consecutive indirect registers lost");
@@ -138,6 +138,8 @@ void testRegisters() {
     }
     execute(state, makePacket(0x69, {0x11, 50, 51}));
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "direct registers not sequential");
+    execute(state, makePacket(0x69, {0xffffffffu, 52, 53}));
+    check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "a direct register packet with the 0xffffffff sentinel wrote a register");
     execute(state, makePacket(0x7a, {0x10, 60}));
     check(state.userConfig.at(0x10) == 60, "uconfig index zero failed");
     execute(state, makePacket(0x7a, {0x20000243, 0x441}));
