@@ -35,6 +35,7 @@ static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, intern
 
 extern "C" {
 void* APS5_VABI SSL_get_SSL_CTX_nid_postfix(const TestSsl*);
+void* APS5_VABI SSL_get_rbio_nid_postfix(const TestSsl*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -59,7 +60,19 @@ static void TestGetSslCtx() {
     Require(SSL_get_SSL_CTX_nid_postfix(&ssl) == &context);
 }
 
+static void TestGetRbio() {
+    int read = 0;
+    int write = 0;
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get_rbio_nid_postfix(nullptr); });
+    Require(SSL_get_rbio_nid_postfix(&ssl) == nullptr);
+    ssl.rbio = &read;
+    ssl.wbio = &write;
+    Require(SSL_get_rbio_nid_postfix(&ssl) == &read);
+}
+
 int main() {
     TestGetSslCtx();
+    TestGetRbio();
     return 0;
 }
