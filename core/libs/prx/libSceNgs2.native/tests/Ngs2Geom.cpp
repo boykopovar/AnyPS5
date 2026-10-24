@@ -115,9 +115,18 @@ static void RejectListener(const Ngs2GeomListenerParam* param, std::uint32_t fla
 static void TestInvalidListener() {
     auto param = Listener();
     Require(sceNgs2GeomCalcListener(&param, nullptr, 0) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
-    RejectListener(nullptr, 0);
-    RejectListener(&param, 2);
-    RejectListener(&param, 0xffffffffu);
+    Ngs2GeomListenerWork work;
+    std::memset(&work, 0x5a, sizeof(work));
+    unsigned char before[sizeof(work)];
+    std::memcpy(before, &work, sizeof(work));
+    Require(sceNgs2GeomCalcListener(nullptr, &work, 0) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(nullptr, &work, 2) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(nullptr, nullptr, 0) == static_cast<int>(0x804A8461));
+    Require(sceNgs2GeomCalcListener(&param, &work, 2) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, &work, 0x80000000u) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, &work, 0xffffffffu) == static_cast<int>(0x804A8463));
+    Require(sceNgs2GeomCalcListener(&param, nullptr, 2) == static_cast<int>(0x804A8010));
+    Require(std::memcmp(before, &work, sizeof(work)) == 0);
     for (const float value : {0.0f, -1.0f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
         param.sound_speed = value;
         RejectListener(&param, 0);

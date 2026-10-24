@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -207,12 +208,14 @@ public:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
     void WaitSerial(std::uint64_t serial);
+    bool WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos);
     // Under the mutex: finishes (completions, release) the in-flight batches up to `serial`, from the
     // front only; tolerates batches another thread finished meanwhile. Later batches stay in flight.
     void FinishUpTo(std::uint64_t serial);
     // Submits and waits for every batch, running completions in order.
     void Sync();
     void CountSamples();
+    bool CountingSamples() const { return countingSamples; }
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
@@ -220,6 +223,7 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
+    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -402,6 +406,7 @@ public:
     static std::uint64_t PublishGeneration();
     // labels waiting in completion actions (the CPU must reap their batch for them to land);
     static std::uint64_t PendingCompletionLabels();
+    static std::uint64_t PendingCompletionStores();
     // write-back completions (OnComplete) of unfinished batches: a reaper retires them when every
     // worker sleeps, as for the labels above;
     static std::uint64_t PendingWriteBackCompletions();
@@ -578,6 +583,7 @@ private:
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
         std::shared_ptr<void> samplePool;
+        std::vector<VkQueryPool> endedSamples;
         bool sampleActive = false;
         bool samplesDrawn = false;
         VkQueryPool segments = VK_NULL_HANDLE;
@@ -599,6 +605,7 @@ private:
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
+        std::uint32_t completionStoreCount = 0;
         // Write-back completions (OnComplete), likewise.
         std::uint32_t writeBackCompletionCount = 0;
         // The ranges of the completion labels also stored on the GPU, and whether each entered the
@@ -796,7 +803,7 @@ private:
     // Whether a write-back noted after `sequence` overlapped [begin, end); true when the ring no
     // longer reaches back to `sequence` (conservative: the store runs as before).
     bool writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std::uint64_t end);
-    std::mutex writtenBackMutex;
+    AgcDriver::Mutex writtenBackMutex;
     std::deque<std::array<std::uint64_t, 3>> writtenBack;
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
@@ -844,7 +851,7 @@ private:
     // frame would otherwise allocate and free their objects each time).
     std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
     std::vector<VkQueryPool> sparePools;
-    mutable std::mutex completedMutex;
+    mutable AgcDriver::Mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;
     std::uint64_t newestSubmitted = 0;
     std::chrono::steady_clock::time_point newestSubmittedAt{};

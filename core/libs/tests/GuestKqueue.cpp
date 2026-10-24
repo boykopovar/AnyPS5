@@ -15,6 +15,12 @@
 #include <aclapi.h>
 #include <windows.h>
 #endif
+#include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 extern "C" {
 int APS5_VABI kqueue_nid_postfix();
@@ -34,6 +40,7 @@ int APS5_VABI rmdir_nid_postfix(const char*);
 std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
 int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
 int APS5_VABI unlink_nid_postfix(const char*);
+int APS5_VABI getpid_nid_postfix(void);
 int APS5_VABI sceKernelRename(const char*, const char*);
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
@@ -43,6 +50,7 @@ int APS5_VABI sceKernelDeleteFileEvent(KernelEqueue eq, int fd);
 int* APS5_VABI __error_nid_postfix();
 }
 
+static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
@@ -58,9 +66,13 @@ static constexpr int FirstSocket = 0x10000000;
 static constexpr std::int16_t EvfiltRead = -1;
 static constexpr std::int16_t EvfiltWrite = -2;
 static constexpr std::int16_t EvfiltVnode = -4;
+static constexpr std::int16_t EvfiltAio = -3;
 static constexpr std::int16_t EvfiltProc = -5;
 static constexpr std::int16_t EvfiltTimer = -7;
+static constexpr std::int16_t EvfiltProcdesc = -8;
+static constexpr std::int16_t EvfiltLio = -10;
 static constexpr std::int16_t EvfiltUser = -11;
+static constexpr std::int16_t EvfiltSendfile = -12;
 static constexpr std::uint16_t EvAdd = 0x0001;
 static constexpr std::uint16_t EvDelete = 0x0002;
 static constexpr std::uint16_t EvEnable = 0x0004;
@@ -188,7 +200,94 @@ static void Timers() {
     RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvAdd, 0x10, 5)), GuestEinval);
     RequireFailure(Apply(kq, Change(3, EvfiltTimer, EvAdd, NoteUseconds | 0x1, 5)), GuestEinval);
     Require(Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 5)); }));
+    Require(Apply(kq, Change(4, EvfiltTimer, EvAdd, 0, 5)) == 0);
+    const KernelTimespec fiftyMillis{0, 50000000};
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &fiftyMillis) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void TimerReadd() {
+    const int kq = kqueue_nid_postfix();
+    int first = 0;
+    int second = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(6, EvfiltTimer, EvAdd, 0, 10, &first)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(Apply(kq, Change(6, EvfiltTimer, EvAdd, 0, 1000, &second)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 6 && events[0].data >= 6 && events[0].udata == &second);
+    Require(Apply(kq, Change(6, EvfiltTimer, EvDelete)) == 0);
+
+    const auto armed = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(7, EvfiltTimer, EvAdd, 0, 50)) == 0);
+    Require(Apply(kq, Change(7, EvfiltTimer, EvAdd, 0, 10)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 7);
+    Require(std::chrono::steady_clock::now() - armed >= std::chrono::milliseconds(49));
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 7 && events[0].data >= 6);
+    Require(Apply(kq, Change(7, EvfiltTimer, EvDelete)) == 0);
+
+    Require(Apply(kq, Change(8, EvfiltTimer, EvAdd, 0, 10)) == 0);
+    Require(Apply(kq, Change(8, EvfiltTimer, EvAdd, 0, 100)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 8);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 8 && events[0].data >= 1 && events[0].data <= 4);
+    Require(Apply(kq, Change(8, EvfiltTimer, EvDelete)) == 0);
+
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd, 0, 20)) == 0);
+    Require(Apply(kq, Change(9, EvfiltTimer, EvAdd | EvOneshot, 0, 20)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 9);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 9);
+    Require(Apply(kq, Change(9, EvfiltTimer, EvDelete)) == 0);
+
+    Require(Apply(kq, Change(10, EvfiltTimer, EvAdd | EvOneshot, 0, 100000)) == 0);
+    Require(Throws([kq] { Apply(kq, Change(10, EvfiltTimer, EvAdd, 0, 5)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 100000)) == 0);
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteUseconds, 5)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)); }));
+    Require(Apply(kq, Change(12, EvfiltTimer, EvAdd | EvDisable, 0, 100000)) == 0);
+    Require(Throws([kq] { Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)); }));
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void UnsupportedFilters() {
+    const int kq = kqueue_nid_postfix();
+    for (const std::int16_t filter : {EvfiltAio, EvfiltLio, EvfiltSendfile}) {
+        RequireFailure(Apply(kq, Change(0, filter, EvAdd)), GuestEperm);
+        RequireFailure(Apply(kq, Change(5, filter, EvAdd)), GuestEperm);
+        RequireFailure(Apply(kq, Change(5, filter, EvAdd | EvClear)), GuestEperm);
+        RequireFailure(Apply(kq, Change(5, filter, EvDelete)), GuestEnoent);
+        RequireFailure(Apply(kq, Change(5, filter, EvEnable)), GuestEnoent);
+        const KernelEvent add = Change(5, filter, EvAdd, 7, 9);
+        KernelEvent failed[1]{};
+        Require(kevent_nid_postfix(kq, &add, 1, failed, 1, nullptr) == 1);
+        Require(failed[0].flags == EvError && failed[0].data == GuestEperm && failed[0].fflags == 0);
+    }
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltProcdesc, EvAdd)), GuestEinval);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltProcdesc, EvAdd)), GuestEinval);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltProcdesc, EvAdd)), GuestEinval);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltProcdesc, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(kq), EvfiltProcdesc, EvAdd)), GuestEinval);
+    RequireFailure(Apply(kq, Change(std::uintptr_t{1} << 40, EvfiltProcdesc, EvAdd)), GuestEbadf);
+    const KernelEvent attach = Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltProcdesc, EvAdd, 7, 9);
+    KernelEvent failed[1]{};
+    Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+    Require(failed[0].flags == EvError && failed[0].data == GuestEinval && failed[0].fflags == 0);
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    Require(Throws([kq, random] { Apply(kq, Change(static_cast<std::uintptr_t>(random), EvfiltProcdesc, EvAdd)); }));
+    Require(Throws([kq] { Apply(kq, Change(2, EvfiltProcdesc, EvAdd)); }));
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(random), EvfiltProcdesc, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(random) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltProcdesc, EvAdd)), GuestEbadf);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -859,7 +958,28 @@ static void Errors() {
 }
 
 static std::string TemporaryName(const char* stem) {
-    return std::string("anyps5-kqueue-") + stem + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    return std::string("anyps5-kqueue-") + stem + "-" + std::to_string(getpid_nid_postfix()) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+static void ProcdescOnFiles() {
+    const int kq = kqueue_nid_postfix();
+    const int other = kqueue_nid_postfix();
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(other), EvfiltProcdesc, EvAdd)), GuestEinval);
+    const auto path = TemporaryName("procdesc-file");
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(file), EvfiltProcdesc, EvAdd)), GuestEinval);
+    Require(close_nid_postfix(file) == 0);
+    Require(std::filesystem::remove(path));
+    const auto folder = TemporaryName("procdesc-directory");
+    Require(std::filesystem::create_directory(folder));
+    const int directory = open_nid_postfix(folder.c_str(), Directory, 0);
+    Require(directory >= 0);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(directory), EvfiltProcdesc, EvAdd)), GuestEinval);
+    Require(close_nid_postfix(directory) == 0);
+    Require(std::filesystem::remove(folder));
+    Require(close_nid_postfix(other) == 0);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void FileWatch() {
@@ -1143,7 +1263,48 @@ static void Timeout() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void ReplaceStandardInputWithNull() {
+#ifdef _WIN32
+    const int null = _open("NUL", _O_RDONLY);
+    Require(null >= 0);
+    if (null != 0) {
+        Require(_dup2(null, 0) == 0);
+        Require(_close(null) == 0);
+    }
+#else
+    const int null = ::open("/dev/null", O_RDONLY);
+    Require(null >= 0);
+    if (null != 0) {
+        Require(::dup2(null, 0) == 0);
+        Require(::close(null) == 0);
+    }
+#endif
+}
+
+static bool StandardInputAtEnd() {
+    char byte = 0;
+#ifdef _WIN32
+    return _read(0, &byte, 1) == 0;
+#else
+    return ::read(0, &byte, 1) == 0;
+#endif
+}
+
+static void StandardInputReplacement() {
+    ReplaceStandardInputWithNull();
+    Require(StandardInputAtEnd());
+#ifdef _WIN32
+    Require(_close(0) == 0);
+#else
+    Require(::close(0) == 0);
+#endif
+    ReplaceStandardInputWithNull();
+    Require(StandardInputAtEnd());
+}
+
+
 static void StandardInput() {
+    ReplaceStandardInputWithNull();
     const int copy = dup_nid_postfix(0);
     if (copy < 0) {
         Require(*__error_nid_postfix() == GuestEbadf);
@@ -1165,9 +1326,13 @@ static void StandardInput() {
 }
 
 int main() {
+    StandardInputReplacement();
     StandardInput();
     CreateAndClose();
     Timers();
+    TimerReadd();
+    UnsupportedFilters();
+    ProcdescOnFiles();
     PipeRead();
 #ifndef __APPLE__
     PipeWrite();

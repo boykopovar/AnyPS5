@@ -16,7 +16,7 @@ static void Require(bool value, const char* message) {
 
 extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
     Require(address == expectedAddress, "module lookup received the wrong address");
-    Require(flags == 2, "module lookup received the wrong flags");
+    Require(flags == 1, "module lookup received the wrong flags");
     Require(info != nullptr && info->st_size == sizeof(ModuleInfoEx), "module lookup received the wrong structure size");
     ++calls;
     return SCE_KERNEL_ERROR_ESRCH;

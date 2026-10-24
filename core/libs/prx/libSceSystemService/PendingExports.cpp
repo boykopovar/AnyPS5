@@ -386,11 +386,6 @@ int APS5_VABI sceLncUtilGetAppStatusListForShellUIReboot(LncShellUiAppStatus* st
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppType(std::int32_t appId, std::uint32_t* type) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1957,11 +1952,6 @@ int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* sta
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1973,11 +1963,6 @@ int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_
 }
 
 int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppTitleId(std::int32_t appId, char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

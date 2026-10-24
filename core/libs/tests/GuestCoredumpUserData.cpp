@@ -15,6 +15,7 @@ int64_t APS5_VABI sceCoredumpWriteUserData(const void* data, size_t size);
 void APS5_VABI sceCoredumpDebugTextOut(const char* str, int len);
 int APS5_VABI sceCoredumpAttachUserFile(uint32_t userValue, const char* path);
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(uint32_t userValue, const void* mem, std::int32_t size, const char* name);
+int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type);
 }
 
 namespace {
@@ -77,6 +78,7 @@ int main() {
     Require(sceCoredumpAttachUserFile(0x40000000u, "") == NotInCoredumpHandler);
 
     Require(NotInCoredumpHandler < 0);
+    Require(sceCoredumpSetUserDataType(0) == 0);
     RequireWritesRefused(region);
     RequireAttachesRefused(region);
     sceCoredumpDebugTextOut(text, static_cast<int>(sizeof(text) - 1));

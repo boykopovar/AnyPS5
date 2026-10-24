@@ -83,8 +83,33 @@ struct InputData {
     std::uint64_t attachedData;
 };
 
+struct Decoder2ConfigInfo {
+    std::uint64_t thisSize;
+    std::uint32_t resourceType;
+    std::uint32_t codecType;
+    std::uint32_t profile;
+    std::uint32_t maxLevel;
+    std::int32_t maxFrameWidth;
+    std::int32_t maxFrameHeight;
+    std::int32_t maxDpbFrameCount;
+    std::uint32_t decodePipelineDepth;
+};
+
+struct Decoder2MemoryInfo {
+    std::uint64_t thisSize;
+    std::uint64_t cpuMemorySize;
+    void* cpuMemory;
+    std::uint64_t gpuMemorySize;
+    void* gpuMemory;
+    std::uint64_t cpuGpuMemorySize;
+    void* cpuGpuMemory;
+    std::uint64_t maxFrameBufferSize;
+    std::uint32_t frameBufferAlignment;
+};
+
 static_assert(sizeof(PictureInfo) == 112 && sizeof(AvcInfo) == 36);
 static_assert(sizeof(ConfigInfo) == 40 && sizeof(ResourceInfo) == 56 && sizeof(Ctrl) == 24);
+static_assert(sizeof(Decoder2ConfigInfo) == 40 && sizeof(Decoder2MemoryInfo) == 72);
 
 extern "C" {
 int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo*, const ResourceInfo*, Ctrl*);
@@ -92,6 +117,8 @@ int APS5_VABI sceVideodecDecode(Ctrl*, const InputData*, FrameBuffer*, PictureIn
 int APS5_VABI sceVideodecDeleteDecoder(Ctrl*);
 int APS5_VABI sceVideodecFlush(Ctrl*, FrameBuffer*, PictureInfo*);
 int APS5_VABI sceVideodecReset(Ctrl*);
+int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo*, ResourceInfo*);
+int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const Decoder2ConfigInfo*, Decoder2MemoryInfo*);
 }
 
 namespace {
@@ -105,6 +132,7 @@ constexpr int ErrorAuSize = static_cast<int>(0x80C10009);
 constexpr int ErrorAuPointer = static_cast<int>(0x80C1000A);
 constexpr int ErrorFrameBufferSize = static_cast<int>(0x80C1000B);
 constexpr int ErrorFrameBufferPointer = static_cast<int>(0x80C1000C);
+constexpr int ErrorConfigInfo = static_cast<int>(0x80C1000E);
 constexpr int ErrorArgumentPointer = static_cast<int>(0x80C1000F);
 
 constexpr std::uint32_t Pitch = 64;
@@ -230,6 +258,50 @@ void testReset() {
     check(!picture.isValid, "a reset decoder produced a picture");
 }
 
+void testQueryResourceInfo(std::int32_t width, std::int32_t height, std::uint32_t profile, std::uint32_t level) {
+    const ConfigInfo config{sizeof(ConfigInfo), 1, profile, level, width, height, 4, 0};
+    ResourceInfo resource{sizeof(ResourceInfo)};
+    check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
+    const Decoder2ConfigInfo mapped{sizeof(Decoder2ConfigInfo), 1, 1, profile, level, width, height, 4, 1};
+    Decoder2MemoryInfo memory{sizeof(Decoder2MemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&mapped, &memory) == 0, "the Videodec2 memory query failed");
+    check(resource.thisSize == sizeof(ResourceInfo), "the resource information size was changed");
+    check(resource.cpuMemorySize == memory.cpuMemorySize, "the CPU memory size differs from libSceVideodec2");
+    check(resource.cpuGpuMemorySize == memory.cpuGpuMemorySize, "the CPU-GPU memory size differs from libSceVideodec2");
+    check(resource.maxFrameBufferSize == memory.maxFrameBufferSize, "the frame buffer size differs from libSceVideodec2");
+    check(resource.frameBufferAlignment == memory.frameBufferAlignment, "the frame buffer alignment differs from libSceVideodec2");
+}
+
+void testQueryResourceInfo() {
+    testQueryResourceInfo(static_cast<std::int32_t>(Width), static_cast<std::int32_t>(CodedHeight), 100, 42);
+    testQueryResourceInfo(1920, 1080, 100, 42);
+    testQueryResourceInfo(3840, 2160, 100, 51);
+    const ConfigInfo config{sizeof(ConfigInfo), 1, 100, 42, static_cast<std::int32_t>(Width),
+                            static_cast<std::int32_t>(CodedHeight), 4, 0};
+    ResourceInfo resource{sizeof(ResourceInfo)};
+    check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
+    check(resource.maxFrameBufferSize >= FrameBytes, "the frame buffer size does not hold a decoded picture");
+    Ctrl ctrl{sizeof(Ctrl)};
+    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "the queried resources were refused");
+    check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
+    check(sceVideodecQueryResourceInfo(nullptr, &resource) == ErrorArgumentPointer, "a null configuration was accepted");
+    check(sceVideodecQueryResourceInfo(&config, nullptr) == ErrorArgumentPointer, "null resource information was accepted");
+    const ResourceInfo sentinel{sizeof(ResourceInfo), 7, nullptr, 7, nullptr, 7, 7};
+    auto refused = sentinel;
+    auto shortConfig = config;
+    shortConfig.thisSize = sizeof(ConfigInfo) - 8;
+    check(sceVideodecQueryResourceInfo(&shortConfig, &refused) == ErrorStructSize, "a short configuration was accepted");
+    auto shortResource = sentinel;
+    shortResource.thisSize = sizeof(ResourceInfo) - 8;
+    check(sceVideodecQueryResourceInfo(&config, &shortResource) == ErrorStructSize, "short resource information was accepted");
+    auto unsized = config;
+    unsized.maxFrameWidth = 0;
+    check(sceVideodecQueryResourceInfo(&unsized, &refused) == ErrorConfigInfo, "a configuration without a frame size was accepted");
+    check(refused.cpuMemorySize == 7 && refused.cpuGpuMemorySize == 7 && refused.maxFrameBufferSize == 7 && refused.frameBufferAlignment == 7,
+          "a refused query wrote the resource information");
+    check(shortResource.cpuMemorySize == 7 && shortResource.maxFrameBufferSize == 7, "a refused query wrote the resource information");
+}
+
 }
 
 int main() {
@@ -238,6 +310,7 @@ int main() {
         testDecodeCropped();
         testErrors();
         testReset();
+        testQueryResourceInfo();
         std::puts("Videodec tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -127,6 +127,35 @@ void convert() {
     require(progress.Events.back().Completed != 1 || progress.Events.back().Stage != Domain::ProgressStage::Executable, "Failed conversion reported completion");
 }
 
+void runtimeLifecyclePolicy() {
+    TestProgress progress;
+    const Relinker::Conversion converter(progress);
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Plugins"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        auto module = fixture();
+        Io::WriteU64(module, 0x2080, 12);
+        Io::WriteU64(module, 0x2088, 0x1000);
+        Io::WriteU64(module, 208, 160);
+        Io::WriteU64(module, 216, 160);
+        source.Modules.push_back({parent / "plugin.prx", std::move(module)});
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), {});
+        const auto& bytes = output.Modules.at(0).Bytes;
+        const auto headers = Io::ReadU64(bytes, 32);
+        bool initializesOnMapping = false;
+        for (std::uint16_t index = 0; index < Io::ReadU16(bytes, 56); ++index) {
+            const auto header = headers + index * 56;
+            if (Io::ReadU32(bytes, header) != 2) continue;
+            const auto dynamic = Io::ReadU64(bytes, header + 8);
+            const auto end = dynamic + Io::ReadU64(bytes, header + 32);
+            for (auto offset = dynamic; offset < end; offset += 16)
+                if (Io::ReadU64(bytes, offset) == 12) initializesOnMapping = Io::ReadU64(bytes, offset + 8) != 0;
+        }
+        require(initializesOnMapping == (std::string_view(directory) != "Media/Plugins"), "Default SDK directories lost their mapping initializer");
+    }
+}
+
 void fixedBase() {
     TestProgress progress;
     const Relinker::Conversion converter(progress);
@@ -256,9 +285,9 @@ void baseRelocations() {
     require(Io::ReadU32(relocs, 4) == 12, "Wrong base relocation block size");
     require(Io::ReadU16(relocs, 8) == 0xa000, "Wrong first relocation entry");
     require(Io::ReadU16(relocs, 10) == 0xa008, "Wrong second relocation entry");
-    reject([&] { (void)builder.BuildBaseRelocations({0x10ffc}); });
-    reject([&] { (void)builder.BuildBaseRelocations({0x10ffd}); });
-    reject([&] { (void)builder.BuildBaseRelocations({0x10fff}); });
+    const auto spanning = builder.BuildBaseRelocations({0x10ffc, 0x10fff});
+    require(spanning.size() == 12 && Io::ReadU32(spanning, 0) == 0x10000, "A page-spanning base relocation was not placed in its first page");
+    require(Io::ReadU16(spanning, 8) == 0xaffc && Io::ReadU16(spanning, 10) == 0xafff, "Wrong page-spanning base relocation entries");
 }
 
 std::size_t fileOffset(const std::vector<std::uint8_t>& pe, std::uint32_t address) {
@@ -300,17 +329,62 @@ void runtimeDirectories() {
     }
 }
 
+void relocationValidation() {
+    TestProgress progress;
+    const Relinker::Conversion converter(progress);
+    {
+        auto source = input();
+        Io::WriteU64(source.Executable, 0x2058, 24);
+        Io::WriteU64(source.Executable, 0x2700, 0x2000);
+        Io::WriteU64(source.Executable, 0x2708, (static_cast<std::uint64_t>(0x9999) << 32) | 0x99);
+        Io::WriteU64(source.Executable, 0x2710, 0);
+        try {
+            converter.Convert(source, {});
+            throw std::runtime_error("Unsupported relocation type was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()).find("Unsupported relocation type 0x99") != std::string::npos, "Wrong error for unsupported relocation");
+            require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
+        }
+    }
+    {
+        auto source = input();
+        const std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{
+            {5, 0x2600}, {10, 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680},
+            {3, 0x2000}, {20, 7}, {23, 0x2780}, {2, 24}, {0, 0}
+        };
+        const auto at = 64 + 2 * 56;
+        Io::WriteU64(source.Executable, at + 32, tags.size() * 16);
+        Io::WriteU64(source.Executable, at + 40, tags.size() * 16);
+        for (std::size_t index = 0; index < tags.size(); ++index) {
+            Io::WriteU64(source.Executable, 0x2000 + index * 16, tags[index].first);
+            Io::WriteU64(source.Executable, 0x2008 + index * 16, tags[index].second);
+        }
+        Io::WriteU64(source.Executable, 0x2780, 0x2000);
+        Io::WriteU64(source.Executable, 0x2788, (static_cast<std::uint64_t>(1) << 32) | 8);
+        Io::WriteU64(source.Executable, 0x2790, 0);
+        try {
+            converter.Convert(source, {});
+            throw std::runtime_error("Unsupported PLT relocation type was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()) == "Unsupported PLT relocation type", "Wrong error for unsupported PLT relocation");
+            require(error.FailureOffset == 0x2780, "Wrong failure offset for unsupported PLT relocation");
+        }
+    }
+}
+
 }
 
 int main() {
     try {
         convert();
+        runtimeLifecyclePolicy();
         fixedBase();
         scanning();
         diagnosticContext();
         cancellation();
         baseRelocations();
         runtimeDirectories();
+        relocationValidation();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

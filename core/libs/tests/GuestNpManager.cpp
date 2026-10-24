@@ -33,6 +33,8 @@ extern "C" {
 int APS5_VABI sceNpCreateRequest(void);
 int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param);
 int APS5_VABI sceNpDeleteRequest(int reqId);
+int APS5_VABI sceNpAbortRequest(int reqId);
+int APS5_VABI sceNpPollAsync(int reqId, int* result);
 int APS5_VABI sceNpSetTimeout(int reqId, std::int32_t resolveRetry, std::uint32_t resolveTimeout,
     std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout);
 }
@@ -47,6 +49,15 @@ int APS5_VABI sceNpUnregisterStateCallbackA(int callbackId);
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata);
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata);
 int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void);
+}
+
+extern "C" {
+int APS5_VABI sceNpCheckNpAvailabilityA(int reqId, int userId);
+int APS5_VABI sceNpGetAccountDateOfBirthA(int userId, void* dateOfBirth);
+int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language);
+int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, std::uint32_t* status);
+int APS5_VABI sceNpGetGamePresenceStatusA(int userId, std::uint32_t* status);
+int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, std::int8_t* age, void* info);
 }
 
 namespace {
@@ -229,6 +240,33 @@ void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(asyncId, 2, 0, 0, 0, 0) == RequestNotFound, "deleted async request");
 }
 
+void CheckAsyncRequestLifecycle() {
+    NpCreateAsyncRequestParameter param{};
+    const int unusedAsyncResult = sceNpCreateAsyncRequest(&param);
+    Require(unusedAsyncResult > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    const int deletedId = sceNpCreateAsyncRequest(&param);
+    Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
+
+    constexpr int resultSentinel = 0x5a5a5a5a;
+    const int unknownIds[] = {0, -1, 0x7fffffff, deletedId};
+    for (const int id : unknownIds) {
+        int result = resultSentinel;
+        Require(sceNpPollAsync(id, &result) == RequestNotFound, "poll must reject an absent or deleted id");
+        Require(result == resultSentinel, "poll must not touch the result for an absent or deleted id");
+        Require(sceNpPollAsync(id, nullptr) == InvalidArgument,
+            "poll must reject a null result before the id");
+        Require(sceNpAbortRequest(id) == RequestNotFound, "abort must reject an absent or deleted id");
+        Require(sceNpDeleteRequest(id) == RequestNotFound, "delete must reject an absent or deleted id");
+    }
+
+    int result = resultSentinel;
+    Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
+    Require(result == SignedOut, "poll must report the signed-out result on a live async request");
+    Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == 0, "delete after abort");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
+}
+
 void CheckOnlineIdQueries() {
     NpOnlineId onlineId{};
     std::memcpy(onlineId.data, "player", 6);
@@ -281,6 +319,62 @@ void CheckOnlineIdQueries() {
     }
 }
 
+void CheckUserIdQueries() {
+    constexpr int InvalidUserId = -1;
+    constexpr int OtherUserId = 0x10000;
+    constexpr int NeverCreated = 0x7fffffff;
+    unsigned char output[64];
+    std::memset(output, 0x5a, sizeof(output));
+    unsigned char untouched[64];
+    std::memset(untouched, 0x5a, sizeof(untouched));
+    std::int8_t age = 0x5a;
+    const int request = sceNpCreateRequest();
+    Require(request > 0, "sceNpCreateRequest must return a positive request id");
+    for (const int userId : {InitialUserId, OtherUserId}) {
+        Require(sceNpCheckNpAvailabilityA(request, userId) == SignedOut, "sceNpCheckNpAvailabilityA must report the user as signed out");
+        Require(sceNpGetAccountLanguageA(request, userId, output) == SignedOut, "sceNpGetAccountLanguageA must report the user as signed out");
+        Require(sceNpGetParentalControlInfoA(request, userId, &age, output) == SignedOut, "sceNpGetParentalControlInfoA must report the user as signed out");
+        Require(sceNpGetAccountDateOfBirthA(userId, output) == SignedOut, "sceNpGetAccountDateOfBirthA must report the user as signed out");
+    }
+    Require(sceNpCheckNpAvailabilityA(request, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject the invalid user id");
+    Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
+    Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
+    Require(sceNpCheckNpAvailabilityA(NeverCreated, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must check the user before the request");
+    Require(sceNpGetAccountLanguageA(request, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must reject a null output");
+    Require(sceNpGetAccountLanguageA(request, InvalidUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject the invalid user id");
+    Require(sceNpGetAccountLanguageA(0, InitialUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject request id 0");
+    Require(sceNpGetAccountLanguageA(NeverCreated, InitialUserId, output) == RequestNotFound, "sceNpGetAccountLanguageA must reject a request that was never created");
+    Require(sceNpGetAccountLanguageA(NeverCreated, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must check the output before the request");
+    Require(sceNpGetParentalControlInfoA(request, InitialUserId, nullptr, output) == InvalidArgument, "sceNpGetParentalControlInfoA must reject a null age");
+    Require(sceNpGetParentalControlInfoA(request, InitialUserId, &age, nullptr) == InvalidArgument, "sceNpGetParentalControlInfoA must reject a null info");
+    Require(sceNpGetParentalControlInfoA(request, InvalidUserId, &age, output) == InvalidArgument, "sceNpGetParentalControlInfoA must reject the invalid user id");
+    Require(sceNpGetParentalControlInfoA(0, InitialUserId, &age, output) == InvalidArgument, "sceNpGetParentalControlInfoA must reject request id 0");
+    Require(sceNpGetParentalControlInfoA(NeverCreated, InitialUserId, &age, output) == RequestNotFound, "sceNpGetParentalControlInfoA must reject a request that was never created");
+    Require(sceNpGetParentalControlInfoA(NeverCreated, InvalidUserId, &age, output) == InvalidArgument, "sceNpGetParentalControlInfoA must check the user before the request");
+    Require(sceNpGetAccountDateOfBirthA(InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountDateOfBirthA must reject a null output");
+    Require(sceNpGetAccountDateOfBirthA(InvalidUserId, output) == InvalidArgument, "sceNpGetAccountDateOfBirthA must reject the invalid user id");
+    Require(sceNpDeleteRequest(request) == 0, "sceNpDeleteRequest failed");
+    Require(sceNpCheckNpAvailabilityA(request, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a deleted request");
+    Require(sceNpGetAccountLanguageA(request, InitialUserId, output) == RequestNotFound, "sceNpGetAccountLanguageA must reject a deleted request");
+    Require(sceNpGetParentalControlInfoA(request, InitialUserId, &age, output) == RequestNotFound, "sceNpGetParentalControlInfoA must reject a deleted request");
+    Require(std::memcmp(output, untouched, sizeof(output)) == 0 && age == 0x5a, "a signed-out account query wrote its output");
+    constexpr std::uint32_t Sentinel = 0x5a5a5a5au;
+    constexpr std::uint32_t Offline = 0;
+    NpOnlineId onlineId{};
+    std::memcpy(onlineId.data, "player", 6);
+    for (const int userId : {InitialUserId, OtherUserId}) {
+        std::uint32_t status = Sentinel;
+        Require(sceNpGetGamePresenceStatusA(userId, &status) == 0 && status == Offline, "sceNpGetGamePresenceStatusA must report the user as offline");
+    }
+    std::uint32_t status = Sentinel;
+    Require(sceNpGetGamePresenceStatusA(InvalidUserId, &status) == InvalidArgument, "sceNpGetGamePresenceStatusA must reject the invalid user id");
+    Require(sceNpGetGamePresenceStatusA(InitialUserId, nullptr) == InvalidArgument, "sceNpGetGamePresenceStatusA must reject a null status");
+    Require(sceNpGetGamePresenceStatus(nullptr, &status) == InvalidArgument, "sceNpGetGamePresenceStatus must reject a null online id");
+    Require(sceNpGetGamePresenceStatus(&onlineId, nullptr) == InvalidArgument, "sceNpGetGamePresenceStatus must reject a null status");
+    Require(status == Sentinel, "a rejected presence query wrote its status");
+    Require(sceNpGetGamePresenceStatus(&onlineId, &status) == 0 && status == Offline, "sceNpGetGamePresenceStatus must report the online id as offline");
+}
+
 }
 
 struct ContentRestrictionFields {
@@ -325,9 +419,11 @@ void CheckPlusAndContentRestriction() {
 
 int main() {
     CheckOnlineIdQueries();
+    CheckUserIdQueries();
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckRequestTimeouts();
+    CheckAsyncRequestLifecycle();
     CheckPlusAndContentRestriction();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));

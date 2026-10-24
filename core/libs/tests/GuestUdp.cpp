@@ -254,6 +254,9 @@ int main() {
     source.fill(0);
     unsigned char control[8]{};
     Msghdr incoming{source.data(), static_cast<std::uint32_t>(source.size()), pieces, 2, control, sizeof(control), -1};
+    Require(recvmsg_nid_postfix(receiver, &incoming, 2) == 14 && incoming.flags == 2);
+    incoming.nameLength = static_cast<std::uint32_t>(source.size());
+    incoming.controlLength = sizeof(control);
     Require(recvmsg_nid_postfix(receiver, &incoming, 0) == 14);
     Require(std::memcmp(first, "scat", 4) == 0 && std::memcmp(second, "ter gather", 10) == 0);
     Require(incoming.flags == 0 && incoming.controlLength == 0 && incoming.nameLength == 16 && source[1] == 2 && source[4] == 127);
@@ -262,9 +265,15 @@ int main() {
     char shortBuffer[5]{};
     Iovec single{shortBuffer, sizeof(shortBuffer)};
     Msghdr truncated{nullptr, 0, &single, 1, nullptr, 0, 0};
-    Require(recvmsg_nid_postfix(receiver, &truncated, 0) == 5);
-    Require(std::memcmp(shortBuffer, "scatt", 5) == 0 && truncated.flags == 0x10);
+    Require(recvmsg_nid_postfix(receiver, &truncated, 2) == 5 && truncated.flags == 0x12);
+    Require(recvmsg_nid_postfix(receiver, &truncated, 0x80) == 5);
+    Require(std::memcmp(shortBuffer, "scatt", 5) == 0 && truncated.flags == 0x90);
     Require(recvmsg_nid_postfix(receiver, &truncated, 0) == -1 && *__error_nid_postfix() == 35);
+    Iovec none{shortBuffer, 0};
+    Msghdr empty{nullptr, 0, &none, 1, nullptr, 0, -1};
+    Require(fcntl_nid_postfix(receiver, 4, 2) == 0);
+    Require(recvmsg_nid_postfix(receiver, &empty, 0) == 0 && empty.flags == 0);
+    Require(fcntl_nid_postfix(receiver, 4, 6) == 0);
     Msghdr oversized{nullptr, 0, parts, 1025, nullptr, 0, 0};
     Require(sendmsg_nid_postfix(sender, &oversized, 0) == -1 && *__error_nid_postfix() == 40);
     Require(recvmsg_nid_postfix(receiver, nullptr, 0) == -1 && *__error_nid_postfix() == 14);

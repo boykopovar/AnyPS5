@@ -1,6 +1,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
@@ -25,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -128,6 +130,10 @@ std::uint32_t imageCoordinates(RdnaImageDimension dimension) {
     }
 }
 
+bool multisamplePlaneRead(const ImageResource& image) {
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+}
+
 bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
     const auto type = rawImageType(descriptor);
     const auto format = rawImageFormat(descriptor);
@@ -214,6 +220,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
+    if (decoded.dimension == RdnaImageDimension::Dim2DMsaa && rawImageType(descriptor) == ImageType::Color2DMsaa && multisamplePlaneRead(base) && !IsFmaskTextureFormat(format) && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) decoded.dimension = RdnaImageDimension::Dim2D;
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
@@ -227,9 +234,14 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (decoded.fmask && (storage || base.depthCompare || table)) {
         return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
     }
-    if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
-    if (decoded.fmask && (descriptor.dwords[6] & (3u << 20u)) != 0u) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented");
+    if (decoded.fmask && !FmaskLayoutOf(format).has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
+    if (decoded.fmask && ((descriptor.dwords[6] & (1u << 20u)) != 0u || ((descriptor.dwords[6] & (1u << 21u)) != 0u && (descriptor.dwords[6] >> 24u) == 0u && descriptor.dwords[7] == 0u))) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented without readable metadata");
+    if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
     if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
+    for (std::uint32_t component = 0; decoded.fmask && component < 4u; ++component) {
+        const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;
+        if (selector != 0u && selector != 1u && selector != 4u) return rejectImage(PoisonReason::Fmask, "FMASK destination channel selector is not implemented");
+    }
     if (base.packed) {
         if (table || (!storage && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle)) {
             return rejectImage(PoisonReason::InvalidFormat, "packed image access requires a direct image, with identity swizzle when sampled");
@@ -250,7 +262,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         }
     }
     const bool nativeRepacked = format == IrBufferFormat::Format10_11_11Float && !storage && !base.packed;
-    decoded.conversionFormat = RemapTextureFormat(format) != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
+    const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
+    decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
     if (format == IrBufferFormat::Format11_11_10UNorm || (format == IrBufferFormat::Format10_11_11Float && !nativeRepacked)) {
         const bool floating = format == IrBufferFormat::Format10_11_11Float;
         if (!base.srgbDecodeCompatible) {
@@ -265,6 +278,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
         }
     }
+    if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) decoded.conversionFormat = FmaskExpansion;
     decoded.srgbDecode = !storage && !base.depthCompare && (srgbDecodeFormats & SrgbDecodeBit(format)) != 0u;
     if (decoded.srgbDecode && !base.srgbDecodeCompatible) {
         return rejectImage(PoisonReason::SrgbUnsupported, "samples or gathers an sRGB image the device cannot sample, which is not implemented");
@@ -275,7 +289,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
-    decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(format);
+    decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
         if (!base.depthBitsCompatible) return rejectImage(PoisonReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
@@ -655,6 +669,7 @@ private:
 
 struct WordsIndexTag {};
 struct ElementIndexTag {};
+struct SamplerIndexTag {};
 struct PoisonIndexTag {};
 struct TableRecordsTag {};
 
@@ -1671,6 +1686,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         return Abi::PoisonCode(*index);
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
+    HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
     std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
@@ -1699,17 +1715,17 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
-                const auto hash = hashWords(element, (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
+                const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
                 auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
                     const auto& entry = out.elements[known];
-                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind;
+                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic;
                 });
                 if (!index.has_value() && out.elements.size() >= Abi::ImageElementBudget) {
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
                     if (!index.has_value()) {
                         index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
+                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic});
                         elementIndex.Insert(hash, *index);
                     }
                     out.elements[*index].samplers |= directSamplers[resource];
@@ -1728,19 +1744,29 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
         } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-        } else if (out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
         } else {
-            record[Abi::SamplerRecordElement] = static_cast<std::uint32_t>(out.samplers.size());
-            for (std::uint32_t variant = 0; variant < 2u; variant++) {
-                const bool compare = variant == 1u;
-                for (std::uint32_t point = 0; point < 2u; point++) {
-                    ImageTableSamplerElement element;
-                    std::copy_n(words.dwords.begin(), 4u, element.words.begin());
-                    element.compare = compare;
-                    element.point = point != 0u;
-                    out.samplers.push_back(element);
+            const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
+            auto index = samplerIndex.Find(hash, [&](std::uint32_t known) {
+                return std::equal(words.dwords.begin(), words.dwords.begin() + 4u, out.samplers[known].words.begin());
+            });
+            if (!index.has_value() && out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
+                record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
+            } else {
+                if (!index.has_value()) {
+                    index = static_cast<std::uint32_t>(out.samplers.size());
+                    for (std::uint32_t variant = 0; variant < 2u; variant++) {
+                        const bool compare = variant == 1u;
+                        for (std::uint32_t point = 0; point < 2u; point++) {
+                            ImageTableSamplerElement element;
+                            std::copy_n(words.dwords.begin(), 4u, element.words.begin());
+                            element.compare = compare;
+                            element.point = point != 0u;
+                            out.samplers.push_back(element);
+                        }
+                    }
+                    samplerIndex.Insert(hash, *index);
                 }
+                record[Abi::SamplerRecordElement] = *index;
             }
         }
         const auto offset = static_cast<std::uint32_t>(out.map.size());
@@ -1848,6 +1874,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
+    if (image.targetMerge) return {image};
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
     std::vector<ImageResource> modes;
@@ -1864,7 +1891,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
-        const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible;
+        const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
         const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
@@ -1872,6 +1899,12 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
             modes.push_back(volume);
+        }
+        const bool arrayStore = image.dimension == RdnaImageDimension::Dim3D && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
+        if (arrayStore && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
+            auto array = mode;
+            array.dimension = RdnaImageDimension::Dim2DArray;
+            modes.push_back(array);
         }
         if (image.dimension == RdnaImageDimension::Dim2DMsaa && image.fmaskCompatible && image.cubeFaceCompatible && !table && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto plane = mode;
@@ -1948,11 +1981,17 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UInt, IrBufferFormat::Invalid, false, false);
             if ((image.srgbDecodeCompatible || (image.convertedSamples && convertedSampleCompatible(image))) && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Invalid, false, false);
             if (image.srgbDecodeCompatible && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+            if (storage) {
+                for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
+                    append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+                }
+            }
             if (!storage) {
                 if (image.depthBitsCompatible) {
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, false);
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, true);
                 }
+                if (image.fmaskCompatible && !table) append(IrTextureNumericClass::Uint, FmaskExpansion, IrBufferFormat::Invalid, false, false);
             }
         }
     }
@@ -2162,63 +2201,141 @@ void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
 
 namespace {
 
+std::vector<const IrValue*> pathToMemoryRead(const IrValue& handle) {
+    std::unordered_map<const IrValue*, const IrValue*> parents;
+    std::vector<const IrValue*> queue;
+    const auto visit = [&](const IrValue* argument, const IrValue* parent) {
+        if (argument == nullptr) return;
+        argument = argument->Resolve();
+        if (!argument->HasImmediate() && parents.emplace(argument, parent).second) queue.push_back(argument);
+    };
+    for (const auto* argument : handle.Arguments()) visit(argument, nullptr);
+    for (std::size_t index = 0; index < queue.size(); ++index) {
+        const auto* value = queue[index];
+        if (Detail::IsMemoryRead(value->Opcode())) {
+            std::vector<const IrValue*> path;
+            for (const auto* step = parents.at(value); step != nullptr; step = parents.at(step)) path.push_back(step);
+            return path;
+        }
+        for (const auto* argument : value->Arguments()) visit(argument, value);
+    }
+    return {};
+}
+
 void ownPlanValues(IrResourcePlan& plan) {
     std::vector<IrValue**> roots;
     for (auto& source : plan.descriptorSources) {
         for (auto& dword : source.dwords) roots.push_back(&dword);
     }
     for (auto& read : plan.srtReads) roots.push_back(&read.value);
-    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
     for (auto& value : plan.uniformFill.values) roots.push_back(&value);
+    const auto closures = roots.size();
+    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
 
-    std::unordered_map<const IrValue*, IrValue*> clones;
-    std::vector<const IrValue*> order;
-    std::vector<const IrValue*> pending;
-    for (const auto* root : roots) {
-        if (*root != nullptr) pending.push_back(*root);
-    }
-    while (!pending.empty()) {
-        const auto* value = pending.back();
-        pending.pop_back();
-        if (!clones.emplace(value, nullptr).second) continue;
-        order.push_back(value);
-        for (const auto* argument : value->Arguments()) {
-            if (argument != nullptr) pending.push_back(argument);
+    std::unordered_set<const IrValue*> whole;
+    std::unordered_set<const IrValue*> linked;
+    for (;;) {
+        std::unordered_map<const IrValue*, IrValue*> clones;
+        std::unordered_set<const IrValue*> closed;
+        std::unordered_set<const IrValue*> opened;
+        std::unordered_set<const IrValue*> handles;
+        std::vector<const IrValue*> phis;
+        std::vector<const IrValue*> order;
+        std::vector<std::pair<const IrValue*, bool>> pending;
+        for (std::size_t index = 0; index < roots.size(); ++index) {
+            if (*roots[index] != nullptr) pending.emplace_back(*roots[index], index < closures);
         }
-    }
-    plan.valueStorage.Reserve(order.size());
-    for (const auto* value : order) {
-        auto* clone = plan.valueStorage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(plan.valueStorage.Size()));
-        clone->SetFlags(value->Flags<std::uint64_t>());
-        if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
-        clone->SetRegister(value->Register());
-        clones[value] = clone;
-    }
-    std::unordered_map<const IrBlock*, IrBlock*> blocks;
-    const auto blockFor = [&](const IrBlock* block) {
-        auto& clone = blocks[block];
-        if (clone == nullptr) {
-            plan.blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
-            clone = plan.blockStorage.back().get();
+        while (!pending.empty()) {
+            const auto value = pending.back().first;
+            const auto closure = pending.back().second || whole.contains(value);
+            pending.pop_back();
+            if (clones.emplace(value, nullptr).second) order.push_back(value);
+            auto reads = closure ? Detail::EvaluatorReads::Closure : Detail::Evaluator::Reads(plan, *value);
+            if (reads == Detail::EvaluatorReads::Nothing && linked.contains(value)) reads = Detail::EvaluatorReads::Arguments;
+            if (reads == Detail::EvaluatorReads::Nothing || closed.contains(value)) continue;
+            if (closure) {
+                closed.insert(value);
+            } else if (!opened.insert(value).second) {
+                continue;
+            } else if (value->IsPhi()) {
+                phis.push_back(value);
+            }
+            for (const auto* argument : value->Arguments()) {
+                if (argument != nullptr) pending.emplace_back(argument, closure);
+            }
+            if (!closure && reads == Detail::EvaluatorReads::Closure && value->ArgumentCount() != 0u && value->Argument(0) != nullptr) {
+                const auto* handle = value->Argument(0)->Resolve();
+                handles.insert(handle);
+                if (opened.insert(handle).second) {
+                    for (const auto* argument : handle->Arguments()) {
+                        if (argument != nullptr) pending.emplace_back(argument, false);
+                    }
+                }
+            }
         }
-        return clone;
-    };
-    for (const auto* value : order) {
-        std::vector<IrValue*> arguments;
-        std::vector<IrBlock*> phiBlocks;
-        arguments.reserve(value->ArgumentCount());
-        if (value->IsPhi()) phiBlocks.reserve(value->ArgumentCount());
-        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            const auto* argument = value->Argument(index);
-            arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
-            if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+        IrValueArena storage;
+        storage.Reserve(order.size());
+        for (const auto* value : order) {
+            auto* clone = storage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(storage.Size()));
+            clone->SetFlags(value->Flags<std::uint64_t>());
+            if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
+            clone->SetRegister(value->Register());
+            clones[value] = clone;
         }
-        clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        std::vector<std::unique_ptr<IrBlock>> blockStorage;
+        std::unordered_map<const IrBlock*, IrBlock*> blocks;
+        const auto blockFor = [&](const IrBlock* block) {
+            auto& clone = blocks[block];
+            if (clone == nullptr) {
+                blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
+                clone = blockStorage.back().get();
+            }
+            return clone;
+        };
+        for (const auto* value : order) {
+            const auto count = closed.contains(value) || opened.contains(value) ? value->ArgumentCount() : 0u;
+            std::vector<IrValue*> arguments;
+            std::vector<IrBlock*> phiBlocks;
+            arguments.reserve(count);
+            if (value->IsPhi()) phiBlocks.reserve(count);
+            for (std::size_t index = 0; index < count; index++) {
+                const auto* argument = value->Argument(index);
+                arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
+                if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+            }
+            clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        }
+        const auto resolvesAlike = [&](const IrValue* phi) {
+            try {
+                const auto* expected = ResolveInvariantPhi(plan, const_cast<IrValue*>(phi));
+                const auto* copied = ResolveInvariantPhi(plan, clones.at(phi));
+                if (expected == nullptr) return copied == nullptr;
+                const auto found = clones.find(expected);
+                return found != clones.end() && found->second == copied;
+            } catch (const std::exception&) {
+                return false;
+            }
+        };
+        bool grown = false;
+        for (const auto* phi : phis) {
+            if (!closed.contains(phi) && !resolvesAlike(phi)) grown = whole.insert(phi).second || grown;
+        }
+        for (const auto* handle : handles) {
+            if (closed.contains(handle) || Detail::LoadedFromMemory(*clones.at(handle))) continue;
+            const auto path = pathToMemoryRead(*handle);
+            bool linkedStep = false;
+            for (const auto* step : path) linkedStep = linked.insert(step).second || linkedStep;
+            if (!path.empty()) grown = (linkedStep || whole.insert(handle).second) || grown;
+        }
+        if (grown) continue;
+        plan.valueStorage = std::move(storage);
+        plan.blockStorage = std::move(blockStorage);
+        for (auto* root : roots) {
+            if (*root != nullptr) *root = clones.at(*root);
+        }
+        plan.denseValueIds = true;
+        return;
     }
-    for (auto* root : roots) {
-        if (*root != nullptr) *root = clones.at(*root);
-    }
-    plan.denseValueIds = true;
 }
 
 void buildCompactPlan(IrResourcePlan& plan) {
@@ -2298,9 +2415,8 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     PrepareImageModes(plan.info);
     plan.uniformFill = source.uniformFill;
     for (auto& block : plan.controlFlow) {
-        if (block.condition != nullptr && !Detail::Evaluator::MayEvaluate(source, block.condition)) block.condition = nullptr;
+        if (block.condition != nullptr && !Detail::Evaluator::MayDecide(source, block.condition)) block.condition = nullptr;
     }
-    ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
         if (index >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan resource references an unknown descriptor source");
@@ -2327,6 +2443,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     }
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
+    ownPlanValues(plan);
     buildCompactPlan(plan);
     return plan;
 }

@@ -27,6 +27,10 @@ int APS5_VABI sceKeyboardReadState(int32_t handle, KeyboardData* data) {
     return Keyboard::ReadState(handle, data);
 }
 
+int APS5_VABI sceKeyboardGetConnection(std::int32_t handle, bool* connected) {
+    return Keyboard::GetConnection(handle, connected);
+}
+
 int APS5_VABI sceKeyboardGetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint8_t led, std::uint8_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData) {
     return Keyboard::GetKey2Char(handle, arrange, led, modifierKey, keyCode, charData);
 }
@@ -47,8 +51,7 @@ int APS5_VABI sceKeyboardDeviceOpen(std::uint64_t deviceId, std::int32_t index, 
 }
 
 int APS5_VABI sceKeyboardDisconnectAll(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::DisconnectAll();
 }
 
 int APS5_VABI sceKeyboardDisconnectDevice(std::int32_t deviceId) {
@@ -57,11 +60,6 @@ int APS5_VABI sceKeyboardDisconnectDevice(std::int32_t deviceId) {
 }
 
 int APS5_VABI sceKeyboardDisconnectPort(std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKeyboardGetConnection(std::int32_t handle, bool* connected) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

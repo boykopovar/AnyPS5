@@ -138,6 +138,7 @@ struct HttpEpoll {
 
 static std::mutex g_stateMutex;
 static std::unordered_set<int> g_contexts;
+static std::unordered_map<int, uint64_t> g_contextPoolSizes;
 static std::unordered_map<HttpEpollHandle, std::shared_ptr<HttpEpoll>> g_epolls;
 
 static std::shared_ptr<HttpEpoll> FindEpoll(HttpEpollHandle eh) {
@@ -181,6 +182,16 @@ int APS5_VABI sceHttpCookieFlush(int httpCtxId) {
     std::lock_guard lock(g_stateMutex);
     if (g_contexts.empty()) return ERROR_BEFORE_INIT;
     if (!g_contexts.contains(httpCtxId)) return ERROR_INVALID_ID;
+    return 0;
+}
+
+int APS5_VABI sceHttpGetMemoryPoolStats(int httpCtxId, HttpMemoryPoolStats* currentStat) {
+    if (!currentStat) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_stateMutex);
+    if (g_contexts.empty()) return ERROR_BEFORE_INIT;
+    const auto pool = g_contextPoolSizes.find(httpCtxId);
+    if (pool == g_contextPoolSizes.end()) return ERROR_INVALID_ID;
+    *currentStat = {static_cast<std::size_t>(pool->second), 0, 0};
     return 0;
 }
 
@@ -295,9 +306,9 @@ int APS5_VABI sceHttpGetStatusCode(int request_id, int* status_code) {
 int APS5_VABI sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
     (void)memid;
     (void)ssl_ctx_id;
-    (void)pool_size;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_stateMutex);
+    g_contextPoolSizes[id] = pool_size;
     g_contexts.insert(id);
     AddHttpContext(id);
     return id;
@@ -317,9 +328,8 @@ int APS5_VABI sceHttpSendRequest(int request_id, const void* post_data, size_t s
 }
 
 int APS5_VABI sceHttpSetAuthEnabled(int id, int enable) {
-    (void)id;
-    (void)enable;
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::authEnabled, enable != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, void* userArg) {
@@ -330,10 +340,9 @@ int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, 
 }
 
 int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
-    (void)id;
     if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
-    if (enable != 0) NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::cookieEnabled, enable != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetAutoRedirect(int id, int enable) {
@@ -422,6 +431,7 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
     std::vector<std::shared_ptr<HttpEpoll>> epolls;
     {
         std::lock_guard lock(g_stateMutex);
+        g_contextPoolSizes.erase(http_ctx_id);
         if (g_contexts.empty()) return ERROR_BEFORE_INIT;
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
@@ -691,11 +701,6 @@ int APS5_VABI sceHttpDbgShowStat(void) {
     return 0;
 }
 
-int APS5_VABI sceHttpGetMemoryPoolStats(int contextId, HttpMemoryPoolStats* stats) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpDbgShowConnectionStat(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -727,12 +732,17 @@ int APS5_VABI sceHttpAddRequestHeaderRaw(int id, const char* header, int mode) {
 }
 
 int APS5_VABI sceHttpRemoveRequestHeader(int id, const char* name) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)name;
     return 0;
 }
 
-int APS5_VABI sceHttpGetAuthEnabled(int id, int* enabled) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!enable) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(id);
+    if (!options) return ERROR_INVALID_ID;
+    *enable = options->authEnabled ? 1 : 0;
     return 0;
 }
 
@@ -751,8 +761,12 @@ int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std
     return 0;
 }
 
-int APS5_VABI sceHttpGetCookieEnabled(int id, int* enabled) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!enable) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(id);
+    if (!options) return ERROR_INVALID_ID;
+    *enable = options->cookieEnabled ? 1 : 0;
     return 0;
 }
 

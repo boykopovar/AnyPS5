@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +11,13 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
+
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
 
 extern "C" {
 int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
@@ -82,6 +90,34 @@ static int APS5_VABI PrintList(const char* format, ...) {
     const int result = vprintf_nid_postfix(format, &list);
     __builtin_sysv_va_end(args);
     return result;
+}
+
+static void CheckSizeLimits() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+    for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
+        char output[8];
+        for (const std::size_t oversized : {static_cast<std::size_t>(INT_MAX) + 2, static_cast<std::size_t>(SIZE_MAX)}) {
+            for (const bool wide : {false, true}) {
+                std::memset(output, 'Z', sizeof(output));
+                int consumed = -1;
+                *__error_nid_postfix() = 0;
+                const int result = wide ? format(output, oversized, "%ls%n", u"x", &consumed)
+                                        : format(output, oversized, "x%n", &consumed);
+                Require(result == -1 && *__error_nid_postfix() == 84 && output[0] == 0 && consumed == -1);
+                Require(std::all_of(output + 1, output + sizeof(output), [](char value) { return value == 'Z'; }));
+            }
+        }
+        for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, static_cast<std::size_t>(INT_MAX), static_cast<std::size_t>(INT_MAX) + 1}) {
+            std::memset(output, 'Z', sizeof(output));
+            *__error_nid_postfix() = 35;
+            Require(format(output, capacity, "x") == 1 && *__error_nid_postfix() == 35);
+            Require(output[0] == (capacity == 0 ? 'Z' : capacity == 1 ? '\0' : 'x'));
+            const std::size_t written = capacity < 2 ? capacity : 2;
+            if (capacity > 1) Require(output[1] == 0);
+            Require(std::all_of(output + written, output + sizeof(output), [](char value) { return value == 'Z'; }));
+        }
+        Require(format(nullptr, 0, "x") == 1);
+    }
 }
 
 static bool CheckWidePrecision() {
@@ -368,4 +404,4 @@ static void CheckAllocatingFormat() {
     free_nid_postfix(allocated);
 }
 
-int main() { RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckSizeLimits(); RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

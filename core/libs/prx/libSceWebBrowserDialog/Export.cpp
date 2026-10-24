@@ -1,6 +1,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
@@ -24,6 +25,7 @@ static_assert(sizeof(WebBrowserDialogResetCookieParam) == 264);
 
 namespace {
 std::atomic<int> g_status{0};
+std::atomic<bool> g_open{false};
 
 constexpr int COMMON_DIALOG_STATUS_NONE = 0;
 constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
@@ -31,10 +33,23 @@ constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
 constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
 constexpr int COMMON_DIALOG_ERROR_PARAMETER = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
+
+bool ReservedClear(const std::uint8_t (&reserved)[256]) {
+    for (const auto byte : reserved)
+        if (byte != 0) return false;
+    return true;
+}
+
+bool LengthWithin(const char* text, std::size_t limit) {
+    if (!text) return false;
+    const auto length = strnlen(text, limit);
+    return length != 0 && length < limit;
+}
 }
 
 extern "C" {
@@ -47,14 +62,21 @@ int APS5_VABI sceWebBrowserDialogInitialize(void) {
 
 int APS5_VABI sceWebBrowserDialogTerminate(void) {
     int expected = 1;
-    if (g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_NONE)) return 0;
+    if (g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_NONE)) {
+        g_open = false;
+        return 0;
+    }
     expected = COMMON_DIALOG_STATUS_FINISHED;
-    if (g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_NONE)) return 0;
+    if (g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_NONE)) {
+        g_open = false;
+        return 0;
+    }
     if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     return COMMON_DIALOG_ERROR_BUSY;
 }
 
 int APS5_VABI sceWebBrowserDialogClose(void) {
+    g_open = false;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_NOT_RUNNING;
@@ -88,16 +110,24 @@ int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
  if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
+ g_open = true;
  return 0;
 }
 
 int APS5_VABI sceWebBrowserDialogUpdateStatus(void) {
-    return g_status.load();
+    const int status = g_status.load();
+    if (status == COMMON_DIALOG_STATUS_FINISHED) g_open = false;
+    return status;
 }
 
 
 int APS5_VABI sceWebBrowserDialogSetCookie(const WebBrowserDialogCookieParam* param) {
-    NotImplemented_nid_no_patch(__func__);
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (g_open.load()) return COMMON_DIALOG_ERROR_INVALID_STATE;
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (param->size != sizeof(WebBrowserDialogCookieParam) || !LengthWithin(param->address, 0x800) || !LengthWithin(param->cookie, 0x1000) ||
+        !ReservedClear(param->reserved))
+        return COMMON_DIALOG_ERROR_PARAMETER;
     return 0;
 }
 
@@ -118,11 +148,15 @@ int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, 
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
+    g_open = true;
     return 0;
 }
 
 int APS5_VABI sceWebBrowserDialogResetCookie(const WebBrowserDialogResetCookieParam* param) {
-    NotImplemented_nid_no_patch(__func__);
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (g_open.load()) return COMMON_DIALOG_ERROR_INVALID_STATE;
+    if (param->size != sizeof(WebBrowserDialogResetCookieParam) || !ReservedClear(param->reserved)) return COMMON_DIALOG_ERROR_PARAMETER;
     return 0;
 }
 

@@ -5,12 +5,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 extern "C" {
-int APS5_VABI sceAudioPropagationPathGetNumPoints();
 int APS5_VABI sceAudioPropagationSystemLock();
-int APS5_VABI sceAudioPropagationMaterialInit();
 }
 
 namespace {
@@ -32,6 +37,16 @@ void RequireThrows(TCall call, const char* message) {
         Require(false, message);
     }
     Require(false, message);
+}
+
+void* Resolve(const char* name) {
+#ifdef _WIN32
+    const HMODULE module = GetModuleHandleA("libSceAudioPropagation.prx");
+    Require(module != nullptr, "library module");
+    return reinterpret_cast<void*>(GetProcAddress(module, name));
+#else
+    return dlsym(RTLD_DEFAULT, name);
+#endif
 }
 
 AudioPropagationSystemMemory Memory() {
@@ -152,13 +167,54 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceCreate(system, nullptr); }, "source without output");
     Require(sceAudioPropagationSourceSetAttributes(source, portalAttributes, 3) == 0, "source attributes failed");
     std::uint32_t count = 7;
-    Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == 0, "source reports audio paths");
+    Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
     AudioPropagationHandle path = 0;
-    path = 0x1234;
-    Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == AudioPropagation::ErrorInvalidArgument && path == 0x1234, "audio path without paths");
-    Require(sceAudioPropagationSourceGetAudioPath(source, UINT32_MAX, &path) == AudioPropagation::ErrorInvalidArgument && path == 0x1234, "audio path index range");
-    Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "audio path null output");
-    Require(sceAudioPropagationSourceGetAudioPath(0, 0, nullptr) == AudioPropagation::ErrorInvalidHandle, "audio path handle precedence");
+    Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == 0 && path != 0, "path lookup immediately after source creation");
+    AudioPropagationHandle repeated = 0;
+    Require(sceAudioPropagationSourceGetAudioPath(source, 0, &repeated) == 0 && repeated == path, "path handle is unstable");
+    AudioPropagationHandle lastPath = 0;
+    Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths - 1, &lastPath) == 0 && lastPath != path, "last path slot");
+    Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths, &repeated) == AudioPropagation::ErrorInvalidArgument, "out of range path slot");
+    Require(repeated == path, "rejected path lookup changed the output");
+    Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "null path output");
+    Require(sceAudioPropagationSourceGetAudioPath(0, 0, nullptr) == AudioPropagation::ErrorInvalidHandle, "path lookup handle precedence");
+    Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 0, "initial path has points");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(source, &count); }, "source used as a path");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, nullptr); }, "null point-count output");
+    AudioPropagation::AudioPath configured{};
+    configured.desc = {AudioPropagation::PathId, sizeof(configured)};
+    configured.pointCount = 2;
+    configured.flags = AudioPropagation::PathInvalid;
+    for (auto& point : configured.points) {
+        point.desc = {AudioPropagation::PathPointId, sizeof(point)};
+        point.gain = 1.0f;
+    }
+    configured.points[0].room = rooms[0];
+    configured.points[0].opaque[0] = std::byte{0x7f};
+    configured.opaque[0] = std::byte{0x55};
+    configured.points[0].position[0] = 3.0f;
+    Require(sceAudioPropagationSourceSetAudioPath(path, &configured, 1.0f) == 0, "path configuration");
+    configured.pointCount = 0;
+    Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 2, "path configuration aliases caller memory");
+    configured.pointCount = 2;
+    auto badPath = configured;
+    badPath.desc.size--;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &badPath, 1.0f); }, "wrong path size");
+    badPath = configured;
+    badPath.pointCount = AudioPropagation::MaxPathPoints + 1;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &badPath, 1.0f); }, "too many path points");
+    badPath = configured;
+    AudioPropagationHandle pathMaterial = 0;
+    Require(sceAudioPropagationSystemRegisterMaterial(system, material, &pathMaterial) == 0, "path material creation");
+    badPath.points[0].room = pathMaterial;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &badPath, 1.0f); }, "material used as a path room");
+    Require(sceAudioPropagationSystemUnregisterMaterial(pathMaterial) == 0, "path material cleanup");
+    badPath = configured;
+    badPath.points[0].position[0] = std::numeric_limits<float>::infinity();
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &badPath, 1.0f); }, "nonfinite point position");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &configured, std::numeric_limits<float>::quiet_NaN()); }, "nonfinite path gain");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, nullptr, 1.0f); }, "null path data");
+    Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 2, "rejected update changed path state");
 
     std::uint8_t rays[AudioPropagation::RaySize * 2]{};
     count = 7;
@@ -186,6 +242,13 @@ int main() {
     Require(sceAudioPropagationSystemCreate(&options, &otherMemory, &otherSystem) == 0, "second system create failed");
     AudioPropagationHandle otherSource = 0;
     Require(sceAudioPropagationSourceCreate(otherSystem, &otherSource) == 0, "second system source create failed");
+    AudioPropagationHandle foreignRoom = 0;
+    Require(sceAudioPropagationRoomCreate(otherSystem, &foreignRoom) == 0, "foreign room create failed");
+    badPath = configured;
+    badPath.points[0].room = foreignRoom;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(path, &badPath, 1.0f); }, "room from another system");
+    Require(sceAudioPropagationRoomDestroy(otherSystem, foreignRoom) == 0, "foreign room cleanup");
+    Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 2, "cross-system rejection changed path state");
     AudioPropagationHandle secondSource = 0;
     Require(sceAudioPropagationSourceCreate(system, &secondSource) == 0, "second source create failed");
 
@@ -260,10 +323,36 @@ int main() {
     reset();
     infos[0].outputSize = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 1); }, "render with an empty output");
+    for (const std::uint32_t format : {0u, 1u, 2u, 4u, 5u}) {
+        reset();
+        infos[0].format = format;
+        const std::size_t channels = format == 0 ? 4 : format == 1 ? 9 : format == 2 ? 16 : 8;
+        infos[0].outputSize = sizeof(float) * options.frameSamples * channels;
+        Require(sceAudioPropagationSourceRender(system, infos, 1) == 0, "render in a known format failed");
+        Require(untouched(), "empty source modified a mix in a known format");
+        infos[0].outputSize -= sizeof(float) * channels;
+        RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 1); }, "known format accepted an undersized frame");
+        Require(untouched(), "undersized known-format output modified a mix");
+    }
     reset();
-    infos[1].format = 1;
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render with an unknown format");
-    Require(untouched(), "render with an unknown format wrote an output");
+    infos[0].format = 1;
+    infos[0].outputSize = sizeof(float) * (options.frameSamples * 9 + 1);
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 1); }, "render of a partial nine-channel frame");
+    Require(untouched(), "render of a partial frame wrote an output");
+    for (const std::uint32_t format : {3u, 6u}) {
+        reset();
+        infos[1].format = format;
+        RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render with an unknown format");
+        Require(untouched(), "render with an unknown format wrote an output");
+    }
+
+    reset();
+    configured.flags = 0;
+    Require(sceAudioPropagationSourceSetAudioPath(path, &configured, 1.0f) == 0, "active path configuration");
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "active path silently rendered");
+    Require(untouched(), "unsupported active-path render modified output");
+    configured.flags = AudioPropagation::PathInvalid;
+    Require(sceAudioPropagationSourceSetAudioPath(path, &configured, 1.0f) == 0, "invalidating path");
 
     Require(sceAudioPropagationSourceDestroy(system, secondSource) == 0, "second source destroy failed");
     reset();
@@ -274,13 +363,18 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, source); }, "source destroy with another system");
     Require(sceAudioPropagationPortalDestroy(system, portal) == 0, "portal destroy failed");
     Require(sceAudioPropagationSourceDestroy(system, source) == 0, "source destroy failed");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, &count); }, "path survived source destruction");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(lastPath, &configured, 1.0f); }, "path update after source destruction");
     Require(sceAudioPropagationRoomDestroy(system, rooms[0]) == 0, "room destroy failed");
 
     AudioPropagationHandle lateSource = 0;
     AudioPropagationHandle lateMaterial = 0;
     Require(sceAudioPropagationSourceCreate(system, &lateSource) == 0, "late source create failed");
+    AudioPropagationHandle latePath = 0;
+    Require(sceAudioPropagationSourceGetAudioPath(lateSource, 0, &latePath) == 0 && latePath != path, "path handle reuse");
     Require(sceAudioPropagationSystemRegisterMaterial(system, material, &lateMaterial) == 0, "late material register failed");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "system destroy failed");
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(latePath, &count); }, "path survived system destruction");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAttributes(lateSource, &attribute, 1); }, "source used after its system");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationRoomDestroy(system, lateSource); }, "orphan destroyed as the wrong kind");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, lateSource); }, "orphan destroyed with another system");
@@ -292,9 +386,12 @@ int main() {
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "memory reuse after destroy failed");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
 
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationPathGetNumPoints(); }, "path get num points throw");
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(); }, "system lock throw");
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationMaterialInit(); }, "material init throw");
+
+    Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
+    for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
+        Require(Resolve(name) == nullptr, name);
+    }
 
     std::puts("AudioPropagation tests passed");
     return 0;

@@ -35,7 +35,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 784, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -44,7 +44,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 6u;
+constexpr std::uint32_t FileFormat = 9u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -195,6 +195,7 @@ void encodeState(Writer& writer, const State& state) {
         writer.U32(static_cast<std::uint32_t>(color.format));
         writer.U32(color.exportIndex);
         writer.Raw(color.componentMapping);
+        writer.Raw(color.partialWriteMask);
     }
     writer.Raws(std::span<const VkPipelineColorBlendAttachmentState>(state.blends));
     for (const auto value : state.blendConstants) writer.Raw(value);
@@ -217,8 +218,13 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.sampleLocationGrid);
     writer.Bool(state.perSampleShading);
     writer.Bool(state.mergedCoverage);
+    writer.Bool(state.truncatedCoverage);
     for (const auto mask : state.quadSampleMask) writer.Raw(mask);
     writer.U32(state.depthRemap.mode);
+    writer.Bool(state.vertexPoints);
+    writer.Raw(state.pointSize);
+    writer.Raw(state.pointSizeMin);
+    writer.Raw(state.pointSizeMax);
 }
 
 void decodeState(Reader& reader, State& state) {
@@ -255,6 +261,7 @@ void decodeState(Reader& reader, State& state) {
         color.format = static_cast<VkFormat>(reader.U32());
         color.exportIndex = reader.U32();
         color.componentMapping = reader.Raw<std::uint8_t>();
+        color.partialWriteMask = reader.Raw<std::uint16_t>();
         state.colors.push_back(color);
     }
     reader.Raws(state.blends, 8u);
@@ -278,8 +285,13 @@ void decodeState(Reader& reader, State& state) {
     state.sampleLocationGrid = reader.Bool();
     state.perSampleShading = reader.Bool();
     state.mergedCoverage = reader.Bool();
+    state.truncatedCoverage = reader.Bool();
     for (auto& mask : state.quadSampleMask) mask = reader.Raw<std::uint16_t>();
     state.depthRemap.mode = reader.U32();
+    state.vertexPoints = reader.Bool();
+    state.pointSize = reader.Raw<float>();
+    state.pointSizeMin = reader.Raw<float>();
+    state.pointSizeMax = reader.Raw<float>();
 }
 
 void encodeRecipe(Writer& writer, const GraphicsPipelineRecipe& recipe) {
@@ -327,6 +339,10 @@ std::uint64_t padded(std::uint64_t bytes) {
     return (bytes + RecordAlignment - 1u) / RecordAlignment * RecordAlignment;
 }
 
+std::uint64_t recordBytes(std::uint64_t payloadBytes) {
+    return padded(sizeof(RecordHeader) + payloadBytes);
+}
+
 bool profiling() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     return profile;
@@ -347,6 +363,16 @@ std::uint64_t configured(const char* name, std::uint64_t fallback) {
 // second run of the same install) takes the same lock file, so its appends and this run's never
 // interleave and neither cuts a record the other is writing. Taken before the journal's mutex,
 // never while holding it.
+bool replaceFile(const std::filesystem::path& temporary, const std::filesystem::path& target) {
+#ifdef _WIN32
+    return ::MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary, target, error);
+    return !error;
+#endif
+}
+
 class FileLock {
 public:
     explicit FileLock(const std::filesystem::path& path) {
@@ -423,6 +449,178 @@ struct LoadedJournal {
     std::uint64_t dropped = 0;
     bool headerValid = false;
 };
+
+struct RecordSpan {
+    std::uint64_t offset = 0;
+    std::uint64_t bytes = 0;
+    std::uint32_t kind = 0;
+    std::uint64_t hash = 0;
+    ShaderRecompiler::PipelineIdentity identity{};
+    std::vector<ShaderRecompiler::PipelineIdentity> needs;
+    bool decodable = false;
+};
+
+class PayloadHash {
+public:
+    explicit PayloadHash(std::uint64_t bytes) : hash(bytes * Multiplier) {}
+
+    void Update(std::span<const std::byte> bytes) {
+        while (!bytes.empty()) {
+            const auto take = std::min(bytes.size(), carry.size() - carryBytes);
+            std::memcpy(carry.data() + carryBytes, bytes.data(), take);
+            carryBytes += take;
+            bytes = bytes.subspan(take);
+            if (carryBytes == carry.size()) {
+                std::uint64_t chunk = 0;
+                std::memcpy(&chunk, carry.data(), sizeof(chunk));
+                Mix(chunk);
+                carryBytes = 0;
+            }
+        }
+    }
+
+    [[nodiscard]] std::uint64_t Finish() {
+        if (carryBytes != 0) {
+            std::uint64_t chunk = 0;
+            std::memcpy(&chunk, carry.data(), carryBytes);
+            Mix(chunk ^ 0x8000000000000000ull);
+            carryBytes = 0;
+        }
+        hash ^= hash >> 33u;
+        hash *= 0xff51afd7ed558ccdull;
+        hash ^= hash >> 33u;
+        hash *= 0xc4ceb9fe1a85ec53ull;
+        hash ^= hash >> 33u;
+        return hash;
+    }
+
+private:
+    static constexpr std::uint64_t Multiplier = 0x9e3779b97f4a7c15ull;
+
+    void Mix(std::uint64_t chunk) {
+        chunk *= 0xff51afd7ed558ccdull;
+        chunk ^= chunk >> 32u;
+        hash = (hash ^ chunk) * Multiplier;
+        hash = (hash << 27u) | (hash >> 37u);
+    }
+
+    std::uint64_t hash;
+    std::array<std::byte, 8> carry{};
+    std::size_t carryBytes = 0;
+};
+
+struct SpanScan {
+    bool headerValid = false;
+    std::vector<RecordSpan> spans;
+};
+
+bool readSpanPayload(std::ifstream& file, const RecordHeader& record, std::array<std::byte, 20>& prefix, std::vector<std::byte>& graphics, std::uint64_t& hash) {
+    constexpr std::uint64_t MaxGraphicsBytes = 16u * 1024u * 1024u;
+    PayloadHash hasher(record.payloadBytes);
+    std::array<std::byte, 64u * 1024u> chunk{};
+    const bool capture = record.kind == GraphicsRecord && record.payloadBytes <= MaxGraphicsBytes;
+    if (capture) graphics.resize(static_cast<std::size_t>(record.payloadBytes));
+    std::size_t copied = 0;
+    std::uint64_t left = record.payloadBytes;
+    while (left != 0) {
+        const auto take = static_cast<std::size_t>(std::min<std::uint64_t>(left, chunk.size()));
+        file.read(reinterpret_cast<char*>(chunk.data()), static_cast<std::streamsize>(take));
+        if (file.gcount() != static_cast<std::streamsize>(take)) return false;
+        const auto bytes = std::span<const std::byte>(chunk.data(), take);
+        hasher.Update(bytes);
+        const auto prefixBytes = std::min(take, prefix.size() - copied);
+        std::memcpy(prefix.data() + copied, bytes.data(), prefixBytes);
+        if (prefixBytes < take) copied = prefix.size();
+        else copied += take;
+        if (capture) std::memcpy(graphics.data() + (static_cast<std::size_t>(record.payloadBytes) - static_cast<std::size_t>(left)), bytes.data(), take);
+        left -= take;
+    }
+    hash = hasher.Finish();
+    return true;
+}
+
+bool scanSpans(const std::filesystem::path& path, std::uint64_t device, SpanScan& scan) {
+    std::error_code error;
+    const auto fileSize = std::filesystem::file_size(path, error);
+    if (error) return false;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    FileHeader header{};
+    file.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (file.gcount() != sizeof(header)) return false;
+    if (header.magic != FileMagic || header.format != FileFormat || header.runtimeAbi != ShaderRecompiler::RuntimeAbi::Version ||
+        header.sourceVersion != ShaderRecompiler::ShaderDiskCache::SourceVersion() || header.device != device) return false;
+    scan.headerValid = true;
+    auto cursor = padded(sizeof(FileHeader));
+    while (cursor + sizeof(RecordHeader) <= fileSize) {
+        file.clear();
+        file.seekg(static_cast<std::streamoff>(cursor), std::ios::beg);
+        RecordHeader record{};
+        file.read(reinterpret_cast<char*>(&record), sizeof(record));
+        if (file.gcount() != sizeof(record) || record.kind == 0 || record.kind > ComputeRecord) break;
+        const auto payloadOffset = cursor + sizeof(RecordHeader);
+        if (record.payloadBytes > fileSize - payloadOffset) break;
+        const auto end = padded(payloadOffset + record.payloadBytes);
+        if (end > fileSize) break;
+        std::array<std::byte, 20> prefix{};
+        std::vector<std::byte> graphics;
+        std::uint64_t hash = 0;
+        if (!readSpanPayload(file, record, prefix, graphics, hash) || hash != record.payloadHash) break;
+        RecordSpan span;
+        span.offset = cursor;
+        span.bytes = end - cursor;
+        span.kind = record.kind;
+        span.hash = record.payloadHash;
+        if (record.kind == ModuleRecord) {
+            if (record.payloadBytes < 20u) break;
+            std::memcpy(&span.identity.low, prefix.data(), sizeof(span.identity.low));
+            std::memcpy(&span.identity.high, prefix.data() + 8, sizeof(span.identity.high));
+        } else if (record.kind == ComputeRecord) {
+            if (record.payloadBytes >= 16u) {
+                std::memcpy(&span.identity.low, prefix.data(), sizeof(span.identity.low));
+                std::memcpy(&span.identity.high, prefix.data() + 8, sizeof(span.identity.high));
+                span.needs.push_back(span.identity);
+                span.decodable = true;
+            }
+        } else {
+            GraphicsPipelineRecipe recipe;
+            if (!graphics.empty() && DecodeGraphicsPipelineRecipe(graphics, recipe)) {
+                for (const auto& stage : recipe.stages) span.needs.push_back(stage.identity);
+                span.decodable = true;
+            }
+        }
+        scan.spans.push_back(std::move(span));
+        cursor = end;
+    }
+    return true;
+}
+
+bool copySpans(const std::filesystem::path& path, const SpanScan& scan, const std::set<std::size_t>& kept, const std::filesystem::path& temporary) {
+    std::ifstream source(path, std::ios::binary);
+    if (!source) return false;
+    std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    std::array<std::byte, 64u * 1024u> chunk{};
+    source.read(reinterpret_cast<char*>(chunk.data()), static_cast<std::streamsize>(padded(sizeof(FileHeader))));
+    if (source.gcount() != static_cast<std::streamsize>(padded(sizeof(FileHeader)))) return false;
+    out.write(reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(padded(sizeof(FileHeader))));
+    for (std::size_t position = 0; position < scan.spans.size(); ++position) {
+        if (!kept.contains(position)) continue;
+        const auto& span = scan.spans[position];
+        source.clear();
+        source.seekg(static_cast<std::streamoff>(span.offset), std::ios::beg);
+        auto left = span.bytes;
+        while (left != 0) {
+            const auto take = static_cast<std::size_t>(std::min<std::uint64_t>(left, chunk.size()));
+            source.read(reinterpret_cast<char*>(chunk.data()), static_cast<std::streamsize>(take));
+            if (source.gcount() != static_cast<std::streamsize>(take)) return false;
+            out.write(reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(take));
+            left -= take;
+        }
+    }
+    out.flush();
+    return !out.fail();
+}
 
 class Journal {
 public:
@@ -531,12 +729,15 @@ public:
         totals.recordedModules = counters.recordedModules.load(std::memory_order_relaxed);
         totals.writtenBytes = counters.writtenBytes.load(std::memory_order_relaxed);
         totals.writeFailures = counters.writeFailures.load(std::memory_order_relaxed);
+        totals.evictedRecords = counters.evictedRecords.load(std::memory_order_relaxed);
+        totals.evictedBytes = counters.evictedBytes.load(std::memory_order_relaxed);
         return totals;
     }
 
     struct Counters {
         std::atomic<std::uint64_t> loadedRecipes{0}, loadedModules{0}, loadedBytes{0}, droppedRecords{0};
         std::atomic<std::uint64_t> recordedGraphics{0}, recordedCompute{0}, recordedModules{0}, writtenBytes{0}, writeFailures{0};
+        std::atomic<std::uint64_t> evictedRecords{0}, evictedBytes{0};
     };
 
 private:
@@ -582,7 +783,7 @@ private:
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
     // module identities and record hashes) is built. Stops at the first record that does not
     // parse; the bytes before it stay valid.
-    void parse(const std::vector<std::byte>& file, const std::shared_ptr<const std::vector<std::byte>>& owner, LoadedJournal& loaded, bool decode) {
+    void parse(const std::vector<std::byte>& file, const std::shared_ptr<const std::vector<std::byte>>& owner, LoadedJournal& loaded, bool decode, std::vector<RecordSpan>* spans = nullptr) {
         std::uint64_t valid = 0;
         bool header = false;
         std::uint64_t dropped = 0;
@@ -619,9 +820,18 @@ private:
                         else ++dropped;
                     }
                     if (decoded) loaded.indexModules.insert(identity);
+                    if (spans != nullptr) {
+                        RecordSpan span;
+                        span.offset = cursor;
+                        span.bytes = end - cursor;
+                        span.kind = record.kind;
+                        span.hash = record.payloadHash;
+                        span.identity = identity;
+                        spans->push_back(std::move(span));
+                    }
                 } else if (record.kind == GraphicsRecord || record.kind == ComputeRecord) {
                     if (decode && !loaded.indexRecords.contains(record.payloadHash)) {
-                        LoadedEntry entry;
+                        LoadedEntry entry{};
                         entry.kind = record.kind;
                         bool decoded = false;
                         if (record.kind == GraphicsRecord) {
@@ -638,6 +848,28 @@ private:
                         else ++dropped;
                     }
                     loaded.indexRecords.insert(record.payloadHash);
+                    if (spans != nullptr) {
+                        RecordSpan span;
+                        span.offset = cursor;
+                        span.bytes = end - cursor;
+                        span.kind = record.kind;
+                        span.hash = record.payloadHash;
+                        if (record.kind == ComputeRecord) {
+                            if (payload.size() >= 16u) {
+                                std::memcpy(&span.identity.low, payload.data(), sizeof(span.identity.low));
+                                std::memcpy(&span.identity.high, payload.data() + 8, sizeof(span.identity.high));
+                                span.needs.push_back(span.identity);
+                                span.decodable = true;
+                            }
+                        } else {
+                            GraphicsPipelineRecipe recipe;
+                            if (DecodeGraphicsPipelineRecipe(payload, recipe)) {
+                                for (const auto& stage : recipe.stages) span.needs.push_back(stage.identity);
+                                span.decodable = true;
+                            }
+                        }
+                        spans->push_back(std::move(span));
+                    }
                 } else {
                     break;
                 }
@@ -723,43 +955,119 @@ private:
     // tail of a crashed run (bytes past the last parsed record) was cut.
     void write(const Pending& pending) {
         if (!ensureIndexed()) throw std::runtime_error("the journal could not be read");
-        for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        for (unsigned attempt = 0; attempt < 3; ++attempt) {
             if (append(pending)) return;
         }
         throw std::runtime_error("the journal keeps changing under this run");
     }
 
+    bool evictUnderLock(std::uint64_t reserve) {
+        SpanScan scan;
+        if (!scanSpans(path, device.load(std::memory_order_relaxed), scan) || !scan.headerValid) return false;
+        const auto& spans = scan.spans;
+        std::map<ShaderRecompiler::PipelineIdentity, std::size_t> moduleSpans;
+        for (std::size_t position = 0; position < spans.size(); ++position) {
+            if (spans[position].kind == ModuleRecord) moduleSpans[spans[position].identity] = position;
+        }
+        const auto headerBytes = padded(sizeof(FileHeader));
+        const auto target = maxBytes - maxBytes / 4u;
+        auto budget = target > reserve ? target - reserve : headerBytes;
+        if (budget < headerBytes) budget = headerBytes;
+        std::set<ShaderRecompiler::PipelineIdentity> keptModules;
+        std::set<std::size_t> kept;
+        std::uint64_t used = headerBytes;
+        for (std::size_t position = spans.size(); position-- > 0;) {
+            const auto& span = spans[position];
+            if (span.kind == ModuleRecord) continue;
+            if (!span.decodable) continue;
+            std::uint64_t added = span.bytes;
+            std::vector<std::size_t> modules;
+            bool complete = true;
+            for (const auto& identity : span.needs) {
+                if (keptModules.contains(identity)) continue;
+                const auto found = moduleSpans.find(identity);
+                if (found == moduleSpans.end()) {
+                    complete = false;
+                    break;
+                }
+                modules.push_back(found->second);
+                added += spans[found->second].bytes;
+            }
+            if (!complete) continue;
+            if (used + added > budget) break;
+            used += added;
+            for (const auto module : modules) keptModules.insert(spans[module].identity);
+            kept.insert(position);
+        }
+        for (const auto& identity : keptModules) kept.insert(moduleSpans[identity]);
+        const auto temporary = path.string() + ".evict";
+        if (!copySpans(path, scan, kept, temporary)) {
+            std::error_code error;
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        if (!replaceFile(temporary, path)) {
+            std::error_code error;
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        std::uint64_t evicted = 0;
+        std::uint64_t evictedBytes = 0;
+        {
+            std::lock_guard lock(mutex);
+            for (std::size_t position = 0; position < spans.size(); ++position) {
+                if (kept.contains(position)) continue;
+                ++evicted;
+                evictedBytes += spans[position].bytes;
+            }
+            writtenModules.clear();
+            writtenRecords.clear();
+            for (const auto& identity : keptModules) writtenModules.insert(identity);
+            for (const auto position : kept) {
+                if (spans[position].kind != ModuleRecord) writtenRecords.insert(spans[position].hash);
+            }
+            validBytes = used;
+            headerValid = true;
+        }
+        counters.evictedRecords.fetch_add(evicted, std::memory_order_relaxed);
+        counters.evictedBytes.fetch_add(evictedBytes, std::memory_order_relaxed);
+        std::fprintf(stderr, "[pipeline-journal] %s reached its size cap; %llu records (%.1f MiB) were dropped and the file was rewritten to %.1f MiB\n", path.string().c_str(), static_cast<unsigned long long>(evicted), static_cast<double>(evictedBytes) / (1024.0 * 1024.0), static_cast<double>(used) / (1024.0 * 1024.0));
+        return true;
+    }
+
+    std::vector<std::byte> EncodeModule(const PendingModule& module) {
+        std::vector<std::byte> payload;
+        Writer writer(payload);
+        writer.U64(module.identity.low);
+        writer.U64(module.identity.high);
+        writer.U32(static_cast<std::uint32_t>(module.stage));
+        ShaderRecompiler::ShaderDiskCache::EncodeResult(*module.result, payload);
+        return payload;
+    }
+
     // One attempt: false when the file was cut or replaced by someone else since it was indexed
-    // (it is indexed again, and the batch is rebuilt against that index).
+    // (it is indexed again, and the batch is rebuilt against that index), or when the file was
+    // rewritten to make room for the record (the batch is rebuilt against that file).
     bool append(const Pending& pending) {
         const auto recordHash = ShaderRecompiler::HashBytes(pending.payload);
-        std::vector<std::byte> batch;
-        std::vector<ShaderRecompiler::PipelineIdentity> newModules;
+        std::vector<ShaderRecompiler::PipelineIdentity> missing;
         {
             std::lock_guard lock(mutex);
             if (writtenRecords.contains(recordHash)) return true;
             for (const auto& module : pending.modules) {
-                if (!writtenModules.contains(module.identity) && std::ranges::find(newModules, module.identity) == newModules.end()) newModules.push_back(module.identity);
+                if (writtenModules.contains(module.identity)) continue;
+                if (std::ranges::find(missing, module.identity) != missing.end()) continue;
+                missing.push_back(module.identity);
             }
         }
-        const auto appendRecord = [&](std::uint32_t kind, std::span<const std::byte> payload) {
-            const RecordHeader header{kind, 0u, payload.size(), ShaderRecompiler::HashBytes(payload)};
-            Writer writer(batch);
-            writer.Raw(header);
-            batch.insert(batch.end(), payload.begin(), payload.end());
-            batch.resize(static_cast<std::size_t>(padded(batch.size())));
-        };
-        for (const auto& identity : newModules) {
+        std::vector<std::vector<std::byte>> missingPayloads;
+        missingPayloads.reserve(missing.size());
+        for (const auto& identity : missing) {
             const auto module = std::ranges::find_if(pending.modules, [&](const PendingModule& candidate) { return candidate.identity == identity; });
-            std::vector<std::byte> payload;
-            Writer writer(payload);
-            writer.U64(identity.low);
-            writer.U64(identity.high);
-            writer.U32(static_cast<std::uint32_t>(module->stage));
-            ShaderRecompiler::ShaderDiskCache::EncodeResult(*module->result, payload);
-            appendRecord(ModuleRecord, payload);
+            missingPayloads.push_back(EncodeModule(*module));
         }
-        appendRecord(pending.kind, pending.payload);
+        std::uint64_t batchSize = recordBytes(pending.payload.size());
+        for (const auto& payload : missingPayloads) batchSize += recordBytes(payload.size());
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         FileLock fileLock(lockPath);
@@ -770,6 +1078,7 @@ private:
             return true;
         }
         bool fresh = false;
+        bool overCap = false;
         {
             std::lock_guard lock(mutex);
             fresh = !headerValid;
@@ -783,13 +1092,41 @@ private:
                     else validBytes = tail;
                 }
             }
-            if (!fresh && validBytes + batch.size() > maxBytes) {
+            overCap = !fresh && validBytes + batchSize > maxBytes;
+        }
+        if (overCap) {
+            std::uint64_t needed = batchSize;
+            std::vector<ShaderRecompiler::PipelineIdentity> held;
+            for (const auto& module : pending.modules) {
+                if (std::ranges::find(missing, module.identity) != missing.end()) continue;
+                if (std::ranges::find(held, module.identity) != held.end()) continue;
+                held.push_back(module.identity);
+                needed += recordBytes(EncodeModule(module).size());
+            }
+            if (needed + padded(sizeof(FileHeader)) > maxBytes) {
+                static std::atomic<bool> reported{false};
+                if (!reported.exchange(true)) std::fprintf(stderr, "[pipeline-journal] %s cannot hold a record of %llu bytes under APS5_PIPELINE_JOURNAL_MAX_MIB; it is not recorded\n", path.string().c_str(), static_cast<unsigned long long>(needed));
+                counters.writeFailures.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+            if (!evictUnderLock(needed)) {
                 static std::atomic<bool> reported{false};
                 if (!reported.exchange(true)) std::fprintf(stderr, "[pipeline-journal] %s reached APS5_PIPELINE_JOURNAL_MAX_MIB; later pipelines are not recorded\n", path.string().c_str());
                 counters.writeFailures.fetch_add(1, std::memory_order_relaxed);
                 return true;
             }
+            return false;
         }
+        std::vector<std::byte> batch;
+        const auto appendRecord = [&](std::uint32_t kind, std::span<const std::byte> payload) {
+            const RecordHeader header{kind, 0u, payload.size(), ShaderRecompiler::HashBytes(payload)};
+            Writer writer(batch);
+            writer.Raw(header);
+            batch.insert(batch.end(), payload.begin(), payload.end());
+            batch.resize(static_cast<std::size_t>(padded(batch.size())));
+        };
+        for (const auto& payload : missingPayloads) appendRecord(ModuleRecord, payload);
+        appendRecord(pending.kind, pending.payload);
         if (!fresh) {
             const auto size = std::filesystem::file_size(path, error);
             if (!error && size < validBytes) {
@@ -813,9 +1150,9 @@ private:
         std::lock_guard lock(mutex);
         headerValid = true;
         validBytes = (fresh ? padded(sizeof(FileHeader)) : validBytes) + batch.size();
-        for (const auto& identity : newModules) writtenModules.insert(identity);
+        for (const auto& identity : missing) writtenModules.insert(identity);
         writtenRecords.insert(recordHash);
-        counters.recordedModules.fetch_add(newModules.size(), std::memory_order_relaxed);
+        counters.recordedModules.fetch_add(missing.size(), std::memory_order_relaxed);
         if (pending.kind == GraphicsRecord) counters.recordedGraphics.fetch_add(1, std::memory_order_relaxed);
         else counters.recordedCompute.fetch_add(1, std::memory_order_relaxed);
         counters.writtenBytes.fetch_add(prefix.size() + batch.size(), std::memory_order_relaxed);
@@ -915,7 +1252,7 @@ private:
             try {
                 auto journal = Journal::Instance().Load();
                 const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 1024u);
-                if (journal.entries.size() > limit) journal.entries.resize(static_cast<std::size_t>(limit));
+                if (journal.entries.size() > limit) journal.entries.erase(journal.entries.begin(), journal.entries.end() - static_cast<std::ptrdiff_t>(limit));
                 loaded = std::move(journal);
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "[pipeline-journal] cannot load %s: %s\n", Journal::Instance().Path().string().c_str(), error.what());
@@ -1028,6 +1365,7 @@ State CanonicalPipelineState(const State& state) {
         canonicalColor.format = color.format;
         canonicalColor.exportIndex = color.exportIndex;
         canonicalColor.componentMapping = color.componentMapping;
+        canonicalColor.partialWriteMask = color.partialWriteMask;
         canonical.colors.push_back(canonicalColor);
     }
     canonical.blends = state.blends;
@@ -1051,8 +1389,13 @@ State CanonicalPipelineState(const State& state) {
     canonical.sampleLocationGrid = state.sampleLocationGrid;
     canonical.perSampleShading = state.perSampleShading;
     canonical.mergedCoverage = state.mergedCoverage;
+    canonical.truncatedCoverage = state.truncatedCoverage;
     canonical.quadSampleMask = state.quadSampleMask;
     canonical.depthRemap.mode = state.depthRemap.mode;
+    canonical.vertexPoints = state.vertexPoints;
+    canonical.pointSize = state.pointSize;
+    canonical.pointSizeMin = state.pointSizeMin;
+    canonical.pointSizeMax = state.pointSizeMax;
     return canonical;
 }
 
@@ -1134,10 +1477,10 @@ void FlushPipelineJournal() {
 void ReportPipelineJournal() {
     if (!profiling() || !Journal::Instance().Enabled()) return;
     const auto totals = PipelineJournalTotals();
-    AgcDriver::ProfilePrint_nid_no_patch("[pipeline-journal] loaded %llu pipelines, %llu modules (%.1f MiB, %.0f ms); replay on %u threads: %llu graphics and %llu compute built, %llu present, %llu skipped (store full), %llu rejected, %llu failed in %.0f ms; recorded this run: %llu graphics, %llu compute, %llu modules (%.1f MiB), %llu write failures\n",
+    AgcDriver::ProfilePrint_nid_no_patch("[pipeline-journal] loaded %llu pipelines, %llu modules (%.1f MiB, %.0f ms); replay on %u threads: %llu graphics and %llu compute built, %llu present, %llu skipped (store full), %llu rejected, %llu failed in %.0f ms; recorded this run: %llu graphics, %llu compute, %llu modules (%.1f MiB), %llu write failures, %llu records evicted (%.1f MiB)\n",
                                          static_cast<unsigned long long>(totals.loadedRecipes), static_cast<unsigned long long>(totals.loadedModules), static_cast<double>(totals.loadedBytes) / (1024.0 * 1024.0), totals.loadMs, totals.replayThreads,
                                          static_cast<unsigned long long>(totals.replayedGraphics), static_cast<unsigned long long>(totals.replayedCompute), static_cast<unsigned long long>(totals.replayPresent), static_cast<unsigned long long>(totals.replaySkipped), static_cast<unsigned long long>(totals.replayRejected), static_cast<unsigned long long>(totals.replayFailed), totals.replayMs,
-                                         static_cast<unsigned long long>(totals.recordedGraphics), static_cast<unsigned long long>(totals.recordedCompute), static_cast<unsigned long long>(totals.recordedModules), static_cast<double>(totals.writtenBytes) / (1024.0 * 1024.0), static_cast<unsigned long long>(totals.writeFailures));
+                                         static_cast<unsigned long long>(totals.recordedGraphics), static_cast<unsigned long long>(totals.recordedCompute), static_cast<unsigned long long>(totals.recordedModules), static_cast<double>(totals.writtenBytes) / (1024.0 * 1024.0), static_cast<unsigned long long>(totals.writeFailures), static_cast<unsigned long long>(totals.evictedRecords), static_cast<double>(totals.evictedBytes) / (1024.0 * 1024.0));
 }
 
 std::uint64_t PipelineJournalDeviceFingerprint(const VkPhysicalDeviceProperties& properties) {

@@ -5,12 +5,15 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
 static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
 static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
+static constexpr std::size_t ProgramInfoSize = 0x134C;
 
 struct GameLiveStreamingProgramInfo;
 
@@ -53,7 +56,10 @@ int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* st
 }
 
 int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo* info) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    if (info == nullptr) return ErrorInvalidArgument;
+    std::memset(info, 0, ProgramInfoSize);
     return 0;
 }
 
@@ -267,8 +273,10 @@ int APS5_VABI sceGameLiveStreamingStopDebugBroadcast(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(bool isEnableLiveStreaming) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) throw std::logic_error(std::string(__func__) + ": not initialized");
+    (void)isEnableLiveStreaming;
     return 0;
 }
 

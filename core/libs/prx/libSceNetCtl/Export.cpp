@@ -131,7 +131,7 @@ static bool HasIpv4Callback() {
     return false;
 }
 
-static bool HostHasAddress(int family) {
+static bool QueryHostHasAddress(int family) {
 #ifdef _WIN32
     static const int socket_status = [] {
         WSADATA data{};
@@ -187,6 +187,74 @@ struct HostIpv4Interface {
     std::uint32_t mtu = 0;
     std::vector<in_addr> dns;
 };
+
+#ifdef _WIN32
+namespace {
+
+struct HostAddressCache {
+    std::mutex lock;
+    bool registered = false;
+    bool tried = false;
+    std::atomic<std::uint64_t> generation{1};
+    std::uint64_t seen[3]{};
+    bool value[3]{};
+    std::uint64_t interfaceSeen = 0;
+    bool interfaceFound = false;
+    HostIpv4Interface interfaceValue;
+};
+
+HostAddressCache& AddressCache() {
+    static HostAddressCache cache;
+    return cache;
+}
+
+void CALLBACK HostAddressChanged(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostInterfaceChanged(PVOID, PMIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostRouteChanged(PVOID, PMIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void WatchHostAddresses(HostAddressCache& cache) {
+    if (cache.tried) return;
+    cache.tried = true;
+    HANDLE addresses = nullptr;
+    HANDLE interfaces = nullptr;
+    HANDLE routes = nullptr;
+    cache.registered = NotifyUnicastIpAddressChange(AF_UNSPEC, HostAddressChanged, nullptr, FALSE, &addresses) == NO_ERROR &&
+                       NotifyIpInterfaceChange(AF_UNSPEC, HostInterfaceChanged, nullptr, FALSE, &interfaces) == NO_ERROR &&
+                       NotifyRouteChange2(AF_UNSPEC, HostRouteChanged, nullptr, FALSE, &routes) == NO_ERROR;
+    if (!cache.registered) {
+        if (addresses != nullptr) CancelMibChangeNotify2(addresses);
+        if (interfaces != nullptr) CancelMibChangeNotify2(interfaces);
+        if (routes != nullptr) CancelMibChangeNotify2(routes);
+    }
+}
+
+}
+#endif
+
+static bool HostHasAddress(int family) {
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (cache.registered && cache.seen[slot] == generation) return cache.value[slot];
+    const bool value = QueryHostHasAddress(family);
+    cache.value[slot] = value;
+    cache.seen[slot] = generation;
+    return value;
+#else
+    return QueryHostHasAddress(family);
+#endif
+}
 
 static bool UsableIpv4(in_addr address) {
     const auto host = ntohl(address.s_addr);
@@ -310,7 +378,7 @@ static std::vector<in_addr> HostDnsServers() {
 }
 #endif
 
-static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
 #ifdef _WIN32
     ULONG size = 0;
     const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_GATEWAYS;
@@ -368,6 +436,25 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
     found.mtu = HostInterfaceMtu(chosen->ifa_name);
     found.dns = HostDnsServers();
     return true;
+#endif
+}
+
+static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (!cache.registered || cache.interfaceSeen != generation) {
+        HostIpv4Interface value;
+        cache.interfaceFound = QueryHostIpv4Interface(value);
+        cache.interfaceValue = std::move(value);
+        cache.interfaceSeen = generation;
+    }
+    if (cache.interfaceFound) found = cache.interfaceValue;
+    return cache.interfaceFound;
+#else
+    return QueryHostIpv4Interface(found);
 #endif
 }
 
@@ -497,7 +584,11 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    throw std::logic_error("sceNetCtlGetResult: service event results are not implemented");
+    if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
+        throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
+    }
+    *result = 0;
+    return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
