@@ -13,6 +13,7 @@ from test_guest_symbol_names import dynamic_tags, file_offset, imported_symbols,
 
 HELPER = "EnterGuestMainStack_nid_no_patch"
 ENTRY = 0x4000
+DEFAULT_BASE = 0x400000
 EXIT_WITH_ARGC = bytes.fromhex("8b07" "8d7829" "b83c000000" "0f05")
 PROLOGUE = bytes.fromhex("4889e7" "4883e4f0" "6a006a00" "4889e5")
 
@@ -63,7 +64,7 @@ def main():
         assert HELPER not in imported_symbols(plain)
         entry, stub = entry_stub(plain)
         assert stub[:14] == PROLOGUE and stub[14:18] == bytes.fromhex("4831f6e8"), stub.hex()
-        assert rip_target(entry, stub, 22) == ENTRY and stub[22:24] == bytes.fromhex("0f0b"), stub.hex()
+        assert rip_target(entry, stub, 22) == ENTRY + DEFAULT_BASE and stub[22:24] == bytes.fromhex("0f0b"), stub.hex()
 
         kernel = relink(relinker, work / "with-kernel", "libkernel.prx")
         slots = helper_slots(kernel)
@@ -72,7 +73,7 @@ def main():
         assert (kind, addend, info, section) == (6, 0, 0x12, 0), slots
         entry, stub = entry_stub(kernel)
         assert stub[:14] == PROLOGUE and stub[14:17] == bytes.fromhex("488d35"), stub.hex()
-        assert rip_target(entry, stub, 21) == ENTRY and stub[21:23] == bytes.fromhex("ff15"), stub.hex()
+        assert rip_target(entry, stub, 21) == ENTRY + DEFAULT_BASE and stub[21:23] == bytes.fromhex("ff15"), stub.hex()
         assert rip_target(entry, stub, 27) == slot and stub[27:29] == bytes.fromhex("0f0b"), stub.hex()
 
         if sys.platform == "linux" and os.uname().machine == "x86_64":
