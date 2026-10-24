@@ -1,6 +1,8 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <algorithm>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -28,6 +30,10 @@ constexpr int kRtldNow = 2;
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
     return it != kModuleTable.end() ? it->second : nullptr;
+}
+
+bool isPublicModuleId(const std::uint16_t id) {
+    return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
 }
 
 std::mutex gMutex;
@@ -181,7 +187,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
 }
 
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -197,7 +203,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
 }
 
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -228,7 +234,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {

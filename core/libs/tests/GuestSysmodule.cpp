@@ -128,12 +128,16 @@ void CheckUnknownIds() {
     const std::uint16_t id = UnknownModuleId();
     const std::uint32_t internalId = id | kInternalFlag;
     Require(kModuleTable.find(internalId) == kModuleTable.end());
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleLoadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
+    for (const std::uint16_t rejected : {id, std::uint16_t{0x0001}, std::uint16_t{0x0080}, std::uint16_t{0x00c5}, std::uint16_t{0x0100}, std::uint16_t{0x8000}}) {
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleLoadModule(rejected) == kInvalidValue);
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleUnloadModule(rejected) == kInvalidValue);
+    }
+    Require(kModuleTable.find(0x0111) == kModuleTable.end());
+    Require(sceSysmoduleIsLoaded(0x0111) == 0);
+    Require(sceSysmoduleLoadModule(0x0111) == 0);
+    Require(sceSysmoduleUnloadModule(0x0111) == 0);
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleLoadModuleInternal(internalId); }));
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleUnloadModuleInternal(internalId); }));
     int result = 0x5a5a5a5a;
