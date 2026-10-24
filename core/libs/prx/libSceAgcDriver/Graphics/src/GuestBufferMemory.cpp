@@ -1860,7 +1860,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         GuestArena::GuestArenaUnmapAlias_nid_postfix(std::exchange(entry.alias, nullptr));
 #endif
         std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx failed at %s (%d); falling back to copies, requested by %s\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), step, static_cast<int>(result), ImportRequesterName(requester));
-        if (std::string_view(step) == "vkAllocateMemory") {
+        if (std::string_view(step) == "vkAllocateMemory" && (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)) {
             state.allocationFailed = true;
             if (++state.allocationFailures >= 3 || state.liveBytes + bytes + budget / 8 >= budget) {
                 state.ceiling = std::max<std::uint64_t>(state.liveBytes, 1);

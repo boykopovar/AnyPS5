@@ -1797,6 +1797,42 @@ void importDeviceBudgetTests() {
     Require(HostImportBudgetWith(5888 * MiB, false, 0, true, 0) != 0, "a host heap report that leaves imports no room made the default import budget 0, which the refusal memory reads as no budget");
 }
 
+void importAllocationErrorTests(const Context& context, VkResult failure, bool nearBudget) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 8;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    ImportAllocationProbe probe(importing);
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    SetHostImportBudget((nearBudget ? 2 : 64) * piece);
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Access)]; };
+    Require(lookup(), "the allocation error test's first import was not made");
+    probe.failure = failure;
+    const auto before = counted();
+    for (int attempt = 0; attempt < 3; ++attempt) Require(!lookup(), "an import with an injected allocation failure was made");
+    const auto after = counted();
+    probe.failure = VK_SUCCESS;
+    const bool exhausted = failure == VK_ERROR_OUT_OF_DEVICE_MEMORY || failure == VK_ERROR_OUT_OF_HOST_MEMORY;
+    const auto failed = exhausted && nearBudget ? 1u : 3u;
+    Require(after.failed - before.failed == failed && after.refused - before.refused == 3 - failed, "allocation error " + std::to_string(failure) + " changed the import failure/refusal counts");
+    Require(lookup() != exhausted, "allocation error " + std::to_string(failure) + " incorrectly changed the host import budget");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void importCeilingTests(const Context& context, const BdaTestAccess& access, bool nearBudget) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t count = 24;
@@ -1860,7 +1896,7 @@ void VKAPI_PTR reportHostHeap(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties
     }
 }
 
-void importReportFloorTests(const Context& context, const BdaTestAccess& access, bool setBudget) {
+void importReportFloorTests(const Context& context, bool setBudget, VkResult failure) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t count = 24;
     constexpr std::uint64_t GiB = std::uint64_t{1} << 30u;
@@ -1868,6 +1904,7 @@ void importReportFloorTests(const Context& context, const BdaTestAccess& access,
     auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
     auto importing = context;
     importing.hostImportAlignment = piece;
+    ImportAllocationProbe probe(importing);
     importing.memory.memoryHeapCount = 2;
     importing.memory.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
     importing.memory.memoryHeaps[1] = {16 * GiB, 0};
@@ -1886,11 +1923,11 @@ void importReportFloorTests(const Context& context, const BdaTestAccess& access,
     const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
     const std::string budget = setBudget ? "a set import budget" : "the default import budget";
     for (int made = 0; made < 3; ++made) Require(lookup(), budget + " was lowered below " + std::to_string(made + 1) + " imports by a host heap report that leaves imports no room, before any vkAllocateMemory failure");
-    access.limitImports(0);
-    Require(!lookup(), "an import past the mock's import limit was made");
-    access.limitImports(std::nullopt);
-    if (setBudget) Require(lookup(), "a set import budget took the host heap report's limit after a vkAllocateMemory failure far below it");
-    else Require(!lookup(), "the default import budget did not take the host heap report's limit after a vkAllocateMemory failure");
+    probe.failure = failure;
+    Require(!lookup(), "an import with an injected allocation failure was made");
+    probe.failure = VK_SUCCESS;
+    const bool exhausted = failure == VK_ERROR_OUT_OF_HOST_MEMORY || failure == VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    Require(lookup() == (setBudget || !exhausted), budget + " incorrectly applied the host heap report after allocation error " + std::to_string(failure));
     SetHostImportBudget(0);
     {
         GuestAllocations::Mutation mutation;
@@ -3720,8 +3757,14 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importDeviceBudgetTests();
     importCeilingTests(context, access, false);
     importCeilingTests(context, access, true);
-    importReportFloorTests(context, access, true);
-    importReportFloorTests(context, access, false);
+    for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_UNKNOWN}) {
+        importAllocationErrorTests(context, failure, false);
+        importAllocationErrorTests(context, failure, true);
+    }
+    for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_UNKNOWN}) {
+        importReportFloorTests(context, true, failure);
+        importReportFloorTests(context, false, failure);
+    }
     importReportRefusalMemoryTests(context, access);
     sparseImportedHeapTests(context, access);
     heapMirrorTests(context, access);
