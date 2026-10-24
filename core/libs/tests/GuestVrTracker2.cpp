@@ -1,12 +1,17 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 extern "C" {
 std::int32_t APS5_VABI VrTracker2NotInitialized();
@@ -18,9 +23,25 @@ std::int32_t APS5_VABI VrTracker2Accept();
 std::int32_t APS5_VABI VrTracker2FillDefaults(void* output);
 std::int32_t APS5_VABI VrTracker2ClearWord(void* output);
 std::int32_t APS5_VABI sceVrTracker2QueryMemory(const void* parameter, void* requirement);
-struct VrTracker2InitializeParameter;
+struct VrTracker2InitializeParameter {
+    std::uint32_t size;
+    std::uint32_t mode;
+    std::int32_t threadPriorities[2];
+    std::uint64_t threadAffinityMasks[2];
+    void* workMemory;
+    std::uint32_t workMemorySize;
+    std::uint32_t workMemoryAlignment;
+    std::uint32_t option;
+    std::uint32_t coordinateSystem;
+    std::uint8_t disableOption;
+    std::int8_t optionMode;
+    std::uint8_t reserved[14];
+};
 std::int32_t APS5_VABI sceVrTracker2Initialize(const VrTracker2InitializeParameter* parameter);
+int APS5_VABI getpid_nid_postfix(void);
 }
+
+static_assert(sizeof(VrTracker2InitializeParameter) == 72);
 
 namespace {
 
@@ -28,6 +49,8 @@ alignas(16) std::array<std::byte, 0x40> process{};
 
 constexpr std::int32_t NotInitialized = static_cast<std::int32_t>(0x8A740001u);
 constexpr std::int32_t InvalidArgument = static_cast<std::int32_t>(0x8A740006u);
+constexpr std::uint32_t TrackerMemory = 32u << 20;
+constexpr std::size_t WorkMemoryTail = 64u << 10;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -56,6 +79,120 @@ bool Throws(TCall call) {
         return true;
     }
     return false;
+}
+
+VrTracker2InitializeParameter TrackerParameter(std::vector<std::uint8_t>& memory) {
+    VrTracker2InitializeParameter parameter{};
+    parameter.size = sizeof(parameter);
+    parameter.threadPriorities[0] = 256;
+    parameter.threadPriorities[1] = 767;
+    parameter.threadAffinityMasks[0] = 0x1fff;
+    parameter.workMemory = memory.data();
+    parameter.workMemorySize = static_cast<std::uint32_t>(memory.size());
+    parameter.workMemoryAlignment = 0x10000;
+    return parameter;
+}
+
+bool WorkMemoryCleared(const std::vector<std::uint8_t>& memory) {
+    return AllEqual(memory.data(), memory.data() + TrackerMemory, 0) && AllEqual(memory.data() + TrackerMemory, memory.data() + memory.size(), 0xAA);
+}
+
+bool WorkMemoryUntouched(const std::vector<std::uint8_t>& memory) {
+    return AllEqual(memory.data(), memory.data() + memory.size(), 0xAA);
+}
+
+std::int32_t InitializeFresh(std::vector<std::uint8_t>& memory, const VrTracker2InitializeParameter& parameter) {
+    std::fill(memory.begin(), memory.end(), 0xAA);
+    return sceVrTracker2Initialize(&parameter);
+}
+
+void CheckInitializeValidation(std::vector<std::uint8_t>& memory) {
+    const auto valid = TrackerParameter(memory);
+    Require(sceVrTracker2Initialize(nullptr) == InvalidArgument, "initialize null");
+    for (const std::uint32_t size : {0u, 71u, 73u}) {
+        auto parameter = valid;
+        parameter.size = size;
+        parameter.mode = 1000;
+        Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize size before mode");
+    }
+    for (const std::uint32_t mode : {1u, 999u, 1002u, 0xffffffffu}) {
+        auto parameter = valid;
+        parameter.mode = mode;
+        Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize mode");
+    }
+    for (const std::uint32_t mode : {1000u, 1001u}) {
+        auto parameter = valid;
+        parameter.mode = mode;
+        parameter.workMemory = nullptr;
+        Require(Throws([&] { sceVrTracker2Initialize(&parameter); }), "initialize system mode category");
+    }
+    auto parameter = valid;
+    parameter.workMemory = nullptr;
+    Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize work memory null");
+    parameter = valid;
+    parameter.workMemorySize = TrackerMemory - 1;
+    Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize work memory size");
+    parameter = valid;
+    parameter.workMemoryAlignment = 0xffff;
+    Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize alignment");
+    for (std::size_t index = 0; index < sizeof(parameter.reserved); ++index) {
+        parameter = valid;
+        parameter.reserved[index] = 1;
+        Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize reserved byte");
+    }
+    for (std::size_t index = 0; index < 2; ++index) {
+        for (const std::int32_t priority : {255, 768, -1}) {
+            parameter = valid;
+            parameter.threadPriorities[index] = priority;
+            Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize thread priority");
+        }
+        for (const std::uint64_t mask : {std::uint64_t{0x2000}, std::uint64_t{0x3fff}, std::uint64_t{1} << 63}) {
+            parameter = valid;
+            parameter.threadAffinityMasks[index] = mask;
+            Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize affinity mask");
+        }
+    }
+    Require(WorkMemoryUntouched(memory), "initialize validation leaves work memory");
+}
+
+void CheckInitializeTracking(std::vector<std::uint8_t>& memory, std::uint32_t sdkVersion) {
+    const auto valid = TrackerParameter(memory);
+    Require(InitializeFresh(memory, valid) == -1, "initialize tracking start result");
+    Require(WorkMemoryCleared(memory), "initialize clears tracker memory");
+    Require(sceVrTracker2Finalize() == NotInitialized, "initialize failure leaves module uninitialized");
+    Require(VrTracker2NotInitialized() == NotInitialized, "initialize failure keeps uninitialized answers");
+    Require(InitializeFresh(memory, valid) == -1, "initialize retry after failure");
+    auto parameter = valid;
+    parameter.workMemoryAlignment = 0x10001;
+    parameter.option = 0xffffffffu;
+    parameter.coordinateSystem = 2;
+    parameter.disableOption = 1;
+    parameter.threadAffinityMasks[1] = 0x1fff;
+    Require(InitializeFresh(memory, parameter) == -1, "initialize late checks follow tracking");
+    for (const std::int8_t optionMode : {std::int8_t{-1}, std::int8_t{0}}) {
+        parameter = valid;
+        parameter.optionMode = optionMode;
+        Require(InitializeFresh(memory, parameter) == -1, "initialize accepted option mode");
+    }
+    for (const std::int8_t optionMode : {std::int8_t{2}, std::int8_t{-2}, std::int8_t{127}}) {
+        parameter = valid;
+        parameter.optionMode = optionMode;
+        Require(InitializeFresh(memory, parameter) == InvalidArgument, "initialize option mode");
+        Require(WorkMemoryCleared(memory), "initialize option mode follows clearing");
+    }
+    parameter = valid;
+    parameter.optionMode = 1;
+    Require(InitializeFresh(memory, parameter) == (sdkVersion >= 0x7000000 ? -1 : InvalidArgument), "initialize SDK option mode");
+    Require(sceVrTracker2Finalize() == NotInitialized, "initialize leaves module uninitialized");
+}
+
+std::filesystem::path EnterApplicationRoot() {
+    const auto root = std::filesystem::temp_directory_path() / ("guest_vr_tracker2_" + std::to_string(getpid_nid_postfix()));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "app0" / "sce_sys");
+    std::ofstream(root / "app0" / "sce_sys" / "param.json") << "{\n  \"contentId\": \"IV0000-ABCD00000_00-VRTRACKER2000000\",\n  \"localizedParameters\": {\"defaultLanguage\": \"en-US\", \"en-US\": {\"titleName\": \"VrTracker2\"}},\n  \"titleId\": \"ABCD00000\"\n}\n";
+    std::filesystem::current_path(root);
+    return root;
 }
 
 }
@@ -138,6 +275,15 @@ int main() {
     parameter[0] = 0x21;
     Require(sceVrTracker2QueryMemory(parameter.data(), requirement.data()) == InvalidArgument, "query size");
 
-    Require(Throws([] { sceVrTracker2Initialize(nullptr); }), "unknown export");
+    std::vector<std::uint8_t> memory(TrackerMemory + WorkMemoryTail);
+    CheckInitializeValidation(memory);
+    const auto previous = std::filesystem::current_path();
+    const auto root = EnterApplicationRoot();
+    for (const std::uint32_t version : {0x6ffffffu, 0x7000000u}) {
+        std::memcpy(process.data() + 0x10, &version, sizeof(version));
+        CheckInitializeTracking(memory, version);
+    }
+    std::filesystem::current_path(previous);
+    std::filesystem::remove_all(root);
     return 0;
 }

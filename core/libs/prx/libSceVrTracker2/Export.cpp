@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -126,11 +127,110 @@ static_assert(sizeof(VrTracker2OrientedBoundingBox) == 80);
 static_assert(offsetof(VrTracker2OrientedBoundingBox, transform) == 4);
 static_assert(offsetof(VrTracker2OrientedBoundingBox, extents) == 68);
 
+extern "C" {
+std::int32_t APS5_VABI sceHmd2InternalTrackingOpen();
+std::int32_t APS5_VABI sceHmd2InternalTrackingStart();
+std::int32_t APS5_VABI sceHmd2InternalTrackingStop();
+std::int32_t APS5_VABI sceHmd2InternalTrackingClose();
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorOpen();
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorStart();
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorStop();
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorClose();
+}
+
 namespace {
 
 constexpr std::int32_t SCE_OK = 0;
 constexpr std::int32_t VR_TRACKER2_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x8A740001u);
+constexpr std::int32_t VR_TRACKER2_ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x8A740002u);
 constexpr std::int32_t VR_TRACKER2_ERROR_INVALID_ARGUMENT = static_cast<std::int32_t>(0x8A740006u);
+
+constexpr std::uint32_t TrackerMode = 0;
+constexpr std::uint32_t SystemTrackingMode = 1000;
+constexpr std::uint32_t SystemClientMode = 1001;
+constexpr std::uint32_t MinimumWorkMemoryAlignment = 0x10000;
+constexpr std::int32_t MinimumThreadPriority = 256;
+constexpr std::int32_t MaximumThreadPriority = 767;
+constexpr std::uint64_t TrackerAffinityLimit = 0x2000;
+constexpr std::uint64_t SystemAffinityMask = 0xEA00;
+constexpr std::uint32_t OptionModeSdkVersion = 0x7000000;
+
+std::atomic<std::uint32_t> state{0};
+
+std::uint32_t WorkMemorySize(std::uint32_t mode) {
+    if (mode == SystemTrackingMode) return 7u << 20;
+    if (mode == SystemClientMode) return 3u << 20;
+    return 32u << 20;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
+    return sdkVersion;
+}
+
+std::int32_t ValidateMode(std::uint32_t mode) {
+    if (mode == SystemTrackingMode || mode == SystemClientMode) NotImplemented_nid_no_patch("sceVrTracker2Initialize: application category of a system mode");
+    return mode == TrackerMode ? SCE_OK : VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+}
+
+bool PriorityAllowed(std::int32_t priority) {
+    return priority >= MinimumThreadPriority && priority <= MaximumThreadPriority;
+}
+
+bool AffinityAllowed(std::uint32_t mode, std::uint64_t mask) {
+    if (mode == TrackerMode) return mask < TrackerAffinityLimit;
+    return (mask & ~SystemAffinityMask) == 0;
+}
+
+bool OptionModeAllowed(std::int8_t optionMode) {
+    if (optionMode == -1 || optionMode == 0) return true;
+    return optionMode == 1 && CompiledSdkVersion() >= OptionModeSdkVersion;
+}
+
+class InitializeSession {
+public:
+    std::int32_t OpenTracking() {
+        return track(sceHmd2InternalTrackingOpen(), trackingOpened);
+    }
+
+    std::int32_t StartTracking() {
+        return track(sceHmd2InternalTrackingStart(), trackingStarted);
+    }
+
+    std::int32_t OpenLedDetector() {
+        return track(sceHmd2InternalLedDetectorOpen(), ledDetectorOpened);
+    }
+
+    std::int32_t StartLedDetector() {
+        return track(sceHmd2InternalLedDetectorStart(), ledDetectorStarted);
+    }
+
+    void Rollback() {
+        if (ledDetectorStarted) sceHmd2InternalLedDetectorStop();
+        if (ledDetectorOpened) sceHmd2InternalLedDetectorClose();
+        if (trackingStarted) sceHmd2InternalTrackingStop();
+        if (trackingOpened) sceHmd2InternalTrackingClose();
+        state.store(0);
+    }
+
+    std::int32_t Abort(std::int32_t result) {
+        Rollback();
+        return result;
+    }
+
+private:
+    static std::int32_t track(std::int32_t result, bool& done) {
+        done = result == SCE_OK;
+        return result;
+    }
+
+    bool trackingOpened = false;
+    bool trackingStarted = false;
+    bool ledDetectorOpened = false;
+    bool ledDetectorStarted = false;
+};
 
 std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
     if (output == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
@@ -309,16 +409,12 @@ std::int32_t APS5_VABI sceVrTracker2UnregisterDevice(std::int32_t deviceHandle) 
 std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter* parameter, VrTracker2MemoryRequirement* requirement) {
     if (parameter == nullptr || requirement == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (parameter->size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    std::uint32_t memorySize = 32u << 20;
-    if (parameter->mode == 1000 || parameter->mode == 1001) {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        std::uint32_t sdkVersion;
-        std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
-        if (sdkVersion < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-        memorySize = parameter->mode == 1000 ? 7u << 20 : 3u << 20;
-    } else if (parameter->mode != 0) {
+    if (parameter->mode == SystemTrackingMode || parameter->mode == SystemClientMode) {
+        if (CompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    } else if (parameter->mode != TrackerMode) {
         return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     }
+    const std::uint32_t memorySize = WorkMemorySize(parameter->mode);
     for (const auto value : parameter->reserved)
         if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     *requirement = {sizeof(VrTracker2MemoryRequirement), memorySize, 64u << 10, {}};
@@ -326,6 +422,30 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
 }
 
 std::int32_t APS5_VABI sceVrTracker2Initialize(const VrTracker2InitializeParameter* parameter) {
+    if (parameter == nullptr || parameter->size != sizeof(VrTracker2InitializeParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    const std::uint32_t mode = parameter->mode;
+    if (const std::int32_t result = ValidateMode(mode); result != SCE_OK) return result;
+    if (parameter->workMemory == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (parameter->workMemorySize < WorkMemorySize(mode)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (parameter->workMemoryAlignment < MinimumWorkMemoryAlignment) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto value : parameter->reserved)
+        if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto priority : parameter->threadPriorities)
+        if (!PriorityAllowed(priority)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto mask : parameter->threadAffinityMasks)
+        if (!AffinityAllowed(mode, mask)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    std::uint32_t expected = 0;
+    if (!state.compare_exchange_strong(expected, 1)) return VR_TRACKER2_ERROR_ALREADY_INITIALIZED;
+    InitializeSession session;
+    if (mode == TrackerMode) std::memset(parameter->workMemory, 0, WorkMemorySize(mode));
+    if (mode != SystemClientMode) {
+        if (!OptionModeAllowed(parameter->optionMode)) return session.Abort(VR_TRACKER2_ERROR_INVALID_ARGUMENT);
+        if (const std::int32_t result = session.OpenTracking(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.StartTracking(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.OpenLedDetector(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.StartLedDetector(); result != SCE_OK) return session.Abort(result);
+    }
+    session.Rollback();
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
