@@ -101,7 +101,6 @@ class FormatOutput {
 public:
     FormatOutput(char* buffer, size_t size, std::string* text) : destination(buffer), capacity(size), complete(text) {
         if (size && !buffer) throw std::invalid_argument("Null formatting buffer");
-        if (capacity) destination[0] = 0;
     }
 
     void Append(const char* text, size_t size) {
@@ -111,7 +110,6 @@ public:
             const size_t available = capacity - 1 - count;
             const size_t copied = size < available ? size : available;
             std::memcpy(destination + count, text, copied);
-            destination[count + copied] = 0;
         }
         if (complete) complete->append(text, size);
         count += size;
@@ -131,10 +129,17 @@ public:
         if (capacity && count < capacity - 1) {
             const size_t remaining = capacity - count;
             const size_t required = static_cast<size_t>(size) + 1;
+            const size_t terminator = count + (required < remaining ? required : remaining) - 1;
+            const char overwritten = destination[terminator];
             const int written = std::snprintf(destination + count, remaining < required ? remaining : required, format.c_str(), value);
+            destination[terminator] = overwritten;
             if (written != size) throw std::runtime_error("Inconsistent formatting conversion");
         }
         count += static_cast<size_t>(size);
+    }
+
+    void Terminate() {
+        if (capacity) destination[count < capacity - 1 ? count : capacity - 1] = 0;
     }
 
     int Count() const { return static_cast<int>(count); }
@@ -368,12 +373,12 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             else output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %s argument");
             if (!value) value = "(null)";
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %ls argument");
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
@@ -395,7 +400,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             strerror_r_nid_postfix(savedError, message, sizeof(message));
             output.Value(spec + 's', static_cast<const char*>(message));
         } else if (conversion == 'n' && secure) {
-            throw FormatConstraintViolation("Format count conversion");
+            throw FormatConstraintViolation("printf_s: %n disallowed");
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
@@ -408,6 +413,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
         }
     }
+    output.Terminate();
     return output.Count();
 }
 
