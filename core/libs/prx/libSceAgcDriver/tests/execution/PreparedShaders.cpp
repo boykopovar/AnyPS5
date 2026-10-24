@@ -1413,13 +1413,81 @@ void RelocatedHeaders() {
     ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&otherContext.shader, {}, primitive); }, "replaced shader header");
 }
 
+void DispatchAheadPrewarm() {
+    alignas(256) std::array<std::uint32_t, 1> pendingCode{0xbf810000u};
+    alignas(256) std::array<std::uint32_t, 65> lazyCode{};
+    lazyCode[0] = 0xbf810000u;
+    lazyCode[64] = 0xbf810000u;
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    } pendingHeader, lazyHeader;
+    const auto fillHeader = [](Header& header, const void* code, std::size_t codeBytes) {
+        const auto address = reinterpret_cast<std::uintptr_t>(code);
+        header.shader.file_header = 0x34333231u;
+        header.shader.version = 0x18;
+        header.shader.header_size = sizeof(Header);
+        header.shader.shader_size = static_cast<std::uint32_t>(codeBytes);
+        header.shader.code = const_cast<void*>(code);
+        header.shader.sh_registers = header.registers.data();
+        header.shader.num_sh_registers = header.registers.size();
+        header.shader.specials = &header.specials;
+        header.specials.dispatch_modifier = 0x8000;
+        header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 2}}};
+    };
+    fillHeader(pendingHeader, pendingCode.data(), sizeof(pendingCode));
+    fillHeader(lazyHeader, lazyCode.data(), sizeof(lazyCode));
+    AgcDriverRegisterShader_nid_postfix(&pendingHeader.shader);
+    AgcDriverRegisterShader_nid_postfix(&lazyHeader.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    Require(registry != nullptr, "dispatch ahead prewarm test published no shader registry");
+    const auto pendingSnapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, &pendingHeader.shader);
+    const auto lazySnapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, &lazyHeader.shader);
+    Require(pendingSnapshot != nullptr && lazySnapshot != nullptr, "dispatch ahead prewarm test published no snapshots");
+    {
+        std::lock_guard lock(pendingSnapshot->prepared->mutex);
+        pendingSnapshot->prepared->entries.clear();
+        pendingSnapshot->prepared->demanded.store(false, std::memory_order_release);
+        pendingSnapshot->prepared->pending = true;
+    }
+    {
+        std::lock_guard lock(lazySnapshot->prepared->mutex);
+        lazySnapshot->prepared->entries.clear();
+        lazySnapshot->prepared->pending = false;
+    }
+    alignas(256) static const std::array<std::uint32_t, 1> invalidCode{0xbf9f0000u};
+    const auto invalidAddress = reinterpret_cast<std::uintptr_t>(invalidCode.data());
+    const auto lazyOffsetAddress = reinterpret_cast<std::uintptr_t>(lazyCode.data() + 64);
+    alignas(16) const std::array<std::uint32_t, 6> indirectPairs{0x20cu, static_cast<std::uint32_t>(lazyOffsetAddress >> 8u), 0x20du, static_cast<std::uint32_t>(lazyOffsetAddress >> 40u), 0x240u, 7u};
+    const auto pairsAddress = reinterpret_cast<std::uintptr_t>(indirectPairs.data());
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : pendingHeader.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0017600u, 0x20cu, static_cast<std::uint32_t>(invalidAddress >> 8u), 0xc0017600u, 0x20du, static_cast<std::uint32_t>(invalidAddress >> 40u), 0xc0031500u, 1, 1, 1, 0x8041u, 0xffff1000u});
+    commands.insert(commands.end(), {0xc0017600u, 0x20cu, pendingHeader.registers[0].value, 0xc0017600u, 0x20du, pendingHeader.registers[1].value, 0xc0031500u, 1, 1, 1, 0x8041u});
+    commands.insert(commands.end(), {0xc0036300u, static_cast<std::uint32_t>(pairsAddress), static_cast<std::uint32_t>(pairsAddress >> 32u), 0x80000000u, 3u});
+    commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "dispatch ahead prewarm submit failed");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "s_code_end");
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    AgcDriver::DriverDetail::AwaitLibraryPrebuilds();
+    Require(pendingSnapshot->prepared->demanded.load(std::memory_order_acquire), "dispatch ahead did not prioritize the pending shader");
+    {
+        std::lock_guard lock(lazySnapshot->prepared->mutex);
+        Require(lazySnapshot->prepared->entries.size() == 1 && lazySnapshot->prepared->entries.front().codeOffset == 64 && lazySnapshot->prepared->entries.front().handle != nullptr, "dispatch ahead did not prewarm the lazy shader for its dispatched offset");
+    }
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "s_code_end");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
         const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
-        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
+        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             if (abiMode == "--abi-deferred-compute") AbiDeferredCompute();
@@ -1445,6 +1513,12 @@ int main(int argc, char** argv) {
             if (!device) return VulkanTestSkipped;
             RegisteredVertexWorkgroup(device->Target(), true);
             AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dispatch-ahead-prewarm") {
+            if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
+            DispatchAheadPrewarm();
+            std::cout << "dispatch ahead prewarm tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--deferred") {

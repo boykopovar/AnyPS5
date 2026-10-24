@@ -58,6 +58,7 @@ public:
     // Builds the pipeline of a journaled compute result ahead of its first dispatch (the journal
     // replay's hook, on its threads): false when the device already holds a pipeline for the module.
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
+    void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     // Starts the journal replay if the device has not (a headless device starts it at its first
     // draw or dispatch) and joins it (tests; the teardown joins it anyway).
     void WaitForPipelineJournalReplay();
