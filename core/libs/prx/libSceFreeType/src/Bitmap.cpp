@@ -107,6 +107,13 @@ int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary* library, GuestBitmap*
     return error;
 }
 
+int APS5_VABI FT_GlyphSlot_Own_Bitmap_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    const FT_Error error = FT_GlyphSlot_Own_Bitmap(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
+    return error;
+}
+
 int APS5_VABI FT_Bitmap_Done_nid_postfix(GuestLibrary* library, GuestBitmap* bitmap) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!bitmap) return FT_Err_Invalid_Argument;
