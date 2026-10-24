@@ -4,10 +4,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "Cookies.hpp"
 #include <atomic>
 #include <deque>
 #include <mutex>
 #include <memory>
+#include <new>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -16,6 +18,7 @@
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
+static constexpr int ERROR_OUT_OF_MEMORY = static_cast<int>(0x817B1022);
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 
@@ -60,6 +63,11 @@ static std::vector<int> ReleaseOwnedHandles(int owner) {
 static bool HandleIsLive(int id) {
     std::lock_guard lock(g_handlesMutex);
     return FindAnyHandle(id) != nullptr;
+}
+
+bool Http2CookieBoxExists(int cookieBoxId) {
+    std::lock_guard lock(g_handlesMutex);
+    return FindHandle(cookieBoxId, Http2Kind::CookieBox) != nullptr;
 }
 
 struct Http2MemoryPoolStats {
@@ -352,15 +360,16 @@ int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolSt
 }
 
 int APS5_VABI sceHttp2CookieFlush(int id) {
-    (void)id;
+    Http2FlushCookies(id);
     return 0;
 }
 
 int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
     if (poolSize < 0x10000) return static_cast<int>(0x817b121du);
-    if (poolSize > std::numeric_limits<std::size_t>::max() - 0x3fff) throw std::overflow_error("sceHttp2CreateCookieBox: pool size overflow");
+    if (poolSize > std::numeric_limits<std::size_t>::max() - 0x3fff) return ERROR_OUT_OF_MEMORY;
     const auto allocationSize = (poolSize + 0x3fff) & ~std::size_t{0x3fff};
-    auto memory = std::make_shared<std::byte[]>(allocationSize);
+    std::shared_ptr<std::byte[]> memory(new (std::nothrow) std::byte[allocationSize]);
+    if (!memory) return ERROR_OUT_OF_MEMORY;
     std::lock_guard lock(g_handlesMutex);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     g_handles[id] = {Http2Kind::CookieBox, 0, poolSize, std::move(memory)};
@@ -368,9 +377,12 @@ int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
 }
 
 int APS5_VABI sceHttp2DeleteCookieBox(int cookie_box_id) {
-    std::lock_guard lock(g_handlesMutex);
-    if (FindHandle(cookie_box_id, Http2Kind::CookieBox) == nullptr) return ERROR_INVALID_ID;
-    g_handles.erase(cookie_box_id);
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(cookie_box_id, Http2Kind::CookieBox) == nullptr) return ERROR_INVALID_ID;
+        g_handles.erase(cookie_box_id);
+    }
+    Http2ForgetCookies(cookie_box_id);
     return 0;
 }
 
@@ -421,11 +433,6 @@ int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint3
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceHttp2AddCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttp2AuthCacheFlush(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -451,17 +458,7 @@ int APS5_VABI sceHttp2GetAutoRedirect(void) {
     return 0;
 }
 
-int APS5_VABI sceHttp2GetCookie(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttp2GetCookieBox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2GetCookieStats(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -477,21 +474,6 @@ int APS5_VABI sceHttp2RemoveRequestHeader(void) {
 }
 
 int APS5_VABI sceHttp2SetAuthInfoCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxNumPerDomain(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2SetCookieMaxSize(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
