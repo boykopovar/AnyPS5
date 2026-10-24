@@ -207,6 +207,8 @@ endforeach()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+include(prx/libSceFreeType/PostScriptInfo.cmake)
+
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
