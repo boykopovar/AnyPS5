@@ -58,4 +58,13 @@ int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary* library, void* master) {
     return FT_Done_MM_Var(library ? library->host : nullptr, static_cast<FT_MM_Var*>(master));
 }
 
+int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    GuestFace* owner = FaceOf(face);
+    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, __func__);
+    FT_Fixed placeholder = 0;
+    const FT_Error error = FT_Set_Var_Design_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
+    if (owner) SyncFace(*owner);
+    return error;
+}
+
 }
