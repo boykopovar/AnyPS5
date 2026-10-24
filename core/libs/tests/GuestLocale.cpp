@@ -39,6 +39,7 @@ extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcE
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
+extern std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18];
 
 }
 
@@ -273,6 +274,15 @@ static void CheckWideNumPutVtableObject() {
     }
 }
 
+static void CheckWideCtypeVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt5ctypeIwE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     CheckGuestCalls();
     CheckLocinfoAlignment();
@@ -285,6 +295,7 @@ int main() {
     CheckInputFacetObjects();
     CheckCodecvtWideVtableObject();
     CheckWideNumPutVtableObject();
+    CheckWideCtypeVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
