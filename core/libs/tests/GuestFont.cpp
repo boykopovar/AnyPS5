@@ -63,6 +63,8 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory*, FontGlyph*);
 int APS5_VABI sceFontTextSourceInit(FontTextSource*, const void*, std::uint32_t, FontTextParseFunction, void*);
 int APS5_VABI sceFontCreateString(const FontMemory*, FontTextSource*, const FontCreateStringDetail*, FontString*);
 int APS5_VABI sceFontDestroyString(FontString*);
+int APS5_VABI sceFontStringGetWritingForm(FontString);
+int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource*, std::int32_t);
 FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString, std::uint32_t*);
 int APS5_VABI sceFontWritingInit(FontWriting*, FontString, const FontTextCharacter*);
 const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting*);
@@ -155,6 +157,25 @@ static std::int32_t APS5_VABI ParseText(FontTextSource* source, void** order, Fo
     return 1;
 }
 
+struct ParsedCodes {
+    const std::uint32_t* codes;
+    std::size_t count;
+    std::size_t at;
+    FontHandle font;
+};
+
+static std::int32_t APS5_VABI ParseCodes(FontTextSource* source, void** order, FontTextParseResult* result) {
+    auto* parsed = static_cast<ParsedCodes*>(source->textObject);
+    *order = const_cast<std::uint32_t*>(parsed->codes + parsed->at);
+    if (parsed->at == parsed->count) {
+        result->Terminate.terminateCode = 0;
+        return 0;
+    }
+    result->FontCode.font = parsed->font;
+    result->FontCode.code = parsed->codes[parsed->at++];
+    return 1;
+}
+
 static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     ParsedText parsed{"AVA", 0, font};
     FontTextSource source{};
@@ -164,6 +185,39 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     std::uint32_t count = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &count);
     Require(characters != nullptr && count == 3);
+    Require(sceFontStringGetWritingForm(string) == 0x12);
+    FontString rtlString = nullptr;
+    Require(sceFontTextSourceSetWritingForm(&source, 0x11) == SCE_FONT_OK && sceFontCreateString(memory, &source, nullptr, &rtlString) == SCE_FONT_OK);
+    Require(sceFontStringGetWritingForm(rtlString) == 0x11);
+    Require(sceFontDestroyString(&rtlString) == SCE_FONT_OK);
+    Require(sceFontTextSourceSetWritingForm(&source, 0x12) == SCE_FONT_OK && sceFontCreateString(memory, &source, nullptr, &rtlString) == SCE_FONT_OK);
+    Require(sceFontStringGetWritingForm(rtlString) == 0x12);
+    Require(sceFontDestroyString(&rtlString) == SCE_FONT_OK);
+    Require(sceFontTextSourceSetWritingForm(&source, 0x10) == SCE_FONT_OK);
+
+    const std::uint32_t latinCodes[]{'A', 0x00E9, 0x4E2D};
+    const std::uint32_t hebrewCodes[]{'A', 0x05D0, 'B'};
+    const std::uint32_t arabicCodes[]{0x0627, 0x0644};
+    const std::uint32_t embeddingCodes[]{0x202B, 'A'};
+    const struct { const std::uint32_t* codes; std::size_t count; std::int32_t sourceForm; int expected; } forms[]{
+        {latinCodes, 3, 0x10, 0x12},
+        {hebrewCodes, 3, 0x10, 0x10},
+        {arabicCodes, 2, 0x10, 0x10},
+        {embeddingCodes, 2, 0x10, 0x10},
+        {hebrewCodes, 3, 0x11, 0x11},
+        {hebrewCodes, 3, 0x12, 0x12},
+        {latinCodes, 3, 0x11, 0x11},
+    };
+    for (const auto& form : forms) {
+        ParsedCodes parsedCodes{form.codes, form.count, 0, font};
+        FontTextSource codeSource{};
+        FontString codeString = nullptr;
+        Require(sceFontTextSourceInit(&codeSource, parsed.text, 3, ParseCodes, &parsedCodes) == SCE_FONT_OK);
+        Require(sceFontTextSourceSetWritingForm(&codeSource, form.sourceForm) == SCE_FONT_OK);
+        Require(sceFontCreateString(memory, &codeSource, nullptr, &codeString) == SCE_FONT_OK && codeString != nullptr);
+        Require(sceFontStringGetWritingForm(codeString) == form.expected);
+        Require(sceFontDestroyString(&codeString) == SCE_FONT_OK);
+    }
 
     FontTextCodes codes;
     std::memset(&codes, 0xa5, sizeof(codes));

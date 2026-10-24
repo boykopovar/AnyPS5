@@ -143,6 +143,12 @@ FontTextCharacter* TextCharacters(FontStringData* data) {
     return data && data->storage && !data->storage->characters.empty() ? data->storage->characters.data() : nullptr;
 }
 
+bool IsRightToLeftCode(std::uint32_t code) {
+    return (code >= 0x0590u && code <= 0x08FFu) || (code >= 0xFB1Du && code <= 0xFDFFu) || (code >= 0xFE70u && code <= 0xFEFFu) ||
+           (code >= 0x10800u && code <= 0x10FFFu) || (code >= 0x1E800u && code <= 0x1EFFFu) ||
+           code == 0x200Fu || code == 0x202Bu || code == 0x202Eu || code == 0x2067u;
+}
+
 std::uint32_t LevelOf(const FontTextCharacter* character) {
     return static_cast<std::uint32_t>((character->flags >> 24) & 0xFFu);
 }
@@ -359,8 +365,14 @@ void* APS5_VABI sceFontStringGetTerminateOrder(FontString fontString) {
 }
 
 int APS5_VABI sceFontStringGetWritingForm(FontString fontString) {
-    const auto* data = GetStringData(fontString);
-    return data ? static_cast<int>(data->writingForm) : 0;
+    auto* data = GetStringData(fontString);
+    if (!data) return 0;
+    if (data->writingForm != WRITING_FORM_HORIZONTAL) return static_cast<int>(data->writingForm);
+    const FontTextCharacter* characters = TextCharacters(data);
+    for (std::uint32_t index = 0; characters && index < data->textCount; ++index) {
+        if (IsRightToLeftCode(characters[index].characterCode)) return static_cast<int>(data->writingForm);
+    }
+    return static_cast<int>(WRITING_FORM_HORIZONTAL_LTR);
 }
 
 FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontString, std::uint32_t* characterCount) {
