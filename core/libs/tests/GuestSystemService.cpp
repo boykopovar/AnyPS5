@@ -43,6 +43,14 @@ bool LaunchAppThrows(const char* titleId, const char* const* arguments, const vo
 extern "C" int APS5_VABI sceSystemServicePowerTick(void);
 extern "C" int APS5_VABI sceSystemServiceIsBgmPlaying(void);
 extern "C" int APS5_VABI sceShellCoreUtilIsBgmPlaying(void);
+extern "C" int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t, std::intptr_t*);
+extern "C" int APS5_VABI sceShellCoreUtilActivateIsActivated(std::intptr_t, bool*);
+extern "C" int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t, std::int32_t*, std::int32_t*);
+extern "C" int APS5_VABI sceShellCoreUtilActivateStart(std::intptr_t);
+extern "C" int APS5_VABI sceShellCoreUtilActivateStartAsync(std::intptr_t);
+extern "C" int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t);
+extern "C" int APS5_VABI sceShellCoreUtilActivateTerm(std::intptr_t);
+extern "C" int APS5_VABI sceShellCoreUtilActivateRecordActivation();
 extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
 extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
 extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
@@ -62,6 +70,33 @@ extern "C" int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event)
 extern "C" void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param);
 
 namespace {
+
+void TestActivation() {
+    Require(sceShellCoreUtilActivateInit(0, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceShellCoreUtilActivateIsActivated(1, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceShellCoreUtilActivateGetStatus(1, nullptr, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    std::int32_t status = -1;
+    std::int32_t result = -1;
+    Require(sceShellCoreUtilActivateGetStatus(1, nullptr, &result) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceShellCoreUtilActivateGetStatus(1, &status, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+
+    std::intptr_t handle = 0;
+    Require(Throws([&] { return sceShellCoreUtilActivateInit(0, &handle); }));
+    Require(handle == 0);
+    bool activated = true;
+    Require(Throws([&] { return sceShellCoreUtilActivateIsActivated(1, &activated); }));
+    Require(activated == true);
+    status = -1;
+    result = -1;
+    Require(Throws([&] { return sceShellCoreUtilActivateGetStatus(1, &status, &result); }));
+    Require(status == -1 && result == -1);
+
+    Require(sceShellCoreUtilActivateStart(handle) == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilActivateStartAsync(handle) == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilActivateAbort(handle) == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilActivateTerm(handle) == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilActivateRecordActivation() == SYSTEM_SERVICE_OK);
+}
 
 void TestPlayerDialogParam() {
     alignas(8) unsigned char buffer[0x100];
@@ -177,4 +212,5 @@ int main() {
     event.event_type = 7;
     Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
     TestPlayerDialogParam();
+    TestActivation();
 }

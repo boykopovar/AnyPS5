@@ -3,6 +3,7 @@
 namespace {
 
 constexpr int SystemServiceUnavailable = static_cast<int>(0x80A10002);
+constexpr int SystemServiceParameterInvalid = static_cast<int>(0x80A10003);
 constexpr int SystemServiceRejected = static_cast<int>(0x80A10005);
 
 }
@@ -696,16 +697,22 @@ int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle) {
 }
 
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result) {
+    (void)handle;
+    if (status == nullptr || result == nullptr) return SystemServiceParameterInvalid;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle) {
+    (void)type;
+    if (handle == nullptr) return SystemServiceParameterInvalid;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateIsActivated(std::intptr_t handle, bool* activated) {
+    (void)handle;
+    if (activated == nullptr) return SystemServiceParameterInvalid;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
