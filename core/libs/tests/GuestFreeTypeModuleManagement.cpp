@@ -13,6 +13,7 @@ using namespace FreeType;
 
 extern "C" {
 void* APS5_VABI FT_Get_Module_nid_postfix(GuestLibrary*, const char*);
+void* APS5_VABI FT_Get_Renderer_nid_postfix(GuestLibrary*, std::uint32_t);
 }
 
 static void Check(bool value, int line) {
@@ -44,6 +45,20 @@ static void TestGetModule() {
     Require(FT_Get_Module_nid_postfix(nullptr, "truetype") == FT_Get_Module(nullptr, "truetype"));
 }
 
+static void TestGetRenderer() {
+    Libraries libraries;
+    for (const std::uint32_t format : {static_cast<std::uint32_t>(FT_GLYPH_FORMAT_NONE), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_COMPOSITE),
+                                       static_cast<std::uint32_t>(FT_GLYPH_FORMAT_BITMAP), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_OUTLINE),
+                                       static_cast<std::uint32_t>(FT_GLYPH_FORMAT_PLOTTER), 0x12345678u}) {
+        void* actual = FT_Get_Renderer_nid_postfix(&libraries.guest, format);
+        FT_Renderer expected = FT_Get_Renderer(libraries.native, static_cast<FT_Glyph_Format>(format));
+        Require((actual != nullptr) == (expected != nullptr));
+        Require(actual == FT_Get_Renderer(libraries.guest.host, static_cast<FT_Glyph_Format>(format)));
+    }
+    Require(FT_Get_Renderer_nid_postfix(nullptr, FT_GLYPH_FORMAT_OUTLINE) == FT_Get_Renderer(nullptr, FT_GLYPH_FORMAT_OUTLINE));
+}
+
 int main() {
     TestGetModule();
+    TestGetRenderer();
 }
