@@ -17,6 +17,10 @@
 #include <stdexcept>
 #include "prx/libc/include/Shutdown.hpp"
 
+#ifndef _WIN32
+extern "C" int daemon(int, int);
+#endif
+
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
@@ -274,10 +278,14 @@ int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
 }
 
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
+#ifdef _WIN32
     (void)noChdir;
     (void)noClose;
     NotImplemented_nid_no_patch("daemon: forking into the background");
     return -1;
+#else
+    return ::daemon(noChdir, noClose);
+#endif
 }
 
 }
