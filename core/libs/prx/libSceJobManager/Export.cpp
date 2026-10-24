@@ -17,6 +17,8 @@
 #include "prx/libc/include/GuestArena.hpp"
 
 extern "C" {
+int APS5_VABI _sceUlobjmgrRegisterObject_nid_postfix(std::uint64_t object, std::int32_t kind, std::uint32_t* id);
+int APS5_VABI _sceUlobjmgrUnregisterObject_nid_postfix(std::uint32_t id);
 int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
@@ -253,6 +255,7 @@ public:
 };
 
 struct Manager {
+    std::uint32_t objectId = 0;
     std::mutex lock;
     std::condition_variable work;
     bool running = false;
@@ -745,7 +748,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     if (computeSequences != 0) StartCompute(*manager, layout, computeSequences, computeQueueMask, handlerPriority, handlerAffinity);
     Implementation(self) = manager;
     StartWorkers(*manager, settings, workers);
-    return 0;
+    return _sceUlobjmgrRegisterObject_nid_postfix(base, 0x21, &manager->objectId);
 }
 
 ISequenceFactory* FactoryFor(void* self, std::uint32_t priority, bool unified) {
@@ -840,6 +843,7 @@ int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void* self) {
         for (const std::uint32_t queue : manager->computeQueues) static_cast<void>(sceAgcDriverDeleteEqEvent(manager->computeEvents, static_cast<int>(queue)));
         if (sceKernelDeleteEqueue(manager->computeEvents) != 0) throw std::runtime_error("sce::Job::JobManager::shutdown: sceKernelDeleteEqueue failed");
     }
+    static_cast<void>(_sceUlobjmgrUnregisterObject_nid_postfix(manager->objectId));
     Implementation(self) = nullptr;
     delete manager;
     return 0;
