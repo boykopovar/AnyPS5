@@ -1,5 +1,6 @@
 #include "VulkanTestDevice.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
@@ -71,6 +72,8 @@ std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKN
 int APS5_VABI _ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(void*, void*, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, const ConfigParams*);
 int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void*);
 SequenceFactory* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcAcbWaitRegMem(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint8_t, const volatile void*, std::uint64_t, std::uint64_t, std::uint32_t);
+int APS5_VABI sceAgcDriverSubmitAcb(std::uint32_t, const Packet*);
 }
 
 #define Construct _ZN3sce3Job10JobManagerC1Ev
@@ -94,6 +97,7 @@ void Require(bool condition, const std::string& message) {
 }
 
 alignas(256) std::array<std::uint32_t, 12> ReaderCode{0xf4040100u, 0xfa000000u, 0xf4080201u, 0xfa000000u, 0xbf8cc07fu, 0xf4000182u, 0xfa000000u, 0xbf8cc07fu, 0x7e000206u, 0xe0700000u, 0x80020000u, 0xbf810000u};
+alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 4> Value{};
 alignas(256) std::array<std::uint32_t, 2> Table{};
 alignas(256) volatile std::uint32_t Output[4]{};
@@ -136,6 +140,7 @@ std::uint64_t SizeFor(std::uint32_t computeSequences, std::uint64_t mask, bool l
 
 std::atomic<bool> Released{false};
 std::atomic<std::uint32_t> SeenByJob{0};
+std::atomic<std::uint32_t> SecondSeenByJob{0};
 
 void APS5_VABI BlockingJob(void*, std::uint32_t) {
     while (!Released) std::this_thread::yield();
@@ -143,6 +148,11 @@ void APS5_VABI BlockingJob(void*, std::uint32_t) {
 
 void APS5_VABI ReadOutputJob(void*, std::uint32_t) {
     SeenByJob = Output[0];
+}
+
+void APS5_VABI ReadBothOutputsJob(void*, std::uint32_t) {
+    SeenByJob = Output[0];
+    SecondSeenByJob = Output[1];
 }
 
 void APS5_VABI Nothing(void*, std::uint32_t) {
@@ -284,6 +294,166 @@ void CapacityCase() {
     ::operator delete(memory, std::align_val_t{256});
 }
 
+void DeferredInputsCase(bool mixed) {
+    for (const bool indirect : {false, true}) {
+        const auto size = SizeFor(1, 1, true);
+        auto* memory = static_cast<std::uint8_t*>(::operator new(size, std::align_val_t{256}));
+        std::memset(memory, 0, size);
+        alignas(64) unsigned char manager[0x100]{};
+        Construct(manager);
+        Require(Initialize(manager, memory, size, 2, 1, 1, 1, nullptr) == 0, "snapshot manager initialization failed");
+        auto* factory = Factories(manager, 0);
+        Sequence* sequence = nullptr;
+        Require(factory->CreateCompute(&sequence, 1, 3, 1, 1, nullptr) == 0, "snapshot sequence creation failed");
+        auto registers = Registers;
+        auto shader = Shader;
+        const ShaderRegister* pointer = registers.data();
+        std::memcpy(shader.data() + 0x20, &pointer, sizeof(pointer));
+        alignas(16) const std::array<std::uint32_t, 4> redirected{Low(Output + 1), High(Output + 1) & 0xffffu, sizeof(Output[1]), 0x31016facu};
+        const std::string expected = indirect ? "snapshot indirect" : "snapshot direct";
+        std::array<char, 32> marker{};
+        std::memcpy(marker.data(), expected.c_str(), expected.size() + 1);
+        Released = false;
+        Output[0] = 0;
+        Output[1] = 0;
+        Value[0] = indirect ? 0x51a70002u : 0x51a70001u;
+        if (mixed) Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "snapshot parallel compute dispatch failed");
+        Require(sequence->Dispatch(BlockingJob, nullptr, 1, nullptr) == 0, "snapshot blocking job failed");
+        Require(sequence->SyncPoint() == 0, "snapshot sync point failed");
+        const int result = indirect ? sequence->DispatchComputeIndirect(shader.data(), Table.data(), IndirectArguments.data(), marker.data())
+                                    : sequence->DispatchCompute(shader.data(), Table.data(), 1, 1, 1, marker.data());
+        Require(result == 0, "snapshot dispatch failed");
+        const bool encoded = std::search(memory, memory + size, expected.begin(), expected.end()) != memory + size;
+        registers[7].value = Low(redirected.data());
+        registers[8].value = High(redirected.data());
+        std::memset(marker.data(), 'x', expected.size());
+        Released = true;
+        Require(sequence->Wait() == 0, "snapshot wait failed");
+        const bool updated = Output[0] == (mixed ? Value[0] : 0) && Output[1] == Value[0];
+        const bool markerUpdated = std::search(memory, memory + size, marker.begin(), marker.begin() + expected.size()) != memory + size;
+        Require(factory->DestroyCompute(sequence) == 0, "snapshot destruction failed");
+        Require(Shutdown(manager) == 0, "snapshot shutdown failed");
+        ::operator delete(memory, std::align_val_t{256});
+        Require(!encoded, "compute commands were encoded before their CPU barrier retired");
+        Require(updated, "queued compute commands did not read their deferred shader registers");
+        Require(markerUpdated, "queued compute commands did not read their deferred marker");
+    }
+}
+
+void GpuBarriersCase() {
+    for (const bool indirect : {false, true}) {
+        const auto size = SizeFor(1, 2, true);
+        auto* memory = static_cast<std::uint8_t*>(::operator new(size, std::align_val_t{256}));
+        std::memset(memory, 0, size);
+        alignas(64) unsigned char manager[0x100]{};
+        Construct(manager);
+        Require(Initialize(manager, memory, size, 2, 1, 1, 2, nullptr) == 0, "GPU barrier initialization failed");
+        auto* factory = Factories(manager, 0);
+        Sequence* sequence = nullptr;
+        Require(factory->CreateCompute(&sequence, 1, 8, 4, 2, nullptr) == 0, "GPU barrier sequence creation failed");
+        auto registers = Registers;
+        auto shader = Shader;
+        const ShaderRegister* pointer = registers.data();
+        std::memcpy(shader.data() + 0x20, &pointer, sizeof(pointer));
+        alignas(16) const std::array<std::uint32_t, 4> redirected{Low(Output + 1), High(Output + 1) & 0xffffu, sizeof(Output[1]), 0x31016facu};
+        alignas(64) std::uint32_t gate = 0;
+        alignas(256) std::array<std::uint32_t, 32> commands{};
+        CommandBuffer buffer{commands.data(), commands.data() + commands.size(), commands.data(), commands.data() + commands.size(), nullptr, nullptr, 0};
+        Require(sceAgcAcbWaitRegMem(&buffer, 0, 3, 3, &gate, 1, 0xffffffffu, 0x190) != nullptr, "GPU barrier gate encoding failed");
+        const Packet packet{commands.data(), static_cast<std::uint32_t>(buffer.cursor_up - commands.data()), 0, {}};
+        Require(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "GPU barrier gate submission failed");
+        Output[0] = 0;
+        Output[1] = 0;
+        Value[0] = indirect ? 0x51a80002u : 0x51a80001u;
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "first") == 0, "GPU barrier first dispatch failed");
+        Require(sequence->SyncPoint() == 0, "GPU barrier sync point failed");
+        const std::string expected = indirect ? "GPU barrier indirect" : "GPU barrier direct";
+        std::array<char, 32> marker{};
+        std::memcpy(marker.data(), expected.c_str(), expected.size() + 1);
+        const int result = indirect ? sequence->DispatchComputeIndirect(shader.data(), Table.data(), IndirectArguments.data(), marker.data())
+                                    : sequence->DispatchCompute(shader.data(), Table.data(), 1, 1, 1, marker.data());
+        Require(result == 0, "GPU barrier second dispatch failed");
+        const bool encoded = std::search(memory, memory + size, expected.begin(), expected.end()) != memory + size;
+        registers[7].value = Low(redirected.data());
+        registers[8].value = High(redirected.data());
+        std::memset(marker.data(), 'x', expected.size());
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+        Require(sequence->Wait() == 0, "GPU barrier wait failed");
+        Require(encoded, "GPU-only sync deferred the following dispatch inputs");
+        Require(Output[0] == Value[0] && Output[1] == 0, "GPU-only sync did not capture shader registers before dispatch returned");
+        alignas(16) const std::array<std::uint32_t, 2> dependentTable{Low(Output), High(Output)};
+        for (std::uint32_t round = 0; round < 3; ++round) {
+            Output[0] = 0;
+            Output[1] = 0;
+            Value[0] = 0x52a80000u + round;
+            std::atomic_ref<std::uint32_t>(gate).store(0);
+            Require(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "GPU dependency gate submission failed");
+            Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "GPU dependency producer failed");
+            Require(sequence->SyncPoint() == 0, "GPU dependency sync failed");
+            Require(sequence->DispatchCompute(shader.data(), const_cast<std::uint32_t*>(dependentTable.data()), 1, 1, 1, nullptr) == 0, "GPU dependency consumer failed");
+            std::atomic_ref<std::uint32_t>(gate).store(1);
+            Require(sequence->Wait() == 0, "GPU dependency wait failed");
+            Require(Output[0] == Value[0] && Output[1] == Value[0], "GPU sync did not make producer writes visible to its consumer");
+        }
+        if (!indirect) {
+            std::array<ShaderRegister, 8> spinRegisters{};
+            std::copy_n(Registers.begin(), 7, spinRegisters.begin());
+            const auto code = reinterpret_cast<std::uint64_t>(SpinCode.data());
+            spinRegisters[0].value = static_cast<std::uint32_t>(code >> 8);
+            spinRegisters[1].value = static_cast<std::uint32_t>(code >> 40) & 0xff;
+            spinRegisters[6].value = 3u << 1;
+            spinRegisters[7] = {0x242, 1u << 27};
+            auto spinShader = Shader;
+            const ShaderRegister* spinPointer = spinRegisters.data();
+            std::memcpy(spinShader.data() + 0x20, &spinPointer, sizeof(spinPointer));
+            spinShader[0x5c] = static_cast<std::uint8_t>(spinRegisters.size());
+            Output[0] = 0;
+            Output[1] = 0;
+            std::atomic_ref<std::uint32_t>(gate).store(0);
+            Require(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "GPU overlap gate submission failed");
+            Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "GPU overlap producer failed");
+            Require(sequence->SyncPoint() == 0, "GPU overlap sync failed");
+            Require(sequence->DispatchCompute(spinShader.data(), const_cast<std::uint32_t*>(redirected.data()), 1, 1, 1, nullptr) == 0, "GPU overlap spin failed");
+            Require(sequence->Dispatch(ReadBothOutputsJob, nullptr, 1, nullptr) == 0, "GPU overlap CPU callback failed");
+            std::atomic_ref<std::uint32_t>(gate).store(1);
+            Require(sequence->Wait() == 0, "GPU overlap wait failed");
+            Require(SeenByJob == Value[0] && SecondSeenByJob == 0, "CPU work waited for GPU work beyond its preceding sync");
+            Require(Output[1] != 0, "GPU overlap spin did not finish before Wait returned");
+            alignas(16) const std::array<std::uint32_t, 4> originalTarget{Low(Output + 2), High(Output + 2) & 0xffffu, sizeof(Output[2]), 0x31016facu};
+            alignas(16) const std::array<std::uint32_t, 4> changedTarget{Low(Output + 3), High(Output + 3) & 0xffffu, sizeof(Output[3]), 0x31016facu};
+            Output[2] = 0;
+            Output[3] = 0;
+            registers[7].value = Low(originalTarget.data());
+            registers[8].value = High(originalTarget.data());
+            const std::string afterWait = "after waiting caller";
+            std::memcpy(marker.data(), afterWait.c_str(), afterWait.size() + 1);
+            std::atomic_ref<std::uint32_t>(gate).store(0);
+            Require(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "GPU wait-boundary gate submission failed");
+            Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "GPU wait-boundary producer failed");
+            Require(sequence->SyncPoint() == 0, "GPU wait-boundary sync failed");
+            Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "GPU wait-boundary second dispatch failed");
+            std::atomic<bool> waiting{false};
+            std::thread waiter([&] {
+                waiting.store(true);
+                Require(sequence->Wait() == 0, "GPU wait-boundary first wait failed");
+            });
+            while (!waiting.load()) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(sequence->DispatchCompute(shader.data(), Table.data(), 1, 1, 1, marker.data()) == 0, "GPU dispatch after a queued wait failed");
+            const bool crossedWait = std::search(memory, memory + size, afterWait.begin(), afterWait.end()) != memory + size;
+            registers[7].value = Low(changedTarget.data());
+            registers[8].value = High(changedTarget.data());
+            std::atomic_ref<std::uint32_t>(gate).store(1);
+            waiter.join();
+            Require(sequence->Wait() == 0, "GPU wait-boundary final wait failed");
+            Require(!crossedWait && Output[2] == 0 && Output[3] == Value[0], "compute lookahead crossed a waiting caller's boundary");
+        }
+        Require(factory->DestroyCompute(sequence) == 0, "GPU barrier destruction failed");
+        Require(Shutdown(manager) == 0, "GPU barrier shutdown failed");
+        ::operator delete(memory, std::align_val_t{256});
+    }
+}
+
 void StorageCase(bool directMemory) {
     constexpr std::uint64_t mask = (1u << 1) | (1u << 5) | (1u << 8);
     const MemorySizeQueryParams query{1, 2, 0, 0, 32, 8, 4, 2, mask};
@@ -305,9 +475,21 @@ void StorageCase(bool directMemory) {
     alignas(64) unsigned char manager[0x100]{};
     Construct(manager);
     Require(Initialize(manager, memory, size, 2, 0, 2, mask, nullptr) == 0, "storage manager initialization failed");
+    const auto inside = [memory, size](const void* pointer) {
+        const auto base = reinterpret_cast<std::uintptr_t>(memory);
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        return address >= base && address < base + size;
+    };
+    void* implementation = nullptr;
+    std::memcpy(&implementation, manager, sizeof(implementation));
+    Require(inside(implementation), "manager state is outside the supplied work area");
     auto* factory = Factories(manager, 0);
+    Require(inside(factory), "compute factory is outside the supplied work area");
     std::array<Sequence*, 2> sequences{};
-    for (auto& sequence : sequences) Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
+    for (auto& sequence : sequences) {
+        Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
+        Require(inside(sequence), "compute sequence is outside the supplied work area");
+    }
     for (std::uint32_t round = 0; round < 3; ++round) {
         for (auto* sequence : sequences) {
             Value[0] = 0x56780000u + round;
@@ -348,7 +530,7 @@ void StorageCase(bool directMemory) {
 
 int RunJobManagerCase(const char* name) {
     try {
-        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0, "unknown compute fixture");
+        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0 || std::strcmp(name, "deferred_inputs") == 0 || std::strcmp(name, "gpu_barriers") == 0, "unknown compute fixture");
 #ifndef ANYPS5_JOB_MANAGER_REFERENCE
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -358,6 +540,11 @@ int RunJobManagerCase(const char* name) {
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0) SizeCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "execution") == 0) RunCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "capacity") == 0) CapacityCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "deferred_inputs") == 0) {
+            DeferredInputsCase(false);
+            DeferredInputsCase(true);
+        }
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "gpu_barriers") == 0) GpuBarriersCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "storage") == 0) {
             StorageCase(false);
             StorageCase(true);
