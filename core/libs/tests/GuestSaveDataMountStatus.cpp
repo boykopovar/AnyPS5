@@ -20,6 +20,7 @@ int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint*, std::uint32_t, cons
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint*, SaveDataIcon*);
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint*, const SaveDataIcon*);
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint*, const char*);
+int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* param);
 }
 
 namespace {
@@ -232,6 +233,7 @@ int main() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(root);
     CheckUnmountedCalls();
+    Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0001), "null param rejected in memory sync");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 1u, "CREATE2 of a missing save");
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 0u, "CREATE2 of an existing save");
