@@ -2759,7 +2759,16 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
         resolved.moved.clear();
     }
-    if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
+    if (state.depth) {
+        const auto& depth = *state.depth;
+        if (depth.samples != 1u) {
+            const bool d16 = depth.format == VK_FORMAT_D16_UNORM || depth.format == VK_FORMAT_D16_UNORM_S8_UINT;
+            const auto depthBytes = MultisampledDepthBytes_nid_no_patch(depth.extent, d16 ? 2u : 4u, depth.samples);
+            const auto stencilBytes = depth.stencilAddress == 0u ? 0u : MultisampledDepthBytes_nid_no_patch(depth.extent, 1u, depth.samples);
+            Require(!resources->WritesOverlap(depth.address, static_cast<std::size_t>(depthBytes)) && (stencilBytes == 0u || !resources->WritesOverlap(depth.stencilAddress, static_cast<std::size_t>(stencilBytes))) && (depth.htileAddress == 0u || !resources->WritesOverlap(depth.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(depth.extent)))), "a writable shader buffer overlaps a native depth attachment");
+        }
+        RequireNoNativeDepthFeedback_nid_no_patch(context, depth, resources->SampledTextures());
+    }
     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
     // The state is copied only when a mask must change.
     auto& masked = prepared.masked;

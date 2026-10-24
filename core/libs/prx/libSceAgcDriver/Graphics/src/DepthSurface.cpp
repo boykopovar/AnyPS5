@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -548,9 +549,12 @@ public:
         hostWritten->store(true, std::memory_order_release);
     }
 
+    void PublishToGuest();
+
     std::uint64_t written = ++depthWrites;
     std::shared_ptr<std::atomic<bool>> hostWritten = std::make_shared<std::atomic<bool>>(false);
     bool retired = false;
+    bool publishedToGuest = false;
 
     bool Overlaps(std::uint64_t address, std::uint64_t bytes) const {
         const auto end = address + bytes;
@@ -999,14 +1003,7 @@ private:
         }
     }
 
-    void refreshSampleShadow(bool drawn) {
-        Require(sampleShadow != nullptr, "native multisample depth shadow was not created");
-        if (!drawn && sampleShadowWritten == written) return;
-        auto* recorder = RecorderFor(context);
-        std::unique_ptr<CommandBatch> batch;
-        if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
-        const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
-        if (recorder != nullptr) recorder->Keep(sampleShadow);
+    void recordSampleShadowCopy(VkCommandBuffer commands) {
         constexpr VkAccessFlags accesses = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, accesses, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         VkImageCopy region{};
@@ -1015,6 +1012,17 @@ private:
         region.extent = {target.extent.width, target.extent.height, 1};
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, sampleShadow->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, accesses);
+    }
+
+    void refreshSampleShadow(bool drawn) {
+        Require(sampleShadow != nullptr, "native multisample depth shadow was not created");
+        if (!drawn && sampleShadowWritten == written) return;
+        auto* recorder = RecorderFor(context);
+        std::unique_ptr<CommandBatch> batch;
+        if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
+        if (recorder != nullptr) recorder->Keep(sampleShadow);
+        recordSampleShadowCopy(commands);
         if (batch) batch->SubmitAndWait();
         else Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
         sampleShadowWritten = written;
@@ -1576,16 +1584,20 @@ DepthSurface* drawnDepth = nullptr;
 std::atomic<std::uint64_t> surfacesSerial{0};
 std::atomic<std::uint64_t> surfacesReleased{0};
 
+void retire(DepthSurface& surface);
+
 void releaseRetired(const Context& context) {
     auto* recorder = Recorder::Active();
     if (recorder != nullptr && recorder->Device() != context.device) return;
     auto& list = surfaces();
     for (auto it = list.begin(); it != list.end();) {
-        const auto& surface = **it;
-        if (!surface.retired || surface.context.device != context.device || surface.target.samples != 1u || surface.SampledElsewhere()) {
+        auto& surface = **it;
+        const bool releasable = surface.target.samples == 1u ? surface.retired : surface.publishedToGuest && !surface.active->load(std::memory_order_acquire);
+        if (!releasable || surface.context.device != context.device || surface.SampledElsewhere()) {
             ++it;
             continue;
         }
+        if (!surface.retired) retire(surface);
         if (drawnDepth == &surface) drawnDepth = nullptr;
         std::shared_ptr<DepthSurface> released = std::move(*it);
         it = list.erase(it);
@@ -1599,6 +1611,64 @@ std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImage
     if ((cleared & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) word = (word & 0x3f0u) | 0xfffff00fu;
     if ((cleared & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) word |= 0x3f0u;
     return word;
+}
+
+void DepthSurface::PublishToGuest() {
+    Require(target.format != VK_FORMAT_D16_UNORM, "guest publication of a written native multisample D16 depth is not implemented");
+    Require(target.format == VK_FORMAT_D32_SFLOAT && hostFormat == target.format, "guest publication of a written native multisample depth that the device stores in another format is not implemented");
+    Require(sampleable, "guest publication of a written native multisample depth the device cannot sample is not implemented");
+    Require(context.detiler != nullptr, "guest publication of a written native multisample depth needs the texture detiler");
+    ApplyFastClear();
+    if (useSampleShadow && sampleShadow == nullptr) createSampleShadow();
+    if (auto* recorder = RecorderFor(context)) recorder->Sync();
+    const auto& depth = sampling.initial[0];
+    const auto& metadata = sampling.initial[1];
+    const MultisampleTextureLayout layout(TextureTileMode::kZ64KBX, 4u, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
+    Require(layout.Bytes() == depth.bytes, "native multisample depth guest layout differs from its guarded range");
+    const auto elements = static_cast<std::uint32_t>(layout.LinearBytes() / 4u);
+    Buffer linear(context, static_cast<std::size_t>(layout.LinearBytes()), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    VkImageView arrayView = VK_NULL_HANDLE;
+    try {
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = useSampleShadow ? sampleShadow->image : image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        viewInfo.format = hostFormat;
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &arrayView), "vkCreateImageView depth guest publication");
+        CommandBatch batch(context);
+        constexpr VkAccessFlags writes = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT;
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, writes, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        if (useSampleShadow) recordSampleShadowCopy(batch.Handle());
+        context.detiler->DispatchMultisampleReadback(batch.Handle(), VK_FORMAT_D32_SFLOAT, linear.Handle(), 0u, layout.LinearBytes(), arrayView, target.extent.width, target.extent.height, 1u, target.samples, 0u, elements);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+    } catch (...) {
+        if (arrayView != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
+        throw;
+    }
+    context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
+    linear.Invalidate();
+    std::vector<std::byte> plane(static_cast<std::size_t>(depth.bytes));
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(depth.address), plane.size(), 1u);
+    GuestMemory::CopyGuestBytes(plane.data(), reinterpret_cast<const void*>(depth.address), plane.size());
+    layout.Tile(linear.Bytes().first(static_cast<std::size_t>(layout.LinearBytes())), plane);
+    std::vector<std::uint32_t> words(metadata.bytes / sizeof(std::uint32_t));
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(metadata.address), metadata.bytes, 4u);
+    GuestMemory::CopyGuestBytes(words.data(), reinterpret_cast<const void*>(metadata.address), metadata.bytes);
+    for (auto& word : words) word = expandedHtileWord(word, !target.htileDepthOnly, VK_IMAGE_ASPECT_DEPTH_BIT);
+    GuestMemory::Write(depth.address, plane);
+    GuestMemory::Write(metadata.address, std::as_bytes(std::span(words)), 4);
+    publishedToGuest = true;
+}
+
+void publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& flag : written) {
+        const auto found = std::ranges::find_if(surfaces(), [&](const auto& surface) { return surface->hostWritten == flag && surface->active->load(std::memory_order_acquire); });
+        Require(found != surfaces().end(), "the written native multisample depth surface is not resident");
+        (*found)->PublishToGuest();
+    }
 }
 
 std::mutex& htileReadsMutex() {
@@ -1855,16 +1925,19 @@ std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32
 
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0u || !anyDepthGuard().load(std::memory_order_acquire)) return;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth read range overflows");
     const auto overlaps = [&](const DepthGuard& range) { return address < range.address + range.bytes && range.address < address + bytes; };
+    std::vector<std::shared_ptr<std::atomic<bool>>> written;
     {
         std::shared_lock lock(depthGuardMutex());
         if (std::ranges::none_of(depthGuards(), overlaps)) return;
+        for (const auto& range : depthGuards()) {
+            if (overlaps(range) && range.hostWritten->load(std::memory_order_acquire) && std::ranges::find(written, range.hostWritten) == written.end()) written.push_back(range.hostWritten);
+        }
     }
+    if (!written.empty()) publishWrittenDepth(written);
     std::unique_lock lock(depthGuardMutex());
-    for (const auto& range : depthGuards()) {
-        if (overlaps(range)) Require(!range.hostWritten->load(std::memory_order_acquire), "sample-preserving guest publication of native multisample depth is not implemented");
-    }
     for (const auto& range : depthGuards()) {
         if (overlaps(range)) range.active->store(false, std::memory_order_release);
     }
