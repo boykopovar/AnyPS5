@@ -753,6 +753,12 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
     return 0;
 }
 
+int ChangeFileFlags_nid_no_patch(const char* function, const char* path, std::uint64_t flags, bool follow);
+
+int APS5_VABI lchflags_nid_postfix(const char* path, std::uint64_t flags) {
+    return ChangeFileFlags_nid_no_patch("lchflags", path, flags, false);
+}
+
 int APS5_VABI unlink_nid_postfix(const char* path);
 int APS5_VABI rmdir_nid_postfix(const char* path);
 
