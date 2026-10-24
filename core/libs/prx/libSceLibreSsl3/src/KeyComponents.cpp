@@ -93,4 +93,11 @@ void APS5_VABI DH_get0_key_nid_postfix(const LibreSsl3Dh* dh, const void** pubKe
     Store(privKey, key.privKey);
 }
 
+void APS5_VABI DSA_get0_pqg_nid_postfix(const LibreSsl3Dsa* dsa, const void** p, const void** q, const void** g) {
+    const LibreSsl3Dsa& key = Key(dsa, __func__);
+    Store(p, key.p);
+    Store(q, key.q);
+    Store(g, key.g);
+}
+
 }
