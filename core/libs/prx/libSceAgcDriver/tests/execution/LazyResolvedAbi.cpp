@@ -13,7 +13,9 @@
 #endif
 #include <windows.h>
 #else
+#include <spawn.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -37,6 +39,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+extern char** environ;
+#endif
 
 namespace {
 
@@ -360,6 +366,20 @@ void ClearEnvironment(const char* name) {
 #endif
 }
 
+int RunEagerReference(const char* self) {
+#ifdef _WIN32
+    const std::string command = "\"" + std::string(self) + "\" --eager-reference";
+    return std::system(command.c_str());
+#else
+    const char* arguments[] = {self, "--eager-reference", nullptr};
+    pid_t child = 0;
+    if (posix_spawnp(&child, self, nullptr, nullptr, const_cast<char**>(arguments), environ) != 0) return -1;
+    int status = 0;
+    if (waitpid(child, &status, 0) != child) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
 void Settle(std::span<const Synthetic> programs) {
     std::vector<const Shader*> registered;
     for (const auto& program : programs) registered.push_back(&program.header.shader);
@@ -605,8 +625,7 @@ int main(int argc, char** argv) {
             SetEnvironment("ANYPS5_SHADER_CACHE_DIR", cache.string());
             SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "1");
             ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
-            const std::string command = "\"" + std::string(argv[0]) + "\" --eager-reference";
-            Require(std::system(command.c_str()) == 0, "lazy resolved ABI: the eager reference process failed");
+            Require(RunEagerReference(argv[0]) == 0, "lazy resolved ABI: the eager reference process failed");
             cached = CacheFiles(cache);
             Require(!cached.empty(), "lazy resolved ABI: the eager reference process wrote no shader cache files");
             SetEnvironment("APS5_LAZY_SHADER_PREPARE", "1");
