@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 
 extern "C" {
@@ -125,6 +126,26 @@ void testRangeFromAnyByte() {
     }
 }
 
+void testListFromAnyByte() {
+    const std::array writers{sceAgcCbSetShRegistersDirect, sceAgcCbSetUcRegistersDirect};
+    const std::array opcodes{0x7600u, 0x7900u};
+    const std::array<ShaderRegister, 3> registers{{{0x10u, 0x11223344u}, {0x11u, 0x55667788u}, {0x30u, 0x99aabbccu}}};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        for (const std::size_t offset : {1u, 2u, 3u, 5u}) {
+            alignas(16) std::array<unsigned char, 48> bytes{};
+            std::memcpy(bytes.data() + offset, registers.data(), sizeof(registers));
+            Storage storage;
+            storage.words.fill(0xabcdef01u);
+            const auto* list = reinterpret_cast<const volatile ShaderRegister*>(bytes.data() + offset);
+            auto* packet = writers[i](&storage.buffer, list, static_cast<std::uint32_t>(registers.size()));
+            const std::array<std::uint32_t, 7> expected{0xc0020000u | opcodes[i], 0x10u, 0x11223344u, 0x55667788u, 0xc0010000u | opcodes[i], 0x30u, 0x99aabbccu};
+            check(packet == storage.words.data() && storage.buffer.cursor_up == packet + expected.size(), "unaligned register list allocation mismatch");
+            check(std::equal(expected.begin(), expected.end(), packet), "unaligned register list was not read byte for byte");
+            check(packet[expected.size()] == 0xabcdef01u, "unaligned register list overwrote the following word");
+        }
+    }
+}
+
 void testIndirect() {
     const std::array writers{sceAgcDcbSetCxRegistersIndirect, sceAgcDcbSetShRegistersIndirect, sceAgcDcbSetUcRegistersIndirect};
     const std::array sizes{sceAgcDcbSetCxRegistersIndirectGetSize, sceAgcDcbSetShRegistersIndirectGetSize, sceAgcDcbSetUcRegistersIndirectGetSize};
@@ -239,6 +260,7 @@ int main() {
         testDirect();
         testConfig();
         testRangeFromAnyByte();
+        testListFromAnyByte();
         testIndirect();
         testIndirectPlaceholder();
         testDirectList();
