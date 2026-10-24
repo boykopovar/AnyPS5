@@ -8,18 +8,43 @@ import sys
 import tempfile
 
 from test_guest_deferred_dependencies import page_aligned
+from test_guest_export_lookup import guest_symbols
 from test_guest_intel_trampolines import main_fixture
 from test_guest_symbol_names import dynamic_tags, file_offset, symbol_name
 from test_windows_import_modules import consumer, provider
 
 
-def at_address_zero(image, info=0x12):
-    struct.pack_into("<B", image, 0x898 + 4, info)
+def at_address_zero(image):
     struct.pack_into("<Q", image, 0x898 + 8, 0)
     image = page_aligned(image)
     struct.pack_into("<Q", image, 24, 0)
     struct.pack_into("<QQ", image, 64 + 16, 0, 0)
     return image
+
+
+def zero_address_module(symbols):
+    image = guest_symbols([(name, info, other, 1) for name, info, other in symbols])
+    position = 0x600
+    while True:
+        tag, value = struct.unpack_from("<qQ", image, position)
+        if tag == 0:
+            break
+        if tag == 6:
+            table = value - 0x1a00
+        position += 16
+    for index in range(1, len(symbols) + 1):
+        struct.pack_into("<Q", image, table + index * 24 + 8, 0)
+    image = page_aligned(image)
+    struct.pack_into("<Q", image, 24, 0)
+    struct.pack_into("<QQ", image, 64 + 16, 0, 0)
+    return image
+
+
+def jump_target(image, value):
+    offset = file_offset(image, value)
+    assert image[offset] == 0xe9, image[offset:offset + 5].hex()
+    displacement, = struct.unpack_from("<i", image, offset + 1)
+    return value + 5 + displacement
 
 
 def exports(image):
@@ -64,14 +89,18 @@ def main():
         image = (output.parent / "app0" / "sce_module" / "provider.prx.guest.prx").read_bytes()
         info, value = exports(image)["shared#guest"]
         assert info == 0x12 and value != 0, (info, value)
-        offset = file_offset(image, value)
-        assert image[offset] == 0xe9, image[offset:offset + 5].hex()
-        displacement, = struct.unpack_from("<i", image, offset + 1)
-        assert value + 5 + displacement == 0, (value, displacement)
+        assert jump_target(image, value) == 0, value
 
-        output = relink(relinker, work / "object", {"provider.prx": at_address_zero(provider(22), 0x11)})
+        output = relink(relinker, work / "kinds", {"provider.prx": zero_address_module([
+            ("global", 0x12, 0), ("weak", 0x22, 0), ("protected", 0x12, 3), ("alias", 0x12, 0),
+            ("internal", 0x12, 1), ("hidden", 0x12, 2), ("object", 0x11, 0)])})
         image = (output.parent / "app0" / "sce_module" / "provider.prx.guest.prx").read_bytes()
-        assert exports(image)["shared#guest"] == (0x11, 0), exports(image)
+        symbols = exports(image)
+        jumps = [symbols[name + "#guest"][1] for name in ("global", "weak", "protected", "alias")]
+        assert all(value != 0 and jump_target(image, value) == 0 for value in jumps), symbols
+        assert len(set(jumps)) == len(jumps), symbols
+        assert symbols["internal"] == (0x12, 0) and symbols["hidden"] == (0x12, 0), symbols
+        assert symbols["object#guest"] == (0x11, 0), symbols
 
         if runnable:
             libraries = work / "function" / "libs"

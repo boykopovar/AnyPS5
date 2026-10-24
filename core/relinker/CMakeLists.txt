@@ -633,6 +633,8 @@ if(BUILD_TESTING)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        set_property(TEST linux_guest_zero_address_exports APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_zero_address_exports PROPERTIES TIMEOUT 30)
         add_asan_test_options(linux_guest_zero_address_exports verify_asan_link_order=0)
         add_test(NAME guest_unused_import_dependencies COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_unused_import_dependencies.py
