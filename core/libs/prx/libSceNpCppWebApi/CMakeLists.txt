@@ -14,8 +14,14 @@ if(BUILD_TESTING)
     target_link_libraries(guest_np_cpp_web_api_string_tests PRIVATE libSceNpCppWebApi libc)
     configure_windows_unwind(guest_np_cpp_web_api_string_tests)
     add_test(NAME guest_np_cpp_web_api_string COMMAND guest_np_cpp_web_api_string_tests)
+    add_test(NAME guest_np_cpp_web_api_alias_append COMMAND guest_np_cpp_web_api_string_tests alias-append)
+    add_test(NAME guest_np_cpp_web_api_alias_string_vector COMMAND guest_np_cpp_web_api_string_tests alias-vector)
+    add_test(NAME guest_np_cpp_web_api_alias_intrusive_vector COMMAND guest_np_cpp_web_api_intrusive_ptr_tests alias-vector)
+    set_tests_properties(guest_np_cpp_web_api_alias_append guest_np_cpp_web_api_alias_string_vector
+        guest_np_cpp_web_api_alias_intrusive_vector PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_np_cpp_web_api_string PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_np_cpp_web_api_string guest_np_cpp_web_api_alias_append
+            guest_np_cpp_web_api_alias_string_vector guest_np_cpp_web_api_alias_intrusive_vector
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
