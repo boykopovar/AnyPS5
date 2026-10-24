@@ -1149,7 +1149,7 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::SetIpLevelOption(native, socket->options, socket->family == 2, option, value, length)
-                      : level == 6  ? GuestSockets::SetTcpLevelOption(native, socket->family != GuestUnix && socket->type == 1, option, value, length)
+                      : level == 6  ? GuestSockets::SetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, length)
                       : level == 41 ? GuestSockets::SetIpv6LevelOption(native, socket->family == 28, option, value, length)
                                     : GuestSockets::SetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
     return error == 0 ? 0 : Fail(error);
@@ -1164,7 +1164,7 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, option, value, length)
-                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->family != GuestUnix && socket->type == 1, option, value, length)
+                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, length)
                       : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, length)
                                     : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
     return error == 0 ? 0 : Fail(error);
@@ -1299,6 +1299,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             std::lock_guard modeLock(listener->modeMutex);
             inheritNonblocking = listener->options.nonblocking;
             accepted->options.noSignal = listener->options.noSignal;
+            accepted->options.keptFlags = listener->options.keptFlags;
             accepted->options.sendTimeout = listener->options.sendTimeout;
             accepted->options.receiveTimeout = listener->options.receiveTimeout;
             accepted->options.sendBuffer = listener->options.sendBuffer;
@@ -1307,6 +1308,9 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             accepted->options.receiveLowWater = listener->options.receiveLowWater;
             accepted->options.ipTimeToLive = listener->options.ipTimeToLive;
             accepted->options.ipTypeOfService = listener->options.ipTypeOfService;
+            accepted->options.tcpKeepIdle = listener->options.tcpKeepIdle;
+            accepted->options.tcpKeepInterval = listener->options.tcpKeepInterval;
+            accepted->options.tcpKeepCount = listener->options.tcpKeepCount;
         }
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));

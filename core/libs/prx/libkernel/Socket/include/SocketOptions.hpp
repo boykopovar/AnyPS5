@@ -17,13 +17,18 @@ struct SocketOptionState {
     int ipTypeOfService = 0;
     int multicastTimeToLive = 1;
     bool multicastLoop = true;
+    int tcpMaximumSegment = 536;
+    unsigned int tcpKeepIdle = 0;
+    unsigned int tcpKeepInterval = 0;
+    unsigned int tcpKeepCount = 0;
+    int keptFlags = 0;
 };
 
 bool NativeListening(std::uintptr_t native, bool& listening);
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length);
 int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, void* value, std::uint32_t* length);
-int SetTcpLevelOption(std::uintptr_t native, bool tcp, int option, const void* value, std::uint32_t length);
-int GetTcpLevelOption(std::uintptr_t native, bool tcp, int option, void* value, std::uint32_t* length);
+int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length);
+int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, void* value, std::uint32_t* length);
 int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4, int option, const void* value, std::uint32_t length);
 int GetIpLevelOption(SocketOptionState& state, bool ipv4, int option, void* value, std::uint32_t* length);
 int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length);

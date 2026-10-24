@@ -158,14 +158,39 @@ void BooleanOptionsReportTheirBit() {
     Require(GetInt(datagram, SoBroadcast) == SoBroadcast, "SO_BROADCAST reads back as its bit");
     SetInt(stream, SoNoSigpipe, 1);
     Require(GetInt(stream, SoNoSigpipe) == SoNoSigpipe, "SO_NOSIGPIPE reads back as its bit");
-    for (const int option : {SoReusePort, SoDebug, SoUseLoopback, SoTimestamp}) {
-        const int one = 1;
-        Require(SetFails(stream, SolSocket, option, &one, sizeof(one), ErrorNoProtocolOption), "an option no title needs must fail with ENOPROTOOPT (42)");
+    for (const int option : {SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
+        Require(GetInt(stream, option) == 0, "a kept flag starts off");
+        SetInt(stream, option, 5);
+        Require(GetInt(stream, option) == option, "a kept flag reads back as its bit");
+        SetInt(stream, option, 0);
+        Require(GetInt(stream, option) == 0, "a kept flag turns off");
+    }
+    for (const int option : {0x4000, 0x8000}) {
+        SetInt(stream, option, 1);
         int value = 0;
         std::uint32_t size = sizeof(value);
-        Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "getsockopt of an option no title needs must fail with ENOPROTOOPT (42)");
+        Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "SO_NO_OFFLOAD and SO_NO_DDP are accepted but cannot be read");
     }
+    const unsigned char narrowFlag = 1;
+    Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+}
+
+void ReusePortSharesAPort() {
+    const int first = socket_nid_postfix(2, Datagram, 0);
+    const int second = socket_nid_postfix(2, Datagram, 0);
+    const int third = socket_nid_postfix(2, Datagram, 0);
+    Require(first >= 0 && second >= 0 && third >= 0, "socket failed");
+    SetInt(first, SoReusePort, 1);
+    SetInt(second, SoReusePort, 1);
+    Require(GetInt(first, SoReusePort) == SoReusePort && GetInt(first, 0x4) == 0, "SO_REUSEPORT does not read back as SO_REUSEADDR");
+    auto address = Loopback(0);
+    Require(bind_nid_postfix(first, address.data(), address.size()) == 0, "bind failed");
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(first, address.data(), &size) == 0, "getsockname failed");
+    Require(bind_nid_postfix(second, address.data(), address.size()) == 0, "a second SO_REUSEPORT socket must bind the same port");
+    Require(bind_nid_postfix(third, address.data(), address.size()) == -1 && *__error_nid_postfix() == 48, "a socket without SO_REUSEPORT must fail with EADDRINUSE (48)");
+    Require(close_nid_postfix(first) == 0 && close_nid_postfix(second) == 0 && close_nid_postfix(third) == 0, "close failed");
 }
 
 void LingerFollowsFreeBsd() {
@@ -333,6 +358,7 @@ int main() {
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
     BooleanOptionsReportTheirBit();
+    ReusePortSharesAPort();
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
     BuffersFollowThePs5();
