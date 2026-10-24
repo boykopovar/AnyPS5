@@ -6,12 +6,12 @@ struct HttpConnectionStat;
 struct HttpRequestStat;
 
 struct HttpCookieStats {
-    std::size_t usedBytes;
-    std::uint32_t cookieCount;
-    std::uint32_t reserved;
-    std::size_t peakUsedBytes;
-    std::uint32_t peakCookieCount;
-    std::uint32_t evictedCookieCount;
+    std::uint64_t currentInuseSize;
+    std::uint32_t currentInuseNum;
+    std::uint64_t maxInuseSize;
+    std::uint32_t maxInuseNum;
+    std::uint32_t removedNum;
+    std::int32_t reserved;
 };
 
 struct HttpMemoryPoolStats {
@@ -114,7 +114,7 @@ int APS5_VABI sceHttpRemoveRequestHeader(int id, const char* name);
 int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable);
 int APS5_VABI sceHttpSetEpollId(std::int32_t id, std::int32_t epollId, void* userArg);
 int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** userArg);
-int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* requiredSize, std::size_t size);
+int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* requiredSize, std::size_t size, int isSecure);
 int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable);
 int APS5_VABI sceHttpAddCookie(int contextId, const char* url, const char* cookie, std::size_t size);
 int APS5_VABI sceHttpSetCookieSendCallback(std::int32_t id, HttpCookieSendCallback callback, void* userArg);
