@@ -347,12 +347,18 @@ if(BUILD_TESTING)
     target_link_libraries(guest_kernel_sys_pthread_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_pthread_tests)
     add_test(NAME guest_kernel_sys_pthread COMMAND guest_kernel_sys_pthread_tests)
+    add_test_executable(guest_kernel_sys_constants_tests tests/GuestKernelSysConstants.cpp)
+    target_include_directories(guest_kernel_sys_constants_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_constants_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_constants_tests)
+    add_test(NAME guest_kernel_sys_constants COMMAND guest_kernel_sys_constants_tests)
+    set_tests_properties(guest_kernel_sys_constants PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_verneed.py $<TARGET_FILE:nid_patcher>)
     endif()
     if(WIN32)
-        set_tests_properties(guest_kernel_sys guest_kernel_sys_thread_defaults guest_kernel_sys_barrier guest_kernel_sys_pthread PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kernel_sys guest_kernel_sys_thread_defaults guest_kernel_sys_barrier guest_kernel_sys_pthread guest_kernel_sys_constants PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
