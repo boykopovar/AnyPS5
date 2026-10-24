@@ -10740,6 +10740,21 @@ void validationTests() {
         attribute.components = 2;
         attribute.resource.fields[1] |= 0x80000000u;
         expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "descriptor flags");
+        attribute.resource.fields = {0x1000, 8u << 16u, 3, 71u << 12u};
+        attribute.components = 3;
+        context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+            *properties = {};
+            if (format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R8G8B8A8_UNORM) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+        };
+        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_R16G16B16_SFLOAT && AgcDriver::Graphics::DecodeVertexFormat(attribute).bytes == 6, "a 3-component 16_16_16_16 float attribute was not decoded as 3 components");
+        const auto widened = AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1));
+        Require(widened.attributes[0].format == VK_FORMAT_R16G16B16A16_SFLOAT && widened.bindings[0].stride == 8 && AgcDriver::Graphics::VertexReadBytes(attribute, widened.attributes[0].format) == 8, "a 3-component 16_16_16_16 float attribute was not widened to the format the device supports");
+        Require(AgcDriver::Graphics::VertexAttributeSignature(attribute) == "f32x3", "widening the vertex format changed the shader input");
+        attribute.resource.fields = {0x1000, 4u << 16u, 3, 56u << 12u};
+        Require(AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)).attributes[0].format == VK_FORMAT_R8G8B8A8_UNORM, "a 3-component 8_8_8_8 unorm attribute was not widened to the format the device supports");
+        attribute.resource.fields = {0x1000, 12u << 16u, 3, 74u << 12u};
+        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "device does not support vertex format 106");
+        expectFailure([&] { AgcDriver::Graphics::VertexReadBytes(attribute, VK_FORMAT_R32G32B32A32_SFLOAT); }, "is not a form of");
     }
     for (const auto capability : {spv::CapabilityInt64Atomics, spv::CapabilityInt64ImageEXT}) {
         ShaderRecompiler::RecompileResult vertex;

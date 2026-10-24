@@ -1278,8 +1278,8 @@ bool StripPatches(const State& state, std::span<const CompiledShader> shaders) {
     return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && BarycentricPatches(state, shaders);
 }
 
-std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, const ShaderRecompiler::VertexAttribute& attribute) {
-    auto zero = std::make_shared<Buffer>(context, DecodeVertexFormat(attribute).bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t bytes) {
+    auto zero = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     std::fill(zero->Bytes().begin(), zero->Bytes().end(), std::byte{0});
     return zero;
 }
@@ -1524,14 +1524,19 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     fetchValid.reserve(attributes.size());
     std::vector<std::size_t> fetchOf(attributes.size(), 0);
     std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
+    const auto& layout = inputs.VertexLayout();
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         const auto& attribute = attributes[i];
+        const auto described = std::find_if(layout.attributes.begin(), layout.attributes.end(), [&](const auto& entry) { return entry.location == attribute.location; });
+        Require(described != layout.attributes.end(), "vertex attribute missing from its input layout");
+        const auto narrow = DecodeVertexFormat(attribute);
+        const std::size_t widened = described->format == narrow.format ? 0u : VertexReadBytes(attribute, described->format) - narrow.bytes;
         if (NullVertexDescriptor(attribute) || VertexFetchOutOfRange(attribute)) {
-            zeroed[i] = zeroVertexBuffer(context, attribute);
+            zeroed[i] = zeroVertexBuffer(context, narrow.bytes + widened);
             continue;
         }
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
+        const auto bytes = (args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         const auto firstByte = args == nullptr ? VertexBufferReadOffset(attribute, draw.firstVertex, draw.firstInstance) : 0;
