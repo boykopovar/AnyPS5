@@ -27,6 +27,15 @@ std::int32_t APS5_VABI scePsmlMfsrSelectConfig(void* config);
 std::int32_t APS5_VABI scePsmlMfsrGetMipmapBias(void* context, float* bias, std::uint32_t dimension);
 std::int32_t APS5_VABI scePsmlMfsrRequestCapture(void* context);
 std::int32_t APS5_VABI scePsmlMfsrIsCaptureInProgress(void* context);
+std::int32_t APS5_VABI scePsmlMfsr2Init();
+std::int32_t APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement(void* requirement, const void* param);
+std::int32_t APS5_VABI scePsmlMfsr2CreateSharedResources(void** sharedResources, const void* param);
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseSharedResources(void* sharedResources);
+std::int32_t APS5_VABI scePsmlMfsr2GetContextInitRequirement(void* requirement, const void* param);
+std::int32_t APS5_VABI scePsmlMfsr2CreateContext(void** context, const void* param);
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseContext(void* context);
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords(void* context, std::uint32_t* packetSizeInDwords);
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPackets(void* context, const void* commandBuffer, const void* param);
 }
 
 namespace {
@@ -230,6 +239,44 @@ void SetupAfterInit() {
     Require(scePsmlMfsrReleaseSharedResources(sharedResources) == 0);
 }
 
+void Mfsr2OnBaseConsole() {
+    constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x8A8A0001);
+    constexpr std::int32_t unsupportedConsole = static_cast<std::int32_t>(0x8A8A0012);
+    Require(scePsmlMfsr2Init() == unsupportedConsole);
+    Require(scePsmlMfsr2Init() == unsupportedConsole);
+
+    std::array<std::uint8_t, 0x30> param{};
+    std::array<std::uint8_t, 0x18> requirement;
+    requirement.fill(0xa5);
+    const auto untouchedRequirement = requirement;
+    Require(scePsmlMfsr2GetSharedResourcesInitRequirement(requirement.data(), param.data()) == notInitialized);
+    Require(scePsmlMfsr2GetContextInitRequirement(requirement.data(), param.data()) == notInitialized);
+    Require(requirement == untouchedRequirement);
+
+    std::uint64_t storage = 0;
+    void* const sentinel = &storage;
+    void* handle = sentinel;
+    Require(scePsmlMfsr2CreateSharedResources(&handle, param.data()) == notInitialized);
+    Require(scePsmlMfsr2CreateContext(&handle, param.data()) == notInitialized);
+    Require(handle == sentinel);
+    Require(scePsmlMfsr2ReleaseContext(sentinel) == notInitialized);
+    Require(scePsmlMfsr2ReleaseSharedResources(sentinel) == notInitialized);
+
+    std::uint32_t packetDwords = 0xa5a5a5a5;
+    Require(scePsmlMfsr2GetDispatchPacketsSizeInDwords(sentinel, &packetDwords) == notInitialized);
+    Require(packetDwords == 0xa5a5a5a5);
+
+    std::array<std::uint8_t, 112> dispatchParam{};
+    std::array<std::uint32_t, 64> dwords;
+    dwords.fill(0xa5a5a5a5u);
+    const auto untouchedDwords = dwords;
+    CommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
+    Require(scePsmlMfsr2GetDispatchPackets(sentinel, &commandBuffer, dispatchParam.data()) == notInitialized);
+    Require(commandBuffer.cursor == dwords.data());
+    Require(commandBuffer.sizeInDwords == dwords.size());
+    Require(dwords == untouchedDwords);
+}
+
 void RefusedAfterInit() {
     SharedParam sharedParam{};
     Requirement requirement{};
@@ -311,6 +358,7 @@ int main() {
     DispatchPacketUntouched(scePsmlMfsrGetDispatchMfsrPacket1000);
     DispatchPacketUntouched(scePsmlMfsrGetDispatchMfsrPacket1300);
     SetupBeforeInit();
+    Mfsr2OnBaseConsole();
     SetupAfterInit();
     RefusedAfterInit();
 }
