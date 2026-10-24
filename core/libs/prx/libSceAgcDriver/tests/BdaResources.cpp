@@ -3314,6 +3314,137 @@ void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& a
     std::cout << "an address-based build refreshes the unwatched heap of a run in full and its watched neighbour by its writes\n";
 }
 
+void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access, bool remembered) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t heapBytes = 32 * block;
+    constexpr std::size_t idleBytes = 16 * block;
+    constexpr std::size_t busyBytes = block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the address copy cap not tested\n";
+        return;
+    }
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: the address copy cap not tested\n";
+        return;
+    }
+#endif
+    struct Piece {
+        void* pointer = nullptr;
+        void* mapping = nullptr;
+        std::size_t allocated = 0;
+        std::size_t bytes = 0;
+    };
+    std::array<Piece, 4> pieces{};
+    const std::array<std::pair<std::size_t, std::size_t>, 4> sizes{{{heapBytes + block, heapBytes}, {heapBytes + block, idleBytes}, {busyBytes + block, busyBytes}, {busyBytes + block, busyBytes}}};
+    for (std::size_t index = 0; index < pieces.size(); ++index) {
+        auto& piece = pieces[index];
+        piece.allocated = sizes[index].first;
+        piece.bytes = sizes[index].second;
+#ifdef _WIN32
+        piece.pointer = GuestArena::GuestArenaAllocate_nid_postfix(piece.allocated, block);
+        Require(piece.pointer != nullptr, "cannot allocate the address copy cap ranges in the guest arena");
+        GuestArena::GuestArenaCommit_nid_postfix(piece.pointer, piece.allocated, PAGE_READWRITE, piece.allocated);
+        piece.mapping = piece.pointer;
+#else
+        piece.mapping = mmap(nullptr, piece.allocated + block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(piece.mapping != MAP_FAILED, "cannot map the address copy cap ranges");
+        piece.pointer = reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(piece.mapping) + block - 1) & ~std::uintptr_t{block - 1});
+#endif
+        std::memset(piece.pointer, 0x5a, piece.allocated);
+    }
+    if (pieces[1].pointer < pieces[0].pointer) {
+        std::swap(pieces[0].pointer, pieces[1].pointer);
+        std::swap(pieces[0].mapping, pieces[1].mapping);
+    }
+    const auto heap = reinterpret_cast<std::uintptr_t>(pieces[0].pointer);
+    const auto idle = reinterpret_cast<std::uintptr_t>(pieces[1].pointer);
+    const auto busy = reinterpret_cast<std::uintptr_t>(pieces[2].pointer);
+    Require(heap < idle, "the idle range does not follow the heap in the registry");
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pieces[0].pointer, heapBytes);
+#endif
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (std::size_t index = 0; index < 3; ++index) {
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, pieces[index].pointer, pieces[index].bytes, true, false, true);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, pieces[index].pointer);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto unrelated = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, pieces[3].pointer, pieces[3].bytes, true, false, false);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, pieces[3].pointer);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(idle, idleBytes);
+    AgcDriver::GuestMemory::Unwatch(busy, busyBytes);
+#endif
+    auto importing = context;
+    importing.hostImportAlignment = block;
+    SetHostImportBudget(heapBytes + idleBytes + busyBytes - block);
+    Require(HostImportFor(importing, idle, 64) != nullptr && HostImportFor(importing, busy, 64) != nullptr, "the idle and busy ranges were not imported");
+    Require(HostImportLiveBytes() == idleBytes + busyBytes && !HostImportCovers(importing, heap, heapBytes), "the imports before the build are not the idle and busy ranges");
+    Require(AgcDriver::GuestMemory::Watched(heap, heapBytes), "the heap is not write-watched");
+    const auto before = MirrorCounters();
+    const auto builds = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Build)]; };
+    const auto unwatch = [&] {
+        AgcDriver::GuestMemory::Unwatch(heap + heapBytes / 2, block);
+        Require(AgcDriver::GuestMemory::Watched(heap, heapBytes / 2) && !AgcDriver::GuestMemory::Watched(heap, heapBytes), "the heap is not partly outside the write watch");
+    };
+    if (remembered) {
+        unwatch();
+        SetAddressCopyLimit(2 * heapBytes);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.Upload(true);
+            Require(MirrorCounters().heapMirrors == before.heapMirrors && !HostImportCovers(importing, heap, heapBytes), "the first build did not copy the heap whose import the budget refused");
+            leased.WriteBack();
+        }
+        SetAddressCopyLimit(0);
+        unrelated(true);
+    }
+    for (int use = 0; use < 300; ++use) Require(HostImportFor(importing, busy, 64) != nullptr, "the busy range lost its import");
+    if (!remembered) unwatch();
+    const auto refused = builds();
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const bool imported = HostImportCovers(importing, heap, heapBytes);
+        Require(imported || (!remembered && MirrorCounters().heapMirrors == before.heapMirrors + 1), "the heap is neither imported nor mirrored");
+        const auto ranges = leased.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == heap; });
+        Require(found != ranges.end() && found->deviceAddress != 0u, "the heap is missing from the BDA table");
+        Require(imported || access.addressBytes(found->deviceAddress)[heapBytes / 2 + 3] == std::byte{0x5a}, "the heap mirror does not hold the guest bytes");
+        leased.WriteBack();
+    }
+    Require(!remembered || builds().remembered == refused.remembered + 1, "the build under the copy cap was not answered from the refusal the first build remembered");
+    SetHostImportBudget(0);
+    if (remembered) unrelated(false);
+    registry(false);
+    ClearImageMirrors(importing.device);
+    ClearHostImports(importing.device);
+    ClearSnapshotCopies(importing.device);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[0].pointer, heapBytes);
+#endif
+    for (const auto& piece : pieces) {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(piece.pointer, piece.allocated);
+        GuestArena::GuestArenaRelease_nid_postfix(piece.pointer, piece.allocated);
+#else
+        munmap(piece.mapping, piece.allocated + block);
+#endif
+    }
+    std::cout << (remembered ? "an address-based build answered from a remembered budget refusal evicts instead of copying a partly unwatched heap past the cap\n" : "an address-based build serves a partly unwatched heap whose import is over the budget\n");
+}
+
 void hostWriteWatchExclusionTests() {
 #ifdef _WIN32
     std::vector<std::uint8_t> host(64, 0x31);
@@ -3737,5 +3868,10 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");
+    AgcDriver::GuestMemory::Unwatch(0x10000, 0x20000);
+    AgcDriver::GuestMemory::Unwatch(0x40000, 0x10000);
+    Require(!AgcDriver::GuestMemory::Watched(0x10000, 0x20000), "the unregistered heap copy range is write-watched");
+    const auto heapCopies = AddressCopyOverflow({{0x10000, 0x30000, 0x18000, nullptr, true, true}, {0x40000, 0x50000, 0x10000, nullptr, true, false}}, 0x2000);
+    Require(heapCopies.find("0x10000+0x20000 (0.1 MiB committed, import over the host import budget, heap not fully write-watched)") != std::string::npos && heapCopies.find("0x40000+0x10000 (0.1 MiB committed, heap not fully write-watched)") != std::string::npos, "the copy limit does not name a copied heap's reason");
     ClearSnapshotCopies(context.device);
 }
