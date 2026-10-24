@@ -33,6 +33,7 @@ static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
+static constexpr int ErrorNotInitialized = static_cast<int>(0x80D90001);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -69,6 +70,9 @@ int main() {
     }
     AppContentInitParam init{};
     AppContentBootParam boot{};
+    Require(sceAppContentAddcontMount(0, nullptr, nullptr) == ErrorNotInitialized);
+    Require(sceAppContentAddcontUnmount(nullptr) == ErrorNotInitialized);
+    Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == ErrorNotInitialized);
     Require(sceAppContentInitialize(nullptr, &boot) == ErrorParameter);
     Require(sceAppContentInitialize(&init, nullptr) == ErrorParameter);
     init.reserved[31] = 1;
