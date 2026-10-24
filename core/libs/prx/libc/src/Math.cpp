@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <xmmintrin.h>
 
 #include "prx/libc/include/General.hpp"
@@ -314,7 +315,74 @@ float APS5_VABI acosf_nid_postfix(float x) {
     return result;
 }
 float APS5_VABI atan2f_nid_postfix(float y, float x) { return std::atan2(y, x); }
-float APS5_VABI hypotf_nid_postfix(float x, float y) { return static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y))); }
+float APS5_VABI hypotf_nid_postfix(float x, float y) {
+    const auto word = [](float value) { return static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(value)); };
+    const auto fromWord = [](std::int32_t value) { return std::bit_cast<float>(static_cast<std::uint32_t>(value)); };
+    std::int32_t ha = word(x) & 0x7fffffff;
+    std::int32_t hb = word(y) & 0x7fffffff;
+    float a = x;
+    float b = y;
+    if (hb > ha) {
+        std::swap(a, b);
+        std::swap(ha, hb);
+    }
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 0xf000000) {
+        return a + b;
+    }
+    int k = 0;
+    if (ha > 0x58800000) {
+        if (ha >= 0x7f800000) {
+            float w = std::fabs(x + 0.0f) - std::fabs(y + 0.0f);
+            if (ha == 0x7f800000) {
+                w = a;
+            }
+            if (hb == 0x7f800000) {
+                w = b;
+            }
+            return w;
+        }
+        ha -= 0x22000000;
+        hb -= 0x22000000;
+        k += 68;
+        a = fromWord(ha);
+        b = fromWord(hb);
+    }
+    if (hb < 0x26800000) {
+        if (hb <= 0x007fffff) {
+            if (hb == 0) {
+                return a;
+            }
+            b *= 0x1p126f;
+            a *= 0x1p126f;
+            k -= 126;
+        } else {
+            ha += 0x22000000;
+            hb += 0x22000000;
+            k -= 68;
+            a = fromWord(ha);
+            b = fromWord(hb);
+        }
+    }
+    float w = a - b;
+    if (w > b) {
+        const float t1 = fromWord(ha & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const float y1 = fromWord(hb & static_cast<std::int32_t>(0xfffff000));
+        const float y2 = b - y1;
+        const float t1 = fromWord((ha + 0x00800000) & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k != 0) {
+        return fromWord((127 + k) << 23) * w;
+    }
+    return w;
+}
 double APS5_VABI hypot_nid_postfix(double x, double y) {
     const std::uint64_t hx = std::bit_cast<std::uint64_t>(x);
     const std::uint64_t hy = std::bit_cast<std::uint64_t>(y);

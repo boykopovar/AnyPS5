@@ -712,6 +712,44 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckHypotfConsoleBits() {
+    constexpr struct {
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t expected;
+    } cases[] = {
+        {0x40400000u, 0xc0800000u, 0x40a00000u},
+        {0x00000000u, 0x80000000u, 0x00000000u},
+        {0x3f800000u, 0x00000000u, 0x3f800000u},
+        {0x00000001u, 0x00000001u, 0x00000001u},
+        {0x007fffffu, 0x00000003u, 0x007fffffu},
+        {0x26800000u, 0x267fffffu, 0x26b504f3u},
+        {0x3f800000u, 0x307fffffu, 0x3f800000u},
+        {0x3f800000u, 0x30800001u, 0x3f800000u},
+        {0x58800001u, 0x58800000u, 0x58b504f4u},
+        {0x7f000000u, 0x7f000000u, 0x7f3504f3u},
+        {0x7f3504f3u, 0x7f3504f3u, 0x7f7fffffu},
+        {0x7f3504f4u, 0xff3504f4u, 0x7f800000u},
+        {0x7f7fffffu, 0x73000000u, 0x7f7fffffu},
+        {0x7f800000u, 0x7fc00123u, 0x7f800000u},
+        {0xffc00123u, 0xff800000u, 0x7f800000u},
+        {0x7fc00123u, 0x3f800000u, 0x7fc00123u},
+        {0xffc00002u, 0x7fc00001u, 0x7fc00002u},
+        {0x7fc00001u, 0xffc00002u, 0x7fc00001u},
+        {0xbc059eb6u, 0x39413c60u, 0x3c05a772u},
+        {0x3f700f06u, 0x452dc68bu, 0x452dc68bu},
+        {0xb9b28c49u, 0xb9416ea5u, 0x39cb0f61u},
+        {0x4056e15fu, 0x4379cdefu, 0x4379d3b5u},
+        {0x3f750592u, 0x3a7fa6a3u, 0x3f75059bu},
+        {0xc3a8012eu, 0x47264372u, 0x472644c5u},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(hypotf_nid_postfix(std::bit_cast<float>(item.x), std::bit_cast<float>(item.y))) == item.expected && errno == 1234);
+        Require(std::bit_cast<std::uint32_t>(hypotf_nid_postfix(std::bit_cast<float>(item.y), std::bit_cast<float>(item.x))) == item.expected || std::isnan(std::bit_cast<float>(item.expected)));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -1669,6 +1707,7 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckHypotfConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
