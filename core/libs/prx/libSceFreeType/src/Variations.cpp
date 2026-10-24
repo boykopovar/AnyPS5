@@ -54,4 +54,8 @@ int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec* face, void** master) {
     return 0;
 }
 
+int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary* library, void* master) {
+    return FT_Done_MM_Var(library ? library->host : nullptr, static_cast<FT_MM_Var*>(master));
+}
+
 }
