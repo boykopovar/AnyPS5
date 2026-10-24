@@ -32,6 +32,7 @@ extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);
 extern "C" std::filesystem::path ResolveDiskPath_nid_no_patch(const char* path);
+extern "C" std::filesystem::path AppOverlayPath_nid_no_patch(const std::filesystem::path& native);
 extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::filesystem::path& path);
 extern "C" int SetWorkingDirectory_nid_no_patch(const char* resolved);
 extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path);

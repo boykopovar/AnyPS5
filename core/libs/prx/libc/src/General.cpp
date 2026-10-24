@@ -1,5 +1,6 @@
 #include <atomic>
 #include <cstdio>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -265,10 +266,38 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath, 
     return std::nullopt;
 }
 
+struct AppOverlay {
+    bool scanned = false;
+    std::map<std::string, std::filesystem::path> files;
+    std::set<std::string> announced;
+};
+
+std::string OverlayKey(std::span<const std::string> names) {
+    std::string key;
+    for (const auto& name : names) {
+        if (!key.empty()) key += '/';
+        for (const char character : name) key += character >= 'A' && character <= 'Z' ? static_cast<char>(character + ('a' - 'A')) : character;
+    }
+    return key;
+}
+
+bool ExecutableHeader(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    unsigned char magic[4]{};
+    if (stream) stream.read(reinterpret_cast<char*>(magic), sizeof(magic));
+    if (!stream.is_open() || stream.bad()) throw std::runtime_error("app0 overlay: cannot read " + path.string());
+    if (stream.gcount() != static_cast<std::streamsize>(sizeof(magic))) return false;
+    constexpr unsigned char elf[] = {0x7f, 'E', 'L', 'F'};
+    constexpr unsigned char ps4Self[] = {0x4f, 0x15, 0x3d, 0x1d};
+    constexpr unsigned char ps5Self[] = {0x54, 0x14, 0xf5, 0xee};
+    return std::memcmp(magic, elf, sizeof(magic)) == 0 || std::memcmp(magic, ps4Self, sizeof(magic)) == 0 || std::memcmp(magic, ps5Self, sizeof(magic)) == 0;
+}
+
 struct WorkingDirectory {
     std::mutex mutex;
     const std::filesystem::path root = std::filesystem::canonical(std::filesystem::current_path());
     std::filesystem::path current = root;
+    AppOverlay overlay;
 };
 WorkingDirectory& Directories() {
     static auto* state = new WorkingDirectory;
@@ -292,10 +321,74 @@ std::optional<std::filesystem::path> ProvidedPath(const WorkingDirectory& state,
     if (provided.empty()) return std::nullopt;
     return provided.make_preferred();
 }
-std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::string>& names, bool module = false) {
+std::optional<std::filesystem::path> OverlayPath(WorkingDirectory& state, const std::vector<std::string>& names);
+std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::string>& names, bool module = false, bool overlay = false) {
     if (auto aliased = ResolveAlias(JoinNames(names), module)) return *aliased;
+    if (auto shadowed = overlay ? OverlayPath(state, names) : std::nullopt) return *shadowed;
     if (auto provided = ProvidedPath(state, names)) return *provided;
     return ResolveHostPath(state.root, names, module).make_preferred();
+}
+void ScanOverlay(WorkingDirectory& state) {
+    const auto app0 = HostPath(state, {"app0"});
+    auto root = app0;
+    root += "-overlay";
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(root, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory)
+        throw std::runtime_error("app0 overlay: cannot read " + root.string() + ": " + error.message());
+    if (!std::filesystem::exists(status)) {
+        state.overlay.scanned = true;
+        return;
+    }
+    if (std::filesystem::is_symlink(status)) throw std::runtime_error("app0 overlay: " + root.string() + " is a symbolic link");
+    if (!std::filesystem::is_directory(status)) throw std::runtime_error("app0 overlay: " + root.string() + " is not a directory");
+    std::map<std::string, std::filesystem::path> files;
+    std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> pending{{root, {}}};
+    while (!pending.empty()) {
+        const auto [directory, names] = std::move(pending.back());
+        pending.pop_back();
+        std::filesystem::directory_iterator entry(directory, error), end;
+        for (; !error && entry != end; entry.increment(error)) {
+            const auto path = entry->path();
+            auto relative = names;
+            relative.push_back(path.filename().string());
+            std::error_code kindError;
+            const auto kind = entry->symlink_status(kindError);
+            if (kindError) throw std::runtime_error("app0 overlay: cannot read " + path.string() + ": " + kindError.message());
+            if (std::filesystem::is_symlink(kind)) throw std::runtime_error("app0 overlay: " + path.string() + " is a symbolic link");
+            if (std::filesystem::is_directory(kind)) {
+                pending.emplace_back(path, std::move(relative));
+                continue;
+            }
+            if (!std::filesystem::is_regular_file(kind)) throw std::runtime_error("app0 overlay: " + path.string() + " is neither a regular file nor a directory");
+            if (ExecutableHeader(path)) throw std::runtime_error("app0 overlay: " + path.string() + " is an ELF or SELF executable");
+            const auto base = ResolveHostPath(app0, relative);
+            std::error_code baseError;
+            const bool onDisk = std::filesystem::is_regular_file(base, baseError);
+            if (baseError && baseError != std::errc::no_such_file_or_directory && baseError != std::errc::not_a_directory)
+                throw std::runtime_error("app0 overlay: cannot read " + base.string() + ": " + baseError.message());
+            AppArchiveNode node{};
+            if (!onDisk && !(AppArchiveLookup_nid_no_patch(base, &node) && !node.Directory))
+                throw std::runtime_error("app0 overlay: " + path.string() + " shadows no file in app0 or app0.zar");
+            const auto [found, inserted] = files.emplace(OverlayKey(relative), path);
+            if (!inserted) throw std::runtime_error("app0 overlay: " + found->second.string() + " and " + path.string() + " shadow the same file");
+        }
+        if (error) throw std::runtime_error("app0 overlay: cannot list " + directory.string() + ": " + error.message());
+    }
+    state.overlay.files = std::move(files);
+    state.overlay.scanned = true;
+    WriteLogLine(stderr, "app0 overlay: %s\n", root.string().c_str());
+}
+std::optional<std::filesystem::path> OverlayPath(WorkingDirectory& state, const std::vector<std::string>& names) {
+    if (names.empty() || !SameName(names.front(), "app0")) return std::nullopt;
+    if (!state.overlay.scanned) ScanOverlay(state);
+    if (state.overlay.files.empty() || names.size() < 2 || names.back().empty()) return std::nullopt;
+    const auto key = OverlayKey(std::span<const std::string>(names).subspan(1));
+    const auto found = state.overlay.files.find(key);
+    if (found == state.overlay.files.end()) return std::nullopt;
+    if (state.overlay.announced.insert(key).second)
+        WriteLogLine(stderr, "app0 overlay: /%s -> %s\n", JoinNames(names).c_str(), found->second.string().c_str());
+    return found->second;
 }
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
@@ -367,7 +460,7 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool mo
     }
     if (endsWithDot && !names.empty() && !(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, names)))) RequireHostDirectory(state, names);
     const bool directory = trailing && !names.empty();
-    auto resolved = HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
+    auto resolved = HostPath(state, WithTrailingSeparator(std::move(names), trailing), module, archived);
     if (directory) RejectNonDirectory(resolved);
     return resolved;
 }
@@ -736,6 +829,49 @@ extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const 
     auto resolved = ResolveLocked(path, true, true);
     AppArchiveRefuseOnly_nid_no_patch(resolved, path, "reading");
     return resolved;
+}
+
+namespace {
+std::optional<std::vector<std::string>> NamesUnderApp0(const std::filesystem::path& normal, const std::filesystem::path& app0) {
+    std::vector<std::string> names;
+    auto part = normal.begin();
+    bool prefixed = true;
+    for (const auto& component : app0) {
+        if (part == normal.end() || !SameName(part->string(), component.string())) {
+            prefixed = false;
+            break;
+        }
+        ++part;
+    }
+    if (prefixed) {
+        for (; part != normal.end(); ++part) names.push_back(part->string());
+        return names;
+    }
+    for (auto cursor = normal; cursor.has_relative_path(); cursor = cursor.parent_path()) {
+        std::error_code error;
+        if (std::filesystem::equivalent(cursor, app0, error)) return names;
+        names.insert(names.begin(), cursor.filename().string());
+    }
+    return std::nullopt;
+}
+}
+
+extern "C" std::filesystem::path AppOverlayPath_nid_no_patch(const std::filesystem::path& native) {
+    const auto normal = native.lexically_normal();
+    if (!normal.has_filename()) return native;
+    AppArchiveReady_nid_no_patch();
+    auto& state = Directories();
+    std::lock_guard lock(state.mutex);
+    if (state.overlay.scanned && state.overlay.files.empty()) return native;
+    const auto relative = NamesUnderApp0(normal, HostPath(state, {"app0"}).lexically_normal());
+    if (!relative) return native;
+    std::vector<std::string> names{"app0"};
+    for (const auto& name : *relative) {
+        if (name == "..") return native;
+        if (!name.empty() && name != ".") names.push_back(name);
+    }
+    const auto shadowed = OverlayPath(state, names);
+    return shadowed ? *shadowed : native;
 }
 
 extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::filesystem::path& path) {

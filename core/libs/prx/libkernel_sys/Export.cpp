@@ -371,8 +371,8 @@ std::int64_t APS5_VABI readlinkat_nid_postfix(int fd, const char* path, char* bu
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return Fail(error);
-    return ReadNativeLink(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                          std::filesystem::path(reinterpret_cast<const char8_t*>(path)), buffer, size);
+    return ReadNativeLink(AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
+                          std::filesystem::path(reinterpret_cast<const char8_t*>(path))), buffer, size);
 }
 
 std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
@@ -591,8 +591,8 @@ int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) 
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return static_cast<int>(Fail(error));
-    auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                  std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+    auto native = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
+                  std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
 #ifdef _WIN32
     if (!CreateDirectoryW(native.wstring().c_str(), nullptr)) {
@@ -630,7 +630,7 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
-        native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+        native = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
     }
     if (flag == GuestAtSymlinkNofollow) {
 #ifdef _WIN32
@@ -747,8 +747,8 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return static_cast<int>(Fail(error));
-    auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                  std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+    auto native = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
+                  std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
     const bool trailingSlash = !native.has_filename() && native.has_relative_path();
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
     std::error_code statusError;
@@ -833,8 +833,8 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(oldfd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
-        source = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                 std::filesystem::path(reinterpret_cast<const char8_t*>(from));
+        source = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
+                 std::filesystem::path(reinterpret_cast<const char8_t*>(from)));
     }
 
     std::filesystem::path destination;
@@ -844,8 +844,8 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(newfd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
-        destination = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                      std::filesystem::path(reinterpret_cast<const char8_t*>(to));
+        destination = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
+                      std::filesystem::path(reinterpret_cast<const char8_t*>(to)));
     }
 
     const std::string_view fromView(from);

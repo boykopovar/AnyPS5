@@ -200,7 +200,19 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override. Use a game's own display setting when it offers one. A game that reads its output size from a data file can be given an edited copy of that file through the [app0 overlay](#app0-overlay), and one that sets it in code can be changed with a [game patch](#game-patches).
+
+### app0 overlay
+
+A directory named `app0-overlay` beside `app0/` replaces files of `app0/` without changing them. A regular file at `app0-overlay/<path>` is read instead of `app0/<path>`, or instead of `<path>` in `app0.zar`; names match ignoring ASCII case, as they do in `app0/`. Every path the game uses sees the replacement: opening, `stat`, APR reads, and calls relative to a directory descriptor such as `openat`. Directories always come from `app0/`, so a directory listing shows the entries of `app0/`. Writing to, renaming or removing a replaced file acts on the copy in `app0-overlay/`.
+
+The first time the game uses a path under `/app0`, AnyPS5 reads the whole overlay and prints `app0 overlay: <directory>`; the first time it uses each replaced file it prints `app0 overlay: /app0/<path> -> <file>`. The game stops at that first use, with an error that names the file, when the overlay holds:
+
+- a file with no counterpart in `app0/` or `app0.zar`, since directory listings would not show it;
+- a file that starts with an ELF or SELF header, since code is changed with [game patches](#game-patches) at conversion;
+- a symbolic link, or anything other than regular files and directories.
+
+To change a setting in a data file, copy the file from `app0/` to the same path under `app0-overlay/` and edit the copy. Delete the copy to go back to the original.
 
 ### VR compatibility
 

@@ -290,7 +290,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(directory, &error);
     if (base == nullptr) return SceErrorFromErrno(error);
-    return OpenNative(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path)), flags, mode);
+    return OpenNative(AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path))), flags, mode);
 }
 
 int APS5_VABI sceKernelClose(int d) {
@@ -426,7 +426,7 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(directory, &error);
     if (base == nullptr) return SceErrorFromErrno(error);
-    const auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+    const auto native = AppOverlayPath_nid_no_patch(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
     if (follow) return StatNative(native, std::string_view(path).back() == '/', sb);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
     if (!File::FillLinkStat(native, sb)) return SceErrorFromErrno(errno);
