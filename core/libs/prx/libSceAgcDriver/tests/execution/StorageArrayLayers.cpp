@@ -1,5 +1,7 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -21,7 +23,16 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <mutex>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -178,6 +189,26 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
+void ExtendMipChain(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    AgcDriver::Graphics::GuestTextureResource chain{};
+    chain.baseAddress = AddressOf(texels);
+    chain.width = Side;
+    chain.height = Side;
+    chain.mipCount = 2;
+    chain.allocatedMipCount = 1;
+    chain.tileMode = AgcDriver::Graphics::TextureTileMode::kLinear;
+    chain.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+    chain.format = Format32UInt;
+    chain.dstSelX = 4;
+    chain.dstSelY = 5;
+    chain.dstSelZ = 6;
+    chain.dstSelW = 7;
+    Require(AgcDriver::Graphics::DescribeSurface(chain).guestBytes <= SurfaceBytes, "storage array layers: the two-level chain does not fit its guest block");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(AgcDriver::Graphics::CachedStorageLayers(context, chain, 0, 1) != nullptr, "storage array layers: the two-level chain has no storage image");
+}
+
 }
 
 int main() {
@@ -186,6 +217,10 @@ int main() {
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
         Run(*device, block.Data());
+        GuestBlock chain;
+        ExtendMipChain(*device, chain.Data());
+        GuestBlock extended;
+        Run(*device, extended.Data());
         std::puts("storage array layers tests passed");
         return 0;
     } catch (const std::exception& error) {

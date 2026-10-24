@@ -1178,16 +1178,18 @@ GuestTextureResource StorageSurface(const Context& context, const GuestTextureRe
     auto surface = viewed;
     surface.mipCount = AllocatedLevels(viewed);
     const auto identity = SurfaceKey(context, surface);
-    std::lock_guard lock(surfaces.mutex);
-    if (extended) {
-        auto& levels = surfaces.levels[identity];
-        levels = std::max(levels, viewed.mipCount);
-        surfaces.any.store(true, std::memory_order_release);
-        surface.mipCount = levels;
-    } else if (const auto it = surfaces.levels.find(identity); it != surfaces.levels.end()) {
-        surface.mipCount = it->second;
-    } else {
-        surface.mipCount = viewed.mipCount;
+    {
+        std::lock_guard lock(surfaces.mutex);
+        if (extended) {
+            auto& levels = surfaces.levels[identity];
+            levels = std::max(levels, viewed.mipCount);
+            surfaces.any.store(true, std::memory_order_release);
+            surface.mipCount = levels;
+        } else if (const auto it = surfaces.levels.find(identity); it != surfaces.levels.end()) {
+            surface.mipCount = it->second;
+        } else {
+            surface.mipCount = viewed.mipCount;
+        }
     }
     return StorageArraySurface(context, surface);
 }
@@ -5840,7 +5842,7 @@ void ShaderResources::WriteBack() {
     if (!SkipWriteBack()) {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
-            if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageLayers[index].second);
+            if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageFirstLayer[index] ? 1u : storageLayers[index].second);
             else storageTextures[index]->MarkDirty();
             static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
         }
@@ -5862,7 +5864,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
-        if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageLayers[index].second);
+        if (storageLayers[index].second != 0) storageTextures[index]->MarkSliceDirty(storageLayers[index].first, storageFirstLayer[index] ? 1u : storageLayers[index].second);
         else storageTextures[index]->MarkDirty();
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
