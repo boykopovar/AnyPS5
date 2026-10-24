@@ -3908,6 +3908,18 @@ void waitForIdlePublish(const char* reason) {
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
+    const auto nothingToStore = [&] {
+        auto& pending = Pending();
+        if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
+        if (!pending.textures.SurelyClear(address, bytes)) {
+            std::lock_guard lock(pending.mutex);
+            const auto* exempt = refreshing;
+            if (pending.textures.MayOverlap(address, bytes) && std::any_of(pending.textures.begin(), pending.textures.end(), [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes); })) return false;
+            if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
+        }
+        return scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes);
+    };
+    if (nothingToStore()) return false;
     if (AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes)) {
         queuedReadHeld.fetch_add(1, std::memory_order_relaxed);
         return false;
