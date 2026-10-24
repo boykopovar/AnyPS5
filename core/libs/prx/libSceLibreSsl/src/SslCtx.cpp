@@ -64,4 +64,8 @@ void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(LibreSslCtx* ctx, void*
     Context(ctx, __func__).defaultPasswdCallback = callback;
 }
 
+void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* ctx, void* userdata) {
+    Context(ctx, __func__).defaultPasswdCallbackUserdata = userdata;
+}
+
 }
