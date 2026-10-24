@@ -761,6 +761,12 @@ if(BUILD_TESTING)
     configure_windows_unwind(savedata_native_write_replacement_tests)
     add_test(NAME savedata_native_write_replacement COMMAND savedata_native_write_replacement_tests)
 
+    add_test_executable(savedata_native_progress_tests tests/SaveDataProgress.cpp)
+    target_include_directories(savedata_native_progress_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(savedata_native_progress_tests PRIVATE libSceSaveData.native)
+    configure_windows_unwind(savedata_native_progress_tests)
+    add_test(NAME savedata_native_progress COMMAND savedata_native_progress_tests)
+
     add_test_executable(savedata_replace_file_failure_tests tests/SaveDataFileWriteFailure.cpp)
     target_include_directories(savedata_replace_file_failure_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     configure_windows_unwind(savedata_replace_file_failure_tests)
@@ -789,6 +795,7 @@ if(BUILD_TESTING)
 
     if(MINGW)
         target_compile_options(savedata_core_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)
+        target_compile_options(savedata_native_progress_tests PRIVATE -fasynchronous-unwind-tables)
         target_compile_options(savedata_native_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)
         target_compile_options(savedata_replace_file_failure_tests PRIVATE -fasynchronous-unwind-tables)
     endif()
@@ -796,6 +803,8 @@ if(BUILD_TESTING)
         set_tests_properties(savedata_core_write_replacement PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
         set_tests_properties(savedata_native_write_replacement PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+        set_tests_properties(savedata_native_progress PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 

@@ -157,11 +157,6 @@ int APS5_VABI sceSaveDataCheckSaveDataVersionLatest(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataClearProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSaveDataCreateUploadData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -262,11 +257,6 @@ int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSaveDataGetSaveDataCount() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -293,11 +283,6 @@ int APS5_VABI sceSaveDataGetSavePoint(void) {
 }
 
 int APS5_VABI sceSaveDataGetUpdatedDataCount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSaveDataInitialize2() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
