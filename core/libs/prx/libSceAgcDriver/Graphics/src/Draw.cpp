@@ -846,6 +846,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
         add(state.topology);
         add(state.cullMode);
         add(state.polygonMode);
+        add(state.lineWidth);
         add(state.blends.size());
         add(context.subgroup.subgroupSize);
         add(context.subgroup.supportedStages);

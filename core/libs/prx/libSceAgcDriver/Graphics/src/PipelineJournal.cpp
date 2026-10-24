@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -210,6 +211,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.U32(static_cast<std::uint32_t>(state.conservativeRasterization));
     writer.U32(state.cullMode);
     writer.U32(static_cast<std::uint32_t>(state.polygonMode));
+    writer.U32(std::bit_cast<std::uint32_t>(state.lineWidth));
     writer.U32(static_cast<std::uint32_t>(state.frontFace));
     writer.U32(static_cast<std::uint32_t>(state.provokingVertexMode));
     writer.U32(state.samples);
@@ -277,6 +279,7 @@ void decodeState(Reader& reader, State& state) {
     state.conservativeRasterization = static_cast<VkConservativeRasterizationModeEXT>(reader.U32());
     state.cullMode = reader.U32();
     state.polygonMode = static_cast<VkPolygonMode>(reader.U32());
+    state.lineWidth = std::bit_cast<float>(reader.U32());
     state.frontFace = static_cast<VkFrontFace>(reader.U32());
     state.provokingVertexMode = static_cast<VkProvokingVertexModeEXT>(reader.U32());
     state.samples = reader.U32();
@@ -1056,6 +1059,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.conservativeRasterization = state.conservativeRasterization;
     canonical.cullMode = state.cullMode;
     canonical.polygonMode = state.polygonMode;
+    canonical.lineWidth = state.lineWidth;
     canonical.frontFace = state.frontFace;
     canonical.provokingVertexMode = state.provokingVertexMode;
     canonical.samples = state.samples;

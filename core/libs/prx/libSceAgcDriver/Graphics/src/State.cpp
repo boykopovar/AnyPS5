@@ -84,7 +84,7 @@ VkPolygonMode decodePolygonMode(const Registers& cx, std::uint32_t raster, const
     if (type == 1) {
         const auto line = find(cx, 0x282);
         if (line == cx.end()) throw std::runtime_error("AGC graphics: a line polygon mode needs PA_SU_LINE_CNTL");
-        if ((line->second & 0xffffu) != 8u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x282, line->second, "a line polygon mode wider or narrower than one pixel"));
+        if ((line->second & 0xffffu) == 0u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x282, line->second, "a line polygon mode with a zero line width"));
         return VK_POLYGON_MODE_LINE;
     }
     const auto size = find(cx, 0x280);
@@ -1450,6 +1450,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     result.cullMode = ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
     if (result.rectList) result.cullMode = VK_CULL_MODE_NONE;
     result.polygonMode = decodePolygonMode(cx, raster, result, pointsOrLines);
+    if (result.polygonMode == VK_POLYGON_MODE_LINE) result.lineWidth = static_cast<float>(find(cx, 0x282)->second & 0xffffu) / 8.0f;
     if ((raster & 0x1800u) != 0 && result.depth) decodeDepthBias(cx, raster, result);
     result.frontFace = (raster & 4u) != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     result.provokingVertexMode = (raster & (1u << 19u)) != 0 ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;

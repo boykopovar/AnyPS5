@@ -148,6 +148,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    float lineWidth = 1.0f;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
