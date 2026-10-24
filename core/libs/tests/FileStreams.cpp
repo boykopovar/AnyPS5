@@ -208,6 +208,16 @@ int main(int argc, char** argv) {
     errno = 0;
     Require(fseek_nid_postfix(stream, 0, -1) == -1);
     Require(errno == EINVAL);
+    Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
+    char16_t word[16] = {};
+    char16_t letters[3] = {u'!', u'!', u'!'};
+    int scanned = -1;
+    Require(fscanf_nid_postfix(stream, "%ls %2lc%n", word, letters, &scanned) == 2);
+    Require(std::u16string(word) == u"stream" && letters[0] == u'r' && letters[1] == u'o' && letters[2] == u'!' && scanned == 9);
+    Require(ftell_nid_postfix(stream) == 9);
+    Require(fscanf_nid_postfix(stream, "%l[a-z]", word) == 1 && std::u16string(word) == u"und");
+    Require(fscanf_nid_postfix(stream, "%*ls %C", letters) == 1 && letters[0] == u'r');
+    Require(fscanf_nid_postfix(stream, "%3S", word) == 1 && std::u16string(word) == u"oun");
     Require(fclose_nid_postfix(stream) == 0);
     ExpectException([] { fputs_nid_postfix("invalid stream", nullptr); });
     ExpectException([] { fopen_nid_postfix(nullptr, "r"); });
