@@ -533,7 +533,7 @@ static double Expm1(double x) {
     }
     double y;
     if (k <= -2 || k > 56) {
-        y = 1.0 - (e - x);
+        y = 1.0 + (x - e);
         if (k == 1024) {
             y = y * 2.0 * 0x1p1023;
         } else {
