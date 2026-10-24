@@ -6340,6 +6340,111 @@ void splitWriteBackTests(const Device& device, Recorder& recorder) {
     std::cout << "split write-back: ok\n";
 }
 
+void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: the DCC mip chain write-back not tested\n";
+        return;
+    }
+    struct Case {
+        const char* name;
+        bool dcc;
+        bool everyUnit;
+    };
+    const Case cases[] = {
+        {"64 KiB R_X 512x512, 3 mips, no DCC, an access to the first unit", false, false},
+        {"64 KiB R_X 512x512, 3 mips, DCC keys uncompressed, an access to the first unit", true, true},
+    };
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    std::string failures;
+    for (const auto& test : cases) {
+        GuestTextureResource resource{};
+        resource.width = 512;
+        resource.height = 512;
+        resource.mipCount = 3;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto geometry = DescribeSurface(resource);
+        const auto surfaceBytes = static_cast<std::size_t>(geometry.guestBytes);
+        Require(surfaceBytes > 65536, std::string(test.name) + ": the surface fits one unit");
+        std::size_t texelCount = 0;
+        for (const auto& mip : geometry.mips) texelCount += static_cast<std::size_t>(mip.width) * mip.height;
+        const auto keysOffset = (surfaceBytes + 65535) / 65536 * 65536;
+        const auto keyBytes = DccKeyBytes(surfaceBytes);
+        const auto bytes = (keysOffset + keyBytes + 65535) / 65536 * 65536;
+#ifdef _WIN32
+        void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        void* block = std::aligned_alloc(65536, bytes);
+#endif
+        Require(block != nullptr, "cannot allocate the DCC mip chain block");
+        auto* memory = static_cast<std::uint8_t*>(block);
+        for (std::size_t i = 0; i < bytes; ++i) memory[i] = pattern(i);
+        std::memset(memory + keysOffset, 0xff, keyBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::size_t bytes;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+#ifdef _WIN32
+                VirtualFree(block, 0, MEM_RELEASE);
+#else
+                std::free(block);
+#endif
+            }
+        } unregister{base, block, bytes};
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        resource.baseAddress = address;
+        resource.dccAddress = test.dcc ? address + keysOffset : 0;
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            if (test.dcc) Require(image->UploadedKeys() == DccKeys::Uncompressed, std::string(test.name) + ": the image did not take its keys as uncompressed");
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, resource.mipCount, 0, 1};
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+            Require(StorageTexture::FlushPending(address, 65536, nullptr, "DCC mip chain test"), std::string(test.name) + ": the pending image was not flushed");
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            std::size_t texels = 0;
+            for (std::size_t i = 0; i < surfaceBytes; i += 4) texels += std::equal(red.begin(), red.end(), memory + i) ? 1 : 0;
+            if (test.everyUnit && texels != texelCount) failures += std::string(test.name) + ": the write-back stored " + std::to_string(texels) + " of " + std::to_string(texelCount) + " texels\n";
+            if (!test.everyUnit && (texels == 0 || texels >= texelCount)) failures += std::string(test.name) + ": the write-back stored " + std::to_string(texels) + " of " + std::to_string(texelCount) + " texels, expected only the accessed unit's\n";
+            StorageTexture::FlushPending(address, surfaceBytes, nullptr, "DCC mip chain test");
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            Require(StorageTexture::FindPending(address, surfaceBytes) == nullptr, std::string(test.name) + ": results stay pending after the whole surface was flushed");
+        }
+        recorder.Sync();
+    }
+    if (!failures.empty()) throw std::runtime_error("DCC mip chain write-back:\n" + failures);
+    std::cout << "DCC mip chain write-back: ok\n";
+}
+
 void writeBackBlockTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
@@ -11098,6 +11203,14 @@ int main(int argc, char** argv) {
             std::cout << "CMASK copied clear, write-back and failure tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-mip-writeback-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            dccMipWriteBackTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--writeback-blocks-only") {
             if (device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, host imports are unavailable\n";
@@ -11262,6 +11375,7 @@ int main(int argc, char** argv) {
         writeBackPaddingTests(device, recorder, true);
         splitWriteBackTests(device, recorder);
         writeBackBlockTests(device, recorder);
+        dccMipWriteBackTests(device, recorder);
         singlePassTests(device, recorder, false);
         singlePassTests(device, recorder, true);
         unchangedCpuStampTests(device, recorder);
