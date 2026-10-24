@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -516,12 +517,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         plan.runtimeState.assign(layout.runtimeStateDwords, 0u);
         for (std::uint32_t target = 0; target < exportMappings.size(); ++target) plan.runtimeState.at(RuntimeAbi::StateExportMappings + target / 4u) |= static_cast<std::uint32_t>(exportMappings[target]) << (target % 4u * 8u);
     }
-    std::vector<std::uint32_t> samplerMasks(info.samplers.size());
+    std::vector<std::uint64_t> samplerMasks(info.samplers.size());
     for (const auto& binding : plan.bindings) {
         if (binding.descriptor.role != DescriptorRole::GuestSamplers) continue;
-        if (binding.resources.size() > ShaderInfo::MaxSamplers) fail("prepared sampler mask capacity exceeded");
+        if (binding.resources.size() > std::numeric_limits<std::uint64_t>::digits) fail("prepared sampler mask capacity exceeded");
         for (std::uint32_t element = 0; element < binding.resources.size(); ++element) {
-            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= 1u << element;
+            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= std::uint64_t{1} << element;
         }
     }
     for (auto& binding : plan.bindings) {
@@ -614,9 +615,9 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
                 physical.imageAtomic.push_back(element.atomic);
-                std::uint32_t samplers = 0;
+                std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
-                    if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];
+                    if (((element.samplers >> sampler) & 1u) != 0u) samplers |= entry.tableSamplerMasks[sampler];
                 }
                 physical.imageSamplers.push_back(samplers);
             }

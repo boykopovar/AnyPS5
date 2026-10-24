@@ -432,7 +432,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageUnnormalizedBaseLevel);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerCoordinatesIgnored);
-    writer.Values(std::span<const std::uint32_t>(binding.imageSamplers));
+    writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
 }

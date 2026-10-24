@@ -3066,24 +3066,26 @@ void verifyImageTableUnkeyedAccess() {
 struct TableManyGuest {
     std::array<std::array<std::uint32_t, 8>, 128> heap{};
     std::array<std::uint32_t, 4> output{};
-    std::array<std::uint32_t, 128> srt{};
+    std::array<std::uint32_t, 160> srt{};
 };
 
 constexpr std::uint32_t TableManyDirectWord = 96u;
 constexpr std::uint32_t TableManyExtraSamplerWord = 112u;
+constexpr std::uint32_t TableManyMoreSamplerWord = 116u;
+constexpr std::array<std::uint32_t, 8> TableManySamplerSgprs{8u, 12u, 64u, 68u, 72u, 76u, 80u, 84u};
 
-std::vector<std::uint32_t> TableManyKeyCode(std::uint32_t first, std::uint32_t second, bool twoSamplers, std::uint32_t direct = 0u, bool extraSampler = false) {
+std::vector<std::uint32_t> TableManyKeyCode(std::uint32_t first, std::uint32_t second, std::uint32_t samplers, std::uint32_t direct = 0u, bool extraSampler = false) {
     std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4080a00u, 0xfa000040u, 0x7e100280u};
     for (std::uint32_t image = 0; image < direct; image++) code.insert(code.end(), {0xf40c0000u | ((44u + image * 8u) << 6u), 0xfa000000u | ((TableManyDirectWord + image * 8u) * 4u)});
     if (extraSampler) code.insert(code.end(), {0xf4080f00u, 0xfa000000u | (TableManyExtraSamplerWord * 4u)});
+    for (std::uint32_t sampler = 2u; sampler < samplers; sampler++) code.insert(code.end(), {0xf4080000u | (TableManySamplerSgprs[sampler] << 6u), 0xfa000000u | ((TableManyMoreSamplerWord + (sampler - 2u) * 4u) * 4u)});
     for (std::uint32_t read = 0; read < first + second; read++) {
-        code.insert(code.end(), {0xf4000400u, 0xfa000050u + read * 4u, 0x8f108510u, read < first ? 0xf42c0502u : 0xf42c0514u, 0x20000000u, 0xf09c0f08u, 0x00450400u, 0x06100908u});
-        if (twoSamplers) code.insert(code.end(), {0xf09c0f08u, 0x00650400u, 0x06100908u});
+        code.insert(code.end(), {0xf4000400u, 0xfa000050u + read * 4u, 0x8f108510u, read < first ? 0xf42c0502u : 0xf42c0514u, 0x20000000u});
+        for (std::uint32_t sampler = 0; sampler < samplers; sampler++) code.insert(code.end(), {0xf09c0f08u, ((TableManySamplerSgprs[sampler] / 4u) << 21u) | 0x00050400u, 0x06100908u});
     }
     for (std::uint32_t image = 0; image < direct; image++) {
         const auto resource = ((44u + image * 8u) / 4u) << 16u;
-        code.insert(code.end(), {0xf09c0f08u, 0x00400400u | resource, 0x06100908u});
-        if (twoSamplers) code.insert(code.end(), {0xf09c0f08u, 0x00600400u | resource, 0x06100908u});
+        for (std::uint32_t sampler = 0; sampler < samplers; sampler++) code.insert(code.end(), {0xf09c0f08u, ((TableManySamplerSgprs[sampler] / 4u) << 21u) | 0x00000400u | resource, 0x06100908u});
         if (extraSampler && image + 1u == direct) code.insert(code.end(), {0xf09c0f08u, 0x01e00400u | resource, 0x06100908u});
     }
     code.insert(code.end(), {0xe0700000u, 0x80070800u, 0xbf810000u});
@@ -3110,6 +3112,8 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
         std::copy(direct.begin(), direct.end(), guest.srt.begin() + TableManyDirectWord + image * 8u);
     }
     guest.srt[TableManyExtraSamplerWord] = 0x91u;
+    std::fill(guest.srt.begin() + TableManyMoreSamplerWord, guest.srt.end(), 0u);
+    for (std::uint32_t sampler = 2u; sampler < TableManySamplerSgprs.size(); sampler++) guest.srt[TableManyMoreSamplerWord + (sampler - 2u) * 4u] = 0x92u;
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
     const auto columnOf = [](const IrResourcePlan& plan, const ImageResource& image) { return *plan.descriptorSources.at(image.source).tableColumn; };
@@ -3117,25 +3121,26 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
         return static_cast<std::uint32_t>(std::count_if(plan.info.images.begin(), plan.info.images.end(), [&](const ImageResource& image) { return image.table != NoTable && columnOf(plan, image).selected; }));
     };
     const std::string name = pairs ? "selected records within the pair limit" : "selected records within the image limit";
-    const std::uint32_t limit = pairs ? ShaderInfo::MaxSampledPairs / 2u : ShaderInfo::MaxImages;
+    const std::uint32_t samplers = pairs ? static_cast<std::uint32_t>(TableManySamplerSgprs.size()) : 1u;
+    const std::uint32_t limit = pairs ? ShaderInfo::MaxSampledPairs / samplers : ShaderInfo::MaxImages;
     const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
     if (direct) {
         const auto directImages = [&](const IrResourcePlan& plan) {
             return static_cast<std::uint32_t>(std::count_if(plan.info.images.begin(), plan.info.images.end(), [](const ImageResource& image) { return image.table == NoTable; }));
         };
         const auto reads = limit - 1u;
-        const auto fittingDirectCode = TableManyKeyCode(reads, 0u, pairs, 1u);
+        const auto fittingDirectCode = TableManyKeyCode(reads, 0u, samplers, 1u);
         const auto fittingDirect = GetResourcePlan(TableRequest(fittingDirectCode, userData));
         const auto describe = [&](const IrResourcePlan& plan) {
             return std::to_string(plan.info.images.size()) + " images (" + std::to_string(selectedTables(plan)) + " selected tables, " + std::to_string(directImages(plan)) + " direct), " + std::to_string(plan.info.sampledPairs.size()) + " pairs";
         };
-        require(fittingDirect->info.images.size() == limit && selectedTables(*fittingDirect) == reads && directImages(*fittingDirect) == 1u && fittingDirect->info.sampledPairs.size() == (pairs ? 2u : 1u) * limit, (name + ": selected reads and a direct image that fit lost the per-key split").c_str());
-        std::cout << name << ": " << reads << " selected reads and 1 direct image" << (pairs ? ", each with 2 samplers" : "") << ": " << describe(*fittingDirect) << '\n';
-        const auto pastDirectCode = TableManyKeyCode(reads, 0u, pairs, pairs ? 1u : 2u, pairs);
+        require(fittingDirect->info.images.size() == limit && selectedTables(*fittingDirect) == reads && directImages(*fittingDirect) == 1u && fittingDirect->info.sampledPairs.size() == samplers * limit, (name + ": selected reads and a direct image that fit lost the per-key split").c_str());
+        std::cout << name << ": " << reads << " selected reads and 1 direct image" << (pairs ? ", each with " + std::to_string(samplers) + " samplers" : std::string()) << ": " << describe(*fittingDirect) << '\n';
+        const auto pastDirectCode = TableManyKeyCode(reads, 0u, samplers, pairs ? 1u : 2u, pairs);
         const auto pastDirectRequest = TableRequest(pastDirectCode, userData);
         const auto pastDirect = GetResourcePlan(pastDirectRequest);
         const auto mergedDirect = std::find_if(pastDirect->info.images.begin(), pastDirect->info.images.end(), [](const ImageResource& image) { return image.table != NoTable; });
-        require(pastDirect->info.images.size() == (pairs ? 2u : 3u) && selectedTables(*pastDirect) == 0u && directImages(*pastDirect) == (pairs ? 1u : 2u) && pastDirect->info.sampledPairs.size() == (pairs ? 5u : 3u) && mergedDirect != pastDirect->info.images.end(), (name + ": selected reads that the direct " + (pairs ? "sampler" : "images") + " push past the limit were not merged into one table").c_str());
+        require(pastDirect->info.images.size() == (pairs ? 2u : 3u) && selectedTables(*pastDirect) == 0u && directImages(*pastDirect) == (pairs ? 1u : 2u) && pastDirect->info.sampledPairs.size() == (pairs ? 2u * samplers + 1u : 3u) && mergedDirect != pastDirect->info.images.end(), (name + ": selected reads that the direct " + (pairs ? "sampler" : "images") + " push past the limit were not merged into one table").c_str());
         const auto mergedColumn = columnOf(*pastDirect, *mergedDirect);
         require(!mergedColumn.selected && mergedColumn.selection == 0u && !mergedColumn.unkeyed && mergedColumn.keyDomains.size() == reads, (name + ": the table merged beside the direct " + (pairs ? "sampler" : "images") + " is not the union of the keys").c_str());
         const auto compiledDirect = CompileTable(pastDirectRequest);
@@ -3146,16 +3151,16 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
             require(key < directSnapshot.codes.size() && (directSnapshot.codes[key] & Abi::PoisonFlag) == 0u && directSnapshot.words.at(directSnapshot.codes[key]).dwords == heap[key], (name + ": a key beside the direct " + (pairs ? "sampler" : "images") + " does not bind its record").c_str());
         }
         require(directSnapshot.codes.at(1) == outside && directSnapshot.codes.at(reads + 2u) == outside, (name + ": a key no read selects was bound beside the direct " + (pairs ? "sampler" : "images")).c_str());
-        std::cout << name << ": " << reads << " selected reads and " << (pairs ? "1 direct image with a third sampler" : "2 direct images") << ": " << describe(*pastDirect) << ", the reads merged into one table with " << mergedColumn.keyDomains.size() << " key domains\n";
+        std::cout << name << ": " << reads << " selected reads and " << (pairs ? "1 direct image with one more sampler" : "2 direct images") << ": " << describe(*pastDirect) << ", the reads merged into one table with " << mergedColumn.keyDomains.size() << " key domains\n";
         return;
     }
-    const auto fitting = TableManyKeyCode(limit, 0u, pairs);
+    const auto fitting = TableManyKeyCode(limit, 0u, samplers);
     const auto atLimit = GetResourcePlan(TableRequest(fitting, userData));
-    require(atLimit->info.images.size() == limit && selectedTables(*atLimit) == limit && atLimit->info.sampledPairs.size() == (pairs ? 2u : 1u) * limit, (name + ": reads that fit lost the per-key split").c_str());
-    const auto past = TableManyKeyCode(limit + 1u, 0u, pairs);
+    require(atLimit->info.images.size() == limit && selectedTables(*atLimit) == limit && atLimit->info.sampledPairs.size() == samplers * limit, (name + ": reads that fit lost the per-key split").c_str());
+    const auto past = TableManyKeyCode(limit + 1u, 0u, samplers);
     const auto request = TableRequest(past, userData);
     const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.sampledPairs.size() == (pairs ? 2u : 1u), (name + ": reads past the limit were not merged into one table").c_str());
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.sampledPairs.size() == samplers, (name + ": reads past the limit were not merged into one table").c_str());
     const auto merged = columnOf(*plan, plan->info.images[0]);
     require(!merged.selected && merged.selection == 0u && !merged.unkeyed && merged.keyDomains.size() == limit + 1u, (name + ": the merged table is not the union of the keys").c_str());
     const auto compiled = CompileTable(request);
@@ -3167,10 +3172,162 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     }
     require(snapshot.codes.at(1) == outside && snapshot.codes.at(limit + 3u) == outside, (name + ": a key no read selects was bound").c_str());
     if (pairs) return;
-    const auto split = TableManyKeyCode(40u, 30u, false);
+    const auto split = TableManyKeyCode(40u, 30u, 1u);
     const auto twoHeaps = GetResourcePlan(TableRequest(split, userData));
     const auto unselected = std::find_if(twoHeaps->info.images.begin(), twoHeaps->info.images.end(), [&](const ImageResource& image) { return !columnOf(*twoHeaps, image).selected; });
     require(twoHeaps->info.images.size() == 31u && selectedTables(*twoHeaps) == 30u && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == 40u, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
+}
+
+struct SamplerLimitGuest {
+    std::array<std::uint32_t, 1024> record{};
+    std::array<std::uint32_t, 4> output{};
+    std::array<std::uint32_t, 256> srt{};
+};
+
+constexpr std::uint32_t SamplerLimitTableSamplerByte = 2048u;
+constexpr std::uint32_t SamplerLimitDirectSamplerWord = 8u;
+constexpr std::uint32_t SamplerLimitDirectImageWord = 160u;
+
+std::vector<std::uint32_t> SamplerLimitCode(std::uint32_t tableSamplers, bool directImages, const std::vector<std::pair<std::uint32_t, std::uint32_t>>& pairs) {
+    std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0x7e200500u, 0x8f108c10u, 0x7e100280u};
+    for (const auto& [image, sampler] : pairs) {
+        if (directImages) code.insert(code.end(), {0xf40c0500u, 0xfa000000u | ((SamplerLimitDirectImageWord + image * 8u) * 4u)});
+        else code.insert(code.end(), {0xf42c0502u, 0x20000000u | (image * 32u)});
+        if (sampler < tableSamplers) code.insert(code.end(), {0xf4280202u, 0x20000000u | (SamplerLimitTableSamplerByte + sampler * 16u)});
+        else code.insert(code.end(), {0xf4080200u, 0xfa000000u | ((SamplerLimitDirectSamplerWord + (sampler - tableSamplers) * 4u) * 4u)});
+        code.insert(code.end(), {0xf09c0f08u, 0x00450400u, 0x06100908u});
+    }
+    code.insert(code.end(), {0xe0700000u, 0x80070800u, 0xbf810000u});
+    return code;
+}
+
+std::uint32_t SamplerLimitImageOf(const std::uint32_t* words) {
+    return (words[2] >> 14u) - 1u;
+}
+
+void verifySamplerLimits() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[4];
+    alignas(4096) static SamplerLimitGuest guest;
+    constexpr std::uint32_t Images = 51u;
+    constexpr std::uint32_t TableSamplers = 60u;
+    guest.record = {};
+    for (std::uint32_t image = 0; image < Images; image++) {
+        const auto words = TableT(textures[image % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, image + 1u);
+        std::copy(words.begin(), words.end(), guest.record.begin() + image * 8u);
+    }
+    for (std::uint32_t sampler = 0; sampler < 64u; sampler++) {
+        const std::array<std::uint32_t, 4> words{0x92u, (sampler + 1u) << 12u, 0u, 0u};
+        std::copy(words.begin(), words.end(), guest.record.begin() + SamplerLimitTableSamplerByte / 4u + sampler * 4u);
+    }
+    guest.srt = {};
+    const auto heapV = TableV(guest.record.data(), 4096u, 1u);
+    const auto outputV = TableV(guest.output.data(), 0u, 16u);
+    std::copy(heapV.begin(), heapV.end(), guest.srt.begin());
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 4);
+    for (std::uint32_t sampler = 0; sampler < 36u; sampler++) {
+        const std::array<std::uint32_t, 4> words{0x92u, (sampler + 101u) << 12u, 0u, 0u};
+        std::copy(words.begin(), words.end(), guest.srt.begin() + SamplerLimitDirectSamplerWord + sampler * 4u);
+    }
+    for (std::uint32_t image = 0; image < 3u; image++) {
+        const auto words = TableT(textures[image].bytes.data(), image == 1u ? TableFormat32UInt : TableFormat8888UNorm, TableType2D, image + 1u);
+        std::copy(words.begin(), words.end(), guest.srt.begin() + SamplerLimitDirectImageWord + image * 8u);
+    }
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+
+    const auto directOf = [](std::uint32_t image) { return image < 19u ? 0u : image < 36u ? 1u : 2u; };
+    const auto riftPairs = [&](std::uint32_t tableSamplers) {
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs;
+        for (std::uint32_t image = 0; image < Images; image++) pairs.emplace_back(image, image);
+        for (std::uint32_t sampler = Images; sampler < tableSamplers; sampler++) pairs.emplace_back(sampler - Images, sampler);
+        for (std::uint32_t image = 0; image < Images; image++) pairs.emplace_back(image, tableSamplers + directOf(image));
+        pairs.emplace_back(0u, tableSamplers + 2u);
+        return pairs;
+    };
+    const auto riftCode = SamplerLimitCode(TableSamplers, false, riftPairs(TableSamplers));
+    const auto riftRequest = TableRequest(riftCode, userData);
+    const auto rift = GetResourcePlan(riftRequest);
+    const auto& samplers = rift->info.samplers;
+    const auto tableCount = static_cast<std::uint32_t>(std::count_if(samplers.begin(), samplers.end(), [](const SamplerResource& sampler) { return sampler.table != NoTable; }));
+    require(samplers.size() == TableSamplers + 3u && tableCount == TableSamplers && rift->info.images.size() == Images && rift->info.sampledPairs.size() == 112u, ("sampler limits: the program planned " + std::to_string(samplers.size()) + " samplers (" + std::to_string(tableCount) + " through the table), " + std::to_string(rift->info.images.size()) + " images and " + std::to_string(rift->info.sampledPairs.size()) + " pairs, expected 63 (60), 51 and 112").c_str());
+    std::vector<std::uint32_t> directResources;
+    for (std::uint32_t resource = 0; resource < samplers.size(); resource++) {
+        if (samplers[resource].table == NoTable) directResources.push_back(resource);
+    }
+    require(directResources.size() == 3u && directResources.front() >= 32u, "sampler limits: the direct samplers were not planned after the table samplers, at resource indices past 31");
+    const auto compiled = CompileTable(riftRequest);
+    const auto* guestSamplers = TableBinding(*compiled.result, DescriptorRole::GuestSamplers);
+    require(guestSamplers != nullptr && guestSamplers->guestDescriptor.size() == 6u * 4u, "sampler limits: the three direct samplers are not bound as six sampler elements");
+    for (std::uint32_t element = 0; element < 6u; element++) {
+        require(guestSamplers->guestDescriptor[element * 4u + 1u] == (element / 2u + 101u) << 12u, "sampler limits: a direct sampler element does not hold its S#");
+    }
+    const auto* table = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+    require(table != nullptr && table->count == Images && table->imageSamplers.size() == Images, "sampler limits: the image table does not bind the 51 images with their sampler masks");
+    for (std::uint32_t element = 0; element < Images; element++) {
+        const auto image = SamplerLimitImageOf(table->guestDescriptor.data() + element * 8u);
+        require(image < Images, "sampler limits: an image table element does not hold one of the images");
+        auto expected = std::uint64_t{3} << (directOf(image) * 2u);
+        if (image == 0u) expected |= std::uint64_t{3} << 4u;
+        require(table->imageSamplers[element] == expected, ("sampler limits: image " + std::to_string(image) + " is paired with sampler elements " + std::to_string(table->imageSamplers[element]) + ", expected " + std::to_string(expected)).c_str());
+    }
+    std::cout << "sampler limits: 60 table samplers and 3 direct samplers (resources " << directResources[0] << " to " << directResources[2] << "), 51 images and 112 pairs planned; each image table element pairs with its direct sampler elements\n";
+
+    constexpr std::uint32_t Direct = 20u;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> directPairs;
+    for (std::uint32_t sampler = 0; sampler < Direct; sampler++) {
+        directPairs.emplace_back(0u, sampler);
+        directPairs.emplace_back(1u, sampler);
+        if (sampler >= 16u) directPairs.emplace_back(2u, sampler);
+    }
+    const auto directCode = SamplerLimitCode(0u, true, directPairs);
+    const auto direct = CompileTable(TableRequest(directCode, userData));
+    const auto* directSamplers = TableBinding(*direct.result, DescriptorRole::GuestSamplers);
+    require(directSamplers != nullptr && directSamplers->guestDescriptor.size() == Direct * 2u * 4u, "sampler limits: 20 direct samplers, each paired with a filtered and an integer image, are not bound as 40 sampler elements");
+    const auto all = (std::uint64_t{1} << (Direct * 2u)) - 1u;
+    std::uint32_t pairedImages = 0u;
+    for (const auto& binding : direct.result->bindings) {
+        if (binding.kind != DescriptorKind::SampledImage || binding.role != DescriptorRole::GuestImages) continue;
+        for (std::uint32_t element = 0; element < binding.count; element++) {
+            const auto image = SamplerLimitImageOf(binding.guestDescriptor.data() + element * 8u);
+            const auto expected = image == 2u ? all & ~((std::uint64_t{1} << 32u) - 1u) : all;
+            require(image < 3u && binding.imageSamplers.at(element) == expected, ("sampler limits: direct image " + std::to_string(image) + " is paired with sampler elements " + std::to_string(binding.imageSamplers.at(element)) + ", expected " + std::to_string(expected)).c_str());
+            pairedImages++;
+        }
+    }
+    require(pairedImages == 3u, "sampler limits: the three direct images are not bound");
+    std::cout << "sampler limits: 20 direct samplers bound as 40 sampler elements; the image sampled only through samplers 16 to 19 pairs with elements 32 to 39\n";
+
+    constexpr std::uint32_t TableDirect = 18u;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> tablePairs;
+    for (std::uint32_t sampler = 0; sampler < TableDirect; sampler++) tablePairs.emplace_back(sampler % 2u, sampler);
+    const auto tableDirectCode = SamplerLimitCode(0u, false, tablePairs);
+    const auto tableDirect = CompileTable(TableRequest(tableDirectCode, userData));
+    const auto* tableDirectSamplers = TableBinding(*tableDirect.result, DescriptorRole::GuestSamplers);
+    require(tableDirectSamplers != nullptr && tableDirectSamplers->guestDescriptor.size() == TableDirect * 2u * 4u, "sampler limits: 18 direct samplers paired with image table images are not bound as 36 sampler elements");
+    const auto* tableImages = TableBinding(*tableDirect.result, DescriptorRole::ImageTable);
+    require(tableImages != nullptr && tableImages->count == 2u && tableImages->imageSamplers.size() == 2u, "sampler limits: the image table does not bind the two images beside 18 direct samplers");
+    for (std::uint32_t element = 0; element < 2u; element++) {
+        const auto image = SamplerLimitImageOf(tableImages->guestDescriptor.data() + element * 8u);
+        std::uint64_t expected = 0u;
+        for (std::uint32_t sampler = image; sampler < TableDirect; sampler += 2u) expected |= std::uint64_t{3} << (sampler * 2u);
+        require(image < 2u && tableImages->imageSamplers[element] == expected, ("sampler limits: image table image " + std::to_string(image) + " is paired with sampler elements " + std::to_string(tableImages->imageSamplers[element]) + ", expected " + std::to_string(expected)).c_str());
+    }
+    std::cout << "sampler limits: 18 direct samplers beside an image table bound as 36 sampler elements; each table image pairs with its samplers' elements up to 35\n";
+
+    const auto pastSamplerCode = SamplerLimitCode(TableSamplers + 2u, false, riftPairs(TableSamplers + 2u));
+    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastSamplerCode, userData))); }, "sampler resource limit exceeded", "sampler limits: 65 samplers were planned");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pastPairs;
+    for (std::uint32_t image = 0; image < Images; image++) {
+        for (std::uint32_t sampler = 0; sampler < 6u; sampler++) pastPairs.emplace_back(image, sampler);
+    }
+    const auto pastPairCode = SamplerLimitCode(6u, false, pastPairs);
+    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastPairCode, userData))); }, "sampled image/sampler pair limit exceeded", "sampler limits: 306 pairs were planned");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pastDirect;
+    for (std::uint32_t sampler = 0; sampler < 33u; sampler++) pastDirect.emplace_back(sampler % 2u, sampler);
+    const auto pastDirectCode = SamplerLimitCode(0u, true, pastDirect);
+    expectFailure([&] { static_cast<void>(CompileTable(TableRequest(pastDirectCode, userData))); }, "shader sampler pairs exceed runtime heap capacity: 33 samplers", "sampler limits: 33 direct samplers were bound");
+    std::cout << "sampler limits: 65 samplers, 306 pairs and 33 direct samplers are refused\n";
 }
 
 void verifyImageTableSrtKey() {
@@ -8398,6 +8555,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--selected-records-direct-pair-limit") {
             verifySelectedRecordsWithinLimits(true, true);
             std::cout << "Direct samplers count toward the sampled pair limit beside selected image-table records\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--sampler-limits") {
+            verifySamplerLimits();
+            std::cout << "Sampler limits passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {

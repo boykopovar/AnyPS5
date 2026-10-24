@@ -220,7 +220,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerCoordinatesIgnored = {false, seed % 2 == 0, true};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
-    binding.imageSamplers = {0x5u, 0u, 0x80000000u};
+    binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
     return binding;

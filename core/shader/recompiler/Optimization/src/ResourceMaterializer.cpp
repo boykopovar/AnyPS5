@@ -34,6 +34,8 @@
 
 namespace ShaderRecompiler {
 
+static_assert(ShaderInfo::MaxSamplers <= std::numeric_limits<std::uint64_t>::digits);
+
 namespace {
 
 using ImageTableAbi::PoisonReason;
@@ -1687,9 +1689,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
     HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
-    std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
+    std::vector<std::uint64_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
-        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
+        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= std::uint64_t{1} << pair.sampler;
     }
     const auto reducingSampler = reducingSamplers(info, snapshot);
     const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
