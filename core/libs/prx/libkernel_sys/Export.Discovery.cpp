@@ -18,6 +18,7 @@ int APS5_VABI pthread_setconcurrency_nid_postfix(int level);
 int APS5_VABI pthread_attr_getscope_nid_postfix(void* const* attr, int* scope);
 int APS5_VABI pthread_attr_setscope_nid_postfix(void** attr, int scope);
 int APS5_VABI pthread_atfork_nid_postfix(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)());
+int APS5_VABI mlockall_nid_postfix(int flags);
 int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags);
 }
 
@@ -1606,9 +1607,8 @@ int APS5_VABI sceKernelMemoryPoolMove(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelMlockall(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelMlockall(int flags) {
+    return mlockall_nid_postfix(flags) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags) {
