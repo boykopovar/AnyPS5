@@ -321,6 +321,8 @@ private:
         case u's':
         case u'c':
         case u'[': return Text(directive);
+        case u'S':
+        case u'C': return Outcome::Matching;
         case u'n': return Count(directive);
         default: Fail("unsupported conversion " + std::to_string(directive.conversion));
         }

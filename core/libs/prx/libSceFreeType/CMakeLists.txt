@@ -1,10 +1,12 @@
 add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         Export.cpp
+        src/Bitmap.cpp
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
         src/GuestObjects.cpp
         src/Names.cpp
+        src/Trigonometry.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceFreeType PRIVATE freetype)
@@ -29,6 +31,16 @@ endif()
 configure_windows_unwind(libSceFreeType)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_freetype_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeBitmap.cpp)
+    target_include_directories(guest_freetype_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_bitmap_tests)
+    add_test(NAME guest_freetype_bitmap COMMAND guest_freetype_bitmap_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+
     add_test_executable(guest_freetype_outline_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutline.cpp)
     target_include_directories(guest_freetype_outline_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_outline_tests PRIVATE libSceFreeType freetype libc)

@@ -10,6 +10,8 @@ int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid cl
 int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clockId);
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared);
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared);
+int APS5_VABI scePthreadCondattrSetpshared(PthreadCondattr* attr, int pshared);
+int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* pshared);
 }
 
 static constexpr int SCE_OK = 0;
@@ -31,6 +33,8 @@ int main() {
     Require(pthread_condattr_setpshared_nid_postfix(&unset, 0) == GuestEinval);
     Require(pthread_condattr_getpshared_nid_postfix(nullptr, &sharing) == GuestEinval && sharing == -1);
     Require(pthread_condattr_getpshared_nid_postfix(&unset, &sharing) == GuestEinval && sharing == -1);
+    Require(scePthreadCondattrSetpshared(&unset, 0) == SceEinval);
+    Require(scePthreadCondattrGetpshared(nullptr, &sharing) == SceEinval && sharing == -1);
 
     PthreadCondattr attr = nullptr;
     Require(scePthreadCondattrInit(&attr) == SCE_OK);
@@ -38,6 +42,9 @@ int main() {
         Require(scePthreadCondattrSetclock(&attr, clock) == SCE_OK);
         Require(pthread_condattr_setclock_nid_postfix(&attr, clock) == 0);
     }
+    Require(scePthreadCondattrSetpshared(&attr, 1) == SceEinval);
+    Require(scePthreadCondattrSetpshared(&attr, 0) == SCE_OK);
+    Require(scePthreadCondattrGetpshared(&attr, &sharing) == SCE_OK && sharing == 0);
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
     for (const int invalid : {1, 2, -1}) {
         Require(pthread_condattr_setpshared_nid_postfix(&attr, invalid) == GuestEinval);

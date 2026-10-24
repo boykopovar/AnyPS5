@@ -281,7 +281,7 @@ extern "C" {
 
 int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     if (backup == nullptr || backup->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataBackup: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     // The system copies the save directory to its backup area asynchronously; the copy itself is
     // not observable by the title, only its completion event.
@@ -478,7 +478,7 @@ int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, Sa
 int APS5_VABI sceSaveDataGetEventResult(const void* event_param, SaveDataEvent* event) {
     (void)event_param;
     if (event == nullptr) {
-        throw std::runtime_error("sceSaveDataGetEventResult: null event");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_state_mutex);
     if (g_events.empty()) {

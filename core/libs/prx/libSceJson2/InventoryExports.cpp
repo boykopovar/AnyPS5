@@ -167,12 +167,6 @@ int APS5_VABI sceJson2Unknown_027_nid_no_patch() {
 }
 APS5_EXPORT("_ZN3sce4Json5ArrayD2Ev", sceJson2Unknown_027_nid_no_patch);
 
-int APS5_VABI sceJson2Unknown_028_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZN3sce4Json5ArrayaSERKS1_", sceJson2Unknown_028_nid_no_patch);
-
 int APS5_VABI sceJson2Unknown_029_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -406,47 +400,5 @@ int APS5_VABI sceJson2Unknown_067_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("_ZNK3sce4Json5ValueixERKNS0_6StringE", sceJson2Unknown_067_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_068_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String2atEm", sceJson2Unknown_068_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_069_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String4findEPKcm", sceJson2Unknown_069_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_070_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String4findEPKcmm", sceJson2Unknown_070_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_071_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String4findERKS1_m", sceJson2Unknown_071_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_072_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String5rfindEPKcm", sceJson2Unknown_072_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_073_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String5rfindEPKcmm", sceJson2Unknown_073_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_074_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json6String5rfindERKS1_m", sceJson2Unknown_074_nid_no_patch);
 
 }

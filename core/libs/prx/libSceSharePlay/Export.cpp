@@ -41,7 +41,7 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfoA(SharePlayConnectionInfoA* in
 int APS5_VABI sceSharePlayProhibitController(std::uint8_t prohibited) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    if (prohibited != 0 && prohibited != 1) APS5_INVALID_ARG_EX;
+    if (prohibited != 0 && prohibited != 1) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
 

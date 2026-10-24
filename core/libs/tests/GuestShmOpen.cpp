@@ -68,13 +68,7 @@ int main() {
     RequireInvalid("/anyps5-shm", 0x1);
     RequireInvalid("/anyps5-shm", 0x202 | 0x8);
 #ifdef _WIN32
-    bool threw = false;
-    try {
-        shm_open_nid_postfix("/anyps5-shm", 0x202, 0600);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    RequireInvalid("", 0x202);
 #else
     RequireInvalid("", 0x202);
 #endif

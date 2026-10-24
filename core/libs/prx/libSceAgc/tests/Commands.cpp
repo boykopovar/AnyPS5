@@ -48,6 +48,10 @@ extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadStreamInactive(CommandBu
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buf, const char* str, std::uint32_t length, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, std::uint32_t length, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbPushMarkerSpan(CommandBuffer* buf, const char* str, std::uint32_t length, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetMarkerSpan(CommandBuffer* buf, const char* str, std::uint32_t length, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t attributeAddress, std::uint32_t attributeIndex);
@@ -223,6 +227,29 @@ void testMarkers() {
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
+}
+
+void testMarkerSpans() {
+    Storage dcb;
+    Storage acb;
+    const char text[] = "framebuffer";
+    const auto* acbPush = sceAgcAcbPushMarkerSpan(&acb.buffer, text, 5, 0x00ff00u);
+    const auto* dcbPush = sceAgcDcbPushMarkerSpan(&dcb.buffer, text, 5, 0xff0000u);
+    check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker span header mismatch");
+    check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker span does not stop at its length");
+    check(dcbPush == dcb.words.data(), "DCB push marker span did not return its packet");
+    const auto* acbSet = sceAgcAcbSetMarkerSpan(&acb.buffer, nullptr, 0, 0);
+    const auto* dcbSet = sceAgcDcbSetMarkerSpan(&dcb.buffer, nullptr, 0, 0);
+    check(acbSet == acb.words.data() + 3 && dcbSet == dcb.words.data() + 3, "set marker span did not return its push packet");
+    check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker span is not a push and pop pair");
+    check(dcb.words == acb.words && acb.buffer.cursor_up == acb.words.data() + 7, "ACB and DCB marker spans differ");
+    Storage plain;
+    sceAgcAcbPushMarker(&plain.buffer, "frame", 0);
+    check(std::equal(plain.words.begin(), plain.words.begin() + 3, acb.words.begin()), "marker span differs from the same text pushed whole");
+    expectFailure([] { sceAgcAcbPushMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([] { sceAgcAcbPushMarker(nullptr, reinterpret_cast<const char*>(std::uintptr_t{0x10}), 0); });
+    expectFailure([] { sceAgcDcbSetMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
 }
 
 void testWorkloads() {
@@ -703,15 +730,13 @@ void testDefaults() {
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
 }
 
-struct DefaultsType {
-    std::uint32_t key;
-    std::uint32_t bankIndex;
-};
+constexpr std::size_t PairEntryBytes = 8;
+constexpr std::size_t CompactEntryBytes = 12;
 
-std::uint32_t colourTargetBlock(const void* root) {
+std::uint32_t colourTargetBlock(const void* root, std::size_t entryBytes) {
     const auto* bytes = static_cast<const unsigned char*>(root);
     ShaderRegister** contextBlocks = nullptr;
-    const DefaultsType* types = nullptr;
+    const unsigned char* types = nullptr;
     std::uint32_t count = 0;
     std::memcpy(&contextBlocks, bytes, sizeof(contextBlocks));
     std::memcpy(&types, bytes + 0x30, sizeof(types));
@@ -721,12 +746,17 @@ std::uint32_t colourTargetBlock(const void* root) {
     std::uint32_t matches = 0;
     std::uint32_t block = 0;
     for (std::uint32_t entry = 0; entry < count; ++entry) {
-        if ((types[entry].bankIndex & 3u) == 0)
+        std::uint32_t key = 0;
+        std::uint32_t bankIndex = 0;
+        std::memcpy(&key, types + entry * entryBytes, sizeof(key));
+        std::memcpy(&bankIndex, types + entry * entryBytes + 4, sizeof(bankIndex));
+        bankIndex &= 0x3ffu;
+        if ((bankIndex & 3u) == 0)
             ++contexts;
-        if (types[entry].key != 0x38e92c91u)
+        if (key != 0x38e92c91u)
             continue;
-        check((types[entry].bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
-        block = types[entry].bankIndex >> 2;
+        check((bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
+        block = bankIndex >> 2;
         ++matches;
     }
     check(matches == 1 && block < contexts && contextBlocks[block] != nullptr, "MRT0 defaults key is missing, repeated or outside the context blocks");
@@ -739,7 +769,11 @@ std::uint32_t colourTargetBlock(const void* root) {
 void testDefaultsTypes() {
     const auto* legacy = sceAgcGetRegisterDefaults();
     check(legacy != sceAgcGetRegisterDefaults2(13), "legacy register defaults reused the compact versioned table");
-    check(colourTargetBlock(legacy) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(legacy, PairEntryBytes) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(13), CompactEntryBytes) == 78, "versioned MRT0 defaults are not block 78 of the compact 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(10), CompactEntryBytes) == 73, "versioned MRT0 defaults are not block 73 of the compact 128-entry table");
+    for (std::uint32_t version = 4; version < 14; ++version)
+        colourTargetBlock(sceAgcGetRegisterDefaults2(version), CompactEntryBytes);
 
     const auto checkCompactTypes = [](const void* root, std::uint32_t count, std::uint32_t key,
                                       std::uint32_t packedType, std::uint32_t extra) {
@@ -815,6 +849,7 @@ int main(int argc, char** argv) {
         testClearState();
         testIndexedIndirectDraws();
         testMarkers();
+        testMarkerSpans();
         testWorkloads();
         testWorkloadStreams();
         testIndexBuffer();
