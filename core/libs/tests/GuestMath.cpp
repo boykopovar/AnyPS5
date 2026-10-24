@@ -683,6 +683,57 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckLogbConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+    } cases[] = {
+        {0x0000000000000000ull, 0xfff0000000000000ull},
+        {0x8000000000000000ull, 0xfff0000000000000ull},
+        {0x0000000000000001ull, 0xc090c80000000000ull},
+        {0x8000000000000001ull, 0xc090c80000000000ull},
+        {0x000fffffffffffffull, 0xc08ff80000000000ull},
+        {0x0010000000000000ull, 0xc08ff00000000000ull},
+        {0x3fe8000000000000ull, 0xbff0000000000000ull},
+        {0x4020000000000000ull, 0x4008000000000000ull},
+        {0xc020000000000000ull, 0x4008000000000000ull},
+        {0x7fefffffffffffffull, 0x408ff80000000000ull},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull},
+        {0xfff0000000000000ull, 0x7ff0000000000000ull},
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull},
+        {0xfff4000000000123ull, 0xfffc000000000123ull},
+        {0x7ff8000000000456ull, 0x7ff8000000000456ull},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(logb_nid_postfix(std::bit_cast<double>(item.input))) == item.expected && errno == 1234);
+    }
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+    } floatCases[] = {
+        {0x00000000u, 0xff800000u},
+        {0x80000000u, 0xff800000u},
+        {0x00000001u, 0xc3150000u},
+        {0x80000001u, 0xc3150000u},
+        {0x007fffffu, 0xc2fe0000u},
+        {0x00800000u, 0xc2fc0000u},
+        {0x3f400000u, 0xbf800000u},
+        {0x41000000u, 0x40400000u},
+        {0xc1000000u, 0x40400000u},
+        {0x7f7fffffu, 0x42fe0000u},
+        {0x7f800000u, 0x7f800000u},
+        {0xff800000u, 0x7f800000u},
+        {0x7f800001u, 0x7fc00001u},
+        {0xffa00123u, 0xffe00123u},
+        {0x7fc00456u, 0x7fc00456u},
+    };
+    for (const auto& item : floatCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(logbf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected && errno == 1234);
+    }
+}
+
 static void CheckExpm1ConsoleBits() {
     constexpr struct {
         std::uint64_t input;
@@ -1668,6 +1719,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckLogbConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);

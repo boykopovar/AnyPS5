@@ -327,7 +327,20 @@ double APS5_VABI hypot_nid_postfix(double x, double y) {
 }
 float APS5_VABI tanf_nid_postfix(float x) { return std::tan(x); }
 float APS5_VABI log10f_nid_postfix(float x) { return std::log10(x); }
-float APS5_VABI logbf_nid_postfix(float x) { return std::logb(x); }
+float APS5_VABI logbf_nid_postfix(float x) {
+    const std::uint32_t bits = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    if (bits == 0) {
+        return -1.0f / std::fabs(x);
+    }
+    if (bits >= 0x7f800000u) {
+        return x * x;
+    }
+    if (bits < 0x00800000u) {
+        const std::uint32_t scaled = std::bit_cast<std::uint32_t>(x * 0x1p25f) & 0x7fffffffu;
+        return static_cast<float>(static_cast<int>(scaled >> 23) - 127 - 25);
+    }
+    return static_cast<float>(static_cast<int>(bits >> 23) - 127);
+}
 double APS5_VABI exp2_nid_postfix(double x) {
     int saved_errno = errno;
     double result = std::exp2(x);
@@ -869,7 +882,20 @@ long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::l
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
 long double APS5_VABI floorl_nid_postfix(long double x) { return std::floor(x); }
-double APS5_VABI logb_nid_postfix(double x) { return std::logb(x); }
+double APS5_VABI logb_nid_postfix(double x) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (bits == 0) {
+        return -1.0 / std::fabs(x);
+    }
+    if (bits >= 0x7ff0000000000000ull) {
+        return x * x;
+    }
+    if (bits < 0x0010000000000000ull) {
+        const std::uint64_t scaled = std::bit_cast<std::uint64_t>(x * 0x1p54) & 0x7fffffffffffffffull;
+        return static_cast<double>(static_cast<int>(scaled >> 52) - 1023 - 54);
+    }
+    return static_cast<double>(static_cast<int>(bits >> 52) - 1023);
+}
 int APS5_VABI ilogb_nid_postfix(double x) {
     if (x == 0.0) {
         return INT_MIN;
