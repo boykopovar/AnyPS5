@@ -101,6 +101,23 @@ void CheckSimpleReplacement() {
     Require(source->Opcode() == IrOpcode::IAdd32 && source->Parent() == &graph.block);
 }
 
+void CheckTailArgumentRemoval() {
+    Graph graph(4);
+    auto* source = graph.Value(0);
+    auto* first = graph.Value(1);
+    auto* last = graph.Value(2);
+    first->AddArgument(source);
+    last->AddArgument(source);
+    last->AddArgument(source);
+    last->ReplaceArgument(0, nullptr);
+    Require(source->OperandUses() == std::vector<IrUse>({{first, 0}, {last, 1}}));
+    last->ReplaceArgument(1, graph.Value(3));
+    Require(source->OperandUses() == std::vector<IrUse>({{first, 0}}));
+    Require(graph.Value(3)->OperandUses() == std::vector<IrUse>({{last, 1}}));
+    first->Invalidate();
+    Require(!source->HasUses() && first->Argument(0) == nullptr);
+}
+
 void CheckSelfAndEmpty() {
     Graph graph(3);
     graph.Value(2)->AddArgument(graph.Value(0));
@@ -223,6 +240,7 @@ int main() {
     try {
         const std::pair<const char*, void (*)()> cases[] = {
             {"ordered duplicate operands", CheckSimpleReplacement},
+            {"tail argument removal", CheckTailArgumentRemoval},
             {"self and empty replacement", CheckSelfAndEmpty},
             {"phi and identity rewriting", CheckPhiAndIdentity},
             {"allocation failure integrity", CheckAllocationFailure},
@@ -234,7 +252,7 @@ int main() {
             current = name;
             test();
         }
-        std::puts("7 IR rewrite suites passed; 2000 differential use graphs and 48000 mutation comparisons");
+        std::puts("8 IR rewrite suites passed; 2000 differential use graphs and 48000 mutation comparisons");
         return 0;
     } catch (const std::exception& error) {
         failureAfter = -1;
