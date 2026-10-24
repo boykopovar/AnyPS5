@@ -39,4 +39,9 @@ void* APS5_VABI UI_get0_user_data_nid_postfix(const LibreSslUi* ui) {
     return ui->userData;
 }
 
+int APS5_VABI UI_get_string_type_nid_postfix(const LibreSslUiString* string) {
+    if (!string) return UiTypeNone;
+    return string->type;
+}
+
 }
