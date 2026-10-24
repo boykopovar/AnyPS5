@@ -31,9 +31,10 @@ constexpr std::uint8_t Multiply(std::uint8_t a, std::uint8_t b) {
 constexpr std::array<std::uint8_t, 256> MakeSubstitution() {
     std::array<std::uint8_t, 256> box {};
     for (int value = 0; value < 256; ++value) {
-        std::uint8_t inverse = 0;
-        for (int candidate = 1; candidate < 256 && value; ++candidate)
-            if (Multiply(static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(candidate)) == 1) inverse = static_cast<std::uint8_t>(candidate);
+        const auto element = static_cast<std::uint8_t>(value);
+        std::uint8_t inverse = element;
+        for (int step = 0; step < 6; ++step) inverse = Multiply(Multiply(inverse, inverse), element);
+        inverse = Multiply(inverse, inverse);
         std::uint8_t result = 0x63;
         for (int shift = 0; shift < 5; ++shift)
             result ^= static_cast<std::uint8_t>((inverse << shift) | (inverse >> ((8 - shift) & 7)));
