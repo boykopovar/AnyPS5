@@ -47,6 +47,8 @@ struct PthreadMutexPrivate {
     int _count;
     int _spinloops = 0;
     int _yieldloops = 0;
+    int _protocol = 0;
+    std::atomic<int> _ceiling{0};
 
     PthreadMutexPrivate() : _type(MutexType::ErrorCheck), _owner(std::thread::id{}), _count(0) {}
 

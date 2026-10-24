@@ -5,6 +5,7 @@
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "Common.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include <atomic>
 #include <stdexcept>
 #include <string>
@@ -17,10 +18,22 @@ constexpr int GUEST_REALTIME_CLOCK = 0;
 constexpr int POSIX_PRIO_PROTECT = 2;
 constexpr int POSIX_SCHED_RR = 3;
 constexpr std::uintptr_t POSIX_ADAPTIVE_MUTEX_INITIALIZER = 1;
+constexpr std::uintptr_t POSIX_MUTEX_DESTROYED = 2;
 
 bool _isStaticInitializer(PthreadMutex mutex) {
     const auto value = reinterpret_cast<std::uintptr_t>(mutex);
     return value == 0 || value == POSIX_ADAPTIVE_MUTEX_INITIALIZER;
+}
+
+PthreadMutexPrivate* _priorityProtected(PthreadMutex* mutex, const char* funcName) {
+    if (!mutex) throw std::runtime_error(std::string(funcName) + ": null mutex");
+    const PthreadMutex current = std::atomic_ref<PthreadMutex>(*mutex).load(std::memory_order_acquire);
+    if (reinterpret_cast<std::uintptr_t>(current) <= POSIX_MUTEX_DESTROYED || current->_protocol != POSIX_PRIO_PROTECT) return nullptr;
+    return current;
+}
+
+int _toSce(int result) {
+    return result == 0 ? 0 : SceKernelError(result);
 }
 
 void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
@@ -52,6 +65,10 @@ int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
     if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
+    if (result == 0 && attr && *attr) {
+        (*mutex)->_protocol = (*attr)->protocol;
+        (*mutex)->_ceiling = (*attr)->ceiling;
+    }
     return PosixThread::ToErrno(result);
 }
 
@@ -82,6 +99,40 @@ int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex) {
 int APS5_VABI pthread_mutex_reltimedlock_np_nid_postfix(PthreadMutex* mutex, KernelUseconds usec) {
     _initializeStatic(mutex, __func__);
     return PosixThread::ToErrno(scePthreadMutexTimedlock(mutex, usec));
+}
+
+int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
+
+int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(const PthreadMutex* mutex, int* prioceiling) {
+    if (!prioceiling) throw std::runtime_error("pthread_mutex_getprioceiling: null prioceiling");
+    auto* current = _priorityProtected(const_cast<PthreadMutex*>(mutex), "pthread_mutex_getprioceiling");
+    if (!current) return POSIX_EINVAL;
+    *prioceiling = current->_ceiling;
+    return 0;
+}
+
+int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(PthreadMutex* mutex, int ceiling, int* oldCeiling) {
+    auto* current = _priorityProtected(mutex, "pthread_mutex_setprioceiling");
+    if (!current) return POSIX_EINVAL;
+    if (ceiling < sched_get_priority_min_nid_postfix(POSIX_SCHED_RR) || ceiling > sched_get_priority_max_nid_postfix(POSIX_SCHED_RR))
+        throw std::runtime_error("pthread_mutex_setprioceiling: ceiling " + std::to_string(ceiling) + " outside the SCHED_RR priority range");
+    const bool owned = MutexOperations::IsOwned(mutex);
+    if (!owned) {
+        if (const int result = scePthreadMutexLock(mutex)) return PosixThread::ToErrno(result);
+    }
+    const int previous = current->_ceiling;
+    current->_ceiling = ceiling;
+    if (!owned && scePthreadMutexUnlock(mutex) != 0) throw std::runtime_error("pthread_mutex_setprioceiling: unlock failed");
+    if (oldCeiling) *oldCeiling = previous;
+    return 0;
+}
+
+int APS5_VABI scePthreadMutexGetprioceiling(PthreadMutex* mutex, int* prioceiling) {
+    return _toSce(pthread_mutex_getprioceiling_nid_postfix(mutex, prioceiling));
+}
+
+int APS5_VABI scePthreadMutexSetprioceiling(PthreadMutex* mutex, int ceiling, int* oldCeiling) {
+    return _toSce(pthread_mutex_setprioceiling_nid_postfix(mutex, ceiling, oldCeiling));
 }
 
 int APS5_VABI pthread_mutex_isowned_np_nid_postfix(PthreadMutex* mutex) {
