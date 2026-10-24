@@ -74,8 +74,9 @@ static void CheckStoul() {
     CheckStoul(u"　5", 10, 0, 0, 0, "non-ASCII space is not skipped");
     CheckStoul(u"", 10, 0, 0, 0, "empty string");
     Require(_WStoul_nid_postfix(u"9", nullptr, 10) == 9, "_WStoul accepts a null end pointer");
-    Require(Throws([] { _WStoul_nid_postfix(u"1", nullptr, 1); }), "_WStoul throws for base 1");
-    Require(Throws([] { _WStoul_nid_postfix(u"1", nullptr, 37); }), "_WStoul throws for base 37");
+    CheckStoul(u" 1", 1, 0, 0, 0, "rejects base 1 without consuming or setting errno");
+    CheckStoul(u" 1", 37, 0, 0, 0, "rejects base 37 without consuming or setting errno");
+    CheckStoul(u" 1", -2, 0, 0, 0, "rejects a negative base without consuming or setting errno");
 }
 
 static void CheckClassification() {

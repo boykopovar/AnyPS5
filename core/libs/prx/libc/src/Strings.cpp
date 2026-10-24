@@ -777,7 +777,6 @@ unsigned long long APS5_VABI wcstoumax_nid_postfix(const char16_t* str, char16_t
 }
 
 std::uint64_t APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
-    if (base < 0 || base == 1 || base > 36) throw std::invalid_argument("_WStoul: unsupported base " + std::to_string(base));
     return wcstoul_nid_postfix(str, endptr, base);
 }
 
