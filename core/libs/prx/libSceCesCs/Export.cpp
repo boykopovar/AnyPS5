@@ -70,26 +70,65 @@ const uint8_t* singleByteProfile(SingleByte::Table table) {
     return PROFILES[3 + table];
 }
 
+bool singleByteTable(const void* profile, SingleByte::Table& table) {
+    for (std::size_t index = 0; index < SingleByte::Count; ++index) {
+        if (profile != singleByteProfile(static_cast<SingleByte::Table>(index))) continue;
+        table = static_cast<SingleByte::Table>(index);
+        return true;
+    }
+    return false;
+}
+
 const uint16_t* sbcHighTable(const void* profile) {
     if (profile == CP1251_PROFILE) return CP1251_HIGH;
     if (profile == CP1250_PROFILE) return CP1250_HIGH;
-    for (std::size_t table = 0; table < SingleByte::Count; ++table) {
-        if (profile == singleByteProfile(static_cast<SingleByte::Table>(table))) return SingleByte::HIGH[table];
-    }
-    return nullptr;
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::HIGH[table] : nullptr;
 }
 
-uint32_t sbcToUnicode(const uint8_t* profile, uint8_t sbc) {
-    if (const uint16_t* high = sbcHighTable(profile)) return sbc >= 0x80 ? high[sbc - 0x80] : sbc;
-    return sbc >= 0x80 && sbc < 0xA0 ? CP1252_HIGH[sbc - 0x80] : sbc;
+bool lowGraphicsUnassigned(const void* profile, uint8_t sbc) {
+    SingleByte::Table table;
+    return sbc >= 0x21 && sbc <= 0x7E && singleByteTable(profile, table) && SingleByte::LOW_GRAPHICS_UNASSIGNED[table];
+}
+
+const SingleByte::LowCode* lowCodes(const void* profile) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::LOW[table] : nullptr;
+}
+
+bool sbcToUnicode(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
+    code = sbc;
+    if (sbc < 0x80) {
+        if (lowGraphicsUnassigned(profile, sbc)) return false;
+        if (const SingleByte::LowCode* low = lowCodes(profile)) {
+            for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+                if (low[i].byte == sbc) code = low[i].code;
+            }
+        }
+        return true;
+    }
+    if (const uint16_t* high = sbcHighTable(profile)) code = high[sbc - 0x80];
+    else if (sbc < 0xA0) code = CP1252_HIGH[sbc - 0x80];
+    return code != SingleByte::Unassigned;
 }
 
 bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
+    if (const SingleByte::LowCode* low = lowCodes(profile)) {
+        for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+            if (low[i].code == code) {
+                sbc = low[i].byte;
+                return true;
+            }
+            if (low[i].byte == code) return false;
+        }
+    }
     if (const uint16_t* high = sbcHighTable(profile)) {
         if (code < 0x80) {
+            if (lowGraphicsUnassigned(profile, static_cast<uint8_t>(code))) return false;
             sbc = static_cast<uint8_t>(code);
             return true;
         }
+        if (code == SingleByte::Unassigned) return false;
         for (uint32_t i = 0; i < 128; ++i) {
             if (high[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
@@ -577,8 +616,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     const uint8_t lead = mbcs[0];
     if (isSbc(profile)) {
         length = 1;
-        code = sbcToUnicode(static_cast<const uint8_t*>(profile), lead);
-        return 0;
+        return sbcToUnicode(static_cast<const uint8_t*>(profile), lead, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
@@ -987,8 +1025,7 @@ uint32_t encodeUtf32(uint32_t code, uint32_t* utf32) {
 int sbcToUnit(const uint8_t* profile, uint8_t sbc, const void* target, uint32_t& code) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    code = sbcToUnicode(profile, sbc);
-    return 0;
+    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
 template<bool BigEndian>
@@ -1161,6 +1198,54 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void) {
     return singleByteProfile(SingleByte::Cp1258);
 }
 
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void) {
+    return singleByteProfile(SingleByte::Ascii);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAsciiWithKatakana(void) {
+    return singleByteProfile(SingleByte::AsciiWithKatakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileBs4730(void) {
+    return singleByteProfile(SingleByte::Bs4730);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988(void) {
+    return singleByteProfile(SingleByte::GbT1988);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::GbT1988Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201(void) {
+    return singleByteProfile(SingleByte::JisX0201);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Katakana(void) {
+    return singleByteProfile(SingleByte::JisX0201Katakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Roman(void) {
+    return singleByteProfile(SingleByte::JisX0201Roman);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201RomanTilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201RomanTilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003(void) {
+    return singleByteProfile(SingleByte::KsX1003);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::KsX1003Tilde0x7e);
+}
+
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
@@ -1281,8 +1366,10 @@ int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
 
+    uint32_t code = 0;
+    if (!sbcToUnicode(profile, sbc, code)) return CES_ERROR_UNASSIGNED_CODE;
     uint8_t encoded[4];
-    const uint32_t length = encodeUtf8(sbcToUnicode(profile, sbc), encoded);
+    const uint32_t length = encodeUtf8(code, encoded);
     if (utf8max < length) return CES_ERROR_DST_BUFFER_END;
     for (uint32_t i = 0; i < length; ++i) utf8[i] = encoded[i];
     if (utf8_len) *utf8_len = length;
