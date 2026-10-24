@@ -1,9 +1,15 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Object.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl)
 configure_windows_unwind(libSceLibreSsl3)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_asn1_object_tests src/Asn1Object.cpp tests/Asn1Object.cpp)
+    target_include_directories(guest_libressl3_asn1_object_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_windows_unwind(guest_libressl3_asn1_object_tests)
+    add_test(NAME guest_libressl3_asn1_object COMMAND guest_libressl3_asn1_object_tests)
+    set_tests_properties(guest_libressl3_asn1_object PROPERTIES TIMEOUT 30)
+
     add_test_executable(guest_crypto_memcmp_tests ${LIBS_INCLUDE_DIR}/tests/GuestCryptoMemcmp.cpp)
     target_include_directories(guest_crypto_memcmp_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_crypto_memcmp_tests PRIVATE libSceLibreSsl3)
