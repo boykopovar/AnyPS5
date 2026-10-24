@@ -1027,21 +1027,6 @@ int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CIPHER_get_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CIPHER_get_version_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
