@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "JsonTestAllocator.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -7,7 +8,7 @@
 #include <new>
 #include <initializer_list>
 
-struct Value { void* node; };
+struct Value { alignas(8) std::uint64_t storage[4]{}; };
 struct String { void* text; };
 struct Array { void* items; };
 struct Object { void* items; };
@@ -15,6 +16,9 @@ struct Iterator { void* state; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 
 extern "C" {
+void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
+int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
@@ -31,9 +35,9 @@ void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
-int APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
-int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value*, const Object*);
-int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value*, const Object*);
+void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);
@@ -170,6 +174,11 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
 }
 
 int main() {
+    JsonTest::Allocator allocator;
+    struct { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; } parameter{&allocator, nullptr, 0, 2, {}};
+    std::uint8_t initializer = 0;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize copy failure contract");
     constexpr const char* objectJson = "{\"long\":\"a sufficiently long string to require its own allocation\",\"nested\":[{\"leaf\":\"another sufficiently long string\"},[true,null,17]]}";
     constexpr const char* arrayJson = "[1,{\"long\":\"a sufficiently long string to require its own allocation\"},[false,null]]";
     constexpr const char* stringJson = "\"a sufficiently long string to require its own allocation\"";
@@ -203,7 +212,7 @@ int main() {
         {"set object", Operation::SetObject, &objectValue, objectJson},
         {"set empty array", Operation::SetTypeArray, &objectValue, "[]"},
         {"set empty object", Operation::SetTypeObject, &objectValue, "{}"},
-        {"set empty string", Operation::SetTypeString, &objectValue, "\"\""},
+        {"retain string type", Operation::SetTypeString, &objectValue, "\"previous\""},
         {"pair copy", Operation::PairCopy, &objectValue, objectJson},
     };
     unsigned failures = 0;
@@ -227,7 +236,7 @@ int main() {
         Iterator source{};
         if (objectIterator) _ZNK3sce4Json6Object5beginEv(&source, object);
         else _ZNK3sce4Json5Array5beginEv(&source, array);
-        for (activeBudget = 0; activeBudget <= 1; ++activeBudget) {
+        for (activeBudget = 0; activeBudget < 1; ++activeBudget) {
             Iterator copy{};
             bool succeeded = false;
             allocationBudget = activeBudget;
@@ -239,7 +248,7 @@ int main() {
                 ++failures;
             }
             allocationBudget = -1;
-            Require(succeeded == (activeBudget == 1), "iterator allocation failure ignored");
+            Require(succeeded, "Iterator copies must use the guest allocator without host allocations");
             if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
             if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
             else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
