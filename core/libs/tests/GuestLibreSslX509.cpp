@@ -26,6 +26,7 @@ static_assert(sizeof(TestX509) == 176);
 
 extern "C" {
 void* APS5_VABI X509_get_issuer_name_nid_postfix(const TestX509*);
+void* APS5_VABI X509_get_subject_name_nid_postfix(const TestX509*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -53,7 +54,22 @@ static void TestIssuerName() {
     Require(X509_get_issuer_name_nid_postfix(&certificate) == &issuer);
 }
 
+static void TestSubjectName() {
+    int issuer = 0;
+    int subject = 0;
+    TestCertInfo info {};
+    TestX509 certificate {};
+    RequireThrows([] { X509_get_subject_name_nid_postfix(nullptr); });
+    RequireThrows([&] { X509_get_subject_name_nid_postfix(&certificate); });
+    certificate.certInfo = &info;
+    Require(X509_get_subject_name_nid_postfix(&certificate) == nullptr);
+    info.issuer = &issuer;
+    info.subject = &subject;
+    Require(X509_get_subject_name_nid_postfix(&certificate) == &subject);
+}
+
 int main() {
     TestIssuerName();
+    TestSubjectName();
     return 0;
 }
