@@ -466,6 +466,10 @@ public:
     void StorageRemap() {
         GuestBlock block;
         const auto target = Target(block);
+        if (MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED) {
+            std::puts("the device stores a multisampled color target in the guest sample order, so it is born storable with no promotion to retire; the MSAA storage-promotion remap is skipped");
+            return;
+        }
         const auto resource = Resource(block);
         std::shared_ptr<Texture> held;
         VkImageView sampledView = VK_NULL_HANDLE, storageView = VK_NULL_HANDLE;
