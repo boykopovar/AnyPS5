@@ -80,4 +80,11 @@ void APS5_VABI RSA_get0_key_nid_postfix(const LibreSsl3Rsa* rsa, const void** n,
     Store(d, key.d);
 }
 
+void APS5_VABI DH_get0_pqg_nid_postfix(const LibreSsl3Dh* dh, const void** p, const void** q, const void** g) {
+    const LibreSsl3Dh& key = Key(dh, __func__);
+    Store(p, key.p);
+    Store(q, key.q);
+    Store(g, key.g);
+}
+
 }
