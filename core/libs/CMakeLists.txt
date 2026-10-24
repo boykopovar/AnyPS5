@@ -249,6 +249,7 @@ if(TARGET mimalloc)
 endif()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(prx/libSceLibreSsl/ErrorQueue.cmake)
 
 if(BUILD_TESTING)
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
