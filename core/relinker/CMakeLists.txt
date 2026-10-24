@@ -798,6 +798,14 @@ if(BUILD_TESTING)
     target_link_libraries(entry_stub_tests PRIVATE relinker_core)
     add_test(NAME entry_stub COMMAND entry_stub_tests)
 
+    add_test_executable(windows_entry_stub_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubAllocation.cpp
+    )
+    target_link_libraries(windows_entry_stub_bounds_tests PRIVATE relinker_core)
+    add_test(NAME windows_entry_stub_bounds COMMAND windows_entry_stub_bounds_tests)
+    set_tests_properties(windows_entry_stub_bounds PROPERTIES TIMEOUT 20)
+
     add_test_executable(control_flow_graph_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ControlFlowGraphTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/RelativeJumpTables.cpp

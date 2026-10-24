@@ -81,7 +81,10 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     auto& data = result.Data.Data;
 
     const auto reserve = [&](const std::size_t size) {
-        const auto rva = CheckedRva(dataRva + data.size());
+        const auto rva = CheckedRva(static_cast<std::uint64_t>(dataRva) + data.size());
+        if (size > data.max_size() - data.size())
+            throw Domain::RelinkerException("Windows entry-stub allocation exceeds vector capacity");
+        CheckedRva(static_cast<std::uint64_t>(dataRva) + data.size() + size);
         data.resize(data.size() + size);
         return rva;
     };
