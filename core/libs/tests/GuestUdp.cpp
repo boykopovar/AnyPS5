@@ -171,6 +171,7 @@ int main() {
     Require(getsockname_nid_postfix(receiver, destination.data(), &size) == 0 && size == 16);
     Require(destination[2] || destination[3]);
     Require(connect_nid_postfix(sender, destination.data(), destination.size()) == 0);
+    Require(sendto_nid_postfix(sender, "x", 1, 0, destination.data(), destination.size()) == -1 && *__error_nid_postfix() == 56);
     char vectorHead[] = "atomic ";
     char vectorTail[] = "datagram";
     Iovec vectorOutput[]{{vectorHead, sizeof(vectorHead) - 1}, {vectorTail, sizeof(vectorTail)}};

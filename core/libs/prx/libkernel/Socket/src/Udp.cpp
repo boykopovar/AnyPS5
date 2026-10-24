@@ -1424,6 +1424,11 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
         if (!Address(address, addressLength, native, size)) return -1;
         if (socket->family == 28 && socket->type == 2 && addressLength > 28) return Fail(22);
         if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
+        if (socket->type == 2) {
+            sockaddr_storage connectedPeer{};
+            socklen_t connectedSize = sizeof(connectedPeer);
+            if (::getpeername(socket->value, reinterpret_cast<sockaddr*>(&connectedPeer), &connectedSize) == 0) return Fail(56);
+        }
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered) return answered;
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
