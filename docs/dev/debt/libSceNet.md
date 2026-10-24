@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceNetShowRouteWithMemory](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - validates memory pool ID and returns success without printing anything: the `(poolId)` signature and pool validation follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/net/net.cpp) and `sceNetShowNetstatWithMemory`. What the console prints and where is unverified
+- [sceNetShowPolicyWithMemory, sceNetShowRouteWithMemory, sceNetShowRoute6WithMemory](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - validate memory pool ID and return success without printing anything: the `(poolId)` signatures and pool validation follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/net/net.cpp) and `sceNetShowNetstatWithMemory`. What the console prints and where is unverified
 - [sceNetShowIfconfig, sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) return the native not-initialized error and set errno before initialization. Initialized calls throw because native diagnostic collection and formatting are not implemented.
 - [sceNetShowPolicy, sceNetShowNetstatEx, sceNetShowRoute, sceNetShowRoute6](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - return success without printing anything: the `()` signatures and the success return follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net.cpp), which stubs each the same way. PPSA01530 fails to load without the `sceNetShowIfconfig` export (#3177); PPSA11386 imports `sceNetShowNetstat` but does not call it during start-up. What the console prints and where is unverified
 
