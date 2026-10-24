@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_OUTLINE_H
+#include FT_MODULE_H
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -117,6 +118,11 @@ int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
     const FT_Error error = FT_Done_FreeType(library ? library->host : nullptr);
     if (error == 0) delete library;
     return error;
+}
+
+int APS5_VABI FT_Done_Library_nid_postfix(GuestLibrary* library) {
+    const FT_Error error = FT_Done_Library(library ? library->host : nullptr);
+    if (error == 0 && --library->references == 0) delete library;
 }
 
 int APS5_VABI FT_Select_Size_nid_postfix(GuestFaceRec* face, std::int32_t strikeIndex) {
