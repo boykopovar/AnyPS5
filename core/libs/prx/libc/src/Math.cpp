@@ -796,7 +796,79 @@ float APS5_VABI logf_nid_postfix(float x) {
     return k == 0 ? f - s * (f - R) : dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
 }
 float APS5_VABI log2f_nid_postfix(float x) { return std::log2(x); }
-double APS5_VABI log10_nid_postfix(double x) { return std::log10(x); }
+static double Log10Kernel(double x) {
+    const double Lg1 = 6.666666666666735130e-01;
+    const double Lg2 = 3.999999999940941908e-01;
+    const double Lg3 = 2.857142874366239149e-01;
+    const double Lg4 = 2.222219843214978396e-01;
+    const double Lg5 = 1.818357216161805012e-01;
+    const double Lg6 = 1.531383769920937332e-01;
+    const double Lg7 = 1.479819860511658591e-01;
+    std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const double f = x - 1.0;
+    if ((0x000fffff & (2 + hx)) < 3) {
+        if (f == 0.0) {
+            return 0.0;
+        }
+        return f * f * (0.33333333333333333 * f - 0.5);
+    }
+    const double s = f / (2.0 + f);
+    const double z = s * s;
+    hx &= 0x000fffff;
+    std::int32_t i = hx - 0x6147a;
+    const double w = z * z;
+    const std::int32_t j = 0x6b851 - hx;
+    const double t1 = w * (Lg2 + w * (Lg4 + w * Lg6));
+    const double t2 = z * (Lg1 + w * (Lg3 + w * (Lg5 + w * Lg7)));
+    i |= j;
+    const double R = t2 + t1;
+    if (i > 0) {
+        const double hfsq = 0.5 * f * f;
+        return s * (hfsq + R) - hfsq;
+    }
+    return s * (R - f);
+}
+
+double APS5_VABI log10_nid_postfix(double x) {
+    const double two54 = 1.80143985094819840000e+16;
+    const double ivln10hi = 4.34294481878168880939e-01;
+    const double ivln10lo = 2.50829467116452752298e-11;
+    const double log10_2hi = 3.01029995663611771306e-01;
+    const double log10_2lo = 3.69423907715893078616e-13;
+    static volatile double zero = 0.0;
+    std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    std::int32_t k = 0;
+    if (hx < 0x00100000) {
+        if (((hx & 0x7fffffff) | lx) == 0) {
+            return -two54 / zero;
+        }
+        if (hx < 0) {
+            errno = EDOM;
+            return (x - x) / zero;
+        }
+        k -= 54;
+        x *= two54;
+        bits = std::bit_cast<std::uint64_t>(x);
+        hx = static_cast<std::int32_t>(bits >> 32);
+    }
+    if (hx >= 0x7ff00000) {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000fffff;
+    const std::int32_t i = (hx + 0x95f64) & 0x100000;
+    x = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(hx | (i ^ 0x3ff00000))) << 32) | (bits & 0xffffffffu));
+    k += i >> 20;
+    const double y = k;
+    const double f = Log10Kernel(x);
+    x = x - 1;
+    const double hi = std::bit_cast<double>(std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull);
+    const double lo = x - hi;
+    const double z = y * log10_2lo + (x + f) * ivln10lo + (lo + f) * ivln10hi + hi * ivln10hi;
+    return z + y * log10_2hi;
+}
 float APS5_VABI ldexpf_nid_postfix(float x, int exp) { return std::ldexp(x, exp); }
 double APS5_VABI fmod_nid_postfix(double x, double y) {
     int saved_errno = errno;
