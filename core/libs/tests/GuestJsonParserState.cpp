@@ -21,6 +21,7 @@ void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
 std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value*);
+std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
 const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
@@ -161,6 +162,14 @@ int main() {
         Require(Parse(value, "{}") == 0 && _ZNK3sce4Json5Value5countEv(&value) == 1, "Parsing an empty object into an existing object must retain its members");
         _ZN3sce4Json5ValueD1Ev(&value);
     }
+    Value missingMember{}; _ZN3sce4Json5ValueC1El(&missingMember, 77);
+    Require(static_cast<unsigned>(Parse(missingMember, "{\"a\":}")) == 0x80848101 &&
+                _ZNK3sce4Json5Value7getTypeEv(&missingMember) == 7,
+            "A missing member value must report parse failure while retaining the object type");
+    Require(Parse(missingMember, "{}") == 0 && _ZNK3sce4Json5Value7getTypeEv(&missingMember) == 7,
+            "The retained object must remain usable after a missing-value parse error");
+    _ZN3sce4Json5ValueD1Ev(&missingMember);
+    Require(live.size() == baseline, "The missing-value error and retry must reclaim admitted storage");
     Value nested{}; _ZN3sce4Json5ValueC1El(&nested, 77);
     Require(static_cast<unsigned>(Parse(nested, "[[1,")) == 0x80848101 && nested.type == 6, "Nested failures must retain the outer collection");
     const auto* inner = _ZNK3sce4Json5Array5frontEv(reinterpret_cast<const Array*>(nested.payload));
