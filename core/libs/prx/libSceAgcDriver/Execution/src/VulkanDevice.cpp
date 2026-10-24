@@ -2720,6 +2720,10 @@ AliasPlan PlanAlias(const Graphics::Context& context, std::uint64_t destination,
         plan.refusal = "no source";
         return plan;
     }
+    if (!plan.from->ImageCoversGuestBytes()) {
+        plan.refusal = "image byte coverage";
+        return plan;
+    }
     plan.to = Graphics::StorageTexture::FindLive(destination, bytes);
     plan.refusal = Graphics::StorageTexture::CopyRefusal(context, plan.to.get(), *plan.from, destination);
     return plan;
