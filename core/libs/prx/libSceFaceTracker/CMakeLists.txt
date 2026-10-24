@@ -1,0 +1,15 @@
+add_library(libSceFaceTracker SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFaceTracker PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFaceTracker)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_face_tracker_tests ${LIBS_INCLUDE_DIR}/tests/GuestFaceTracker.cpp)
+    target_include_directories(guest_face_tracker_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_face_tracker_tests PRIVATE libSceFaceTracker libc)
+    configure_windows_unwind(guest_face_tracker_tests)
+    add_test(NAME guest_face_tracker COMMAND guest_face_tracker_tests)
+    if(WIN32)
+        set_tests_properties(guest_face_tracker PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFaceTracker>")
+    endif()
+endif()
