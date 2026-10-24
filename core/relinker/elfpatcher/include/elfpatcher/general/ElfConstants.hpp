@@ -170,6 +170,7 @@ inline constexpr std::uint32_t SHT_PROGBITS = 1;
 inline constexpr std::uint32_t SHT_SYMTAB = 2;
 inline constexpr std::uint32_t SHT_STRTAB = 3;
 inline constexpr std::uint32_t SHT_DYNAMIC = 6;
+inline constexpr std::uint32_t SHT_NOBITS = 8;
 inline constexpr std::uint32_t SHT_DYNSYM = 11;
 inline constexpr std::uint32_t SHF_WRITE = 0x1;
 inline constexpr std::uint32_t SHF_ALLOC = 0x2;

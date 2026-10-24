@@ -245,14 +245,23 @@ bool runsAllStartingLanes(const IrProgram& program, const IrBlock* target) {
     return false;
 }
 
-bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, std::uint32_t depth = 0) {
+enum class LaneCoverage { Real, Quads };
+
+bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, LaneCoverage coverage, std::uint32_t depth = 0) {
     if (depth > 8u) return false;
     if (word.Opcode() == IrOpcode::BitwiseAnd32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
     }
     if (word.Opcode() == IrOpcode::BitwiseOr32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
     }
+    if (word.Opcode() == IrOpcode::CompositeExtractU64 && isImmediateU32(resolveArg(word, 1), index)) {
+        const auto& mask = resolveArg(word, 0);
+        if (mask.Opcode() != IrOpcode::WqmU64) return false;
+        const auto& lanes = resolveArg(mask, 0);
+        return lanes.Opcode() == IrOpcode::CompositeConstructU64 && holdsStartingLanes(program, resolveArg(lanes, index), index, LaneCoverage::Real, depth + 1u);
+    }
+    if (coverage == LaneCoverage::Quads) return false;
     if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return false;
     const auto& ballot = resolveArg(word, 0);
     if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return false;
@@ -291,13 +300,8 @@ bool foldStartingQuadBitTest(const IrProgram& program, IrBuilder& builder, IrVal
     } else if (program.WaveSize() != 32u) {
         return false;
     }
-    if (low->Opcode() != IrOpcode::CompositeExtractU64 || !isImmediateU32(resolveArg(*low, 1), 0u)) return false;
-    const auto& wqm = resolveArg(*low, 0);
-    if (high != nullptr && (high->Opcode() != IrOpcode::CompositeExtractU64 || &resolveArg(*high, 0) != &wqm || !isImmediateU32(resolveArg(*high, 1), 1u))) return false;
-    if (wqm.Opcode() != IrOpcode::WqmU64) return false;
-    const auto& lanes = resolveArg(wqm, 0);
-    if (lanes.Opcode() != IrOpcode::CompositeConstructU64 || !holdsStartingLanes(program, resolveArg(lanes, 0), 0u)) return false;
-    if (high != nullptr && !holdsStartingLanes(program, resolveArg(lanes, 1), 1u)) return false;
+    if (!holdsStartingLanes(program, *low, 0u, LaneCoverage::Quads)) return false;
+    if (high != nullptr && !holdsStartingLanes(program, *high, 1u, LaneCoverage::Quads)) return false;
     replaceWith(inst, builder.ConstantBool(true));
     return true;
 }

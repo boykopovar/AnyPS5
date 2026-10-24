@@ -18,6 +18,8 @@ int APS5_VABI sceHttpSetAutoRedirect(int, int);
 int APS5_VABI sceHttpGetAutoRedirect(int, int*);
 int APS5_VABI sceHttpSetAuthEnabled(int, int);
 int APS5_VABI sceHttpGetAuthEnabled(int, int*);
+int APS5_VABI sceHttpSetCookieEnabled(int, int);
+int APS5_VABI sceHttpGetCookieEnabled(int, int*);
 int APS5_VABI sceHttpSetNonblock(int, int);
 int APS5_VABI sceHttpGetNonblock(int, int*);
 int APS5_VABI sceHttpTrySetNonblock(int, int);
@@ -94,6 +96,23 @@ void CheckAuthEnabled(int context) {
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
 }
 
+void CheckCookieEnabled(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(Get(sceHttpGetCookieEnabled, pattern) == 0, "a template enables cookies by default");
+    Require(sceHttpSetCookieEnabled(pattern, 1) == 0 && Get(sceHttpGetCookieEnabled, pattern) == 1, "the cookie-enabled getter does not return what was set");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, request) == 1, "a child did not inherit its parent's cookie option");
+    Require(sceHttpSetCookieEnabled(request, 0) == 0 && Get(sceHttpGetCookieEnabled, request) == 0, "the cookie option could not be disabled on a child");
+    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, pattern) == 1, "changing a child changed its parent or sibling");
+    int value = -1;
+    Require(sceHttpGetCookieEnabled(request, nullptr) == InvalidValue, "a null cookie output was not refused");
+    Require(sceHttpSetCookieEnabled(pattern, -1) == InvalidValue && sceHttpSetCookieEnabled(pattern, 2) == InvalidValue, "an invalid cookie-enabled value was accepted");
+    Require(sceHttpGetCookieEnabled(UnknownId, &value) == InvalidId && sceHttpSetCookieEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused for cookie options");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetCookieEnabled(request, &value) == InvalidId, "a deleted request retained its cookie option");
+    Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
 void CheckNonblock(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     Require(Get(sceHttpGetNonblock, pattern) == 0 && Get(sceHttpTryGetNonblock, pattern) == 0, "a template is nonblocking by default");
@@ -167,6 +186,7 @@ void CheckTermEndsOptions() {
     HttpEpollHandle bound = nullptr;
     Require(sceHttpGetAutoRedirect(pattern, &value) == BeforeInit && sceHttpSetAutoRedirect(pattern, 0) == BeforeInit, "the redirect option outlived the last sceHttpTerm");
     Require(sceHttpGetAuthEnabled(pattern, &value) == BeforeInit && sceHttpSetAuthEnabled(pattern, 0) == BeforeInit, "the authentication option outlived the last sceHttpTerm");
+    Require(sceHttpGetCookieEnabled(pattern, &value) == BeforeInit && sceHttpSetCookieEnabled(pattern, 0) == BeforeInit, "the cookie option outlived the last sceHttpTerm");
     Require(sceHttpGetNonblock(connection, &value) == BeforeInit && sceHttpTryGetNonblock(connection, &value) == BeforeInit, "the nonblocking getters work after the last sceHttpTerm");
     Require(sceHttpSetNonblock(connection, 1) == BeforeInit && sceHttpTrySetNonblock(connection, 1) == BeforeInit, "the nonblocking setters work after the last sceHttpTerm");
     Require(sceHttpGetAcceptEncodingGZIPEnabled(pattern, &value) == BeforeInit && sceHttpSetAcceptEncodingGZIPEnabled(pattern, 1) == BeforeInit, "the gzip option outlived the last sceHttpTerm");
@@ -213,6 +233,7 @@ int main() {
     Require(context > 0, "sceHttpInit failed");
     CheckAutoRedirect(context);
     CheckAuthEnabled(context);
+    CheckCookieEnabled(context);
     CheckNonblock(context);
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);

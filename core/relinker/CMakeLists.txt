@@ -687,6 +687,14 @@ if(BUILD_TESTING)
         add_test(NAME windows_import_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_import_modules.py
             $<TARGET_FILE:relinker> ${windows_stdio_host_arguments})
+        if(WIN32)
+            foreach(kernelVariant IN ITEMS sys web)
+                add_test(NAME windows_kernel_variant_${kernelVariant} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_kernel_variant_imports.py
+                    $<TARGET_FILE:relinker> libkernel_${kernelVariant}.prx)
+                set_tests_properties(windows_kernel_variant_${kernelVariant} PROPERTIES TIMEOUT 30)
+            endforeach()
+        endif()
         add_test(NAME elf_header COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_elf_header.py $<TARGET_FILE:relinker>)
         add_test(NAME weak_imports COMMAND ${Python3_EXECUTABLE}

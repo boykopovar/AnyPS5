@@ -52,6 +52,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 countLabelOutcome(reason);
                 ++immediateLabels;
             } else {
+                if (localDevice != nullptr) Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before interrupt");
                 ++noOpLabels;
             }
             if (reason == 0 || reason == 5) {

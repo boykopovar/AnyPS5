@@ -148,6 +148,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
+    require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
@@ -260,6 +261,7 @@ RecompileResult sampleResult() {
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
+    result.bdaWrites = true;
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
@@ -749,6 +751,7 @@ void verifyKeySensitivity() {
     changes("spanned waves", [](SampleRequest& sample) { sample.request.target.spannedWaves = true; });
     changes("robust buffer access 2", [](SampleRequest& sample) { sample.request.target.robustBufferAccess2 = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
+    changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });

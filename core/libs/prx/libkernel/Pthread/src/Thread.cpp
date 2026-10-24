@@ -2,6 +2,7 @@
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
 #include "../include/Cancel.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -34,6 +35,7 @@
 #endif
 
 static constexpr int SCE_OK = 0;
+static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
 
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
@@ -819,6 +821,7 @@ extern "C" {
 
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
+    if (name && std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     if (attr && !*attr) attr = nullptr;
     auto p = std::make_unique<PthreadPrivate>(attr ? *attr : nullptr);
     bool detached = false;
@@ -926,7 +929,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     return SCE_OK;
 }
 
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
+int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const KernelTimespec* abstime) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     if (thread == CurrentGuestState().current) return SCE_KERNEL_ERROR_EDEADLK;
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
@@ -938,7 +941,22 @@ int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
         if (thread->_joining) return SCE_KERNEL_ERROR_EOPNOTSUPP;
         thread->_joining = true;
         while (!thread->_finished.load()) {
-            ThreadCancel::Wait(thread->_join_cv, lock, std::nullopt);
+            std::optional<std::uint64_t> deadline;
+            if (abstime != nullptr) {
+                KernelTimespec now{};
+                if (clock_gettime_nid_postfix(0, &now) != 0) {
+                    thread->_joining = false;
+                    throw std::runtime_error("Joining guest thread: realtime clock unavailable");
+                }
+                if (abstime->tv_sec < now.tv_sec || (abstime->tv_sec == now.tv_sec && abstime->tv_nsec <= now.tv_nsec)) {
+                    thread->_joining = false;
+                    return SCE_KERNEL_ERROR_ETIMEDOUT;
+                }
+                const auto seconds = static_cast<std::uint64_t>(abstime->tv_sec) - static_cast<std::uint64_t>(now.tv_sec);
+                const auto nanos = seconds > 1 ? std::int64_t{1000000000} : static_cast<std::int64_t>(seconds) * 1000000000 + abstime->tv_nsec - now.tv_nsec;
+                deadline = TimedWait::DeadlineNanos(static_cast<std::uint64_t>((nanos + 999) / 1000));
+            }
+            ThreadCancel::Wait(thread->_join_cv, lock, deadline);
             if (ThreadCancel::Requested()) {
                 thread->_joining = false;
                 lock.unlock();
@@ -964,11 +982,16 @@ int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
     return SCE_OK;
 }
 
+int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
+    return JoinThread_nid_no_patch(thread, retval, nullptr);
+}
+
 int APS5_VABI scePthreadDetach(Pthread thread) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     {
         std::lock_guard lock(thread->_join_mtx);
-        if (thread->_detached || thread->_joining || thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_EINVAL;
+        if (thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
+        if (thread->_detached || thread->_joining) return SCE_KERNEL_ERROR_EINVAL;
         thread->_detached = true;
     }
 #ifdef _WIN32

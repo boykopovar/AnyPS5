@@ -115,6 +115,7 @@ enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedF
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
+    bool pipe = false;
 };
 
 std::mutex g_mutex;
@@ -362,6 +363,12 @@ int CurrentStatus(int fd) {
     return *Materialize(fd).status;
 }
 
+bool CreatedByPipe(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_entries.find(fd);
+    return found != g_entries.end() && found->second.pipe;
+}
+
 void SetCloseOnExec(int fd, bool value) {
     std::lock_guard lock(g_mutex);
     Materialize(fd).closeOnExec = value;
@@ -482,7 +489,7 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
             return 0;
         case GetStatusFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int access = AccessMode(fd, "fcntl");
+            const int access = CreatedByPipe(fd) ? ReadWrite : AccessMode(fd, "fcntl");
             return access | CurrentStatus(fd);
         }
         case SetStatusFlags: {
@@ -561,11 +568,17 @@ void RememberDescriptor(int fd, int openFlags) {
 #endif
 }
 
+void RememberPipe(int fd) {
+    RememberDescriptor(fd, 0);
+    std::lock_guard lock(g_mutex);
+    g_entries[fd].pipe = true;
+}
+
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto status = Materialize(from).status;
-    g_entries[to] = Entry{false, std::move(status)};
+    const auto& source = Materialize(from);
+    g_entries[to] = Entry{false, source.status, source.pipe};
 #ifdef _WIN32
     File::SharePositionedTransfer(from, to);
     GuestFileLockShare_nid_no_patch(from, to);

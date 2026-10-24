@@ -1,4 +1,5 @@
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -92,7 +93,7 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
 #else
-    const int result = ::getc_unlocked(native);
+    const int result = getc_unlocked(native);
 #endif
     stream->SyncUnlockedStatus();
     stream->KeepDirectoryReadError(result == -1);
@@ -115,7 +116,7 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
 #ifdef _WIN32
     const int result = _fputc_nolock(value, GetNativeStream(stream));
 #else
-    const int result = ::putc_unlocked(value, GetNativeStream(stream));
+    const int result = putc_unlocked(value, GetNativeStream(stream));
 #endif
     stream->SyncUnlockedStatus();
     return result;
@@ -194,7 +195,12 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
         buffer = nullptr;
         size = BUFSIZ;
     }
-    return std::setvbuf(GetStreamHandle(stream), buffer, native, size);
+    auto* handle = GetStreamHandle(stream);
+#ifdef _WIN32
+    if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
+    if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
+#endif
+    return std::setvbuf(handle, buffer, native, size);
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);

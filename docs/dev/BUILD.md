@@ -157,7 +157,7 @@ On Windows MinGW frees `thread_local` objects before their destructors run, so t
 
 ## Compute pipeline replay
 
-Build `agc_compute_pipeline_replay` in the full build with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`; replay validates the captured module before calling Vulkan. Set `APS5_DUMP_COMPUTE_PIPELINES` to a dedicated empty directory before starting a title to save each uncached compute pipeline's final SPIR-V, descriptor layouts, push constant ranges, specialization values, subgroup size and creation flags before compilation. Files are named `compute-<identity>/capture.aps5cp`; identical records are deduplicated. Capture stops with an error at 128 records, 256 MiB total or 36 MiB per record (at most 8,388,608 SPIR-V words, or 32 MiB of shader code). Capture files contain shader code and device metadata, but no guest buffers or textures; review them before sharing.
+Build `agc_compute_pipeline_replay` in the full build with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`; replay validates the captured module before calling Vulkan. Set `APS5_DUMP_COMPUTE_PIPELINES` to a dedicated empty directory before starting a title to save each uncached compute pipeline's final SPIR-V, descriptor layouts, push constant ranges, specialization values, subgroup size and creation flags before compilation. Files are named `compute-<identity>/capture.aps5cp`; identical records are deduplicated. The pipelines of the start-up f32 denormal flush probe are not captured. Capture stops with an error at 128 records, 256 MiB total or 36 MiB per record (at most 8,388,608 SPIR-V words, or 32 MiB of shader code). Capture files contain shader code and device metadata, but no guest buffers or textures; review them before sharing.
 
 Set `APS5_DUMP_COMPUTE_MIN_WORDS` to capture only modules at or above that SPIR-V word count, for example `100000` when investigating large NVIDIA compilations. The default is `0` (all modules); values outside `0` through `8388608` fail. The filter applies only when capture is enabled.
 
@@ -192,7 +192,7 @@ Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newl
 
 ## Device loss reports
 
-On a device that supports `VK_EXT_device_fault`, the first `VK_ERROR_DEVICE_LOST` prints the driver's fault description, the faulting addresses and the vendor fault codes as `[device-fault]` lines. Set `APS5_GPU_CHECKPOINTS=1` to also record a `VK_NV_device_diagnostic_checkpoints` marker with the program address before each compute dispatch; the report then lists the last markers the GPU reached. Checkpoints are disabled by default and ignored on devices without the extension.
+On a device that supports `VK_EXT_device_fault`, the first `VK_ERROR_DEVICE_LOST` prints the driver's fault description, the faulting addresses and the vendor fault codes as `[device-fault]` lines. Set `APS5_GPU_CHECKPOINTS=1` to also record a `VK_NV_device_diagnostic_checkpoints` marker with the program address before each compute dispatch; the report then lists the last markers the GPU reached. On a device without that extension but with `VK_AMD_buffer_marker` (RADV and AMD's own drivers), each compute dispatch instead writes a numbered marker into a host-visible buffer when the GPU reaches it and another when it finishes; the report then names the programs of the last dispatch reached, of the last one finished and of up to eight dispatches between them. Checkpoints are disabled by default and ignored on devices without the extension.
 
 ## Worker sampler
 

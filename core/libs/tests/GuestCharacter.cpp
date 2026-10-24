@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cctype>
 #include <clocale>
 #include <cstdio>
@@ -29,16 +30,20 @@ int main() {
     for (int category = 0; category <= 6; ++category) {
         const char* result = setlocale_nid_postfix(category, "C");
         Require(result != nullptr && std::strcmp(result, "C") == 0);
-        result = setlocale_nid_postfix(category, "POSIX");
-        Require(result != nullptr && std::strcmp(result, "C") == 0);
+        Require(setlocale_nid_postfix(category, "POSIX") == nullptr);
         result = setlocale_nid_postfix(category, nullptr);
         Require(result != nullptr && std::strcmp(result, "C") == 0);
         result = setlocale_nid_postfix(category, "");
         Require(result != nullptr && std::strcmp(result, "C") == 0);
         Require(setlocale_nid_postfix(category, "en_US.UTF-8") == nullptr);
     }
-    Require(setlocale_nid_postfix(-1, "C") == nullptr);
-    Require(setlocale_nid_postfix(7, "C") == nullptr);
+    for (const int category : std::array<int, 4>{-1, 7, 100, 1 << 30}) {
+        const char* result = setlocale_nid_postfix(category, "C");
+        Require(result != nullptr && std::strcmp(result, "C") == 0);
+        result = setlocale_nid_postfix(category, nullptr);
+        Require(result != nullptr && std::strcmp(result, "C") == 0);
+        Require(setlocale_nid_postfix(category, "POSIX") == nullptr && setlocale_nid_postfix(category, "x") == nullptr);
+    }
     for (int c = EOF; c <= 255; ++c) {
         Require(bool(isupper_nid_postfix(c)) == bool(std::isupper(c)));
         Require(bool(islower_nid_postfix(c)) == bool(std::islower(c)));

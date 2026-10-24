@@ -153,7 +153,7 @@ TFloat NanValue(const NanSubject& subject, const char*& end) {
         return std::bit_cast<double>((subject.negative ? 0x8000000000000000ull : 0) | 0x7ff8000000000000ull | payload);
     } else if constexpr (std::is_same_v<TFloat, float>) {
         end = NanSequenceEnd(subject.tail);
-        return std::bit_cast<float>(0x7fc00000u);
+        return std::bit_cast<float>((subject.negative ? 0x80000000u : 0) | 0x7fc00000u);
     } else {
         end = NanSequenceEnd(subject.tail);
         TFloat value{};
@@ -187,7 +187,36 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     const TFloat value = parse(text, &parsedEnd);
     if (errno == ERANGE && value != 0 && (value < 0 ? -value : value) < std::numeric_limits<TFloat>::min()) errno = saved;
     if (end != nullptr) *end = parsedEnd;
-    return parsedEnd == text ? TFloat{0} : value;
+    const char* subject = text;
+    while (std::isspace(static_cast<unsigned char>(*subject))) ++subject;
+    if (parsedEnd == text) {
+        if (subject[0] != '-') return TFloat{0};
+        if constexpr (std::is_same_v<TFloat, float>) return subject[1] == '\0' ? TFloat{0} : -TFloat{0};
+        const bool special = std::strchr("iInN", subject[1]) != nullptr && subject[1] != '\0';
+        return std::is_same_v<TFloat, long double> && !special ? -TFloat{0} : TFloat{0};
+    }
+    if (*subject == '+' || *subject == '-') ++subject;
+    const bool hexadecimal = subject[0] == '0' && (subject[1] == 'x' || subject[1] == 'X') && parsedEnd > subject + 2;
+    if constexpr (std::is_same_v<TFloat, float>) {
+        const float magnitude = value < 0 ? -value : value;
+        if (value != 0 && magnitude < std::numeric_limits<float>::min()) {
+            const long double exact = std::strtold(text, nullptr);
+            const bool roundedUp = magnitude == std::numeric_limits<float>::denorm_min() && (exact < 0 ? -exact : exact) < magnitude;
+            errno = hexadecimal ? (roundedUp ? ERANGE : saved) : (static_cast<long double>(value) != exact ? ERANGE : saved);
+        }
+        return value;
+    }
+    if (!hexadecimal) return value;
+    if constexpr (std::is_same_v<TFloat, double>) {
+        constexpr double smallest = std::numeric_limits<double>::denorm_min();
+        if ((value < 0 ? -value : value) == smallest) {
+            const long double exact = std::strtold(text, nullptr);
+            if ((exact < 0 ? -exact : exact) < smallest) errno = ERANGE;
+        }
+    } else if (errno == ERANGE) {
+        errno = saved;
+    }
+    return value;
 }
 
 }
@@ -421,18 +450,20 @@ char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, si
 
 extern "C" {
 
+int APS5_VABI tolower_nid_postfix(int);
+
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
-        const int a = std::tolower(static_cast<unsigned char>(*s1));
-        const int b = std::tolower(static_cast<unsigned char>(*s2));
+        const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
+        const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b || *s1 == 0) return a - b;
     }
 }
 
 int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
     for (; n != 0; ++s1, ++s2, --n) {
-        const int a = std::tolower(static_cast<unsigned char>(*s1));
-        const int b = std::tolower(static_cast<unsigned char>(*s2));
+        const int a = tolower_nid_postfix(static_cast<unsigned char>(*s1));
+        const int b = tolower_nid_postfix(static_cast<unsigned char>(*s2));
         if (a != b) return a - b;
         if (*s1 == 0) break;
     }
@@ -863,8 +894,8 @@ int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     }
     const auto destination = reinterpret_cast<std::uintptr_t>(dest + used);
     const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (length != 0 && distance < (length + 1) * sizeof(char16_t)) {
+    const auto bytes = length * sizeof(char16_t);
+    if (destination < source + bytes && source < destination + bytes) {
         dest[0] = 0;
         return GuestEinval;
     }

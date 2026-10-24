@@ -157,7 +157,7 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"5", nullptr) == -1, "null format");
     Require(Throws([&] { swscanf_s_nid_postfix(u"abc", u"%l[a-c]", text, std::size_t{6}); }), "scanset range throws");
     Require(Throws([&] { swscanf_s_nid_postfix(u"5", u"%Ld", &wide); }), "%Ld throws");
-    Require(Throws([&] { swscanf_s_nid_postfix(u"Ā", u"%s", narrow, std::size_t{4}); }), "unconvertible narrow %s throws");
+    Require(swscanf_s_nid_postfix(u"Ā", u"%s", narrow, std::size_t{4}) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "narrow %s stores UTF-8");
 }
 
 static void CheckUnsizedScan() {
@@ -224,7 +224,7 @@ static void CheckUnsizedScan() {
     Require(Throws([&] { swscanf_nid_postfix(u"abc", u"%l[a-c]", text); }), "swscanf scanset range throws");
     Require(Throws([&] { swscanf_nid_postfix(u"5", u"%Ld", &wide); }), "swscanf %Ld throws");
     Require(Throws([&] { swscanf_nid_postfix(u"1", u"%lp", &pointer); }), "swscanf %lp throws");
-    Require(Throws([&] { swscanf_nid_postfix(u"Ā", u"%s", narrow); }), "swscanf unconvertible narrow %s throws");
+    Require(swscanf_nid_postfix(u"Ā", u"%s", narrow) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "swscanf narrow %s stores UTF-8");
 }
 
 int main() {

@@ -14,6 +14,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -87,6 +88,9 @@ void MapDriverMemory() {
     auto* slot = reinterpret_cast<std::uint64_t*>(FsTableAddress);
     slot[0] = (FsRoutineTableAddress & 0xffffffffffffull) | 16ull << 48u;
     slot[1] = FsTableDword3 << 32u | FsRoutineRecords;
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, DriverMemoryBytes);
+#endif
     GuestAllocations::Mutation mutation;
     mutation.Add(mapped, DriverMemoryBytes, true, true, true);
 }

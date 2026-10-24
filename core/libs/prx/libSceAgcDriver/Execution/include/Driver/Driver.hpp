@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <atomic>
@@ -73,6 +74,17 @@ public:
     void ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
     void ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType);
     void SettleShaderPreparations(std::span<const Shader* const> stages);
+    [[nodiscard]] std::size_t PreparedEntries(const Shader* shader);
+    struct DeferredAbiUseCounts {
+        std::uint64_t firstUses;
+        std::uint64_t found;
+        std::uint64_t own;
+        std::uint64_t entries;
+        std::uint64_t unmatchedEntries;
+    };
+    [[nodiscard]] static DeferredAbiUseCounts DeferredAbiUses();
+    [[nodiscard]] std::vector<std::array<std::uint64_t, 2>> PreparedEntryHashes(const Shader* shader);
+    [[nodiscard]] std::array<std::uint64_t, 4> PrebuiltLibraries();
     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
@@ -173,7 +185,7 @@ private:
     void lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData);
     std::shared_ptr<const ShaderRecompiler::RecompileResult> materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics);
     static void recordStageDataPositions(DispatchVariant& variant, const ShaderRecompiler::ResourceCapture& capture, const std::vector<Graphics::DecodeRead>& decodeReads);
-    void cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawParameters& drawParameters, const std::optional<Graphics::IndirectDrawPath>& indirectCpu, const std::vector<DrawProgram>& programs, const std::vector<StageCapture>& stageCaptures, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, bool verifyHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::uint64_t drawKey, bool registerKey, const std::shared_ptr<const DrawDecode>& decode, DrawPhaseTiming& phaseTiming, const std::vector<bool>& reused, const std::shared_ptr<DrawEntry>& entry, std::uint64_t shapeKey, bool shapeNeedsEntry = false);
+    void cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawParameters& drawParameters, const std::optional<Graphics::IndirectDrawPath>& indirectCpu, const std::vector<DrawProgram>& programs, const std::vector<StageCapture>& stageCaptures, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, const std::vector<std::vector<Graphics::DecodeRead>>& decodeReads, bool verifyHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<StageDataHit>& stageData, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::uint64_t drawKey, bool registerKey, const std::shared_ptr<const DrawDecode>& decode, DrawPhaseTiming& phaseTiming, const std::vector<bool>& reused, const std::shared_ptr<DrawEntry>& entry, std::uint64_t shapeKey, bool shapeNeedsEntry = false);
     static bool drawPrecheck();
     std::optional<DrawVerdict> precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect);
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
@@ -347,7 +359,7 @@ private:
     void run(std::uint32_t id) noexcept;
 
     std::mutex mutex;
-    std::mutex shutdownMutex;
+    AgcDriver::Mutex shutdownMutex;
     std::condition_variable changed;
 
     std::map<std::uint32_t, QueueWorker> workers;
@@ -370,7 +382,7 @@ private:
     std::unordered_map<std::uint64_t, std::shared_ptr<DispatchEntry>> dispatchCache;
 
     std::list<std::uint64_t> dispatchOrder;
-    std::mutex dispatchCacheMutex;
+    AgcDriver::Mutex dispatchCacheMutex;
     std::uint64_t dispatchCacheHits = 0;
     std::uint64_t dispatchCacheEvictions = 0;
 
@@ -392,18 +404,18 @@ private:
     DrawRelocationPending drawRelocationPending;
     std::unordered_map<std::uint64_t, DrawRelocationTrial> drawRelocationTrials;
     DrawRelocationCounters drawRelocationCounters;
-    std::mutex drawCacheMutex;
+    AgcDriver::Mutex drawCacheMutex;
     std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
     std::optional<DrawKeySightings> drawKeySightings;
     std::optional<DrawKeySightings> drawShapeSightings;
 
     DrawEntryCounters drawEntryCounters;
 
-    std::mutex driverPhasesMutex;
+    AgcDriver::Mutex driverPhasesMutex;
     std::array<DriverPhaseTotals, DispatchClassCount> driverPhaseTotals{};
     std::chrono::steady_clock::time_point driverPhasesReport = std::chrono::steady_clock::now();
 
-    std::mutex drawPhasesMutex;
+    AgcDriver::Mutex drawPhasesMutex;
     DrawPhaseTotals drawPhaseTotals;
 
     std::map<std::uint32_t, QueueState> queues;
@@ -416,7 +428,7 @@ private:
     std::uint32_t nextEopToken = EopFlipTokenBase;
     DevicePointer device;
 
-    std::mutex labelStoresMutex;
+    AgcDriver::Mutex labelStoresMutex;
     std::unordered_map<std::uint64_t, std::array<LabelStore, LabelStoreHistory>> labelStores;
 
     std::vector<std::shared_ptr<VulkanDevice>> replacedDevices;
@@ -447,7 +459,7 @@ private:
     std::atomic<std::uint64_t> evidenceValidations{0};
     std::atomic<std::uint64_t> dispatchesAdoptedAhead{0};
 
-    std::mutex writtenBuffersMutex;
+    AgcDriver::Mutex writtenBuffersMutex;
     std::deque<WrittenBuffer> writtenBuffers;
     std::uint64_t writtenBufferSerial = 0;
     std::unordered_map<std::uint64_t, DwordEvidence> dwordEvidence;
@@ -457,7 +469,7 @@ private:
     std::atomic<std::uint64_t> observationsNoWait{0};
     std::atomic<std::uint64_t> observationsNotReached{0};
 
-    std::mutex validateMutex;
+    AgcDriver::Mutex validateMutex;
     ValidateCounters validateCounters;
 
 };

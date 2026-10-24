@@ -47,6 +47,7 @@ struct VulkanDeviceTestAccess {
 namespace {
 
 using AgcDriver::Graphics::DccKeys;
+using AgcDriver::Graphics::LookupOutcomes;
 using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
@@ -451,6 +452,46 @@ void RunSingleKeys(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(wrong == 0, message);
 }
 
+void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    const std::uint32_t color = 0x11223344u;
+    std::memset(texels, 0x55, SurfaceBytes);
+    for (std::size_t offset = 0; offset < SurfaceBytes; offset += 256) std::memcpy(texels + offset, &color, 4);
+    std::memset(keys, 0x10, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    const auto uploads = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr && image->UploadedKeys() == DccKeys::Uncompressed, "uniform single-key clear: the first write did not store the keys uncompressed");
+    const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    Require(uploaded[LookupOutcomes::UploadClear] == uploads[LookupOutcomes::UploadClear] + 1 && uploaded[LookupOutcomes::UploadCpu] == uploads[LookupOutcomes::UploadCpu], "uniform single-key clear: the first write read the surface and uploaded it instead of clearing it on the GPU");
+    const bool stillWatched = AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
+    Require(image->GuestSnapshotValid() == !stillWatched, stillWatched ? "uniform single-key clear: the upload of write-watched memory kept a guest snapshot, so the surface was read rather than cleared" : "uniform single-key clear: the upload of untracked memory kept no guest bytes to compare");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test uniform single-key clear");
+    device.WaitIdle();
+    RequireKeys(keys, 0xff, "uniform single-key clear: the keys after the write-back");
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto offset = layout.Offset(x, y);
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, texels + offset, 4);
+            const auto expected = y == 0 && x < Threads ? 0xffffffffu : color;
+            if (texel != expected) ++wrong;
+        }
+    }
+    char message[256];
+    std::snprintf(message, sizeof(message), "uniform single-key clear: %zu of %u written-back texels are neither the kernel's write nor the proved clear color 0x%08x", wrong, Side * Side, color);
+    Require(wrong == 0, message);
+}
+
 void RunSingleKeysSampled(AgcDriver::VulkanDevice& device, std::uint8_t* block, std::uint8_t* outputBlock, const char* memory) {
     auto* texels = block;
     auto* keys = block + KeysOffset;
@@ -787,6 +828,11 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_PROFILE_DRAW", "1");
+#else
+        setenv("APS5_PROFILE_DRAW", "1", 1);
+#endif
         std::optional<GuestBlock> block;
         std::optional<GuestBlock> watched;
         std::optional<GuestBlock> untracked;
@@ -806,6 +852,9 @@ int main() {
         std::optional<GuestBlock> single;
         single.emplace(false);
         RunSingleKeys(*device, single->Data());
+        std::optional<GuestBlock> uniformClear;
+        uniformClear.emplace(false);
+        RunUniformSingleClear(*device, uniformClear->Data());
         std::optional<GuestBlock> sampled;
         sampled.emplace(false);
         std::optional<GuestBlock> sampledOutput;
@@ -828,6 +877,9 @@ int main() {
             std::optional<GuestBlock> sampledWatched;
             sampledWatched.emplace(true);
             RunSingleKeysSampled(*device, sampledWatched->Data(), sampledOutput->Data(), "write-watched");
+            std::optional<GuestBlock> uniformClearWatched;
+            uniformClearWatched.emplace(true);
+            RunUniformSingleClear(*device, uniformClearWatched->Data());
 #ifdef _WIN32
             pendingSingle.emplace(true, true);
 #else

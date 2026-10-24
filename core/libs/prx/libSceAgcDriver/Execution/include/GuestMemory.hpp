@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -156,8 +157,10 @@ public:
     std::uint32_t DepthOnThisThread() const;
 
 private:
+    void enter();
+    bool tryEnter();
     void acquired();
-    std::recursive_mutex mutex;
+    Mutex mutex;
     // The holder's thread token and recursion depth, written by the holder only; another thread
     // reads the owner just to see that it is not itself.
     std::atomic<const void*> owner{nullptr};
