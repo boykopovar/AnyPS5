@@ -87,8 +87,99 @@ public:
         const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
         if (result < 0) fail("libopus rejected the packet");
         if (result != samples) fail("unexpected libopus PCM duration");
+        opus_uint32 range = 0;
+        if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_FINAL_RANGE(&range)) != OPUS_OK) fail("libopus did not report the final range");
+        decoder.finalRange = range;
         std::memcpy(pcm, decoded.data(), static_cast<std::size_t>(outputBytes));
         return outputBytes;
+    }
+
+    struct CtlArguments {
+        std::int32_t value = 0;
+        std::int32_t* output = nullptr;
+        const std::int32_t* second = nullptr;
+    };
+
+    template <typename TReadValue, typename TReadPointer>
+    static CtlArguments ReadCtlArguments(int request, TReadValue readValue, TReadPointer readPointer) {
+        CtlArguments arguments;
+        switch (request) {
+        case OPUS_SET_GAIN_REQUEST:
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST:
+        case OPUS_SET_INBAND_FEC_REQUEST:
+        case unknownFlagSet: arguments.value = readValue(); break;
+        case OPUS_GET_SAMPLE_RATE_REQUEST:
+        case OPUS_GET_FINAL_RANGE_REQUEST:
+        case OPUS_GET_GAIN_REQUEST:
+        case OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST:
+        case OPUS_GET_INBAND_FEC_REQUEST:
+        case unknownFlagGet: arguments.output = readPointer(); break;
+        case -1:
+            arguments.output = readPointer();
+            arguments.second = readPointer();
+            break;
+        }
+        return arguments;
+    }
+
+    int Ctl(void* state, int request, const CtlArguments& arguments) {
+        if (!state) return error(0);
+        std::lock_guard lock(mutex);
+        const auto found = decoders.find(state);
+        if (found == decoders.end()) return error(1);
+        auto& decoder = *found->second;
+        const auto value = arguments.value;
+        auto* output = arguments.output;
+        const auto get = [&](std::int32_t current) {
+            if (!output) return error(13);
+            *output = current;
+            return 0;
+        };
+        switch (request) {
+        case OPUS_RESET_STATE:
+            decoder.inbandFec = 0;
+            decoder.gain = 0;
+            decoder.unknownFlag = 0;
+            decoder.phaseInversionDisabled = 0;
+            if (opus_decoder_ctl(decoder.codec.get(), OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset");
+            apply(decoder);
+            return 0;
+        case OPUS_GET_SAMPLE_RATE_REQUEST: return get(decoder.sampleRate);
+        case OPUS_GET_FINAL_RANGE_REQUEST: return get(static_cast<std::int32_t>(decoder.finalRange));
+        case OPUS_SET_GAIN_REQUEST:
+            if (value < -32768 || value > 32767) return error(12);
+            decoder.gain = value;
+            apply(decoder);
+            return 0;
+        case OPUS_GET_GAIN_REQUEST: return get(decoder.gain);
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST:
+            if (static_cast<std::uint32_t>(value) > 1) return error(celtOnly ? 17 : 27);
+            decoder.phaseInversionDisabled = value;
+            apply(decoder);
+            return 0;
+        case OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST: return get(decoder.phaseInversionDisabled);
+        case -1: {
+            const auto* second = arguments.second;
+            if (!output || !second) return error(13);
+            fail("the AJM result words of the last batch are not modelled");
+        }
+        }
+        if (!celtOnly) {
+            switch (request) {
+            case OPUS_SET_INBAND_FEC_REQUEST:
+                if (static_cast<std::uint32_t>(value) > 1) return error(16);
+                decoder.inbandFec = value;
+                return 0;
+            case OPUS_GET_INBAND_FEC_REQUEST: return get(decoder.inbandFec);
+            case unknownFlagSet:
+                if (static_cast<std::uint32_t>(value) > 1) return error(17);
+                if (value != 0) fail("the effect of request 4050 is unknown");
+                decoder.unknownFlag = value;
+                return 0;
+            case unknownFlagGet: return get(decoder.unknownFlag);
+            }
+        }
+        return error(14);
     }
 
     int Destroy(void* state) {
@@ -104,7 +195,15 @@ private:
         int channels;
         int sampleRate;
         std::unique_ptr<OpusDecoder, void (*)(OpusDecoder*)> codec{nullptr, opus_decoder_destroy};
+        std::uint32_t finalRange = 0;
+        std::int32_t inbandFec = 0;
+        std::int32_t gain = 0;
+        std::int32_t unknownFlag = 0;
+        std::int32_t phaseInversionDisabled = 0;
     };
+
+    static constexpr int unknownFlagSet = 4050;
+    static constexpr int unknownFlagGet = 4051;
 
     const char* name;
     bool celtOnly;
@@ -115,6 +214,12 @@ private:
 
     int error(std::uint32_t offset) const {
         return static_cast<int>((celtOnly ? 0x81400000u : 0x81740000u) + offset);
+    }
+
+    void apply(Decoder& decoder) const {
+        if (opus_decoder_ctl(decoder.codec.get(), OPUS_SET_GAIN(decoder.gain)) != OPUS_OK ||
+            opus_decoder_ctl(decoder.codec.get(), OPUS_SET_PHASE_INVERSION_DISABLED(decoder.phaseInversionDisabled)) != OPUS_OK)
+            fail("libopus rejected a decoder setting");
     }
 
     [[noreturn]] void fail(const char* message) const {
