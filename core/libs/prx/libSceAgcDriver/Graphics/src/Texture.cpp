@@ -2964,7 +2964,7 @@ std::vector<StorageTexture::SliceWindow> StorageTexture::sliceWindows(std::span<
                 // One region per block row; whole rows merge (a run's middle rows are whole).
                 for (auto row = firstRow; row <= lastRow; ++row) {
                     const auto rowFirst = std::max<std::uint64_t>(firstBlock, static_cast<std::uint64_t>(row) * mip.blocksPerRow);
-                    const auto rowLast = std::min<std::uint64_t>(lastBlock, static_cast<std::uint64_t>(row + 1u) * mip.blocksPerRow - 1u);
+                    const auto rowLast = std::min<std::uint64_t>(lastBlock, (static_cast<std::uint64_t>(row) + 1u) * mip.blocksPerRow - 1u);
                     const auto x0 = static_cast<std::uint32_t>(rowFirst - static_cast<std::uint64_t>(row) * mip.blocksPerRow) * block[1];
                     const auto x1 = std::min(mip.width, static_cast<std::uint32_t>(rowLast - static_cast<std::uint64_t>(row) * mip.blocksPerRow + 1u) * block[1]);
                     const auto y0 = row * block[2];

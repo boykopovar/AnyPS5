@@ -765,6 +765,9 @@ private:
                     Fail("the merged hull program reads LDS outside its patch's control point records", access.pc);
                 }
                 break;
+            case TessellationAttribute::InstanceInput:
+            case TessellationAttribute::InstanceOutput:
+                break;
             case TessellationAttribute::PatchOutput:
                 break;
             }

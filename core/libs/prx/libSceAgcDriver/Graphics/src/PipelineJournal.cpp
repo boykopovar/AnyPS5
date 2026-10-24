@@ -906,8 +906,8 @@ public:
     }
 
     ~Replay() override {
-        Cancel();
-        Wait();
+        Replay::Cancel();
+        Replay::Wait();
     }
 
     void Cancel() override { cancelled.store(true, std::memory_order_relaxed); }

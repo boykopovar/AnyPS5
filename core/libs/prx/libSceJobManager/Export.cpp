@@ -396,10 +396,12 @@ int Sequence::Dispatch(JobEntry entry, void* argument, std::uint32_t count, cons
 
 void Sequence::SubmitCompute(const Item& item) {
     const auto* bytes = static_cast<const std::uint8_t*>(item.shader);
-    const ShaderRegister* registers = nullptr;
-    const std::uint8_t* specials = nullptr;
-    std::memcpy(&registers, bytes + 0x20, sizeof(registers));
-    std::memcpy(&specials, bytes + 0x28, sizeof(specials));
+    std::uintptr_t registerAddress = 0;
+    std::uintptr_t specialsAddress = 0;
+    std::memcpy(&registerAddress, bytes + 0x20, sizeof(registerAddress));
+    std::memcpy(&specialsAddress, bytes + 0x28, sizeof(specialsAddress));
+    const auto* registers = reinterpret_cast<const ShaderRegister*>(registerAddress);
+    const auto* specials = reinterpret_cast<const std::uint8_t*>(specialsAddress);
     const std::uint32_t registerCount = bytes[0x5c];
     std::uint32_t modifier = 0;
     std::memcpy(&modifier, specials + 0x10, sizeof(modifier));

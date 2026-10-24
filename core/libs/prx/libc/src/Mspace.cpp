@@ -165,7 +165,10 @@ void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base,
     const auto first = start + ArenaHeaderBytes;
     const auto last = start + (size & ~(Granule - 1));
     AddFree(*arena, first, last);
-    arenas.emplace(start, std::move(arena));
+    if (!arenas.try_emplace(start, std::move(arena)).second) {
+        Error(22);
+        return nullptr;
+    }
     return base;
 }
 

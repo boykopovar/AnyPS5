@@ -88,9 +88,9 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         if (slot1 == dumpSlot1) {
             static_cast<void>(dumpRequest(program.binary.codeAddress, request));
             if (std::FILE* file = std::fopen("draw_slot1.regs", "w")) {
-                for (const auto& [offset, value] : queue.context) std::fprintf(file, "context %x %08x\n", offset, value);
-                for (const auto& [offset, value] : queue.userConfig) std::fprintf(file, "uconfig %x %08x\n", offset, value);
-                for (const auto& [offset, value] : queue.shader) std::fprintf(file, "shader %x %08x\n", offset, value);
+                for (const auto& [offset, value] : queue.context) std::fprintf(file, "context %x %08x\n", static_cast<unsigned>(offset), static_cast<unsigned>(value));
+                for (const auto& [offset, value] : queue.userConfig) std::fprintf(file, "uconfig %x %08x\n", static_cast<unsigned>(offset), static_cast<unsigned>(value));
+                for (const auto& [offset, value] : queue.shader) std::fprintf(file, "shader %x %08x\n", static_cast<unsigned>(offset), static_cast<unsigned>(value));
                 std::fclose(file);
             }
         }
