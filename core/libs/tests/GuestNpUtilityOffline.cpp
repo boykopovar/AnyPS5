@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -143,10 +144,18 @@ void CheckWordFilter() {
 
 }
 
-int WaitInThread(int (*wait)(int, int*), int reqId, int* result, void (*finish)(int)) {
+int WaitInThread(const char* name, int (*wait)(int, int*), int reqId, int* result, void (*finish)(int)) {
     int status = 7;
-    std::thread waiter([&] { status = wait(reqId, result); });
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+    std::thread waiter([&] {
+        entered = true;
+        status = wait(reqId, result);
+        returned = true;
+    });
+    while (!entered) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(!returned, name, "the wait returned before the request finished");
     finish(reqId);
     waiter.join();
     return status;
@@ -187,7 +196,7 @@ void CheckLookupAsync() {
     int result = 7;
     Require(sceNpLookupPollAsync(async + 100, &result) == InvalidId, "sceNpLookupPollAsync", "an unknown request was taken");
     Require(sceNpLookupPollAsync(async, nullptr) == PollRunning, "sceNpLookupPollAsync", "an unstarted request was not running");
-    Require(WaitInThread(sceNpLookupWaitAsync, async, &result, StartLookup) == 0 && result == SignedOut, "sceNpLookupWaitAsync", "waiting did not end with SIGNED_OUT when the lookup started");
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, async, &result, StartLookup) == 0 && result == SignedOut, "sceNpLookupWaitAsync", "waiting did not end with SIGNED_OUT when the lookup started");
     Require(sceNpLookupPollAsync(async, nullptr) == PollFinished, "sceNpLookupPollAsync", "a null result was refused on a finished request");
     result = 7;
     Require(sceNpLookupPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpLookupPollAsync", "the request did not finish with SIGNED_OUT");
@@ -199,11 +208,11 @@ void CheckLookupAsync() {
 
     const int aborted = sceNpLookupCreateAsyncRequest(context, asyncParam);
     Require(sceNpLookupAbortRequest(aborted + 100) == InvalidId, "sceNpLookupAbortRequest", "an unknown request was taken");
-    Require(WaitInThread(sceNpLookupWaitAsync, aborted, &result, AbortLookup) == 0 && result == Aborted, "sceNpLookupAbortRequest", "waiting did not end with ABORTED");
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, aborted, &result, AbortLookup) == 0 && result == Aborted, "sceNpLookupAbortRequest", "waiting did not end with ABORTED");
     Require(sceNpLookupNpId(aborted, nullptr, npId, nullptr) == InsufficientArgument, "sceNpLookupNpId", "arguments were not checked before the abort");
 
     const int deleted = sceNpLookupCreateAsyncRequest(context, asyncParam);
-    Require(WaitInThread(sceNpLookupWaitAsync, deleted, &result, DeleteLookup) == InvalidId, "sceNpLookupWaitAsync", "waiting on a deleted request did not return INVALID_ID");
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, deleted, &result, DeleteLookup) == InvalidId, "sceNpLookupWaitAsync", "waiting on a deleted request did not return INVALID_ID");
     Require(sceNpLookupWaitAsync(deleted, &result) == InvalidId, "sceNpLookupWaitAsync", "an unknown request was taken");
     sceNpLookupDeleteTitleCtx(context);
 }
