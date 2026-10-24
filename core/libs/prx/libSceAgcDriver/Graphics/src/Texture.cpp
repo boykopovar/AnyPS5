@@ -1234,21 +1234,21 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     };
     VkFormat storage = VK_FORMAT_UNDEFINED;
     const auto packed = PackedStorageViewFormat(format);
+    VkFormat linear = VK_FORMAT_UNDEFINED;
+    switch (format) {
+        case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
+        case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
+        case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
+        case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
+        default: break;
+    }
     if (packed != VK_FORMAT_UNDEFINED) {
         if (supports(packed)) storage = format;
+    } else if (linear != VK_FORMAT_UNDEFINED) {
+        if (supports(linear)) storage = linear;
     } else if (supports(format)) {
         storage = format;
-    } else {
-        VkFormat linear = VK_FORMAT_UNDEFINED;
-        switch (format) {
-            case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
-            case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
-            case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
-            case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
-            case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
-            default: break;
-        }
-        if (linear != VK_FORMAT_UNDEFINED && supports(linear)) storage = linear;
     }
     std::lock_guard lock(table.mutex);
     table.formats.emplace(key, storage);
