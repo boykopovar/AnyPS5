@@ -456,26 +456,38 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
     if (status != nullptr) *status = encoded;
     return static_cast<int>(reaped);
 #else
+    unsigned hostOptions = static_cast<unsigned>(options) & 3u;
+    if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
     int encoded = 0;
-    const int result = ::waitpid(pid, &encoded, options & (WNOHANG | WUNTRACED | WCONTINUED));
+    const int result = ::waitpid(pid, &encoded, static_cast<int>(hostOptions));
     if (result < 0) {
         *__error_nid_postfix() = errno;
         return -1;
     }
     if (result == 0) return 0;
-    if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+    if (WIFCONTINUED(encoded)) {
+        encoded = 0x13;
+    } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
         const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        int guestSignal = hostSignal;
         switch (hostSignal) {
-        case 7: encoded = (encoded & ~0x7f) | 10; break;
-        case 10: encoded = (encoded & ~0x7f) | 30; break;
-        case 12: encoded = (encoded & ~0x7f) | 31; break;
+        case 7: guestSignal = 10; break;
+        case 10: guestSignal = 30; break;
+        case 12: guestSignal = 31; break;
+        case 17: guestSignal = 20; break;
+        case 18: guestSignal = 19; break;
+        case 19: guestSignal = 17; break;
+        case 20: guestSignal = 18; break;
+        case 23: guestSignal = 16; break;
+        case 29: guestSignal = 23; break;
+        case 31: guestSignal = 12; break;
         case 16:
-        case 29:
         case 30:
-            NotImplemented_nid_no_patch("waitpid: a child died with a signal without a guest equivalent");
+            NotImplemented_nid_no_patch("waitpid: a child stopped or died with a signal without a guest equivalent");
             return -1;
         default: break;
         }
+        encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
     }
     if (status != nullptr) *status = encoded;
     return result;

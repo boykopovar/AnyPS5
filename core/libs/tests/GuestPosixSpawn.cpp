@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,8 @@
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
+#else
+extern "C" int kill(int, int);
 #endif
 
 extern "C" {
@@ -233,14 +236,14 @@ static std::filesystem::path OwnExecutablePath() {
 #endif
 }
 
-static void CheckSpawnedChild(const char* role, int expectedCode) {
+static std::int32_t SpawnChild(const char* role) {
     const auto own = OwnExecutablePath();
     const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
     std::error_code error;
     std::filesystem::copy_file(own, target, std::filesystem::copy_options::overwrite_existing, error);
     Check(!error);
     const auto app0 = std::filesystem::current_path() / "app0";
-    Check(std::filesystem::create_directories(app0));
+    Check(std::filesystem::create_directories(app0) || std::filesystem::exists(app0));
     { std::ofstream file(app0 / "child.bin"); file << "child"; }
 
     char program[] = "/app0/child.bin";
@@ -252,26 +255,84 @@ static void CheckSpawnedChild(const char* role, int expectedCode) {
     std::int32_t processId = 0;
     Check(posix_spawn_nid_postfix(&processId, program, nullptr, nullptr, arguments, environment) == 0);
     Check(processId > 0);
+    return processId;
+}
 
+static void CleanupChild() {
+    std::error_code error;
+    std::filesystem::remove(OwnExecutablePath().parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + OwnExecutablePath().extension().string()).c_str())), error);
+    std::filesystem::remove_all(std::filesystem::current_path() / "app0", error);
+}
+
+static void CheckSpawnedChild(const char* role, int expectedCode) {
+    const std::int32_t processId = SpawnChild(role);
     int status = -1;
     if (std::strcmp(role, "child-sleep") == 0)
         Check(waitpid_nid_postfix(processId, &status, 1) == 0);
     Check(waitpid_nid_postfix(processId, &status, 0) == processId);
     Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == expectedCode);
-
     status = -1;
     Check(waitpid_nid_postfix(processId, &status, 0) == -1 && *__error_nid_postfix() == 10);
-
-    std::filesystem::remove(target, error);
-    std::filesystem::remove_all(app0, error);
+    CleanupChild();
 }
+
+#ifndef _WIN32
+static void CheckStoppedChild() {
+    const std::int32_t processId = SpawnChild("child-stop");
+    int status = -1;
+    Check(waitpid_nid_postfix(processId, &status, 2) == processId);
+    Check((status & 0x7f) == 0x7f && (status >> 8) == 17);
+    Check(kill(processId, SIGCONT) == 0);
+    Check(waitpid_nid_postfix(processId, &status, 4) == processId && status == 0x13);
+    Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 44);
+    Check(waitpid_nid_postfix(processId, &status, 0) == -1 && *__error_nid_postfix() == 10);
+    CleanupChild();
+}
+
+static void CheckKilledChild(const char* role, int guestSignal) {
+    const std::int32_t processId = SpawnChild(role);
+    int status = -1;
+    Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+    Check((status & 0x7f) == guestSignal);
+    Check(waitpid_nid_postfix(processId, &status, 0) == -1 && *__error_nid_postfix() == 10);
+    CleanupChild();
+}
+#else
+static void CheckTerminatedChild(const char* role, unsigned code, int guestSignal) {
+    const std::int32_t processId = SpawnChild(role);
+    const HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(processId));
+    Check(process != nullptr);
+    Check(TerminateProcess(process, code) != 0);
+    CloseHandle(process);
+    int status = -1;
+    Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+    Check(code == 0xFFFFFFFFu ? ((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 255)
+                              : ((status & 0x7f) == guestSignal && (status & 0x80) == 0));
+    Check(waitpid_nid_postfix(processId, &status, 0) == -1 && *__error_nid_postfix() == 10);
+    CleanupChild();
+}
+#endif
 
 int main() {
     if (const char* role = std::getenv("ANYPS5_POSIX_SPAWN_ROLE")) {
         if (std::strcmp(role, "child-exit-42") == 0) std::_Exit(42);
+        if (std::strcmp(role, "child-exit-neg") == 0) std::exit(-1);
+#ifndef _WIN32
+        if (std::strcmp(role, "child-stop") == 0) {
+            std::raise(SIGSTOP);
+            std::_Exit(44);
+        }
+        if (std::strcmp(role, "child-kill-bus") == 0) std::raise(SIGBUS);
+        if (std::strcmp(role, "child-kill-sys") == 0) std::raise(SIGSYS);
+#endif
         if (std::strcmp(role, "child-sleep") == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
             std::_Exit(43);
+        }
+        if (std::strcmp(role, "child-laze") == 0) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            std::_Exit(47);
         }
         std::_Exit(99);
     }
@@ -280,4 +341,17 @@ int main() {
     CheckSpawn();
     CheckSpawnedChild("child-exit-42", 42);
     CheckSpawnedChild("child-sleep", 43);
+    CheckSpawnedChild("child-exit-neg", 255);
+#ifndef _WIN32
+    CheckStoppedChild();
+    CheckKilledChild("child-kill-bus", 10);
+    CheckKilledChild("child-kill-sys", 12);
+#else
+    CheckTerminatedChild("child-laze", 0xC0000005u, 11);
+    CheckTerminatedChild("child-laze", 0xC0000096u, 4);
+    CheckTerminatedChild("child-laze", 0x80000003u, 5);
+    CheckTerminatedChild("child-laze", 0xC0000094u, 8);
+    CheckTerminatedChild("child-laze", 0xC0000409u, 6);
+    CheckTerminatedChild("child-laze", 0xFFFFFFFFu, 0);
+#endif
 }

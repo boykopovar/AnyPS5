@@ -292,7 +292,6 @@ std::mutex childProcessMutex;
 std::vector<ChildProcess> childProcesses;
 
 int ChildProcessWaitStatus(DWORD code) {
-    if (code < 0x80000000u) return static_cast<int>(code & 0xffu) << 8;
     switch (code) {
     case 0xC0000005u:
     case 0xC00000FDu: return 11;
@@ -303,14 +302,7 @@ int ChildProcessWaitStatus(DWORD code) {
     case 0xC0000095u: return 8;
     case 0xC0000409u:
     case 0xC0000374u: return 6;
-    default: {
-        static constexpr char digits[] = "0123456789ABCDEF";
-        std::string text(8, '0');
-        for (std::size_t index = 0; index < 8; ++index) text[7 - index] = digits[(code >> (index * 4)) & 0xfu];
-        NotImplemented_nid_no_patch(("waitpid: a child exited with the status 0x" + text + " is not representable").c_str());
-        return 15;
-    }
-        return 15;
+    default: return static_cast<int>(code & 0xffu) << 8;
     }
 }
 }
@@ -321,7 +313,7 @@ extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::i
 }
 
 extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status) {
-    const bool hang = (options & 1u) != 0;
+    const bool noWait = (options & 1u) != 0;
     const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
     {
         std::lock_guard lock(childProcessMutex);
@@ -353,15 +345,18 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
             if (status != nullptr) *status = encoded;
             return reaped;
         }
-        if (hang) return 0;
-        constexpr std::size_t groupSize = MAXIMUM_WAIT_OBJECTS;
-        std::lock_guard lock(childProcessMutex);
+        if (noWait) return 0;
         std::vector<HANDLE> handles;
-        for (std::size_t start = 0; start < childProcesses.size(); start += groupSize) {
-            handles.clear();
-            for (std::size_t index = start; index < childProcesses.size() && index < start + groupSize; ++index)
-                handles.push_back(reinterpret_cast<HANDLE>(childProcesses[index].processHandle));
-            if (WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), FALSE, 250) != WAIT_TIMEOUT) break;
+        {
+            const std::lock_guard lock(childProcessMutex);
+            if (childProcesses.empty()) continue;
+            for (const auto& child : childProcesses) handles.push_back(reinterpret_cast<HANDLE>(child.processHandle));
+        }
+        constexpr std::size_t groupSize = MAXIMUM_WAIT_OBJECTS;
+        bool timedOut = true;
+        for (std::size_t start = 0; start < handles.size() && timedOut; start += groupSize) {
+            const std::size_t count = std::min(handles.size() - start, groupSize);
+            timedOut = WaitForMultipleObjects(static_cast<DWORD>(count), handles.data() + start, FALSE, 250) == WAIT_TIMEOUT;
         }
     }
 }
