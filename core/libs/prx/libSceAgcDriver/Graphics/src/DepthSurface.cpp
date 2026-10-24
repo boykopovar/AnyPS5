@@ -1692,6 +1692,40 @@ std::optional<std::uint32_t> htileAfterPendingFills(const Recorder& recorder, st
     return landed;
 }
 
+struct HtileMaskWrite {
+    HtileMaskClear clear;
+    std::uint64_t note;
+};
+
+std::mutex& htileMasksMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::vector<HtileMaskWrite>& htileMasks() {
+    static auto* masks = new std::vector<HtileMaskWrite>();
+    return *masks;
+}
+
+std::optional<std::pair<VkImageAspectFlags, std::uint32_t>> htileAfterMaskClear(const Recorder& recorder, const DepthTarget& target, std::size_t bytes) {
+    const auto newest = recorder.NewestWriteNote(target.htileAddress, bytes);
+    if (newest == 0) return std::nullopt;
+    std::optional<HtileMaskClear> clear;
+    {
+        std::lock_guard lock(htileMasksMutex());
+        for (const auto& write : htileMasks()) {
+            if (write.note == newest && write.clear.address <= target.htileAddress && write.clear.address + write.clear.bytes >= target.htileAddress + bytes) clear = write.clear;
+        }
+    }
+    if (!clear.has_value() || (clear->mask & 0xfu) != 0 || (clear->value & 0xfu) != 0) return std::nullopt;
+    if (target.firstSlice != 0 && clear->mask != 0) return std::nullopt;
+    if (!target.htileStencil) return std::pair<VkImageAspectFlags, std::uint32_t>{VK_IMAGE_ASPECT_DEPTH_BIT, 0xfffc000fu};
+    if ((clear->mask & 0x300u) != 0) return std::nullopt;
+    if (((clear->value >> 8u) & 0x3u) == 0) return std::pair<VkImageAspectFlags, std::uint32_t>{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0xfffff3ffu};
+    if ((clear->mask & 0x3f0u) != 0) return std::nullopt;
+    return std::pair<VkImageAspectFlags, std::uint32_t>{VK_IMAGE_ASPECT_DEPTH_BIT, (clear->value & 0x3f0u) | 0xfffff00fu};
+}
+
 bool storeHtileOnGpu(const Context& context, Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t word) {
     if (address % 4u != 0 || bytes % 4u != 0) return false;
     const auto* import = HostImportFor(context, address, bytes);
@@ -1741,6 +1775,11 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
                 htileReads()[target.htileAddress] = generation;
                 return cleared;
             }
+        } else if (const auto known = htileAfterMaskClear(*recorder, target, bytes); known.has_value() && storeHtileOnGpu(context, *recorder, target.htileAddress, bytes, known->second)) {
+            const auto generation = GuestMemory::CollectWrites(target.htileAddress, bytes);
+            std::lock_guard lock(htileReadsMutex());
+            htileReads()[target.htileAddress] = generation;
+            return known->first;
         }
     }
     std::vector<std::uint32_t> words(bytes / 4u);
@@ -2176,6 +2215,30 @@ std::uint64_t HtileDepthClearAddress(std::span<const std::uint32_t> code, std::s
     return userData[2] | (static_cast<std::uint64_t>(userData[3]) << 32u);
 }
 
+std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments) {
+    static constexpr std::array<std::uint32_t, 16> kernel{0xd7460004u, 0x04010c0cu, 0xe00c2000u, 0x80000004u, 0xbf8c3f70u, 0xd7710000u, 0x00120008u, 0xd7710001u, 0x00160209u, 0xd7710002u, 0x001a040au, 0xd7710003u, 0x001e060bu, 0xe01c2000u, 0x80000004u, 0xbf810000u};
+    if (userData.size() != 12u || packet.size() < 5u || indirectArguments != 0u) return std::nullopt;
+    if (code.size() < kernel.size() || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    if (compute.numThreads != std::array<std::uint32_t, 3>{64u, 1u, 1u} || !compute.groupIdEnable[0] || compute.threadIdComponentCount == 0u || compute.threadIdComponentCount > 3u) return std::nullopt;
+    if (packet[1] == 0u || packet[2] != 1u || packet[3] != 1u || (packet[4] & 0x3u) != 0x1u) return std::nullopt;
+    for (std::size_t word = 1; word < 4; ++word) {
+        if (userData[4 + word] != userData[4] || userData[8 + word] != userData[8]) return std::nullopt;
+    }
+    if ((userData[8] & 0xfu) != 0u || (userData[4] & 0xfu) != 0u) return std::nullopt;
+    const auto stride = (userData[1] >> 16u) & 0x3fffu;
+    const bool swizzled = ((userData[1] >> 31u) & 1u) != 0u;
+    const bool addTid = ((userData[3] >> 23u) & 1u) != 0u;
+    const auto type = userData[3] >> 30u;
+    const auto format = (userData[3] >> 12u) & 0x7fu;
+    const auto selects = userData[3] & 0xfffu;
+    if (stride != 16u || swizzled || addTid || type != 0u || format != 75u || selects != 0xfacu) return std::nullopt;
+    const auto address = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
+    const std::uint64_t threads = (packet[4] & 0x20u) != 0u ? packet[1] : static_cast<std::uint64_t>(packet[1]) * 64u;
+    const auto records = std::min<std::uint64_t>(threads, userData[2]);
+    if (address == 0u || (address & 15u) != 0u || records == 0u || records > 0x400000u) return std::nullopt;
+    return HtileMaskClear{address, static_cast<std::size_t>(records * 16u), userData[8], userData[4]};
+}
+
 std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads, const std::array<std::uint32_t, 3>& groups) {
     static constexpr std::array<std::uint32_t, 9> kernel{0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u};
     if (userData.size() < 8 || numThreads != std::array<std::uint32_t, 3>{64u, 1u, 1u} || groups[1] != 1u || groups[2] != 1u) return std::nullopt;
@@ -2266,6 +2329,26 @@ std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> cod
     if (address == 0u || (address & 15u) != 0u) return 0u;
     const auto bytes = static_cast<std::uint64_t>(packet[1]) * 1024u;
     return address <= std::numeric_limits<std::uint64_t>::max() - bytes ? static_cast<std::size_t>(bytes) : 0u;
+}
+
+void NoteHtileMaskOnGpu(const Context& context, const HtileMaskClear& clear) {
+    const auto* recorder = RecorderFor(context);
+    if (recorder == nullptr || clear.bytes == 0) return;
+    const auto end = clear.address + clear.bytes;
+    std::uint64_t note = 0;
+    bool covers = false;
+    for (const auto& write : recorder->PendingWritesOver(clear.address, clear.bytes)) {
+        if (write.note <= note) continue;
+        note = write.note;
+        covers = write.begin <= clear.address && write.end >= end;
+    }
+    std::lock_guard lock(htileMasksMutex());
+    auto& masks = htileMasks();
+    std::erase_if(masks, [&](const HtileMaskWrite& write) { return clear.address < write.clear.address + write.clear.bytes && write.clear.address < end; });
+    if (!covers) return;
+    constexpr std::size_t KeptMasks = 64;
+    if (masks.size() >= KeptMasks) masks.erase(masks.begin());
+    masks.push_back({clear, note});
 }
 
 bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes) {

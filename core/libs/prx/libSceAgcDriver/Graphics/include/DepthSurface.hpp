@@ -59,6 +59,14 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+struct HtileMaskClear {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint32_t mask = 0;
+    std::uint32_t value = 0;
+};
+std::optional<HtileMaskClear> MatchHtileBufferMaskClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
+void NoteHtileMaskOnGpu(const Context& context, const HtileMaskClear& clear);
 struct MemoryValueFill {
     std::uint64_t address;
     std::size_t bytes;

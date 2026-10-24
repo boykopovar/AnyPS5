@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -269,6 +270,50 @@ void RecordedFillClearsWithoutWait(AgcDriver::VulkanDevice& device, const Shader
     }
 }
 
+void RecordedMaskClearClearsWithoutWait(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+    const VkStencilOpState writeFive{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 5u};
+    const VkStencilOpState equalZero{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_EQUAL, 0xffu, 0u, 0u};
+    for (const bool stencil : {false, true}) {
+        auto& htile = NewBlock();
+        const Surface surface{NewBlock().Address(), stencil ? NewBlock().Address() : 0, htile.Address(), stencil, stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT};
+        Require(Draw(device, shaders, surface, {.depthWrite = true, .stencilTest = stencil, .stencil = writeFive}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
+        Require(Draw(device, shaders, surface, {}) == 0u, "a draw at depth 0.5 passed LESS against the 0.5 written before it");
+        const auto mask = stencil ? 0x0f0u : 0x3f0u;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> words{0x010u & mask, 0x0a0u & mask, 0x150u & mask, 0x3f0u & mask};
+            Require(device.FillBuffer(htile.Address(), HtileFillBytes, words), "the words of the HTILE mask clear were not recorded on the GPU");
+            device.NoteHtileMask({htile.Address(), HtileFillBytes, mask, 0u});
+        }
+        const auto waits = AgcDriver::Graphics::Recorder::ThreadHookWaits();
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, stencil ? "a depth and stencil clear by an HTILE mask clear did not clear the depth to DB_DEPTH_CLEAR (1.0)" : "a depth clear by an HTILE mask clear did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+        Require(AgcDriver::Graphics::Recorder::ThreadHookWaits() == waits, "the bind of the depth target waited for the GPU to run the HTILE mask clear recorded over its HTILE");
+        const auto expanded = stencil ? 0xfffff3ffu : 0xfffc000fu;
+        Require(AllWords(WordsAt(htile, 0), expanded), stencil ? "the bind after a depth and stencil HTILE mask clear did not store it back as expanded (0xfffff3ff)" : "the bind after a depth HTILE mask clear did not store it back as expanded (0xfffc000f)");
+        if (stencil) Require(Draw(device, shaders, surface, {.depthTest = false, .stencilTest = true, .stencil = equalZero}) == Covered, "a depth and stencil HTILE mask clear did not clear the stencil to 0");
+        Require(Draw(device, shaders, surface, {}) == 0u, "the depth drawn after the clear by the HTILE mask clear was cleared again");
+    }
+}
+
+void RecordedMaskKeepingZMaskReadsBack(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+    for (const bool stencil : {false, true}) {
+        auto& htile = NewBlock();
+        const Surface surface{NewBlock().Address(), stencil ? NewBlock().Address() : 0, htile.Address(), stencil, stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT};
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
+        Require(Draw(device, shaders, surface, {}) == 0u, "a draw at depth 0.5 passed LESS against the 0.5 written before it");
+        const auto mask = stencil ? 0x0ffu : 0x3ffu;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> words{0x015u & mask, 0x0a0u & mask, 0x15au & mask, 0x3ffu & mask};
+            Require(device.FillBuffer(htile.Address(), HtileFillBytes, words), "the words of the HTILE mask clear were not recorded on the GPU");
+            device.NoteHtileMask({htile.Address(), HtileFillBytes, mask, 0u});
+        }
+        const auto waits = AgcDriver::Graphics::Recorder::ThreadHookWaits();
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == 0u, "an HTILE mask clear that keeps non-zero ZMask bits cleared the depth");
+        Require(AgcDriver::Graphics::Recorder::ThreadHookWaits() != waits, "the bind after an HTILE mask clear that keeps the ZMask did not read the HTILE back");
+    }
+}
+
 void DepthOnlyFillKeepsStencil(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
     const auto& htile = NewBlock();
     const Surface surface{NewBlock().Address(), NewBlock().Address(), htile.Address(), true, VK_FORMAT_D32_SFLOAT_S8_UINT};
@@ -299,6 +344,8 @@ int main() {
         MixedClearedSliceClears(*device, shaders);
         if (computeRan) {
             RecordedFillClearsWithoutWait(*device, shaders);
+            RecordedMaskClearClearsWithoutWait(*device, shaders);
+            RecordedMaskKeepingZMaskReadsBack(*device, shaders);
             DispatchFillClearsDepth(*device, shaders);
             DispatchBufferPatternFillClearsDepth(*device, shaders);
             UnknownKernelClearsTwice(*device, shaders);

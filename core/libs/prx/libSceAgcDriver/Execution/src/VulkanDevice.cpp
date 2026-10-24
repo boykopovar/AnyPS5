@@ -2521,6 +2521,10 @@ bool VulkanDevice::AfterRecordedWork(std::function<void()> action, bool reapFirs
     return state->recorder->AfterRecordedWork(std::move(action));
 }
 
+void VulkanDevice::NoteHtileMask(const Graphics::HtileMaskClear& clear) const {
+    Graphics::NoteHtileMaskOnGpu(graphicsContext(), clear);
+}
+
 bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     static const bool syncDumps = std::getenv("APS5_SYNC_SAMPLE_DUMPS") != nullptr || std::getenv("APS5_NO_GPU_SAMPLE_DUMPS") != nullptr;
     if (syncDumps) return false;
