@@ -3089,11 +3089,22 @@ void metadataPassTests() {
     expectFailure([&] { DecodeColorMetadataPass(bound); }, "depth or stencil work");
     bound.context[0x200] = 0x7a;
     expectFailure([&] { DecodeColorMetadataPass(bound); }, "depth or stencil work");
+    const auto keyed = [&](auto state) {
+        const auto keysAt = reinterpret_cast<std::uintptr_t>(dccKeys.data());
+        state.context[0x31c] |= 0x10000000;
+        state.context[0x325] = static_cast<std::uint32_t>(keysAt >> 8u);
+        state.context[0x3a8] = static_cast<std::uint32_t>(keysAt >> 40u);
+        return state;
+    };
     queue.context[0x91] = 0x40020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "over part of a color target");
+    pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->targets.size() == 1, "a partial metadata pass over a target without CMASK or DCC keys was refused");
+    expectFailure([&] { DecodeColorMetadataPass(keyed(queue)); }, "over part of a color target");
     queue.context[0x91] = 0x40040;
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "over part of a color target");
+    pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->targets.size() == 1, "a metadata pass with a partial viewport over a target without CMASK or DCC keys was refused");
+    expectFailure([&] { DecodeColorMetadataPass(keyed(queue)); }, "over part of a color target");
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
     queue.context[0x202] = 0xcc0030;
     queue.context[0x1c5] = 9;

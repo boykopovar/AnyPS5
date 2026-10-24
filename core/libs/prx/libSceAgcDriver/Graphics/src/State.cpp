@@ -2162,7 +2162,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
             Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
-        requireCovered(target);
+        if (target.cmaskAddress != 0 || target.dccAddress != 0) requireCovered(target);
         pass.targets.push_back(target);
     }
     return pass;
