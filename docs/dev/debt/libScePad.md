@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
+- [scePadBondUpdate exports](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - undocumented family, so the whole ladder is inferred, not measured: the module owns an initialized flag; `scePadBondUpdateInit` is idempotent and `scePadBondUpdateTerm` succeeds unconditionally, also before `scePadInit`; queries check the flag (`NOT_INITIALIZED`), then the output pointer (`INVALID_ARG`), then report ready/status 0 for every device id; actions check the flag, then the pointer, then (for `scePadBondUpdateStart`) the handle (`INVALID_HANDLE`), and return `DEVICE_NOT_CONNECTED` (0x80920007). The console's device-id validation and the status value space are unknown, and 0 is assumed to mean no update pending
 - [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 
 ### Unknown function info
