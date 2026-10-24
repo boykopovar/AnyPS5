@@ -236,7 +236,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     if (decoded.fmask && !FmaskLayoutOf(format).has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
     if (decoded.fmask && ((descriptor.dwords[6] & (1u << 20u)) != 0u || ((descriptor.dwords[6] & (1u << 21u)) != 0u && (descriptor.dwords[6] >> 24u) == 0u && descriptor.dwords[7] == 0u))) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented without readable metadata");
-    if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+    if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8 && format != IrBufferFormat::Fmask8_S2_F2) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 2-sample, 2-fragment and 8-sample, 8-fragment FMASK");
     if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
     for (std::uint32_t component = 0; decoded.fmask && component < 4u; ++component) {
         const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;

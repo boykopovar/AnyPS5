@@ -198,7 +198,7 @@ void RunGuestTextureResourceTests() {
         auto compressedNarrow = narrow;
         compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
         compressedNarrow.metaAddr = 0x123456789aull;
-        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+        if (format == 159u) Require(DecodeTextureResource(pack(compressedNarrow)).format == surface, "a two-fragment CMASK FMASK was not normalized to its 8-bit storage");
     }
     auto identityWord = fmask;
     identityWord.dstSelX = 4u;
