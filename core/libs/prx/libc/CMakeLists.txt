@@ -195,6 +195,28 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dynamic_cast PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    if(WIN32)
+        add_test_executable(windows_guest_main_stack_tests ${LIBS_INCLUDE_DIR}/tests/WindowsGuestMainStack.cpp)
+        target_include_directories(windows_guest_main_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(windows_guest_main_stack_tests PRIVATE libc)
+        configure_windows_unwind(windows_guest_main_stack_tests)
+        add_test_executable(windows_guest_main_stack_failure_tests
+            ${LIBS_INCLUDE_DIR}/tests/WindowsGuestMainStackFailure.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp)
+        target_include_directories(windows_guest_main_stack_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(windows_guest_main_stack_failure_tests PRIVATE libc)
+        configure_windows_unwind(windows_guest_main_stack_failure_tests)
+        add_test(NAME windows_guest_main_stack_failure COMMAND windows_guest_main_stack_failure_tests)
+        set_tests_properties(windows_guest_main_stack_failure PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        add_test(NAME windows_guest_main_stack COMMAND windows_guest_main_stack_tests)
+        set_tests_properties(windows_guest_main_stack PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME windows_guest_main_stack_entry COMMAND ${Python3_EXECUTABLE}
+                ${LIBS_INCLUDE_DIR}/tests/test_windows_guest_main_stack.py $<TARGET_FILE:relinker> $<TARGET_FILE_DIR:libc>)
+            set_tests_properties(windows_guest_main_stack_entry PROPERTIES TIMEOUT 20)
+        endif()
+    endif()
     add_test_executable(guest_time_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeConversion.cpp)
     target_include_directories(guest_time_conversion_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_time_conversion_tests PRIVATE libc)

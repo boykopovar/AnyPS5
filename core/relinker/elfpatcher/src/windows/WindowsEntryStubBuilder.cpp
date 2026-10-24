@@ -114,6 +114,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto logName = addWideString(logFileName);
     const auto shellLibrary = addString("shell32.dll");
     const auto parseArguments = addString("CommandLineToArgvW");
+    const auto enterMainStack = addString("EnterGuestMainStack_nid_no_patch");
     const auto handles = reserve(libraries.size() * 8);
     const auto guestFinished = reserve(4);
     const WindowsGuestStartup guestStartup;
@@ -267,6 +268,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     errors.push_back("FAIL: cannot make the executable directory the current directory\n");
     const auto traceError = errors.size();
     errors.push_back("FAIL: libc.prx does not export TraceImport_nid_no_patch\n");
+    const auto mainStackError = errors.size();
+    errors.push_back("FAIL: host libc does not provide guest main-stack entry\n");
     std::vector<std::uint32_t> errorRvas;
     for (const auto& error : errors)
         errorRvas.push_back(addString(error));
@@ -717,6 +720,20 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x85, 0xc0});
         unresolvedBranches.push_back(code.Branch({0x0f, 0x85}));
     }
+    std::optional<std::uint32_t> guestEntryStart;
+    for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
+        if (libraries[index] != "libc.prx" || (!imported[index] && !unscopedImports)) continue;
+        code.Rip({0x48, 0x8b, 0x0d}, CheckedRva(handles + index * 8));
+        code.Rip({0x48, 0x8d, 0x15}, enterMainStack);
+        call("GetProcAddress");
+        requireNonzero(mainStackError, 0xc0000139u);
+        const auto entry = code.Branch({0x48, 0x8d, 0x0d});
+        code.Emit({0xff, 0xd0, 0x0f, 0x0b});
+        guestEntryStart = code.GetRva();
+        code.PatchBranch(entry, *guestEntryStart);
+        code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
+        break;
+    }
     guestStartup.Initialize(code, guestModules, handles);
     writeString(enteringElf);
     code.Rip({0x48, 0x8d, 0x0d}, shellLibrary);
@@ -815,20 +832,26 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
 
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
-    Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
+    Io::WriteU32(data, functionTable - dataRva + 4, guestEntryStart.value_or(functionEnd));
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);
     auto exceptionEntries = CheckedRva(1);
+    if (guestEntryStart) {
+        Io::WriteU32(data, functionTable - dataRva + 12, *guestEntryStart);
+        Io::WriteU32(data, functionTable - dataRva + 16, functionEnd);
+        Io::WriteU32(data, functionTable - dataRva + 20, unwindRva);
+        ++exceptionEntries;
+    }
     if (dependencyBuilder.has_value()) {
         const auto dependency = dependencyBuilder->Build(code, nativeImports);
         for (const auto offset : dependencyCalls)
             code.PatchBranch(offset, dependency.EntryRva);
-        if (dependency.Functions.size() >= 32)
+        if (dependency.Functions.size() + exceptionEntries > 32)
             throw Domain::RelinkerException("Too many dependency diagnostic routines");
         for (std::size_t index = 0; index < dependency.Functions.size(); ++index) {
             for (std::size_t field = 0; field < 3; ++field)
-                Io::WriteU32(data, functionTable - dataRva + (index + 1) * 12 + field * 4, dependency.Functions[index][field]);
+                Io::WriteU32(data, functionTable - dataRva + (index + exceptionEntries) * 12 + field * 4, dependency.Functions[index][field]);
         }
-        exceptionEntries = CheckedRva(dependency.Functions.size() + 1);
+        exceptionEntries = CheckedRva(dependency.Functions.size() + exceptionEntries);
     }
     result.ExceptionDirectory = {functionTable, CheckedRva(exceptionEntries * 12)};
     result.Code.Data = code.TakeBytes();

@@ -112,7 +112,7 @@ def imported_symbols_by_dll(path):
     return imports
 
 
-def provider(value, soname=None, code=None):
+def provider(value, soname=None, code=None, main_stack_entry=False):
     image = module_with_symbol(True)
     code = code or b'\xb8' + struct.pack('<I', value) + b'\xc3'
     image[0x400:0x400 + len(code)] = code
@@ -123,13 +123,21 @@ def provider(value, soname=None, code=None):
         tags = [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
                 (4, 0x2240), (7, 0x2300), (8, 0), (9, 24), (14, 12)]
         dynamic(image, 0x600, 176, tags)
+    if main_stack_entry:
+        assert soname is None
+        strings = b'\0shared#A#B\0EnterGuestMainStack_nid_no_patch\0'
+        image[0x800:0x800 + len(strings)] = strings
+        struct.pack_into('<Q', image, 0x618, len(strings))
+        struct.pack_into('<IIIIII', image, 0x840, 1, 3, 1, 0, 2, 0)
+        struct.pack_into('<IBBHQQ', image, 0x8b0, 12, 0x12, 0, 1, 0x1040, 2)
+        image[0x440:0x442] = b'\xff\xe1'
     return image
 
 
 def check_internal_guest_libc(convert, work, relinker):
-    result, dummy = convert('empty-native-provider', 'c.prx')
+    result, dummy = convert('empty-native-provider', 'c.prx', main_stack_entry=True)
     assert result.returncode == 0, result.stderr
-    result, shared = convert('shared-native-provider', 'a.prx')
+    result, shared = convert('shared-native-provider', 'a.prx', main_stack_entry=True)
     assert result.returncode == 0, result.stderr
     empty_provider = dummy.parent / 'app0' / 'prx' / 'c.prx.guest.prx'
     shared_provider = shared.parent / 'app0' / 'prx' / 'a.prx.guest.prx'
@@ -161,6 +169,14 @@ def check_internal_guest_libc(convert, work, relinker):
                 assert run.returncode != 0 and 'unresolved ELF import ' + symbol.split('#')[0] in run.stderr, (run.returncode, run.stdout, run.stderr)
             else:
                 assert run.returncode == expected, (run.returncode, run.stdout, run.stderr)
+                if name == 'native-libc-first':
+                    native_libc = case / 'libs' / 'libc.prx'
+                    data = native_libc.read_bytes()
+                    export = b'EnterGuestMainStack_nid_no_patch'
+                    assert export in data
+                    native_libc.write_bytes(data.replace(export, b'X' * len(export)))
+                    missing = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert missing.returncode != 0 and 'host libc does not provide guest main-stack entry' in missing.stderr, (missing.returncode, missing.stdout, missing.stderr)
 
 
 def consumer(owner, symbol='shared#A#B', expected=22, module_name=None, needed_module_tag=0x61000045):
@@ -392,13 +408,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix='anyps5-import-modules-') as directory:
         work = Path(directory)
 
-        def convert(name, owner, symbol='shared#A#B', guest_owner=None, module_name=None, provider_name='b.prx', extra_dependencies=(), windows_gui=False, extra_symbols=()):
+        def convert(name, owner, symbol='shared#A#B', guest_owner=None, module_name=None, provider_name='b.prx', extra_dependencies=(), windows_gui=False, extra_symbols=(), main_stack_entry=False):
             case = work / name
             modules = case / 'prx'
             modules.mkdir(parents=True)
-            (modules / 'a.prx').write_bytes(provider(11))
+            (modules / 'a.prx').write_bytes(provider(11, main_stack_entry=main_stack_entry))
             (modules / provider_name).write_bytes(provider(22, 'alias.prx'))
-            other = provider(33)
+            other = provider(33, main_stack_entry=main_stack_entry)
             other[0x800:0x80c] = b'\0other#A#B\0\0'
             (modules / 'c.prx').write_bytes(other)
             if guest_owner:
