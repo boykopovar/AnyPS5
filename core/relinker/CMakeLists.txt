@@ -318,6 +318,18 @@ if(BUILD_TESTING)
     add_test(NAME file_identity COMMAND file_identity_tests)
     set_tests_properties(file_identity PROPERTIES TIMEOUT 20)
 
+    add_test_executable(file_reader_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/FileReaderTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+    )
+    target_include_directories(file_reader_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+    )
+    add_test(NAME file_reader_prefix COMMAND file_reader_tests)
+    set_tests_properties(file_reader_prefix PROPERTIES TIMEOUT 20)
+
     add_test_executable(param_json_utf8_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tests/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp)
