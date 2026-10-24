@@ -41,6 +41,16 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
     return error;
 }
 
+#ifdef _WIN32
+static bool BelowSymbolicLinkLoop(const std::filesystem::path& directory) {
+    const auto handle = CreateFileW(directory.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_CANT_RESOLVE_FILENAME;
+    CloseHandle(handle);
+    return false;
+}
+#endif
+
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
     constexpr int GuestEnotdir = 20;
@@ -120,6 +130,13 @@ extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
             std::error_code status;
             if (HasNonDirectoryPrefix_nid_no_patch(source) || (std::filesystem::exists(source, status) && HasNonDirectoryPrefix_nid_no_patch(destination))) error = 20;
         }
+#ifdef _WIN32
+        constexpr int GuestEloop = 62;
+        if (error == 2 || error == 20) {
+            if (BelowSymbolicLinkLoop(source.parent_path())) error = GuestEloop;
+            else if (SourceLookupError_nid_no_patch(source) == 0 && BelowSymbolicLinkLoop(destination.parent_path())) error = GuestEloop;
+        }
+#endif
         if (error) { errno = error; return -1; }
         RecordWrittenPath_nid_no_patch(source);
         RecordWrittenPath_nid_no_patch(destination);
