@@ -10,6 +10,15 @@ extern "C" {
 void* APS5_VABI malloc_nid_postfix(std::size_t size);
 void APS5_VABI free_nid_postfix(void* pointer);
 
+void APS5_VABI CONF_modules_free_nid_postfix(void) {
+}
+
+void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {
+}
+
+void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {
+}
+
 void APS5_VABI RAND_add_nid_postfix(const void*, int, double) {
 }
 

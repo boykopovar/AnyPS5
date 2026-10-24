@@ -16,6 +16,9 @@ int APS5_VABI RAND_status_nid_postfix(void);
 int APS5_VABI RAND_bytes_nid_postfix(unsigned char*, int);
 int APS5_VABI RAND_load_file_nid_postfix(const char*, std::int64_t);
 const char* APS5_VABI RAND_file_name_nid_postfix(char*, std::size_t);
+void APS5_VABI CONF_modules_free_nid_postfix(void);
+void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void);
+void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void);
 void* APS5_VABI CRYPTO_malloc_nid_postfix(int, const char*, int);
 void APS5_VABI CRYPTO_free_nid_postfix(void*);
 int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*);
@@ -56,6 +59,11 @@ int main() {
     for (const auto value : first) ++counts[value];
     Require(*std::max_element(counts.begin(), counts.end()) < 64);
     RequireThrows([] { RAND_bytes_nid_postfix(nullptr, 1); });
+
+    OPENSSL_load_builtin_modules_nid_postfix();
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    CONF_modules_free_nid_postfix();
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
 
     RAND_add_nid_postfix(first.data(), 16, 8.0);
     RAND_add_nid_postfix(nullptr, 0, 0.0);

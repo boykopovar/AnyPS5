@@ -258,11 +258,6 @@ int APS5_VABI CMAC_Update_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CONF_modules_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -938,16 +933,6 @@ int APS5_VABI OCSP_response_status_str_nid_postfix(void) {
 }
 
 int APS5_VABI OCSP_single_get0_status_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
