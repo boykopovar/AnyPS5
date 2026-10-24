@@ -110,6 +110,13 @@ int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
     return error;
 }
 
+int APS5_VABI FT_Select_Size_nid_postfix(GuestFaceRec* face, std::int32_t strikeIndex) {
+    GuestFace* owner = FaceOf(face);
+    const FT_Error error = FT_Select_Size(owner ? owner->host : nullptr, strikeIndex);
+    if (owner) SyncSize(*owner);
+    return error;
+}
+
 int APS5_VABI FT_New_Face_nid_postfix(GuestLibrary* library, const char* filepathname, std::int64_t face_index, GuestFaceRec** aface) {
     if (!filepathname) return FT_Err_Invalid_Argument;
     const std::int64_t faceIndex = OpenFaceIndex(face_index);

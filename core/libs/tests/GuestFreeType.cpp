@@ -35,6 +35,7 @@ std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t, std::int64_t);
 void APS5_VABI FT_Vector_Unit_nid_postfix(GuestVector*, std::int64_t);
 int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
 int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
+int APS5_VABI FT_Select_Size_nid_postfix(GuestFaceRec*, std::int32_t);
 int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec*);
@@ -529,6 +530,101 @@ static void APS5_VABI GuestFaceFinalizer(void* object) {
     static_cast<Finalizers*>(face->generic.data)->calls.push_back(3);
 }
 
+static std::string BitmapStrikeFont(int width, int height, int descent) {
+    std::string font = "STARTFONT 2.1\nFONT -anyps5-strike-medium-r-normal--" + std::to_string(height) + "-0-72-72-c-0-iso10646-1\n";
+    font += "SIZE " + std::to_string(height) + " 72 72\nFONTBOUNDINGBOX " + std::to_string(width) + " " + std::to_string(height) + " 0 -" + std::to_string(descent);
+    font += "\nSTARTPROPERTIES 4\nFONT_ASCENT " + std::to_string(height - descent) + "\nFONT_DESCENT " + std::to_string(descent);
+    font += "\nCHARSET_REGISTRY \"ISO10646\"\nCHARSET_ENCODING \"1\"\nENDPROPERTIES\nCHARS 1\nSTARTCHAR A\nENCODING 65\nSWIDTH 1000 0\nDWIDTH ";
+    font += std::to_string(width) + " 0\nBBX " + std::to_string(width) + " " + std::to_string(height) + " 0 -" + std::to_string(descent) + "\nBITMAP\n";
+    for (int y = 0; y < height; ++y) {
+        for (int byte = 0; byte < (width + 7) / 8; ++byte) {
+            unsigned value = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                const int x = byte * 8 + bit;
+                if (x < width && (x == 0 || y == height - 1 || (x + y) % 3 == 0)) value |= 0x80u >> bit;
+            }
+            font += "0123456789ABCDEF"[value >> 4];
+            font += "0123456789ABCDEF"[value & 15];
+        }
+        font += '\n';
+    }
+    return font + "ENDCHAR\nENDFONT\n";
+}
+
+static void CheckStrikeSelection(void* library, FT_Library nativeLibrary, GuestFaceRec* scalable, FT_Face nativeScalable) {
+    const auto sizeMatches = [](const GuestSizeRec* size, FT_Size host) {
+        const auto& actual = size->metrics;
+        const auto& expected = host->metrics;
+        Require(actual.x_ppem == expected.x_ppem && actual.y_ppem == expected.y_ppem);
+        Require(actual.x_scale == expected.x_scale && actual.y_scale == expected.y_scale);
+        Require(actual.ascender == expected.ascender && actual.descender == expected.descender);
+        Require(actual.height == expected.height && actual.max_advance == expected.max_advance);
+    };
+    constexpr std::array<std::int32_t, 5> invalidIndices{-1, 1, 2, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()};
+    int requests = 0;
+    int rendered = 0;
+    for (const auto index : invalidIndices) {
+        const auto nullError = FT_Select_Size(nullptr, index);
+        Require(nullError != 0 && FT_Select_Size_nid_postfix(nullptr, index) == nullError);
+        ++requests;
+    }
+    for (const auto index : {0, -1, std::numeric_limits<std::int32_t>::max()}) {
+        const auto error = FT_Select_Size(nativeScalable, index);
+        Require(error == FT_Err_Invalid_Face_Handle && FT_Select_Size_nid_postfix(scalable, index) == error);
+        sizeMatches(scalable->size, nativeScalable->size);
+        ++requests;
+    }
+    for (const auto& dimensions : {std::array{5, 7, 2}, std::array{11, 13, 3}}) {
+        const auto [width, height, descent] = dimensions;
+        const std::string font = BitmapStrikeFont(width, height, descent);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(font.data());
+        GuestFaceRec* face = nullptr;
+        FT_Face native = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(library, bytes, static_cast<std::int64_t>(font.size()), 0, &face) == 0);
+        Require(FT_New_Memory_Face(nativeLibrary, bytes, static_cast<FT_Long>(font.size()), 0, &native) == 0);
+        Require(FT_HAS_FIXED_SIZES(native) && !FT_IS_SCALABLE(native) && face->num_fixed_sizes == 1);
+        const GuestBitmapSize* strikes = face->available_sizes;
+        const auto& expectedStrike = native->available_sizes[0];
+        Require(strikes[0].width == expectedStrike.width && strikes[0].height == expectedStrike.height && strikes[0].size == expectedStrike.size);
+        Require(strikes[0].x_ppem == expectedStrike.x_ppem && strikes[0].y_ppem == expectedStrike.y_ppem);
+        GuestSizeRec* size = face->size;
+        int marker = 0;
+        size->generic.data = &marker;
+        sizeMatches(size, native->size);
+        Require(size->metrics.y_ppem == 0);
+        const std::array<std::int32_t, 9> indices{-1, 1, invalidIndices[3], invalidIndices[4], 0, 2, 0, -1, 0};
+        for (const auto index : indices) {
+            face->glyph->advance.x = 0x123456789ABCll;
+            face->bbox.xMin = -0x123456789ABCll;
+            const auto error = FT_Select_Size(native, index);
+            Require((index == 0) == (error == 0));
+            Require(FT_Select_Size_nid_postfix(face, index) == error);
+            ++requests;
+            sizeMatches(size, native->size);
+            Require(face->size == size && size->face == face && size->generic.data == &marker && face->available_sizes == strikes);
+            Require(face->glyph->advance.x == 0x123456789ABCll && face->bbox.xMin == -0x123456789ABCll);
+            if (error != 0) continue;
+            Require(size->metrics.y_ppem == height && size->metrics.ascender == (height - descent) * 64 && size->metrics.descender == -descent * 64);
+            for (const auto flags : std::array<std::int32_t, 3>{FT_LOAD_DEFAULT, FT_LOAD_RENDER, FT_LOAD_RENDER | FT_LOAD_MONOCHROME}) {
+                Require(FT_Load_Char_nid_postfix(face, 'A', flags) == 0 && FT_Load_Char(native, 'A', flags) == 0);
+                SlotMatches(face->glyph, native->glyph);
+                const auto& bitmap = face->glyph->bitmap;
+                Require(face->glyph->format == FT_GLYPH_FORMAT_BITMAP && bitmap.pixel_mode == FT_PIXEL_MODE_MONO);
+                Require(bitmap.width == width && bitmap.rows == height && bitmap.pitch > 0 && face->glyph->bitmap_top == height - descent);
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        const bool pixel = (bitmap.buffer[y * bitmap.pitch + x / 8] & (0x80u >> (x % 8))) != 0;
+                        Require(pixel == (x == 0 || y == height - 1 || (x + y) % 3 == 0));
+                    }
+                }
+                ++rendered;
+            }
+        }
+        Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+    }
+    std::printf("FT_Select_Size: %d native request comparisons, %d bitmap glyph comparisons\n", requests, rendered);
+}
+
 static void SetFinalizers(FT_Face face, Finalizers& events) {
     face->generic = {&events, NativeFaceFinalizer};
     face->glyph->generic = {&events, NativeSlotFinalizer};
@@ -668,6 +764,8 @@ int main() {
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0x180000000ll, &masked) == 0 && masked != nullptr && masked->face_index == 0);
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0, &face) == 0 && face != nullptr && face != masked);
     FaceMatches(face, host, library);
+
+    CheckStrikeSelection(library, hostLibrary, face, host);
 
     const auto fontSize = static_cast<std::int64_t>(font.size());
     GuestFaceRec* memoryFace = nullptr;
