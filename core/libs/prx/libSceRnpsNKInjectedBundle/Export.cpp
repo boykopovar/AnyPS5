@@ -11,6 +11,6 @@ int APS5_VABI sceRnpsNKInjectedBundlePending_001_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("WKBundleInitialize", sceRnpsNKInjectedBundlePending_001_nid_no_patch);
+APS5_EXPORT("es-hzEqlzr0", sceRnpsNKInjectedBundlePending_001_nid_no_patch);
 
 }
