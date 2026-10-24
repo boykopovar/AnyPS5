@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <ctime>
@@ -226,22 +228,11 @@ static int RecordWriteAddressFromCounterPair(Apr::CommandBufferObject* buffer, v
 
 static std::atomic_flag sharedPtrSpinLock;
 
-struct AmmUsageStatsData {
-    std::uint64_t sizeInBytes;
-    std::uint16_t numPageTablePoolEntries;
-    std::uint16_t allocatedPageTablePoolEntries;
-    std::uint16_t highWatermarkAllocatedEntries;
-    std::uint16_t reserved;
-    std::uint32_t ringIdleFlags;
-};
 static_assert(sizeof(AmmUsageStatsData) == 0x18);
 static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
 static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
 
 extern "C" {
-int APS5_VABI _Cnd_init_nid_postfix(void** handle);
-int APS5_VABI wcstombs_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
-[[noreturn]] void APS5_VABI __cxa_call_terminate_nid_postfix(void* exception);
 
 int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t value) {
     if (!ValidWriteAddress(address)) return SCE_KERNEL_ERROR_EINVAL;
@@ -624,11 +615,6 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(std
     return sizeof(Apr::WriteKernelEventQueueCommand);
 }
 
-struct AmmSubmitResult {
-    std::int32_t result;
-    std::uint32_t errorOffset;
-};
-
 int APS5_VABI sceAmprAmmCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
     (void)buffer;
     return 0;
@@ -867,8 +853,8 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
     while (sharedPtrSpinLock.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
 }
 
-
 [[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException) {
+
     __cxa_call_terminate_nid_postfix(unwindException);
 }
 

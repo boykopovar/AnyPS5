@@ -1,47 +1,10 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpX0208(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2Ss3(void*);
-void* APS5_VABI sceCesUcsProfileInitSJis1997X0208(void*);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesEucJpToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
-int APS5_VABI sceCesSJisToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesSJisToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf16(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf16le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf32be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesSJisToUtf32le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUtf16(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUtf32le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToSJis(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToEucJp(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToSJis(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToEucJp(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf16ToSJis(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf16beToEucJp(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32ToSJis(std::uint32_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32beToSJis(const std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32leToEucJp(const std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisCodeToJisX0208(std::uint16_t, std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesJisX0208ToSJisCode(std::uint8_t, std::uint8_t, std::uint16_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

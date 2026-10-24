@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
@@ -30,88 +32,7 @@
 #ifdef __linux__
 #include <sys/inotify.h>
 #endif
-extern "C" {
-int APS5_VABI remove_nid_postfix(const char*);
-int APS5_VABI rename_nid_postfix(const char*, const char*);
-int APS5_VABI sceKernelChmod_nid_postfix(const char*, unsigned short);
-int APS5_VABI sceKernelFchmod(int, unsigned short);
-int APS5_VABI fchmod_nid_postfix(int, int);
-int APS5_VABI chmod_nid_postfix(const char*, int);
-int APS5_VABI chflags_nid_postfix(const char*, std::uint64_t);
-int APS5_VABI fchflags_nid_postfix(int, std::uint64_t);
-int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
-int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI sceKernelFsync(int);
-int APS5_VABI fdatasync_nid_postfix(int);
-int APS5_VABI fsync_nid_postfix(int);
-int APS5_VABI sceKernelFdatasync(int);
-int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t*);
-int APS5_VABI sceKernelFtruncate(int, long long);
-int APS5_VABI sceKernelTruncate_nid_postfix(const char*, long long);
-int APS5_VABI truncate_nid_postfix(const char*, long long);
-int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const void*);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI creat_nid_postfix(const char*, int);
-int APS5_VABI _open_nid_postfix(const char*, int, ...);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI flock_nid_postfix(int, int);
-int APS5_VABI stat_nid_postfix(const char*, FileStat*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI unlink_nid_postfix(const char*);
-int APS5_VABI rmdir_nid_postfix(const char*);
-int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
-int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
-int APS5_VABI sceKernelClose(int);
-int APS5_VABI sceKernelGetdents(int, char*, int);
-int APS5_VABI getdents_nid_postfix(int, char*, int);
-int APS5_VABI getdirentries_nid_postfix(int, char*, int, int64_t*);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelReadv(int, const void*, int);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPreadv(int, const void*, int, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-int APS5_VABI sceKernelStat(const char*, FileStat*);
-int APS5_VABI sceKernelCheckReachability(const char*);
-int APS5_VABI sceKernelFstat(int, FileStat*);
-int APS5_VABI sceKernelUnlink(const char*);
-int APS5_VABI sceKernelRename(const char*, const char*);
-int APS5_VABI sceKernelRmdir(const char*);
-int APS5_VABI sceKernelMkdir(const char*, unsigned short);
-int APS5_VABI sceKernelRename(const char*, const char*);
-int APS5_VABI sceKernelCheckReachability(const char*);
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI chdir_nid_postfix(const char*);
-void* APS5_VABI opendir_nid_postfix(const char*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fgetc_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-char* APS5_VABI fgets_nid_postfix(char*, int, FileStream*);
-int APS5_VABI fscanf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI fputc_nid_postfix(int, FileStream*);
-int APS5_VABI fseek_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream*);
-void APS5_VABI clearerr_nid_postfix(FileStream*);
-int APS5_VABI feof_nid_postfix(FileStream*);
-int APS5_VABI ferror_nid_postfix(FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
-int APS5_VABI ftrylockfile_nid_postfix(FileStream*);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-int APS5_VABI sceKernelDebugOutText(int, const char*);
-}
+
 #ifdef _WIN32
 static bool g_invalidParameter = false;
 static void RecordInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, std::uintptr_t) { g_invalidParameter = true; }
@@ -139,6 +60,7 @@ static void Check(bool value, int line) {
 static bool ChflagsThrows(const std::filesystem::path& path, std::uint64_t flags, const char* names) {
     try {
         chflags_nid_postfix(path.string().c_str(), flags);
+
     } catch (const std::runtime_error& error) {
         return std::strstr(error.what(), names) != nullptr;
     }
@@ -148,6 +70,7 @@ static bool ChflagsThrows(const std::filesystem::path& path, std::uint64_t flags
 static bool FchflagsThrows(int descriptor, std::uint64_t flags, const char* names) {
     try {
         fchflags_nid_postfix(descriptor, flags);
+
     } catch (const std::runtime_error& error) {
         return std::strstr(error.what(), names) != nullptr;
     }
@@ -488,6 +411,7 @@ static void TestMissingPathListsDirectoryOnce() {
     bool ambiguous = false;
     try {
         sceKernelStat((root / "PLUGIN.prx").generic_string().c_str(), &status);
+
     } catch (const std::runtime_error&) {
         ambiguous = true;
     }
@@ -663,16 +587,20 @@ int main() {
             Require(fread_nid_postfix(unread, 1, sizeof(unread), directoryStream) == 0 && *__error_nid_postfix() == 21);
             Require(ferror_nid_postfix(directoryStream) != 0 && feof_nid_postfix(directoryStream) == 0);
             clearerr_nid_postfix(directoryStream);
+
             Require(ferror_nid_postfix(directoryStream) == 0);
             *__error_nid_postfix() = 0;
             Require(fgetc_nid_postfix(directoryStream) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
             clearerr_nid_postfix(directoryStream);
+
             *__error_nid_postfix() = 0;
             Require(fgets_nid_postfix(unread, sizeof(unread), directoryStream) == nullptr && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
             clearerr_nid_postfix(directoryStream);
+
             *__error_nid_postfix() = 0;
             Require(fscanf_nid_postfix(directoryStream, "%d", &scanned) == -1 && *__error_nid_postfix() == 21 && ferror_nid_postfix(directoryStream) != 0);
             clearerr_nid_postfix(directoryStream);
+
             Require(fseek_nid_postfix(directoryStream, 0, 0) == 0 && ftell_nid_postfix(directoryStream) == 0);
             *__error_nid_postfix() = 0;
             Require(fputc_nid_postfix('x', directoryStream) == -1 && *__error_nid_postfix() == 9 && ferror_nid_postfix(directoryStream) != 0);
@@ -716,6 +644,10 @@ int main() {
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(-1, 0) == -1 && *__error_nid_postfix() == 9);
+    const int flaggedKqueue = kqueue_nid_postfix();
+    Require(flaggedKqueue >= 0);
+    Require(fchflags_nid_postfix(flaggedKqueue, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(close_nid_postfix(flaggedKqueue) == 0);
     const int flaggedRoot = sceKernelOpen(root.string().c_str(), 0x20000, 0);
     Require(flaggedRoot >= 0 && fchflags_nid_postfix(flaggedRoot, 0) == 0 && sceKernelClose(flaggedRoot) == 0);
     int flaggedPipe[2];
@@ -844,6 +776,7 @@ int main() {
             Require(held != INVALID_HANDLE_VALUE);
             const int result = kernel ? sceKernelRename(name(lockedSource).c_str(), name(preservedTarget).c_str()) :
                 rename_nid_postfix(name(lockedSource).c_str(), name(preservedTarget).c_str());
+
             Require(CloseHandle(held) != 0);
             Require(result != 0 && std::filesystem::is_regular_file(marker));
             if (!std::filesystem::is_directory(preservedTarget))
@@ -1298,7 +1231,7 @@ int main() {
     const int directoryDescriptor = open_nid_postfix(rootName.c_str(), 0, 0);
     Require(directoryDescriptor >= 0);
     char directoryBytes[8]{};
-    struct { void* base; std::size_t length; } directoryVector[2] = {{directoryBytes, 3}, {directoryBytes + 3, 5}};
+    KernelIovec directoryVector[2] = {{directoryBytes, 3}, {directoryBytes + 3, 5}};
     Require(read_nid_postfix(directoryDescriptor, directoryBytes, sizeof(directoryBytes)) == -1 && *__error_nid_postfix() == 21);
     Require(sceKernelRead(directoryDescriptor, directoryBytes, sizeof(directoryBytes)) == static_cast<int>(0x80020015u));
     Require(sceKernelReadv(directoryDescriptor, directoryVector, 2) == static_cast<int>(0x80020015u));
@@ -1524,14 +1457,18 @@ int main() {
         Require(std::memcmp(first, second, sizeof(first)) != 0);
         Require(feof_nid_postfix(stream) == 0 && ferror_nid_postfix(stream) == 0);
         flockfile_nid_postfix(stream);
+
         Require(fread_nid_postfix(first, 1, 4, stream) == 4);
         funlockfile_nid_postfix(stream);
+
         Require(ftrylockfile_nid_postfix(stream) == 0);
         funlockfile_nid_postfix(stream);
+
         Require(fflush_nid_postfix(stream) == 0);
         bool unsupported = false;
         try {
             fgetc_nid_postfix(stream);
+
         } catch (const std::runtime_error&) {
             unsupported = true;
         }
@@ -1541,6 +1478,7 @@ int main() {
             bool rejected = false;
             try {
                 fopen_nid_postfix(device, mode);
+
             } catch (const std::runtime_error&) {
                 rejected = true;
             }

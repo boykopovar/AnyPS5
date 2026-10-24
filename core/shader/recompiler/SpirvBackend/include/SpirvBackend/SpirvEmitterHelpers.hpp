@@ -114,6 +114,7 @@ void EmitMemoryOffsets(SpirvEmitterState& state);
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state);
 bool LdsInDeviceMemory(const SpirvEmitterState& state);
 std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state);
+std::uint32_t LdsMemoryBarrierScope(const SpirvEmitterState& state);
 void EmitLdsBufferBase(SpirvEmitterState& state);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
@@ -156,6 +157,7 @@ std::uint32_t EmitF16BitsToF32Decoded(SpirvEmitterState& state, std::uint32_t bi
 void EmitProgram(SpirvEmitterState& state);
 void DefineGetBdaPointer(SpirvEmitterState& state);
 void DefineDot2F32F16Function(SpirvEmitterState& state);
+void DefineReciprocalCorrectionFunction(SpirvEmitterState& state);
 void EmitLabel(SpirvEmitterState& state, std::uint32_t label);
 std::uint32_t Unary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t value);
 std::uint32_t Binary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t lhs, std::uint32_t rhs);
@@ -278,7 +280,8 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     EmitLabel(state, cont);
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, merge);
-    if (kind != ResourceKind::Lds || !state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
+    const auto fenceScope = kind == ResourceKind::Lds ? LdsMemoryBarrierScope(state) : scope;
+    if (kind != ResourceKind::Lds || !state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, fenceScope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
     return observed;
 }
 

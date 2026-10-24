@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -31,26 +32,13 @@ struct NetCtlDefaultRoute {
 };
 #endif
 
-union NetCtlInfoV6;
 
 extern "C" {
-int APS5_VABI sceNetCtlInit(void);
-int APS5_VABI sceNetCtlCheckCallback(void);
-int APS5_VABI sceNetCtlGetInfo(int, NetCtlInfo*);
-int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo*);
-int APS5_VABI sceNetCtlGetState(int*);
-int APS5_VABI sceNetCtlGetStateV6(int*);
-int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t, NetCtlInfoV6*);
-int APS5_VABI sceNetCtlGetResult(int, int*);
-int APS5_VABI sceNetCtlGetResultV6(int, int*);
+
 #ifdef __APPLE__
 std::size_t NetCtlDefaultRoutes_nid_no_patch(const char*, std::size_t, NetCtlDefaultRoute*, std::size_t);
 #endif
-int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback, void*, int*);
-int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
-void APS5_VABI sceNetCtlTerm(void);
-int APS5_VABI sceNetCtlUnregisterCallback(int);
-int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
+
 }
 
 namespace {
@@ -283,6 +271,9 @@ int main() {
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallback(-1) == invalidId);
     Require(sceNetCtlUnregisterCallbackV6(-1) == invalidId);
+    Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
     CheckCallbacks();
 
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
@@ -290,24 +281,15 @@ int main() {
     Require(sceNetCtlGetStateV6(&stateV6) == 0);
     Require(stateV6 == 0 || stateV6 == kStateIpObtained);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
-    int errorCode = -1;
-    bool resultUnsupported = false;
-    try {
-        sceNetCtlGetResult(0, &errorCode);
-    } catch (const std::logic_error&) {
-        resultUnsupported = true;
+    Require(sceNetCtlGetResult(kEventDisconnected, nullptr) == kErrInvalidAddr);
+    for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
+        int errorCode = -1;
+        Require(sceNetCtlGetResult(eventType, &errorCode) == 0 && errorCode == 0);
     }
-    Require(resultUnsupported && errorCode == -1);
     Require(sceNetCtlGetResultV6(kEventIpObtained, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCodeV6 = -1;
         Require(sceNetCtlGetResultV6(eventType, &errorCodeV6) == 0 && errorCodeV6 == 0);
-    }
-    for (const int eventType : {0, 4, -1}) {
-        int errorCodeV6 = -1;
-        bool threw = false;
-        try { sceNetCtlGetResultV6(eventType, &errorCodeV6); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw && errorCodeV6 == -1);
     }
     NetCtlInfo info{};
     Require(sceNetCtlGetInfo(0, &info) == kErrInvalidCode);

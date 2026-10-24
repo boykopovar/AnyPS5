@@ -1,3 +1,6 @@
+#include "prx/libSceNpTrophy/include/Api.hpp"
+#include "prx/libSceNpSignaling/include/Api.hpp"
+#include "prx/libSceNpMatching2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -11,19 +14,6 @@
 #include <system_error>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t serviceLabel, std::uint64_t options);
-int APS5_VABI sceNpTrophyCreateHandle(int* handle);
-int APS5_VABI sceNpTrophyRegisterContext(int context, int handle, std::uint64_t options);
-int APS5_VABI sceNpTrophyUnlockTrophy(int context, int handle, int trophyId, int* platinumId);
-int APS5_VABI sceNpTrophyGetGameInfo(int context, int handle, void* details, void* data);
-int APS5_VABI sceNpTrophyGetGroupInfo(int context, int handle, int groupId, void* details, void* data);
-int APS5_VABI sceNpTrophyGetTrophyInfo(int context, int handle, int trophyId, void* details, void* data);
-int APS5_VABI sceNpMatching2Initialize(const void* param);
-int APS5_VABI sceNpMatching2Terminate(void);
-int APS5_VABI sceNpSignalingDeactivateConnection(void);
-}
-
 namespace {
 
 constexpr int Matching2AlreadyInitialized = static_cast<int>(0x80550C02u);
@@ -33,50 +23,6 @@ constexpr int TrophyInvalidArgument = static_cast<int>(0x80551604u);
 constexpr int TrophyInvalidTrophyId = static_cast<int>(0x8055160au);
 constexpr int TrophyInvalidGroupId = static_cast<int>(0x8055160bu);
 constexpr int TrophyNotRegistered = static_cast<int>(0x8055160fu);
-
-struct TrophyGameDetails {
-    std::uint64_t size;
-    std::uint32_t numGroups, numTrophies, numPlatinum, numGold, numSilver, numBronze;
-    char title[128];
-    char description[1024];
-};
-
-struct TrophyGameData {
-    std::uint64_t size;
-    std::uint32_t unlockedTrophies, unlockedPlatinum, unlockedGold, unlockedSilver, unlockedBronze, progressPercentage;
-};
-
-struct TrophyGroupDetails {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t numTrophies, numPlatinum, numGold, numSilver, numBronze;
-    char title[128];
-    char description[1024];
-};
-
-struct TrophyGroupData {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t unlockedTrophies, unlockedPlatinum, unlockedGold, unlockedSilver, unlockedBronze, progressPercentage;
-    std::uint8_t reserved[4];
-};
-
-struct TrophyDetails {
-    std::uint64_t size;
-    std::int32_t trophyId, trophyGrade, groupId;
-    bool hidden;
-    std::uint8_t reserved[3];
-    char name[128];
-    char description[1024];
-};
-
-struct TrophyData {
-    std::uint64_t size;
-    std::int32_t trophyId;
-    bool unlocked;
-    std::uint8_t reserved[3];
-    std::uint64_t timestamp;
-};
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -128,8 +74,8 @@ void CheckTrophyInfo() {
     int context = -1;
     int handle = -1;
     Require(sceNpTrophyCreateContext(&context, user, label, 0u) == 0 && sceNpTrophyCreateHandle(&handle) == 0, "trophy context or handle not created");
-    TrophyGameDetails game{};
-    TrophyGameData gameData{};
+    GameDetails game{};
+    GameData gameData{};
     game.size = sizeof(game);
     gameData.size = sizeof(gameData);
     Require(sceNpTrophyGetGameInfo(context, handle, &game, &gameData) == TrophyNotRegistered, "game info answered before registration");
@@ -153,8 +99,8 @@ void CheckTrophyInfo() {
     Require(trophy.trophyId == 1 && trophy.trophyGrade == 0 && trophy.groupId == -1 && !trophy.hidden && trophy.name[0] == '\0' && trophyData.trophyId == 1 && trophyData.unlocked, "trophy 1 info is wrong");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, nullptr, &trophyData) == 0 && trophyData.trophyId == 0 && !trophyData.unlocked, "trophy 0 reported unlocked");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 3, &trophy, &trophyData) == TrophyInvalidTrophyId, "a trophy past the package accepted");
-    TrophyGroupDetails group{};
-    TrophyGroupData groupData{};
+    GroupDetails group{};
+    GroupData groupData{};
     group.size = sizeof(group);
     groupData.size = sizeof(groupData);
     Require(sceNpTrophyGetGroupInfo(context, handle, -1, &group, &groupData) == 0, "base game group refused");
@@ -173,13 +119,13 @@ void CheckMatching2() {
     Require(sceNpMatching2Terminate() == Matching2NotInitialized, "NpMatching2 terminated before initialization");
     Require(sceNpMatching2Initialize(nullptr) == Matching2InvalidArgument, "a null NpMatching2 parameter was accepted");
     setSize(0x20u);
-    Require(sceNpMatching2Initialize(param) == Matching2InvalidArgument, "an NpMatching2 parameter of size 0x20 was accepted");
+    Require(sceNpMatching2Initialize(reinterpret_cast<const NpMatching2InitializeParameter*>(param)) == Matching2InvalidArgument, "an NpMatching2 parameter of size 0x20 was accepted");
     setSize(0x28u);
-    Require(sceNpMatching2Initialize(param) == 0, "an NpMatching2 parameter of size 0x28 was refused");
-    Require(sceNpMatching2Initialize(param) == Matching2AlreadyInitialized, "NpMatching2 initialized twice");
+    Require(sceNpMatching2Initialize(reinterpret_cast<const NpMatching2InitializeParameter*>(param)) == 0, "an NpMatching2 parameter of size 0x28 was refused");
+    Require(sceNpMatching2Initialize(reinterpret_cast<const NpMatching2InitializeParameter*>(param)) == Matching2AlreadyInitialized, "NpMatching2 initialized twice");
     Require(sceNpMatching2Terminate() == 0, "NpMatching2 did not terminate");
     setSize(0x30u);
-    Require(sceNpMatching2Initialize(param) == 0, "an NpMatching2 parameter with an SSL pool was refused");
+    Require(sceNpMatching2Initialize(reinterpret_cast<const NpMatching2InitializeParameter*>(param)) == 0, "an NpMatching2 parameter with an SSL pool was refused");
     Require(sceNpMatching2Terminate() == 0, "NpMatching2 did not terminate after the SSL form");
 }
 

@@ -355,7 +355,11 @@ void testFailureLog() {
     std::fflush(stderr);
     const int saved = APS5_DUP(APS5_FILENO(stderr));
     check(saved >= 0, "stderr could not be saved");
-    check(std::freopen(path.string().c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+#ifdef _WIN32
+    check(_wfreopen(path.wstring().c_str(), L"wb", stderr) != nullptr, "stderr could not be redirected");
+#else
+    check(std::freopen(path.c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+#endif
     std::string message;
     std::string error;
     try {

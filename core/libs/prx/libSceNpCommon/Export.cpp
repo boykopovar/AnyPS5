@@ -1,3 +1,7 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -18,19 +22,9 @@ constexpr std::size_t ONLINE_ID_MAX_LENGTH = 16;
 constexpr int MUTEX_TYPE_RECURSIVE = 2;
 constexpr KernelClockid CLOCK_MONOTONIC_ID = 4;
 
-struct NpIdFull {
-    NpOnlineId handle;
-    std::uint8_t opt[8];
-    std::uint8_t reserved[8];
-};
 static_assert(sizeof(NpIdFull) == 36);
 
-struct SystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
-static_assert(sizeof(SystemSwVersion) == 0x28);
+static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 
 int compareBytes(const std::uint8_t* lhs, const std::uint8_t* rhs, std::size_t count) {
     for (std::size_t i = 0; i < count; ++i) {
@@ -40,25 +34,6 @@ int compareBytes(const std::uint8_t* lhs, const std::uint8_t* rhs, std::size_t c
 }
 
 }
-
-extern "C" int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-extern "C" int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-extern "C" int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-extern "C" int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-extern "C" int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-extern "C" int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-extern "C" int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-extern "C" int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
-extern "C" int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr);
-extern "C" int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr);
-extern "C" int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-extern "C" int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-extern "C" int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
-extern "C" int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
-extern "C" int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
-extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-extern "C" int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
-extern "C" int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SystemSwVersion* version);
 
 extern "C" {
 
@@ -112,6 +87,7 @@ int APS5_VABI sceNpMutexInit(PthreadMutex* mutex, const char* name, std::uint64_
     if (flags & 1) result = scePthreadMutexattrSettype(&attr, MUTEX_TYPE_RECURSIVE);
     if (result == 0) result = scePthreadMutexInit(mutex, &attr, name);
     scePthreadMutexattrDestroy(&attr);
+
     return result;
 }
 
@@ -158,6 +134,7 @@ int APS5_VABI sceNpCondInit(PthreadCond* cond, const char* name, std::uint64_t) 
     if (result != 0) return result;
     result = scePthreadCondInit(cond, &attr, name);
     scePthreadCondattrDestroy(&attr);
+
     return result;
 }
 
@@ -187,9 +164,10 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
 }
 
 void APS5_VABI sceNpGetSdkVersion(char* version) {
-    SystemSwVersion swVersion{};
+    SceKernelSystemSwVersion swVersion{};
     swVersion.size = sizeof(swVersion);
     sceKernelGetSystemSwVersion_nid_postfix(&swVersion);
+
     const std::uint32_t hex = swVersion.version;
     std::snprintf(version, 8, "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
 }

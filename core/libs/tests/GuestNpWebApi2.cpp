@@ -1,34 +1,10 @@
+#include "prx/libSceNpWebApi2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-struct NpWebApi2MemoryPoolStats {
-    std::size_t pool_size;
-    std::size_t max_inuse_size;
-    std::size_t current_inuse_size;
-    std::int32_t reserved;
-};
-
-extern "C" {
-int APS5_VABI sceNpWebApi2Initialize(int, std::size_t);
-int APS5_VABI sceNpWebApi2InitializeForPresence(int, std::uint64_t);
-int APS5_VABI sceNpWebApi2IntInitialize(const NpWebApi2IntInitializeArgs*);
-int APS5_VABI sceNpWebApi2IntInitialize2(const NpWebApi2IntInitialize2Args*);
-int APS5_VABI sceNpWebApi2Terminate(int);
-int APS5_VABI sceNpWebApi2GetMemoryPoolStats(int, NpWebApi2MemoryPoolStats*);
-int APS5_VABI sceNpWebApi2PushEventCreateHandle(int);
-int APS5_VABI sceNpWebApi2PushEventAbortHandle(int, int);
-int APS5_VABI sceNpWebApi2PushEventDeleteHandle(int, int);
-int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int, int, std::uint32_t);
-int APS5_VABI sceNpWebApi2CreateUserContext(int, int);
-int APS5_VABI sceNpWebApi2CreateRequest(int, const char*, const char*, const char*, const void*, std::int64_t*);
-int APS5_VABI sceNpWebApi2SetRequestTimeout(std::int64_t, std::uint32_t);
-int APS5_VABI sceNpWebApi2AddWebTraceTag(std::int64_t, const char*);
-int APS5_VABI sceNpWebApi2DeleteRequest(std::int64_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

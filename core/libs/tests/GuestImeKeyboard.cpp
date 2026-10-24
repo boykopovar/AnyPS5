@@ -1,14 +1,8 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param);
-int APS5_VABI sceImeKeyboardClose(int32_t user_id);
-int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info);
-int APS5_VABI sceImeKeyboardSetMode(int32_t user_id, uint32_t mode);
-}
 
 static_assert(sizeof(KeyboardInfo) == 36);
 

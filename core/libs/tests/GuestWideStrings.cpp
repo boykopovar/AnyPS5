@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
@@ -9,58 +10,6 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
-
-extern "C" {
-std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void* state);
-std::size_t APS5_VABI c16rtomb_nid_postfix(char* destination, std::uint16_t unit, void* state);
-std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const char* source, std::size_t count, void* state);
-std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
-int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count);
-int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
-int* APS5_VABI __error_nid_postfix();
-const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, std::size_t n);
-int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, std::size_t n);
-char16_t* APS5_VABI wmemcpy_nid_postfix(char16_t* dest, const char16_t* src, std::size_t n);
-char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, std::size_t n);
-std::size_t APS5_VABI wcslen_nid_postfix(const char16_t* s);
-std::size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, std::size_t maxlen);
-int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2);
-int APS5_VABI wcsncmp_nid_postfix(const char16_t* s1, const char16_t* s2, std::size_t n);
-char16_t* APS5_VABI wcscpy_nid_postfix(char16_t* dest, const char16_t* src);
-char16_t* APS5_VABI wcscat_nid_postfix(char16_t* dest, const char16_t* src);
-char16_t* APS5_VABI wcsncpy_nid_postfix(char16_t* dest, const char16_t* src, std::size_t n);
-int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src, std::size_t count);
-int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src, std::size_t count);
-int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src, std::size_t count);
-int APS5_VABI wcscpy_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src);
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler);
-void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error);
-char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, std::size_t n);
-int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src, std::size_t count);
-int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, std::size_t destsz, const char16_t* src);
-const char16_t* APS5_VABI wcschr_nid_postfix(const char16_t* s, char16_t c);
-const char16_t* APS5_VABI wcsrchr_nid_postfix(const char16_t* s, char16_t c);
-const char16_t* APS5_VABI wcsstr_nid_postfix(const char16_t* haystack, const char16_t* needle);
-const char16_t* APS5_VABI wcspbrk_nid_postfix(const char16_t* s, const char16_t* accept);
-std::size_t APS5_VABI wcsspn_nid_postfix(const char16_t* s, const char16_t* accept);
-std::size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject);
-char16_t* APS5_VABI wcstok_nid_postfix(char16_t* text, const char16_t* delimiters, char16_t** last);
-char16_t* APS5_VABI wmemset_nid_postfix(char16_t* s, char16_t c, std::size_t n);
-double APS5_VABI wcstod_nid_postfix(const char16_t* str, char16_t** endptr);
-float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr);
-long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr);
-long long APS5_VABI wcstol_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-long long APS5_VABI wcstoll_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-long long APS5_VABI wcstoimax_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-unsigned long long APS5_VABI wcstoumax_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr, int base);
-char* APS5_VABI rindex_nid_postfix(const char* s, int c);
-int APS5_VABI flsl_nid_postfix(std::int64_t mask);
-unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t** endptr, int base);
-int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
-std::size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, std::size_t count);
-}
 
 namespace {
 
@@ -151,11 +100,13 @@ int main() {
 
     char16_t buffer[8];
     wmemset_nid_postfix(buffer, 0xaaaa, 8);
+
     require(wcscpy_nid_postfix(buffer, u"wide") == buffer);
     require(same(buffer, u"wide", 5) && buffer[5] == 0xaaaa);
 
     char16_t concatenated[8];
     wmemset_nid_postfix(concatenated, 0xaaaa, 8);
+
     concatenated[0] = 0;
     require(wcscat_nid_postfix(concatenated, u"ab") == concatenated);
     require(wcscat_nid_postfix(concatenated, u"世") == concatenated);
@@ -168,6 +119,7 @@ int main() {
     require(same(buffer, padded, 6));
     wmemset_nid_postfix(buffer, 0xaaaa, 8);
     wcsncpy_nid_postfix(buffer, u"abcdef", 3);
+
     const char16_t truncated[] = {u'a', u'b', u'c', 0xaaaa};
     require(same(buffer, truncated, 4));
 
@@ -177,9 +129,11 @@ int main() {
     require(wmemcpy_s_nid_postfix(nullptr, 16, u"abc", 3) == 22);
     require(wmemcpy_s_nid_postfix(memBuf, 16, nullptr, 3) == 22 && memBuf[0] == 0);
     wmemset_nid_postfix(memBuf, u'Z', 16);
+
     require(wmemcpy_s_nid_postfix(memBuf, 4, u"12345", 5) == 34 && memBuf[0] == 0 && memBuf[3] == 0);
     require(wmemcpy_s_nid_postfix(memBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
     wmemcpy_s_nid_postfix(memBuf, 16, u"abcdefgh", 8);
+
     require(wmemcpy_s_nid_postfix(memBuf + 2, 8, memBuf, 4) == 22 && memBuf[2] == 0);
 
     wmemcpy_s_nid_postfix(memBuf, 16, u"0123456789", 10);
@@ -206,23 +160,26 @@ int main() {
     require(wcsncpy_s_nid_postfix(strBuf, 5, u"hello", 5) == 34 && strBuf[0] == 0);
     require(wcsncpy_s_nid_postfix(strBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abcdef", 6);
+
     require(wcsncpy_s_nid_postfix(strBuf + 1, 10, strBuf, 3) == 22 && strBuf[1] == 0);
 
     char16_t cpyBuf[16];
-    require(wcscpy_s_nid_postfix(cpyBuf, 16, u"wide") == 0 && same(cpyBuf, u"wide", 5));
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, reinterpret_cast<const std::uint16_t*>(u"wide")) == 0 && same(cpyBuf, u"wide", 5));
     void* previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&ignore_handler_s_nid_postfix));
-    require(wcscpy_s_nid_postfix(nullptr, 16, u"wide") == 22);
-    require(wcscpy_s_nid_postfix(cpyBuf, 0, u"wide") == 22);
-    require(wcscpy_s_nid_postfix(cpyBuf, 16, nullptr) == 22 && cpyBuf[0] == 0);
-    require(wcscpy_s_nid_postfix(cpyBuf, 4, u"wide") == 34 && cpyBuf[0] == 0);
+    require(wcscpy_s_nid_postfix(nullptr, 16, reinterpret_cast<const std::uint16_t*>(u"wide")) == 22);
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 0, reinterpret_cast<const std::uint16_t*>(u"wide")) == 22);
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, nullptr) == 22 && cpyBuf[0] == 0);
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 4, reinterpret_cast<const std::uint16_t*>(u"wide")) == 34 && cpyBuf[0] == 0);
     cpyBuf[0] = 0x1234;
-    require(wcscpy_s_nid_postfix(cpyBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a") == 34 && cpyBuf[0] == 0x1234);
-    wcscpy_s_nid_postfix(cpyBuf, 16, u"abcdef");
-    require(wcscpy_s_nid_postfix(cpyBuf + 1, 10, cpyBuf) == 22 && cpyBuf[1] == 0);
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, reinterpret_cast<const std::uint16_t*>(u"a")) == 34 && cpyBuf[0] == 0x1234);
+    wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, reinterpret_cast<const std::uint16_t*>(u"abcdef"));
+
+    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf + 1), 10, reinterpret_cast<const std::uint16_t*>(cpyBuf)) == 22 && cpyBuf[1] == 0);
     set_constraint_handler_s_nid_postfix(previousHandler);
 
     char16_t ncatBuf[16];
     wmemset_nid_postfix(ncatBuf, 0xaaaa, 16);
+
     ncatBuf[0] = 0;
     require(wcsncat_nid_postfix(ncatBuf, u"hello", 3) == ncatBuf);
     require(same(ncatBuf, u"hel", 4) && ncatBuf[4] == 0xaaaa);
@@ -232,24 +189,32 @@ int main() {
     wcsncpy_s_nid_postfix(strBuf, 16, u"hello", 5);
     require(wcsncat_s_nid_postfix(strBuf, 16, u" world", 6) == 0 && same(strBuf, u"hello world", 12));
     wcsncpy_s_nid_postfix(strBuf, 16, u"foo", 3);
+
     require(wcsncat_s_nid_postfix(strBuf, 16, u"barbaz", 3) == 0 && same(strBuf, u"foobar", 7));
     wcsncpy_s_nid_postfix(strBuf, 8, u"abc", 3);
+
     require(wcsncat_s_nid_postfix(strBuf, 8, u"1234", 4) == 0 && same(strBuf, u"abc1234", 8));
     wcsncpy_s_nid_postfix(strBuf, 8, u"abc", 3);
+
     require(wcsncat_s_nid_postfix(strBuf, 8, u"12345", 5) == 34 && strBuf[0] == 0);
     wmemset_nid_postfix(strBuf, u'x', 4);
+
     require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 34 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
+
     require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 1, 2) == 0 && same(strBuf, u"abcbc", 6));
     const char16_t splitSource[] = u"abc\0xyz";
     std::memcpy(strBuf, splitSource, sizeof(splitSource));
     require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 4, 3) == 22 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
+
     require(wcscat_s_nid_postfix(strBuf, 16, u"def") == 0 && same(strBuf, u"abcdef", 7));
     wcsncpy_s_nid_postfix(strBuf, 8, u"12345", 5);
+
     require(wcscat_s_nid_postfix(strBuf, 8, u"6789") == 34 && strBuf[0] == 0);
     require(wcscat_s_nid_postfix(nullptr, 8, u"a") == 22);
     wcsncpy_s_nid_postfix(strBuf, 8, u"123", 3);
+
     require(wcscat_s_nid_postfix(strBuf, 8, nullptr) == 22 && strBuf[0] == 0);
 
     const char16_t* text = u"a世b世c";
@@ -362,11 +327,23 @@ int main() {
     require(wcstod_nid_postfix(scientific, &end) == 350.0 && end == scientific + 5);
     require(wcstod_nid_postfix(letters, &end) == 0.0 && end == letters);
     require(wcstof_nid_postfix(u"0.25", nullptr) == 0.25f);
+    const char16_t* sign = u" -x";
+    require(std::signbit(wcstof_nid_postfix(sign, &end)) && end == sign && std::signbit(wcstold_nid_postfix(sign, &end)) && !std::signbit(wcstod_nid_postfix(sign, &end)));
+    *__error_nid_postfix() = 0;
+    require(wcstof_nid_postfix(u"0x1p+200", nullptr) == HUGE_VALF && *__error_nid_postfix() == ERANGE);
+    *__error_nid_postfix() = 0;
+    require(wcstof_nid_postfix(u"1e-45", nullptr) == 0x1p-149f && *__error_nid_postfix() == ERANGE);
+    *__error_nid_postfix() = 0;
+    require(wcstof_nid_postfix(u"0x1p-149", nullptr) == 0x1p-149f && *__error_nid_postfix() == 0);
+    require(wcstof_nid_postfix(u"0x1.8p-150", nullptr) == 0x1p-149f && *__error_nid_postfix() == ERANGE);
+    const char16_t* loneSign = u" -";
+    const float loneSignValue = wcstof_nid_postfix(loneSign, &end);
+    require(loneSignValue == 0.f && !std::signbit(loneSignValue) && end == loneSign && std::signbit(wcstold_nid_postfix(loneSign, &end)));
     const char16_t* half = u"-1.5é";
     require(wcstold_nid_postfix(half, &end) == -1.5L && end == half + 4);
     const char16_t* wideNan = u" -nan(0x123)é";
     require(std::bit_cast<std::uint64_t>(wcstod_nid_postfix(wideNan, &end)) == 0xfff8000000000123u && end == wideNan + 12);
-    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0x7fc00000u && end == wideNan + 12);
+    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0xffc00000u && end == wideNan + 12);
     const long double wideExtended = wcstold_nid_postfix(wideNan, &end);
     std::uint64_t significand;
     std::memcpy(&significand, &wideExtended, sizeof(significand));
@@ -378,8 +355,10 @@ int main() {
 
     char16_t transformed[8];
     wmemset_nid_postfix(transformed, 0xaaaa, 8);
+
     require(wcsxfrm_nid_postfix(transformed, u"wide", 8) == 4 && same(transformed, u"wide", 5) && transformed[5] == 0xaaaa);
     wmemset_nid_postfix(transformed, 0xaaaa, 8);
+
     require(wcsxfrm_nid_postfix(transformed, u"much too long", 4) == 13);
     if (!same(transformed, u"muc", 4)) std::fputs("wcsxfrm did not copy and terminate its truncated result\n", stderr);
     require(same(transformed, u"muc", 4) && transformed[4] == 0xaaaa);
@@ -403,6 +382,7 @@ int main() {
         TransformCase{u"\x7fff\x8000\xffff\xd83d\xde00", 6, 5, u"\x7fff\x8000\xffff\xd83d\xde00", 6}
     }) {
         wmemset_nid_postfix(transformed, 0xaaaa, 8);
+
         require(wcsxfrm_nid_postfix(transformed, test.source, test.count) == test.length);
         require(same(transformed, test.expected, test.written));
         for (std::size_t index = test.written; index < 8; ++index) require(transformed[index] == 0xaaaa);

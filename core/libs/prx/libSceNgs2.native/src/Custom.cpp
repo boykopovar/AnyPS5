@@ -61,6 +61,9 @@ static void CheckDelayModule(std::uint32_t rackId, const Ngs2CustomRackModuleInf
 }
 
 int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option, std::uint32_t maxInputs) {
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING && option.num_modules != 0) {
+        throw std::runtime_error("NGS2: custom mastering racks with modules are not implemented");
+    }
     if (option.num_buffers == 0 || option.num_buffers > SCE_NGS2_CUSTOM_MAX_BUFFERS || option.num_buffers < maxInputs) {
         return SCE_NGS2_ERROR_INVALID_NUM_BUFFERS;
     }

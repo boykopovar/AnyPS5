@@ -1,37 +1,8 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceAgcDriverGetShaderDebuggingStatus();
-int APS5_VABI sceAgcDriverSetValidationErrorOutputFrequency(std::uint32_t);
-int APS5_VABI sceAgcDriverSetSubmitValidationMode(std::uint32_t);
-int APS5_VABI sceAgcDriverGetSubmitValidationMode(std::uint32_t*);
-int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void*);
-int APS5_VABI sceAgcDriverGetSubmitValidationConfig(void*);
-int APS5_VABI sceAgcDriverSetValidationDisabled();
-int APS5_VABI sceAgcDriverGetCaptureConfig();
-int APS5_VABI sceAgcDriverSetCaptureConfig();
-int APS5_VABI sceAgcDriverGetGpuPrintfWorkArea();
-int APS5_VABI sceAgcDriverSetGpuPrintfEnabled();
-int APS5_VABI sceAgcDriverDbgReadRegister();
-int APS5_VABI sceAgcDriverDbgWriteRegister();
-int APS5_VABI sceAgcDriverGetGpuRefClks();
-int APS5_VABI sceAgcDriverIsSuspendPointInFlight();
-int APS5_VABI sceAgcDriverIsPaDebug();
-int APS5_VABI sceAgcDriverGetExceptionStatus();
-int APS5_VABI sceAgcDriverGetTraceInitiator();
-int APS5_VABI sceAgcDriverRegisterGpuResetCallbacks();
-int APS5_VABI sceAgcDriverUnregisterGpuResetCallbacks();
-int APS5_VABI sceAgdResetGpu();
-int APS5_VABI sceAgcDriverSysSubmitFlipHandleProxy();
-int APS5_VABI sceAgcDriverUserDataImmediateWrite();
-int APS5_VABI sceAgcDriverUserDataImmediateWritePacket();
-int APS5_VABI sceAgcDriverGetCoredumpMode(std::uint32_t*);
-int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(std::uint64_t, std::uint64_t, std::uint64_t, void*);
-int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(std::uint64_t, void*);
-}
 
 static constexpr int DebugUnavailable = static_cast<int>(0x8A6C1000);
 static constexpr int FeatureUnavailable = static_cast<int>(0x8A6D0001);

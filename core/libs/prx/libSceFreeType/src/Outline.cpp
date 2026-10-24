@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 

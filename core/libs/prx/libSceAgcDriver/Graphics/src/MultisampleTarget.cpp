@@ -228,7 +228,7 @@ public:
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
             viewUsage.usage = imageUsage & ~VK_IMAGE_USAGE_STORAGE_BIT;
-            if (orderFormat != VK_FORMAT_UNDEFINED) viewInfo.pNext = &viewUsage;
+            if ((imageUsage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) viewInfo.pNext = &viewUsage;
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created.view), "vkCreateImageView multisampled target");
         } catch (...) {
             destroy(created);
@@ -660,6 +660,7 @@ struct GuardedRange {
     std::uint32_t samples;
     std::shared_ptr<std::atomic<bool>> active;
     std::shared_ptr<std::atomic<bool>> metadataValid;
+    bool fmask = false;
 };
 
 class PrimedSharedMutex : public std::shared_mutex {
@@ -1152,6 +1153,12 @@ VkComponentMapping swapRedBlue(VkComponentMapping components) {
     return {swapped(components.r, VK_COMPONENT_SWIZZLE_R), swapped(components.g, VK_COMPONENT_SWIZZLE_G), swapped(components.b, VK_COMPONENT_SWIZZLE_B), swapped(components.a, VK_COMPONENT_SWIZZLE_A)};
 }
 
+bool sameStorageForm(const Context& context, VkFormat rendered, VkFormat requested) {
+    if (rendered == requested) return true;
+    const auto storage = HostStorageFormat(context, rendered);
+    return storage != VK_FORMAT_UNDEFINED && storage == HostStorageFormat(context, requested);
+}
+
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
@@ -1214,7 +1221,7 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
-        if (rendered.format == format && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Storage(StorageFormatForGuest(context, resource.format));
+        if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Storage(StorageFormatForGuest(context, resource.format));
         other = target.get();
     }
     if (other == nullptr) {
@@ -1315,6 +1322,17 @@ void ClearMultisampleTargets(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
+void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
+    const auto bits = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.coverageSamples;
+    const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
+    std::unique_lock lock(guardedMutex());
+    const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
+    if (!known) guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, true});
+    anyGuarded().store(true, std::memory_order_release);
+    lock.unlock();
+    InstallResidentImageReadGuard_nid_no_patch();
+}
+
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
     RequireNoResidentDepthRead_nid_no_patch(address, bytes);
     RequireNoMultisampleColorTarget(address, bytes, access);
@@ -1326,6 +1344,10 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
         char text[256];
+        if (range.fmask) {
+            std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps the FMASK 0x%llx+0x%llx of a one-fragment color target of %u samples drawn on the host, which does not write it: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
+            throw std::runtime_error(text);
+        }
         std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps multisampled color target 0x%llx+0x%llx (%u samples), whose samples are only on the host: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
         throw std::runtime_error(text);
     }

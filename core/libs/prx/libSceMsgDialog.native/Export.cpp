@@ -1,3 +1,4 @@
+#include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>

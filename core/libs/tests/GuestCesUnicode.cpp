@@ -1,3 +1,4 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCesCs/JisX0208.hpp"
 #include <array>
@@ -5,25 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceCesUcs2ToUtf8(uint16_t, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf8ToUcs2(const uint8_t*, uint32_t, uint32_t*, uint16_t*);
-int APS5_VABI sceCesUtf32ToUtf8(uint32_t, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf32beToUtf8(const uint32_t*, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf32leToUtf8(const uint32_t*, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf32(const uint8_t*, uint32_t, uint32_t*, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf32be(const uint8_t*, uint32_t, uint32_t*, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf32le(const uint8_t*, uint32_t, uint32_t*, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf16(const uint8_t*, uint32_t, uint32_t*, uint16_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf16be(const uint8_t*, uint32_t, uint32_t*, uint16_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf8ToUtf16le(const uint8_t*, uint32_t, uint32_t*, uint16_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf16ToUtf8(const uint16_t*, uint32_t, uint32_t*, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf16beToUtf8(const uint16_t*, uint32_t, uint32_t*, uint8_t*, uint32_t, uint32_t*);
-int APS5_VABI sceCesUtf16leToUtf8(const uint16_t*, uint32_t, uint32_t*, uint8_t*, uint32_t, uint32_t*);
-void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
-int APS5_VABI sceCesEucJpToUtf8(const void*, const uint8_t*, uint32_t, uint32_t*, uint8_t*, uint32_t, uint32_t*);
-}
 
 namespace {
 

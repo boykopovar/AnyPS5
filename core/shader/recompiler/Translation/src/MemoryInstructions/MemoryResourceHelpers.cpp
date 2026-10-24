@@ -69,7 +69,7 @@ TranslationContext::AddressOperands TranslationContext::readAddressOperands(cons
     const RdnaOperand& highOrBase = sourceAt(inst, firstSource + 1u);
     if (kind == ResourceKind::Scratch) {
         IrValue& resource = ir.Emit(IrOpcode::GetScratchResource, IrOpcodeType(IrOpcode::GetScratchResource), {});
-        IrValue& offset = highOrBase.kind != RdnaOperandKind::VectorRegister ? readU32(highOrBase).Value() : low.Value();
+        IrValue& offset = ir.IAdd(low.Value(), readU32(highOrBase).Value());
         return AddressOperands{&resource, &offset, &ir.Constant(0u)};
     }
     if (kind == ResourceKind::Global && highOrBase.kind != RdnaOperandKind::VectorRegister) {

@@ -129,6 +129,7 @@ struct SpirvEmitterState {
     std::uint32_t pixelFlatPositions = 0;
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> solvedBarycentrics;
     bool waveLdsMemoryBarriers = false;
+    bool deviceScopeLdsMemoryBarriers = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;
@@ -167,6 +168,8 @@ struct SpirvEmitterState {
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;
     std::uint32_t dot2F32F16Function = 0;
+    std::uint32_t reciprocalCorrectionFunction = 0;
+    std::array<std::uint32_t, 3> reciprocalTables {};
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;
     bool integerInterpolation = false;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};

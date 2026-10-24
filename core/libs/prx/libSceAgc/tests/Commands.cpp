@@ -1,3 +1,23 @@
+#include "prx/libSceAgc/include/Agc.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/Patch/include/Nop.hpp"
+#include "prx/libSceAgc/Misc/include/Suspend.hpp"
+#include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
+#include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
+#include "prx/libSceAgc/Misc/include/Debug.hpp"
+#include "prx/libSceAgc/DcbState/include/Workload.hpp"
+#include "prx/libSceAgc/DcbState/include/Marker.hpp"
+#include "prx/libSceAgc/DcbState/include/Init.hpp"
+#include "prx/libSceAgc/DcbState/include/Display.hpp"
+#include "prx/libSceAgc/DcbState/include/ContextState.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Control.hpp"
+#include "prx/libSceAgc/DcbDraw/include/Instancing.hpp"
+#include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
+#include "prx/libSceAgc/Cb/include/Registers.hpp"
+#include "prx/libSceAgc/Acb/include/Control.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
@@ -9,53 +29,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <string>
-
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address);
-extern "C" std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbClearState(CommandBuffer* buf, std::uint32_t command);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t handle, std::uint32_t index);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
-extern "C" int APS5_VABI sceAgcSuspendPoint();
-extern "C" int APS5_VABI sceAgcInit(std::uint32_t version);
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version);
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaultsInternal();
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version);
-extern "C" int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size);
-extern "C" int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t version);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint32_t reference);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask);
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
-extern "C" std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t stream_id, std::uint32_t workload_id);
-extern "C" int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t stream_id, const void* stream);
-extern "C" int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t stream_id);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t stream_id, const std::uint32_t* workload_ids, std::uint32_t workload_count);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t streamId, std::uint32_t workloadId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t attributeAddress, std::uint32_t attributeIndex);
-extern "C" std::uint32_t APS5_VABI sceAgcDcbSetIndexIndirectArgsGetSize();
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, std::uint32_t shaderType, const volatile void* indirectBaseAddr);
-extern "C" std::uint32_t* APS5_VABI sceAgcSetNop(CommandBuffer* buf, std::uint32_t sizeDw);
-extern "C" int APS5_VABI sceAgcDebugRaiseException(std::uint32_t exceptionId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData);
 
 namespace {
 
@@ -223,6 +196,29 @@ void testMarkers() {
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
+}
+
+void testMarkerSpans() {
+    Storage dcb;
+    Storage acb;
+    const char text[] = "framebuffer";
+    const auto* acbPush = sceAgcAcbPushMarkerSpan(&acb.buffer, text, 5, 0x00ff00u);
+    const auto* dcbPush = sceAgcDcbPushMarkerSpan(&dcb.buffer, text, 5, 0xff0000u);
+    check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker span header mismatch");
+    check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker span does not stop at its length");
+    check(dcbPush == dcb.words.data(), "DCB push marker span did not return its packet");
+    const auto* acbSet = sceAgcAcbSetMarkerSpan(&acb.buffer, nullptr, 0, 0);
+    const auto* dcbSet = sceAgcDcbSetMarkerSpan(&dcb.buffer, nullptr, 0, 0);
+    check(acbSet == acb.words.data() + 3 && dcbSet == dcb.words.data() + 3, "set marker span did not return its push packet");
+    check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker span is not a push and pop pair");
+    check(dcb.words == acb.words && acb.buffer.cursor_up == acb.words.data() + 7, "ACB and DCB marker spans differ");
+    Storage plain;
+    sceAgcAcbPushMarker(&plain.buffer, "frame", 0);
+    check(std::equal(plain.words.begin(), plain.words.begin() + 3, acb.words.begin()), "marker span differs from the same text pushed whole");
+    expectFailure([] { sceAgcAcbPushMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([] { sceAgcAcbPushMarker(nullptr, reinterpret_cast<const char*>(std::uintptr_t{0x10}), 0); });
+    expectFailure([] { sceAgcDcbSetMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
 }
 
 void testWorkloads() {
@@ -822,6 +818,7 @@ int main(int argc, char** argv) {
         testClearState();
         testIndexedIndirectDraws();
         testMarkers();
+        testMarkerSpans();
         testWorkloads();
         testWorkloadStreams();
         testIndexBuffer();

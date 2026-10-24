@@ -459,12 +459,43 @@ bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* va
         case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+        case IrOpcode::ULessThan32:
+        case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
         default: return false;
     }
 }
 
 template<typename TNode>
+EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const IrValue& value) {
+    if (value.IsIdentity()) {
+        return EvaluatorReads::Arguments;
+    }
+    if (value.HasImmediate()) {
+        return EvaluatorReads::Nothing;
+    }
+    switch (value.Opcode()) {
+        case IrOpcode::LoadAddressU32:
+        case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x2:
+        case IrOpcode::IAddCarry32:
+        case IrOpcode::GetUserData:
+        case IrOpcode::GetShaderBase:
+        case IrOpcode::Phi:
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
+        default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
+    }
+}
+
+template<typename TNode>
 bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& result) {
+    if (Reads(_program, *inst.Value()) == EvaluatorReads::Nothing) {
+        return false;
+    }
     std::uint64_t a = 0;
     std::uint64_t b = 0;
     std::uint64_t c = 0;
@@ -790,17 +821,24 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         case IrOpcode::ULessThan32:
-            if (binary()) {
-                result = static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b) ? 1u : 0u;
+        case IrOpcode::UGreaterThan32: {
+            const bool greater = inst.Opcode() == IrOpcode::UGreaterThan32;
+            const bool first = Arg(inst, 0, a);
+            if (first && static_cast<std::uint32_t>(a) == (greater ? 0u : 0xffffffffu)) {
+                result = 0u;
                 return true;
             }
-            return false;
-        case IrOpcode::UGreaterThan32:
-            if (binary()) {
-                result = static_cast<std::uint32_t>(a) > static_cast<std::uint32_t>(b) ? 1u : 0u;
+            const bool second = Arg(inst, 1, b);
+            if (second && static_cast<std::uint32_t>(b) == (greater ? 0xffffffffu : 0u)) {
+                result = 0u;
                 return true;
             }
-            return false;
+            if (!first || !second) return false;
+            const auto lhs = static_cast<std::uint32_t>(greater ? b : a);
+            const auto rhs = static_cast<std::uint32_t>(greater ? a : b);
+            result = lhs < rhs ? 1u : 0u;
+            return true;
+        }
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr: {
             const bool decisive = inst.Opcode() == IrOpcode::LogicalOr;
