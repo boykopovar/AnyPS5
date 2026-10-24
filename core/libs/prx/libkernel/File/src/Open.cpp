@@ -410,7 +410,9 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     }
     if (directory && !std::filesystem::is_directory(status)) return SceErrorFromErrno(GuestEnotdir);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (!File::TryFillFileStat(metadataPath, sb)) return SceStatErrorFromErrno(errno);
+    FileStat result{};
+    if (!File::TryFillFileStat(metadataPath, &result)) return SceStatErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);
     return 0;
 }
 

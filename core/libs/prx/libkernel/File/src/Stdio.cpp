@@ -887,10 +887,7 @@ int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     KernelStatfs result{};
     result.f_version = KERNEL_STATFS_VERSION;
     if (const int error = NativeFstatfs(d, &result)) return PosixFailure(error);
-    if (buf == nullptr) return PosixFailure(GUEST_EFAULT);
-    const GuestArena::HostWrite destination(buf, sizeof(result));
-    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
-    std::memcpy(buf, &result, sizeof(result));
+    if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -900,11 +897,13 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         if (fstat_nid_disambig1_nid_postfix(d, &ignored) != 0) return -1;
         return PosixFailure(GUEST_EFAULT);
     }
+    FileStat result{};
     if (GuestSockets::IsOpen(d)) {
-        if (const int error = GuestSockets::Stat(d, sb)) return PosixFailure(error);
-        return 0;
+        if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
+    } else if (!File::FillFileStatFromDescriptor(d, &result)) {
+        return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     }
-    if (!File::FillFileStatFromDescriptor(d, sb)) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -1051,7 +1050,9 @@ int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
     if (const int error = PathError(path)) return PosixFailure(error);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
-    if (!File::FillLinkStat(native, sb)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
+    FileStat result{};
+    if (!File::FillLinkStat(native, &result)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
     return 0;
 }
 
@@ -1077,11 +1078,14 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         if (const int error = sceKernelFstat(d, &ignored)) return error;
         return SceErrorFromErrno(GUEST_EFAULT);
     }
+    FileStat result{};
     if (GuestSockets::IsOpen(d)) {
-        const int error = GuestSockets::Stat(d, sb);
-        return error == 0 ? 0 : SceErrorFromErrno(error);
+        const int error = GuestSockets::Stat(d, &result);
+        if (error != 0) return SceErrorFromErrno(error);
+    } else if (!File::FillFileStatFromDescriptor(d, &result)) {
+        return SceErrorFromErrno(errno);
     }
-    if (!File::FillFileStatFromDescriptor(d, sb)) return SceErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
     return 0;
 }
 
