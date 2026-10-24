@@ -118,6 +118,7 @@ struct Ngs2Voice {
     Ngs2PlayState state = Ngs2PlayState::Empty;
     std::uint32_t stateFlags = 0;
     std::uint32_t channels = 0;
+    std::uint32_t inputChannels = 0;
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
     Ngs2Atrac9 atrac9;
@@ -153,6 +154,7 @@ struct Ngs2Voice {
     void SetEvent(std::uint32_t eventId);
     void ResetSetup();
     const std::uint8_t* WaveformData() const;
+    std::uint32_t InputChannels() const { return inputChannels != 0 ? inputChannels : channels; }
 };
 
 struct Ngs2Rack {
@@ -172,6 +174,7 @@ struct Ngs2Rack {
     std::vector<Ngs2CustomUserFx2ModuleOption> userFx;
     std::vector<std::vector<std::uint8_t>> userFxCommon;
     std::vector<std::uint32_t> customModuleIds;
+    std::vector<Ngs2CustomModuleInfo> customModules;
     std::thread::id lockOwner{};
     std::uint32_t lockDepth = 0;
 };

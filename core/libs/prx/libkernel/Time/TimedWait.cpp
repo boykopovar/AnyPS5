@@ -11,6 +11,9 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <csignal>
+#include <pthread.h>
+#include <system_error>
 #include <time.h>
 #endif
 
@@ -388,6 +391,91 @@ void Condition::NotifyOne() {
 void Condition::NotifyAll() {
     coarse.notify_all();
 }
+
+namespace {
+
+constinit thread_local std::atomic<int> deferralDepth{0};
+constinit thread_local std::atomic<int> deferredSignal{0};
+
+class DeliveryAllowance {
+public:
+    DeliveryAllowance() : depth(deferralDepth.exchange(0)) { DeliverDeferred(); }
+    ~DeliveryAllowance() { deferralDepth.store(depth); }
+    DeliveryAllowance(const DeliveryAllowance&) = delete;
+    DeliveryAllowance& operator=(const DeliveryAllowance&) = delete;
+
+private:
+    int depth;
+};
+
+}
+
+DeliveryDeferral::DeliveryDeferral() {
+    deferralDepth.fetch_add(1);
+}
+
+DeliveryDeferral::~DeliveryDeferral() {
+    deferralDepth.fetch_sub(1);
+}
+
+void DeliverDeferred() {
+    if (deferralDepth.load() != 0) return;
+    const int signum = deferredSignal.exchange(0);
+    if (signum != 0) pthread_kill(pthread_self(), signum);
+}
+
+bool DeferDelivery(int signum) {
+    if (deferralDepth.load() == 0) return false;
+    deferredSignal.store(signum);
+    return true;
+}
+
+#ifdef __APPLE__
+SingleWaiterCondition::SingleWaiterCondition() : semaphore(dispatch_semaphore_create(0)) {
+    if (semaphore == nullptr) throw std::runtime_error("TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    dispatch_release(semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    dispatch_semaphore_signal(semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    if (deadlineNanos == nullptr) return dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER) == 0;
+    const std::uint64_t now = NowNanos();
+    const std::uint64_t remaining = *deadlineNanos > now ? *deadlineNanos - now : 0;
+    const dispatch_time_t deadline = remaining >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ? DISPATCH_TIME_FOREVER : dispatch_time(DISPATCH_TIME_NOW, static_cast<std::int64_t>(remaining));
+    return dispatch_semaphore_wait(semaphore, deadline) == 0;
+}
+#else
+SingleWaiterCondition::SingleWaiterCondition() {
+    if (sem_init(&semaphore, 0, 0) != 0) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    sem_destroy(&semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    sem_post(&semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    timespec deadline{};
+    if (deadlineNanos != nullptr) deadline = {static_cast<time_t>(*deadlineNanos / 1000000000ULL), static_cast<long>(*deadlineNanos % 1000000000ULL)};
+    for (;;) {
+        const int result = deadlineNanos == nullptr ? sem_wait(&semaphore) : sem_clockwait(&semaphore, CLOCK_MONOTONIC, &deadline);
+        if (result == 0) return true;
+        if (errno == ETIMEDOUT) return false;
+        if (errno != EINTR) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot wait for a wait semaphore");
+    }
+}
+#endif
 
 #endif
 

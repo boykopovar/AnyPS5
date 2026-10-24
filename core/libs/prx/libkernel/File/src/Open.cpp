@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/General.hpp"
@@ -87,6 +89,8 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
 static int NativeClose(int fd) {
+    const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(fd);
+    if (shared != -2) return shared;
     const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
     const int result = ::_close(fd);
     _set_thread_local_invalid_parameter_handler(previous);
@@ -168,9 +172,6 @@ static int MapFlags(int sceFlags) {
     return f;
 }
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
 
 static int SceErrorFromErrno(int error) {
     const int guest = error > 0 && error <= 34 ? error : FilesystemError(std::error_code(error, std::generic_category()));
@@ -294,12 +295,12 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 }
 
 int APS5_VABI sceKernelClose(int d) {
-    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EBADF;
+    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
+    EqueueDescriptorClosed(d);
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    EqueueDescriptorClosed(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);

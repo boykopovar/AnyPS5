@@ -1,3 +1,4 @@
+#include "prx/libSceRemoteplay/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>

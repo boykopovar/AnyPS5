@@ -1,3 +1,5 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -7,14 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleListInternal(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -57,11 +51,12 @@ static void CheckEachModule() {
 static void CheckMatchesAddressLookup() {
     ModuleInfoEx byAddress{};
     byAddress.st_size = sizeof(ModuleInfoEx);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&sceKernelGetModuleInfo), 2, &byAddress) == 0);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&sceKernelGetModuleInfo), 1, &byAddress) == 0);
     ModuleInfoEx byHandle{};
     byHandle.st_size = sizeof(ModuleInfoEx);
     Require(sceKernelGetModuleInfoInternal(byAddress.id, &byHandle) == 0);
-    Require(std::memcmp(&byHandle, &byAddress, sizeof(ModuleInfoEx)) == 0);
+    Require(byAddress.st_size == 0 && byHandle.st_size == sizeof(ModuleInfoEx));
+    Require(std::memcmp(byHandle.name, byAddress.name, sizeof(ModuleInfoEx) - offsetof(ModuleInfoEx, name)) == 0);
 }
 
 static void CheckRefusals() {

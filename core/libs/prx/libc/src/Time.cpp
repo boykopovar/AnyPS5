@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -101,7 +102,11 @@ std::tm toHostTm(const GuestTm& guest) {
     host.tm_isdst = guest.tm_isdst;
 #ifndef _WIN32
     host.tm_gmtoff = static_cast<long>(guest.tm_gmtoff);
+#ifdef __APPLE__
+    host.tm_zone = const_cast<char*>(guest.tm_zone);
+#else
     host.tm_zone = guest.tm_zone;
+#endif
 #endif
     return host;
 }
@@ -157,8 +162,6 @@ const bool timeZoneFixed = [] {
 }  // namespace
 #endif
 
-extern "C" int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr);
-
 namespace {
 
 bool setHostZone(const char* zone) {
@@ -183,6 +186,7 @@ std::recursive_mutex& zoneMutex() {
 }
 
 char** HostZoneNames();
+char* GuestZoneName(int index);
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -205,9 +209,8 @@ void applyGuestZone() {
 #else
     ::tzset();
 #endif
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
 }
 
 int& zoneDepth() {
@@ -515,32 +518,35 @@ char** HostZoneNames() {
     return ::tzname;
 #endif
 }
+
+char* GuestZoneName(int index) {
+    static char unnamed[] = "   ";
+    char** names = HostZoneNames();
+#ifdef _WIN32
+    const bool daylightSaving = _daylight != 0;
+#else
+    const bool daylightSaving = ::daylight != 0;
+#endif
+    return index == 1 && !daylightSaving ? unnamed : names[index];
+}
 }
 
 extern "C" {
 
-char* tzname_nid_postfix[2] = {HostZoneNames()[0], HostZoneNames()[1]};
+char* tzname_nid_postfix[2] = {GuestZoneName(0), GuestZoneName(1)};
 int64_t timezone_nid_postfix = 0;
 int daylight_nid_postfix = 0;
 
-GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
-GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
-int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
-double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0);
-std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void* state);
-std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state);
-int APS5_VABI _Getmbcurmax_nid_postfix();
-
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
     GuestTm universal{};
     GuestTm local{};
     gmtime_s_nid_postfix(&now, &universal);
     localtime_s_nid_postfix(&now, &local);
+
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
 }
@@ -688,6 +694,7 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const ZoneScope zone;
     tzset_nid_postfix();
+
     return formatGuestTime(str, count, format, *timeptr);
 }
 
@@ -735,6 +742,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
         return 0;
     }
     wcsrtombs_nid_postfix(narrowFormat.get(), &formatCursor, formatLength + 1, nullptr);
+
     const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
     if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
         errno = GuestEinval;
@@ -754,6 +762,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     const std::size_t length = mbsrtowcs_nid_postfix(nullptr, &narrowCursor, 0, nullptr);
     if (length == Failed || length >= count) return 0;
     mbsrtowcs_nid_postfix(str, &narrowCursor, count, nullptr);
+
     return length;
 }
 

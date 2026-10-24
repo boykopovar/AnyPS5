@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 
 #include <chrono>
@@ -13,29 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam*, std::size_t*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-int APS5_VABI sceAudioOut2LoContextQueryMemory(const AudioOut2ContextParam*, std::size_t*);
-int APS5_VABI sceAudioOut2LoContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2LoContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2LoContextSetAttributes(AudioOut2ContextHandle, const AudioOut2Attribute*, std::uint32_t);
-int APS5_VABI sceAudioOut2LoContextAdvance(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2LoContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2LoContextGetQueueLevel(AudioOut2ContextHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2LoPortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2LoPortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2LoPortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-int APS5_VABI sceAudioOut2LoPortGetState(AudioOut2PortHandle, AudioOut2PortState*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

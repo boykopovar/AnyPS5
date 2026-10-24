@@ -149,6 +149,33 @@ class BuildWebCliTests(unittest.TestCase):
                 code = build_web.main(["--build", str(build)])
             self.assertEqual(code, 0)
 
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(build_web.sys, "stdout", out), patch.object(build_web.sys, "stderr", err):
+            try:
+                build_web.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
 
 if __name__ == "__main__":
     unittest.main()

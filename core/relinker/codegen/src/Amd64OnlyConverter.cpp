@@ -56,6 +56,7 @@ public:
     ) : _seg(seg), _matches(matches), _ph(ph), _branchTargets(branchTargets), _pending(pending), _claimed(claimed), _matcher(matcher) {}
 
     [[nodiscard]] std::optional<Placement> Window(const std::size_t index) const {
+        std::optional<Placement> fallback;
         for (const bool avoidSegment : {true, false}) {
             if (index + 1 < _matches.size() && (_pending.contains(index + 1) || _movable(index + 1, true, avoidSegment))) {
                 if (auto placement = _relocate(index, index, index + 1))
@@ -65,8 +66,10 @@ public:
                 if (auto placement = _relocate(index, index - 1, index))
                     return placement;
             }
+            if (!fallback && index + 1 < _matches.size() && _pending.contains(index + 1))
+                fallback = _relocate(index, index, index + 1, true);
         }
-        return std::nullopt;
+        return fallback;
     }
 
     [[nodiscard]] std::optional<Placement> Island(const std::size_t index) {
@@ -130,7 +133,7 @@ private:
         };
     }
 
-    [[nodiscard]] std::optional<Placement> _relocate(const std::size_t index, const std::size_t first, const std::size_t last) const {
+    [[nodiscard]] std::optional<Placement> _relocate(const std::size_t index, const std::size_t first, const std::size_t last, const bool allowInPlace = false) const {
         if (_entered(_address(first), _end(last)))
             return std::nullopt;
         StubBodyBuilder body;
@@ -138,7 +141,7 @@ private:
         try {
             for (auto k = first; k <= last; ++k) {
                 if (_pending.contains(k)) {
-                    _matcher.EmitOutOfLine(body, _bytes(k));
+                    _matcher.EmitOutOfLine(body, _bytes(k), allowInPlace);
                     if (k != index)
                         placement.Consumed.push_back(k);
                 } else {

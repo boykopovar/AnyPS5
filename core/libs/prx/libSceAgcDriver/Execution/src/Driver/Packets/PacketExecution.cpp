@@ -303,8 +303,10 @@ void Driver::execute(const Submission& submission) {
                 continue;
             }
         }
+        timing.Mark("pipeline_prepare");
         if (pipelined && DrawPipeline::Queue0().Busy() && !keepsDrawPipeline(packet, header, opcode)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, header == FlipPacketHeader ? 0xffu : opcode);
         if (pipelined && predicated && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(queue.predication.address, queue.predication.operation == 3 ? 8 : 4)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode);
+        timing.Mark("pipeline_drain");
         std::shared_lock deviceUse(deviceReplacement, std::defer_lock);
         if (opcode != 0x3c && opcode != 0x93 && header != RenderingWaitPacketHeader && header != FlipPacketHeader) deviceUse.lock();
 
@@ -473,7 +475,7 @@ void Driver::execute(const Submission& submission) {
 
                 try {
                     std::string rejected;
-                    const auto verdict = draw(queue, packet, submission, rejected);
+                    const auto verdict = draw(queue, packet, submission, cursor, rejected);
                     drawn = verdict == DrawVerdict::Drawn;
                     CaptureTrace::Log("draw submission=%llu queue=%x offset=%zu target=%llx mask=%x verdict=%d reason=%.256s", static_cast<unsigned long long>(submission.serial), submission.queue, cursor, static_cast<unsigned long long>(color), readRegister(queue.context, 0x8e), static_cast<int>(verdict), rejected.c_str());
                     if (verdict == DrawVerdict::Rejected) {
@@ -567,8 +569,8 @@ void Driver::execute(const Submission& submission) {
             return;
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
-            DrawPipeline::Queue0().Enqueue([this] {
-                submitOpenWork();
+            DrawPipeline::Queue0().Enqueue([this, progress = submission.progress] {
+                submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
             }, {});
             endTiming.Finish();
@@ -592,7 +594,10 @@ void Driver::execute(const Submission& submission) {
         if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
     }
     endTiming.Finish();
-    if (submission.rewindTail != nullptr) executeRewindTail(submission);
+    if (submission.rewindTail != nullptr) {
+        if (submission.progress) submitOpenWork(submission.progress);
+        executeRewindTail(submission);
+    }
 }
 
 }

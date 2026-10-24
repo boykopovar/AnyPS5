@@ -6,13 +6,12 @@ endif()
 project(Relinker CXX)
 
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
-set(ANYPS5_WINDOWS_TEST_EXIT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsTestExit.cpp")
 
 function(add_test_executable target)
     add_executable(${target} ${ARGN})
     set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     if(MINGW)
-        target_sources(${target} PRIVATE "${ANYPS5_WINDOWS_TEST_EXIT}")
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
     endif()
 endfunction()
@@ -94,6 +93,10 @@ endif()
 if(APPLE AND NOT ANYPS5_RELINKER_ONLY)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fexperimental-library>)
     add_link_options(-fexperimental-library)
+endif()
+
+if(MINGW)
+    add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
 endif()
 
 if(BUILD_TESTING)
@@ -246,9 +249,15 @@ if(BUILD_TESTING)
         add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
         set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
-        add_test(NAME conventions_env_reference COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py)
-        set_tests_properties(conventions_env_reference PROPERTIES TIMEOUT 60)
+        set(env_reference_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${env_reference_test_source}")
+        file(STRINGS "${env_reference_test_source}" env_reference_cases REGEX "^    def test_")
+        foreach(test_case IN LISTS env_reference_cases)
+            string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+            add_test(NAME conventions_env_reference_${test_case} COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py" "EnvReferenceDiffTests.${test_case}")
+            set_tests_properties(conventions_env_reference_${test_case} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}

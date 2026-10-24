@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 

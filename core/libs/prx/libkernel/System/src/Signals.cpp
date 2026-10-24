@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
@@ -17,25 +19,12 @@
 #include <string>
 #include <thread>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI getpid_nid_postfix(void);
-extern "C" Pthread APS5_VABI scePthreadSelf(void);
-
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-
-struct GuestSigaction {
-    std::uintptr_t handler;
-    int flags;
-    GuestSignalSet mask;
-};
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
 extern "C" GuestSignalSet _sigintr_nid_postfix{};
 
 namespace {
-using GuestHandler = void (APS5_VABI *)(int);
+
 constexpr int MaxSignal = 128;
 constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
@@ -75,11 +64,8 @@ struct GuestSiginfo {
 static_assert(sizeof(GuestSiginfo) == 80 && offsetof(GuestSiginfo, code) == 8 && offsetof(GuestSiginfo, pid) == 12 &&
     offsetof(GuestSiginfo, uid) == 16 && offsetof(GuestSiginfo, address) == 24 && offsetof(GuestSiginfo, value) == 32 &&
     offsetof(GuestSiginfo, band) == 40);
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
-static_assert(sizeof(GuestTimespec) == 16 && offsetof(GuestTimespec, nanoseconds) == 8);
+
+static_assert(sizeof(KernelTimespec) == 16 && offsetof(KernelTimespec, tv_nsec) == 8);
 bool IgnoredByDefault(int guest) {
     return guest == 16 || guest == GuestSigcont || guest == 20 || guest == 23 || guest == 28 || guest == 29;
 }
@@ -122,6 +108,10 @@ bool TakePending(int guest) {
     const std::uint32_t bit = SignalBit(guest);
     if ((word.load(std::memory_order_relaxed) & bit) == 0) return false;
     return (word.fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
+}
+
+void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
+    if (action.handler == 1 || (action.handler == 0 && IgnoredByDefault(guest))) TakePending(guest);
 }
 
 bool PendingInSet(const GuestSignalSet& set, int* guest) {
@@ -236,7 +226,7 @@ bool DeliverPendingSignal(int guest) {
     return false;
 }
 
-int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const GuestTimespec* timeout, int* guest) {
+int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest) {
     auto& pending = Pending();
     std::unique_lock lock(pending.lock);
     std::optional<std::chrono::steady_clock::time_point> deadline;
@@ -246,8 +236,8 @@ int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const Guest
             pending.changed.wait(lock);
             continue;
         }
-        if (!deadline) deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->seconds) +
-            std::chrono::nanoseconds(timeout->nanoseconds);
+        if (!deadline) deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->tv_sec) +
+            std::chrono::nanoseconds(timeout->tv_nsec);
         if (pending.changed.wait_until(lock, *deadline) == std::cv_status::no_timeout) continue;
         return PendingInSet(set, guest) ? 0 : GuestEagain;
     }
@@ -274,8 +264,6 @@ void WaitForDeliverableSignal() {
         if (DeliverPendingSignal(guest)) return;
     }
 }
-
-extern "C" int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 
 }
 
@@ -373,10 +361,6 @@ extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds) 
     return remaining;
 }
 
-struct GuestItimerval {
-    KernelTimeval interval;
-    KernelTimeval value;
-};
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
 
 extern "C" int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output) {
@@ -468,11 +452,6 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
     return 0;
 }
 
-struct GuestStack {
-    void* sp;
-    std::size_t size;
-    int flags;
-};
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);
 namespace {
 constexpr int SsDisable = 4;
@@ -489,6 +468,7 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     if (!Install(guest, action)) { *__error_nid_postfix() = 22; return invalid; }
     const auto previous = reinterpret_cast<GuestHandler>(dispositions[guest].handler);
     dispositions[guest] = action;
+    DiscardPendingIfIgnored(guest, action);
     return previous;
 }
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
@@ -500,9 +480,13 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
     if (action) {
         if (!Install(guest, *action)) { *__error_nid_postfix() = 22; return -1; }
         dispositions[guest] = *action;
+        DiscardPendingIfIgnored(guest, *action);
     }
     if (previous) *previous = old;
     return 0;
+}
+int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    return sigaction_nid_postfix(guest, action, previous);
 }
 int APS5_VABI raise_nid_postfix(int guest) {
     if (guest == 0) return 0;
@@ -599,9 +583,9 @@ int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, Gu
     return _sigprocmask_nid_postfix(how, set, previousSet);
 }
 
-int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const GuestTimespec* timeout) {
+int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout) {
     if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
-    if (timeout != nullptr && (timeout->nanoseconds < 0 || timeout->nanoseconds >= 1000000000) && !PendingInSetPresent(*set)) {
+    if (timeout != nullptr && (timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000) && !PendingInSetPresent(*set)) {
         *__error_nid_postfix() = 22;
         return -1;
     }
@@ -645,8 +629,13 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     }
     WaitForDeliverableSignal();
     _sigprocmask_nid_postfix(GuestSigsetmask, &previous, nullptr);
+
     *__error_nid_postfix() = GuestEintr;
     return -1;
+}
+
+int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
+    return sigsuspend_nid_postfix(set);
 }
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
@@ -667,4 +656,13 @@ int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t programCounter) {
     return 0;
 }
 
+}
+
+namespace {
+struct RegisterSignalsOnLoad {
+    RegisterSignalsOnLoad() {
+        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
+    }
+};
+const RegisterSignalsOnLoad gRegisterSignals;
 }
