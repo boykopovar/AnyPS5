@@ -595,6 +595,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_stack.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbol_names COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbol_names.py $<TARGET_FILE:relinker>)
+        add_test(NAME import_symbol_types COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_import_symbol_types.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_registry COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME needed_libraries COMMAND ${Python3_EXECUTABLE}
