@@ -1,10 +1,7 @@
 # libSceJpegDec technical debt
 
-### Unknown function info
-
-- [sceJpegDecDecodeWithInputControl](../../../core/libs/prx/libSceJpegDec/Export.cpp) (libSceJpegDec) - its name and NID are in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJpegDec.c), but no credible prototype was found. It is declared without parameters solely to resolve known imports; this is not an ABI claim
-
 ### Functional
 
 - [libSceJpegDec](../../../core/libs/prx/libSceJpegDec/Export.cpp): work-memory size, alignment, creation checks, image-info fields, progressive coefficient-buffer capacity, row-buffer capacity and scaled dimensions are recovered from the native module. The host still allocates its decoder storage separately rather than using the guest work and coefficient regions. Malformed-header diagnostics and output mutation on failure are not fully matched.
 - [sceJpegDecDecode](../../../core/libs/prx/libSceJpegDec/Export.cpp): decode mode 1 and pixel formats 9, 10 and 11 remain unimplemented and throw. Exact decoded pixel values and color conversion are not verified against the native decoder.
+- [sceJpegDecDecodeWithInputControl](../../../core/libs/prx/libSceJpegDec/Export.cpp) (libSceJpegDec): input is requested from the callback in 2048-byte blocks until the frame header (parse) or the end-of-image marker (decode) is buffered. libSceJpegDec.sprx (firmware 13.60, read from disassembly, not measured on a console) refills its 2 KiB buffer whenever fewer than 0x3F0 bytes are left, so the callback can be called a different number of times. Decode mode 1, pixel formats 9 to 11, an unlisted parse down scale, decoding without a parse and decoding at another down scale than the parse throw. A stream that ends before the frame header, or whose buffered bytes can no longer form one, returns 0x80650010, as `sceJpegDecParseHeader` does; the console code and how far it reads are not known. Streamed bytes are kept in host memory, not in the work memory; a stream whose work memory is freed without `sceJpegDecDelete` stays there.
