@@ -141,7 +141,7 @@ static int GetFlag(const char* function, int id, bool Http2Handle::*flag, int* e
     std::lock_guard lock(g_handlesMutex);
     const Http2Handle* handle = FindAnyHandle(id);
     if (handle == nullptr) return ERROR_INVALID_ID;
-    if (enable == nullptr) NotImplemented_nid_no_patch(function);
+    if (enable == nullptr) throw std::invalid_argument(std::string(function) + ": null out-pointer");
     *enable = handle->*flag ? 1 : 0;
     return 0;
 }
@@ -162,7 +162,8 @@ int APS5_VABI sceHttp2AddRequestHeader(int id, const char* name, const char* val
     std::lock_guard lock(g_handlesMutex);
     Http2Handle* handle = FindAnyHandle(id);
     if (handle == nullptr) return ERROR_INVALID_ID;
-    if (name == nullptr || value == nullptr || mode > 1) NotImplemented_nid_no_patch(__func__);
+    if (name == nullptr || value == nullptr) throw std::invalid_argument(std::string(__func__) + ": null header name or value");
+    if (mode > 1) throw std::invalid_argument(std::string(__func__) + ": unknown header mode");
     if (mode == 0) EraseHeader(*handle, name);
     handle->headers.emplace_back(name, value);
     return 0;
@@ -525,7 +526,7 @@ int APS5_VABI sceHttp2RemoveRequestHeader(int id, const char* name) {
     std::lock_guard lock(g_handlesMutex);
     Http2Handle* handle = FindAnyHandle(id);
     if (handle == nullptr) return ERROR_INVALID_ID;
-    if (name == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (name == nullptr) throw std::invalid_argument(std::string(__func__) + ": null header name");
     EraseHeader(*handle, name);
     return 0;
 }
