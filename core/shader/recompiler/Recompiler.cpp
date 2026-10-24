@@ -246,6 +246,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.inputInfo = inputInfo;
+    translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
 
     constexpr InstructionTranslator translator;
 
