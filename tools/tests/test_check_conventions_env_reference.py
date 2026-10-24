@@ -80,10 +80,13 @@ class EnvReferenceDiffTests(unittest.TestCase):
             other: None,
         }
         expected = [("env-reference", SAMPLE, 2, f"APS5_NEW_READ is read here but has no row in {DOC}")]
-        self.assertEqual(self.run_case(base, head, target), expected)
-        for directory in ("core", "core/libs/prx/libSceExample", "docs/dev"):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        repository(root, base, head, target)
+        for directory in (".", "core", "core/libs/prx/libSceExample", "docs/dev"):
             with self.subTest(directory=directory):
-                self.assertEqual(self.run_case(base, head, target, directory), expected)
+                self.assertEqual(findings_of(root, base, head, "target", directory), expected)
 
     def test_a_new_spaced_read_is_reported_at_its_line(self):
         base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
