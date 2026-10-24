@@ -741,8 +741,13 @@ int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0 ? 0 : NativeError();
 }
 
-int UnsupportedLevelError(const Socket& socket, int level) {
-    if (socket.family == GuestUnix) return level == 0 ? 45 : 22;
+int UnsupportedLevelError(const Socket& socket, int level, int option, bool set) {
+    if (socket.family == GuestUnix) {
+        if (level != 0) return 22;
+        const bool handledByFreeBsd = set ? option == 2 || option == 4 : option == 1 || option == 2 || option == 4;
+        if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
+        return 45;
+    }
     const bool ownProtocol = level == 17 && socket.type == 2;
     const bool ownFamily = socket.family == 2 && level == 0;
     return ownProtocol || ownFamily ? 42 : 22;
@@ -1152,7 +1157,7 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level));
+    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::SetIpLevelOption(native, socket->options, socket->family == 2, option, value, length)
@@ -1165,7 +1170,7 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level));
+    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, false));
     if (!length) return Fail(22);
     if (!value) *length = 0;
     std::lock_guard lock(socket->modeMutex);
