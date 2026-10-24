@@ -20,6 +20,7 @@ int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary*, void*);
 int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
 int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
 int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
+int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
 }
 
 static void Check(bool value, int line) {
@@ -163,10 +164,29 @@ static void TestSetBlend() {
     Require(FT_Set_Var_Blend_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Set_Var_Blend_Coordinates(nullptr, 0, nullptr));
 }
 
+static void TestGetBlend() {
+    for (const std::int64_t value : {0LL, 0x4000LL, -0x4000LL, 0x10000LL}) {
+        FacePair pair(VariableFont());
+        const std::int64_t set[1] = {value};
+        FT_Fixed nativeSet[1] = {static_cast<FT_Fixed>(value)};
+        Require(FT_Set_Var_Blend_Coordinates_nid_postfix(&pair.guest.rec, 1, set) == FT_Set_Var_Blend_Coordinates(pair.oracle, 1, nativeSet));
+        for (const std::uint32_t count : {0u, 1u, 2u}) {
+            std::int64_t actual[2] = {7, 7};
+            FT_Fixed expected[2] = {7, 7};
+            Require(FT_Get_Var_Blend_Coordinates_nid_postfix(&pair.guest.rec, count, actual) == FT_Get_Var_Blend_Coordinates(pair.oracle, count, expected));
+            Require(actual[0] == expected[0] && actual[1] == expected[1]);
+        }
+    }
+    FacePair pair(VariableFont());
+    Require(FT_Get_Var_Blend_Coordinates_nid_postfix(&pair.guest.rec, 1, nullptr) == FT_Get_Var_Blend_Coordinates(pair.oracle, 1, nullptr));
+    Require(FT_Get_Var_Blend_Coordinates_nid_postfix(nullptr, 0, nullptr) == FT_Get_Var_Blend_Coordinates(nullptr, 0, nullptr));
+}
+
 int main() {
     TestGetMMVar();
     TestDoneMMVar();
     TestSetDesign();
     TestGetDesign();
     TestSetBlend();
+    TestGetBlend();
 }
