@@ -54,6 +54,14 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
 int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback, void*, int*);
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int);
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void);
+int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int);
+int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int);
+int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void);
+int APS5_VABI sceNetCtlGetStateIpcInt(int*);
+int APS5_VABI sceNetCtlGetState2IpcInt(int*);
+int APS5_VABI sceNetCtlGetStateV6IpcInt(int*);
 }
 
 namespace {
@@ -80,6 +88,13 @@ Delivery g_second;
 Delivery g_v6;
 Delivery g_self;
 int g_selfUnregister = -1;
+Delivery g_ipc;
+
+void APS5_VABI RecordIpc(int event, void* arg) {
+    ++g_ipc.calls;
+    g_ipc.event = event;
+    g_ipc.arg = arg;
+}
 
 void APS5_VABI RecordFirst(int event, void* arg) {
     ++g_first.calls;
@@ -104,6 +119,27 @@ void APS5_VABI UnregisterSelf(int event, void* arg) {
     g_self.event = event;
     g_self.arg = arg;
     g_selfUnregister = sceNetCtlUnregisterCallback(*static_cast<int*>(arg));
+}
+
+static void CheckIpcCallbacks() {
+    int state = -1;
+    Require(sceNetCtlGetStateIpcInt(&state) == 0);
+    const int event = state == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
+    int ipcProbe = 42;
+    int cid = -1;
+    g_ipc = {};
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpc, &ipcProbe, &cid) == 0 && cid >= 0);
+    Require(g_ipc.calls == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(g_ipc.calls == 0);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipc.calls == 1 && g_ipc.event == event && g_ipc.arg == &ipcProbe);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipc.calls == 1);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(cid) == 0);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipc.calls == 1);
 }
 
 void CheckCallbacks() {
@@ -289,6 +325,24 @@ int main() {
     Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
     Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(sceNetCtlRegisterCallbackIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackIpcInt(-1) == invalidId);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    CheckIpcCallbacks();
+
+    Require(sceNetCtlGetStateIpcInt(nullptr) == kErrInvalidAddr);
+    int stateIpc = -1;
+    Require(sceNetCtlGetStateIpcInt(&stateIpc) == 0);
+    Require(stateIpc == 0 || stateIpc == kStateIpObtained);
+    Require(sceNetCtlGetState2IpcInt(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetState2IpcInt(&stateIpc) == 0);
+    Require(stateIpc == 0 || stateIpc == kStateIpObtained);
+    Require(sceNetCtlGetStateV6IpcInt(nullptr) == kErrInvalidAddr);
+    int stateV6Ipc = -1;
+    Require(sceNetCtlGetStateV6IpcInt(&stateV6Ipc) == 0);
+    Require(stateV6Ipc == 0 || stateV6Ipc == kStateIpObtained);
     CheckCallbacks();
 
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);

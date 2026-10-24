@@ -100,6 +100,8 @@ static std::mutex g_callbackLock;
 static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksIpcInt[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksForLibIpcInt[MAX_CALLBACKS] = {};
 
 static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
@@ -646,13 +648,11 @@ int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback callback, voi
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksIpcInt, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksForLibIpcInt, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
@@ -660,13 +660,11 @@ int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksIpcInt, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksForLibIpcInt, callbackId);
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
@@ -674,8 +672,7 @@ int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckCallbacks(g_callbacksForLibIpcInt);
 }
 
 int APS5_VABI sceNetCtlClearEventIpcInt(int event) {
@@ -699,13 +696,11 @@ int APS5_VABI sceNetCtlGetResultIpcInt(int event, int* result) {
 }
 
 int APS5_VABI sceNetCtlGetStateIpcInt(int* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetCtlGetState(state);
 }
 
 int APS5_VABI sceNetCtlGetState2IpcInt(int* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetCtlGetState(state);
 }
 
 int APS5_VABI sceNetCtlGetInfoIpcInt(std::uint32_t code, NetCtlInfo* info) {
@@ -803,8 +798,7 @@ int APS5_VABI sceNetCtlGetResultV6IpcInt(int event, int* result) {
 }
 
 int APS5_VABI sceNetCtlGetStateV6IpcInt(int* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetCtlGetStateV6(state);
 }
 
 int APS5_VABI sceNetCtlGetInfoV6IpcInt(std::uint32_t code, NetCtlInfoV6* info) {
