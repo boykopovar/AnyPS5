@@ -326,8 +326,8 @@ void CheckShutdownAndGuard() {
     OutputFile file;
     std::vector<std::byte> source(TransferBytes, std::byte{0x5a});
     AgcDriver::GuestMemory::SetFlushHook(nullptr);
-    AgcDriver::GuestMemory::SetReadGuard([](std::uint64_t, std::size_t) { throw std::runtime_error("file source read guard"); });
     const auto descriptor = file.Open();
+    AgcDriver::GuestMemory::SetReadGuard([](std::uint64_t, std::size_t) { throw std::runtime_error("file source read guard"); });
     bool refused = false;
     try { sceKernelWrite(descriptor, source.data(), source.size()); }
     catch (const std::runtime_error& error) { refused = std::string(error.what()) == "file source read guard"; }

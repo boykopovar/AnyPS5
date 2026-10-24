@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <atomic>
+#include <array>
 #include <cstdio>
 #include <mutex>
 #include <stdexcept>
@@ -7,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <cerrno>
 #include <cstring>
@@ -28,12 +31,19 @@
 #include <ctime>
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/uio.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include <unistd.h>
 #endif
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 // Guest prefixes (without leading slashes) mapped to host directories, e.g. save-data mount points:
@@ -48,6 +58,41 @@ struct PathAliases {
 PathAliases& Aliases() {
     static auto* aliases = new PathAliases;
     return *aliases;
+}
+
+std::size_t HostPageSize() {
+    static const std::size_t size = [] {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return static_cast<std::size_t>(info.dwPageSize);
+#else
+        const long value = sysconf(_SC_PAGESIZE);
+        if (value <= 0) throw std::runtime_error("cannot query the host page size");
+        return static_cast<std::size_t>(value);
+#endif
+    }();
+    return size;
+}
+
+bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
+#elif defined(__linux__)
+    iovec local{destination, bytes};
+    iovec remote{const_cast<void*>(source), bytes};
+    const auto copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("guest path: process_vm_readv failed with errno " + std::to_string(errno));
+    return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return mach_vm_read_overwrite(mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
+               reinterpret_cast<mach_vm_address_t>(destination), &copied) == KERN_SUCCESS && copied == bytes;
+#else
+    throw std::runtime_error("checked guest path copies are not implemented on this host");
+#endif
 }
 
 std::string TrimSlashes(const char* path) {
@@ -486,6 +531,31 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
 #endif
     return 0;
 }
+}
+
+extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination) {
+    constexpr std::size_t maximum = 1024;
+    if (source == nullptr) return 14;
+    const auto address = reinterpret_cast<std::uintptr_t>(source);
+    std::array<char, maximum> bytes{};
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return 14;
+        const auto current = address + offset;
+        const auto pageRemaining = HostPageSize() - current % HostPageSize();
+        const auto count = std::min(pageRemaining, bytes.size() - offset);
+        if (!CopyGuestBytes(bytes.data() + offset, reinterpret_cast<const void*>(current), count)) return 14;
+        if (const auto* end = static_cast<const char*>(std::memchr(bytes.data() + offset, 0, count))) {
+            try {
+                destination.assign(bytes.data(), static_cast<std::size_t>(end - bytes.data()));
+            } catch (const std::bad_alloc&) {
+                return 12;
+            }
+            return 0;
+        }
+        offset += count;
+    }
+    return 63;
 }
 
 #ifndef _WIN32

@@ -601,9 +601,9 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     return 0;
 }
 
-static int PathError(const char* path) {
-    if (path == nullptr) return GUEST_EFAULT;
-    return *path == '\0' ? GUEST_ENOENT : 0;
+static int PathError(const char* path, std::string& copy) {
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return error;
+    return copy.empty() ? GUEST_ENOENT : 0;
 }
 
 #ifdef _WIN32
@@ -689,7 +689,9 @@ static int SetFileFlags(const char* function, const std::string& target, std::ui
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (NativeChmod(native, mode & 07777) != 0) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
@@ -697,7 +699,9 @@ int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
 }
 
 int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (const int error = LookupError(native)) return PosixFailure(error);
@@ -942,7 +946,9 @@ int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
 }
 
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (NativeMkdir(native, mode) != 0) {
@@ -959,7 +965,9 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
     if (File::InvalidOpenFlags(flags)) return PosixFailure(GUEST_EINVAL);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode)));
 }
 
@@ -1042,13 +1050,17 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
     if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelStat(path, sb));
 }
 
 int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
     if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (!File::FillLinkStat(native, sb)) return PosixResult(SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno));
@@ -1056,13 +1068,18 @@ int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
 }
 
 int APS5_VABI unlink_nid_postfix(const char* path) {
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelUnlink(path));
 }
 
 int APS5_VABI sceKernelCheckReachability(const char* path) {
     if (path == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    if (*path == '\0') return SCE_KERNEL_ERROR_ENOENT;
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
+    path = copy.c_str();
+    if (copy.empty()) return SCE_KERNEL_ERROR_ENOENT;
     if (std::strlen(path) > 255) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
@@ -1237,8 +1254,10 @@ int APS5_VABI getdents_nid_postfix(int fd, char* buf, int nbytes) {
 
 int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     (void)mode;
-    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
-    if (!*path) return SceErrorFromErrno(GUEST_ENOENT);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
@@ -1503,8 +1522,10 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
 }
 
 int APS5_VABI sceKernelRmdir(const char* path) {
-    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
-    if (*path == '\0') return SceErrorFromErrno(GUEST_ENOENT);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
@@ -1525,7 +1546,9 @@ int APS5_VABI sceKernelRmdir(const char* path) {
 }
 
 int APS5_VABI rmdir_nid_postfix(const char* path) {
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelRmdir(path));
 }
 
@@ -1534,8 +1557,10 @@ int APS5_VABI rmdir_nid_postfix(const char* path) {
 extern "C" {
 
 int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
-    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
-    if (!*path) return SceErrorFromErrno(GUEST_ENOENT);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     if (NativeChmod(native, mode & 07777) != 0) return SceErrorFromErrno(errno);
@@ -1559,8 +1584,10 @@ static bool InvalidTimes(const KernelTimeval* times) {
 
 int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t length) {
     if (length < 0) return SceErrorFromErrno(GUEST_EINVAL);
-    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
-    if (*path == '\0') return SceErrorFromErrno(GUEST_ENOENT);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
@@ -1580,14 +1607,18 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
 
 int APS5_VABI truncate_nid_postfix(const char* path, std::int64_t length) {
     if (length < 0) return PosixFailure(GUEST_EINVAL);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelTruncate_nid_postfix(path, length));
 }
 
 int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval* times) {
     if (InvalidTimes(times)) return SCE_KERNEL_ERROR_EINVAL;
-    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
-    if (*path == '\0') return SceErrorFromErrno(GUEST_ENOENT);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     if (NativeUtimes(native, times) != 0) return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno);
@@ -1596,13 +1627,17 @@ int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval*
 
 int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
     if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     return PosixResult(sceKernelUtimes_nid_postfix(path, times));
 }
 
 int APS5_VABI lutimes_nid_postfix(const char* path, const KernelTimeval* times) {
     if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
-    if (const int error = PathError(path)) return PosixFailure(error);
+    std::string copy;
+    if (const int error = PathError(path, copy)) return PosixFailure(error);
+    path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (NativeUtimes(native, times, false) != 0) return PosixResult(SceErrorFromErrno(errno));
