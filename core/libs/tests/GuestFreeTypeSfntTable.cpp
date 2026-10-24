@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +26,15 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <typename TCall> static bool ThrowsWith(TCall call, const std::string& prefix) {
+    try {
+        call();
+    } catch (const std::exception& error) {
+        return std::string(error.what()).rfind(prefix, 0) == 0;
+    }
+    return false;
+}
 
 struct FacePair {
     std::vector<unsigned char> bytes;
@@ -63,18 +74,23 @@ int main() {
         os2[68] = 0x03;
         std::vector<unsigned char> post = FontFixture::Words({3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
         FacePair face(library, nativeLibrary, FontFixture::BuildFont(3, {{"OS/2", os2}, {"post", post}}));
-        face.Compare(FT_SFNT_HEAD, sizeof(TT_Header), true);
-        face.Compare(FT_SFNT_HHEA, sizeof(TT_HoriHeader), true);
-        face.Compare(FT_SFNT_MAXP, sizeof(TT_MaxProfile), true);
-        face.Compare(FT_SFNT_OS2, sizeof(TT_OS2), true);
-        face.Compare(FT_SFNT_POST, sizeof(TT_Postscript), true);
-        face.Compare(FT_SFNT_VHEA, sizeof(TT_VertHeader), false);
-        face.Compare(FT_SFNT_PCLT, sizeof(TT_PCLT), false);
-        face.Compare(FT_SFNT_MAX, 0, false);
-        face.Compare(-1, 0, false);
-        FacePair bitmap(library, nativeLibrary, FontFixture::BitmapFont());
-        bitmap.Compare(FT_SFNT_HEAD, sizeof(TT_Header), false);
-        bitmap.Compare(FT_SFNT_OS2, sizeof(TT_OS2), false);
+        if constexpr (sizeof(FT_Long) != sizeof(std::int64_t)) {
+            Require(ThrowsWith([&] { FT_Get_Sfnt_Table_nid_postfix(const_cast<GuestFaceRec*>(&face.guest.rec), FT_SFNT_HEAD); },
+                               "FT_Get_Sfnt_Table: the LP64 table layouts need a 64-bit host FT_Long, which is not implemented"));
+        } else {
+            face.Compare(FT_SFNT_HEAD, sizeof(TT_Header), true);
+            face.Compare(FT_SFNT_HHEA, sizeof(TT_HoriHeader), true);
+            face.Compare(FT_SFNT_MAXP, sizeof(TT_MaxProfile), true);
+            face.Compare(FT_SFNT_OS2, sizeof(TT_OS2), true);
+            face.Compare(FT_SFNT_POST, sizeof(TT_Postscript), true);
+            face.Compare(FT_SFNT_VHEA, sizeof(TT_VertHeader), false);
+            face.Compare(FT_SFNT_PCLT, sizeof(TT_PCLT), false);
+            face.Compare(FT_SFNT_MAX, 0, false);
+            face.Compare(-1, 0, false);
+            FacePair bitmap(library, nativeLibrary, FontFixture::BitmapFont());
+            bitmap.Compare(FT_SFNT_HEAD, sizeof(TT_Header), false);
+            bitmap.Compare(FT_SFNT_OS2, sizeof(TT_OS2), false);
+        }
     }
     Require(FT_Get_Sfnt_Table_nid_postfix(nullptr, FT_SFNT_HEAD) == FT_Get_Sfnt_Table(nullptr, FT_SFNT_HEAD));
     GuestFaceRec empty{};
