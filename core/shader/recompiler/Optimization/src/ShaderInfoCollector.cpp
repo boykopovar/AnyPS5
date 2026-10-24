@@ -425,6 +425,7 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::BaryCoordSmooth:
                     AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    if (program.Metadata().barycentricBuiltinsUnnormalized) AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
                     break;
                 case StageInputKind::BaryCoordSmoothCenter:
                 case StageInputKind::BaryCoordSmoothSample:
