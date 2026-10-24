@@ -37,12 +37,16 @@ __int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor);
 SonyLconv* APS5_VABI localeconv_nid_postfix(void);
 int APS5_VABI sceAmprFpclassifyd(double value);
 unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix();
+void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler);
+void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error);
+int APS5_VABI wcscpy_s_nid_postfix(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
+int APS5_VABI fopen_s_nid_postfix(void** result, const char* filename, const char* mode);
 }
 
 #define Require(condition) do { if (!(condition)) { std::fprintf(stderr, "guest_crt: line %d: %s\n", __LINE__, #condition); std::abort(); } } while (0)
 
 static int g_handlerCalls = 0;
-static void CountingHandler(const char* message, void* pointer, int error) {
+static void APS5_VABI CountingHandler(const char* message, void* pointer, int error) {
     (void)message;
     (void)pointer;
     (void)error;
@@ -66,8 +70,12 @@ int main() {
     Require(sceAmprSinh(1.0, 2.0) == 2.0 * std::sinh(1.0));
     Require(sceAmprSinh(0.0, 5.0) == 0.0);
 
-    SonyLconv* locale = sceAmprLocaleconv();
+    SonyLconv* locale = localeconv_nid_postfix();
+    Require(locale != nullptr);
+    SonyLconv* amprLocale = sceAmprLocaleconv();
+    Require(amprLocale == locale);
     Require(reinterpret_cast<std::uintptr_t>(&locale->decimal_point) - reinterpret_cast<std::uintptr_t>(locale) == 0x48);
+    Require(reinterpret_cast<std::uintptr_t>(&amprLocale->decimal_point) - reinterpret_cast<std::uintptr_t>(amprLocale) == 0x48);
     Require(std::strcmp(locale->decimal_point, ".") == 0);
     Require(std::memcmp(localeconv_nid_postfix()->chars, locale->chars, sizeof(locale->chars)) == 0);
     Require(std::strcmp(localeconv_nid_postfix()->decimal_point, ".") == 0);
@@ -75,6 +83,7 @@ int main() {
     for (char value : locale->chars) Require(value == CHAR_MAX);
     Require(std::strcmp(locale->false_text, "false") == 0 && std::strcmp(locale->true_text, "true") == 0);
     Require(locale->grouping[0] == '\0' && locale->thousands_sep[0] == '\0');
+    Require(SonyLocaleconv_nid_no_patch() == locale);
 
     Require(__udivti3_nid_postfix(100, 3) == 33);
     Require(SonyUdivti3(100, 3) == 33);
@@ -159,23 +168,37 @@ int main() {
     }
     Require(trapped);
 
-    void* previous = sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler));
+    void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler));
     Require(previous != nullptr);
     Require(previous != reinterpret_cast<void*>(&CountingHandler));
     const std::uint16_t hello[] = {'h', 'i', 0};
     std::uint16_t buffer[8] = {};
-    Require(sceAmprWcscpyS(buffer, 8, hello) == 0);
+    Require(wcscpy_s_nid_postfix(buffer, 8, hello) == 0);
     Require(buffer[0] == 'h' && buffer[1] == 'i' && buffer[2] == 0);
     const std::uint16_t longText[] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 0};
     g_handlerCalls = 0;
     Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
     Require(g_handlerCalls == 1);
+    g_handlerCalls = 0;
     Require(sceAmprWcscpyS(nullptr, 4, longText) == EINVAL);
+    Require(g_handlerCalls == 1);
+    g_handlerCalls = 0;
+    Require(wcscpy_s_nid_postfix(nullptr, 4, longText) == EINVAL);
+    Require(g_handlerCalls == 1);
+    g_handlerCalls = 0;
+    Require(fopen_s_nid_postfix(nullptr, nullptr, nullptr) == EINVAL);
+    Require(g_handlerCalls == 1);
+    previous = sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler));
+    Require(previous == reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 1);
+    sceAmprIgnoreHandlerS("msg", nullptr, 0);
+    ignore_handler_s_nid_postfix("msg", nullptr, 0);
     previous = sceAmprSetConstraintHandlerS(nullptr);
     Require(previous == reinterpret_cast<void*>(&CountingHandler));
-    previous = sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler));
+    previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler));
     Require(previous != nullptr && previous != reinterpret_cast<void*>(&CountingHandler));
-    sceAmprIgnoreHandlerS("msg", nullptr, 0);
 
     char text[64];
     GuestTm known{};
@@ -238,4 +261,15 @@ int main() {
     bool randomChanged = false;
     for (int draw = 0; draw < 8; ++draw) randomChanged |= _ZSt14_Random_devicev_nid_postfix() != firstRandom;
     Require(randomChanged);
+
+    set_constraint_handler_s_nid_postfix(nullptr);
+    void* const defaultHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler));
+    Require(defaultHandler != nullptr && defaultHandler != reinterpret_cast<void*>(&CountingHandler));
+    Require(reinterpret_cast<void*>(SonyConstraintHandlerSlot()) == reinterpret_cast<void*>(&CountingHandler));
+    Require(sceAmprSetConstraintHandlerS(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    Require(reinterpret_cast<void*>(SonyConstraintHandlerSlot()) == defaultHandler);
+    Require(set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler)) == defaultHandler);
+    Require(set_constraint_handler_s_nid_postfix(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    Require(reinterpret_cast<void*>(SonyConstraintHandlerSlot()) == defaultHandler);
+    return 0;
 }

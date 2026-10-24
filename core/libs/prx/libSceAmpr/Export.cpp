@@ -874,7 +874,7 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
 
 APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
 SonyLconv* APS5_VABI sceAmprLocaleconv(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 APS5_EXPORT("802pFCwC9w0", sceAmprUdivti3);
@@ -904,7 +904,7 @@ int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::u
 
 APS5_EXPORT("ENLfKJEZTjE", sceAmprSetConstraintHandlerS);
 void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler) {
-    return SonySetConstraintHandlerS(handler);
+    return SonySetConstraintHandlerS_nid_no_patch(handler);
 }
 
 APS5_EXPORT("Jo9ON-AX9eU", sceAmprFltrounds);
@@ -914,7 +914,7 @@ int APS5_VABI sceAmprFltrounds(void) {
 
 APS5_EXPORT("ODGONXcSmz4", sceAmprIgnoreHandlerS);
 void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error) {
-    SonyIgnoreHandlerS(message, pointer, error);
+    SonyIgnoreHandlerS_nid_no_patch(message, pointer, error);
 }
 
 APS5_EXPORT("sZLrjx-yEx4", sceAmprWcstombsS);
