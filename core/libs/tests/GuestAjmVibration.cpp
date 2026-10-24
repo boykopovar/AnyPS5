@@ -110,7 +110,7 @@ std::vector<T> Decode(std::uint32_t context, unsigned channels, unsigned encodin
         Require((stream.result & 2) != 0 && stream.consumed == 0 && stream.produced == 0, "invalid first-frame flag");
     }
     const auto stream = run(packet, packet.size());
-    Require(stream.result == 0 && stream.internalResult == 0, "decode vibration superframe");
+    Require(stream.result == 0x18 && stream.internalResult == 0, "decode vibration superframe");
     Require(stream.consumed == 128 && stream.produced == static_cast<int>(pcm.size() * sizeof(T)), "consumed/produced accounting");
     Require(stream.samples == static_cast<unsigned>(samples) && stream.frames == 4, "decoded sample/frame accounting");
     Require(sceAjmInstanceDestroy(context, instance) == 0, "destroy instance");
