@@ -44,6 +44,7 @@
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "src/ResolverTestHooks.hpp"
 
 // Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
@@ -97,7 +98,12 @@ struct NetDataTraffic;
 struct NetEmulationParameter;
 
 struct NetResolverConnection;
-struct NetThreadParameter;
+struct NetThreadParameter {
+    void (APS5_VABI *entry)(void*);
+    void* arg;
+    std::uint64_t reserved;
+    std::uint32_t flags;
+};
 struct NetIpv4InterfaceAddress;
 struct NetStatisticsInfoInternal;
 struct NetInitializeParameter;
@@ -499,6 +505,15 @@ void set_errno(int err) {
 int fail(int err) {
     set_errno(err);
     return NET_ERROR_BASE | err;
+}
+
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+
+void* APS5_VABI RunNetThread(void* param) {
+    const auto* thread = static_cast<const NetThreadParameter*>(param);
+    thread->entry(thread->arg);
+    return nullptr;
 }
 
 int set_native_timeout(NativeSocket native, int optname, std::int64_t microseconds) {
@@ -1656,7 +1671,9 @@ int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
 
 constexpr int NET_SOCKINFO_F_SELF = 0x1;
 constexpr int NET_SOCKINFO_F_NONBLOCK = 0x200000;
+constexpr int NET_SOCKINFO_F_IPV6 = 0x400000;
 constexpr int NET_SOCKINFO_TIME_WAIT = 0x40;
+constexpr int NET_SOCKINFO6_IPV46 = 0x1000;
 
 struct NetSockInfo {
     char name[32];
@@ -1692,6 +1709,44 @@ struct NetSockInfo {
 };
 static_assert(sizeof(NetSockInfo) == 0xA0 && offsetof(NetSockInfo, s) == 0x24 && offsetof(NetSockInfo, local_adr) == 0x34 &&
     offsetof(NetSockInfo, local_port) == 0x3C && offsetof(NetSockInfo, recv_buffer_size) == 0x64);
+
+struct NetSockInfo6 {
+    char name[32];
+    std::int32_t pid;
+    std::int32_t s;
+    std::int8_t socket_type;
+    std::int8_t policy;
+    std::int8_t priority;
+    std::int8_t reserved8;
+    std::int32_t recv_queue_length;
+    std::int32_t send_queue_length;
+    std::uint32_t local_adr;
+    std::uint32_t remote_adr;
+    std::uint16_t local_port;
+    std::uint16_t remote_port;
+    std::uint16_t local_vport;
+    std::uint16_t remote_vport;
+    std::int32_t state;
+    std::int32_t flags;
+    std::int32_t tx_bps;
+    std::int32_t rx_bps;
+    std::int32_t max_tx_bps;
+    std::int32_t max_rx_bps;
+    std::int32_t tx_vbps;
+    std::int32_t rx_vbps;
+    std::int32_t recv_buffer_size;
+    std::int32_t send_buffer_size;
+    std::uint8_t local_adr6[16];
+    std::uint8_t remote_adr6[16];
+    std::int32_t tx_drops;
+    std::int32_t rx_drops;
+    std::int32_t tx_wait;
+    std::int32_t reserved[2];
+};
+static_assert(sizeof(NetSockInfo6) == sizeof(NetSockInfo) && offsetof(NetSockInfo6, s) == offsetof(NetSockInfo, s) &&
+    offsetof(NetSockInfo6, local_port) == offsetof(NetSockInfo, local_port) && offsetof(NetSockInfo6, flags) == offsetof(NetSockInfo, flags) &&
+    offsetof(NetSockInfo6, recv_buffer_size) == offsetof(NetSockInfo, recv_buffer_size) && offsetof(NetSockInfo6, local_adr6) == 0x6C &&
+    offsetof(NetSockInfo6, remote_adr6) == 0x7C && offsetof(NetSockInfo6, tx_drops) == offsetof(NetSockInfo, tx_drops));
 
 static int sock_buffer_size(const Sock& socket, bool send, std::int32_t& value) {
     value = send ? socket.snd_buffer : socket.rcv_buffer;
@@ -1761,6 +1816,86 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
         if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
         if (error != 0) return fail(error);
         std::memcpy(static_cast<char*>(info) + static_cast<std::size_t>(written) * sizeof(record), &record, sizeof(record));
+        ++written;
+    }
+    return written;
+}
+
+static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
+    Sock socket;
+    {
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(s);
+        if (it == g_socks.end()) return NET_EBADF;
+        socket = it->second;
+    }
+    const bool ipv6 = socket.family == NET_AF_INET6;
+    if (!ipv6 && !(includeIpv4 && socket.family == NET_AF_INET)) return NET_EAFNOSUPPORT;
+    sockaddr_storage local{};
+    NativeLength length = sizeof(local);
+    if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() != WSAEINVAL) return native_error();
+#else
+        return native_error();
+#endif
+    }
+    sockaddr_storage remote{};
+    length = sizeof(remote);
+    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
+        const int error = native_error();
+        if (error != NET_ENOTCONN) return error;
+    }
+    record = {};
+    if (const int error = sock_buffer_size(socket, false, record.recv_buffer_size)) return error;
+    if (const int error = sock_buffer_size(socket, true, record.send_buffer_size)) return error;
+    record.s = s;
+    record.socket_type = static_cast<std::int8_t>(socket.type);
+    record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+    if (ipv6) {
+        const auto& local6 = reinterpret_cast<const sockaddr_in6&>(local);
+        const auto& remote6 = reinterpret_cast<const sockaddr_in6&>(remote);
+        std::memcpy(record.local_adr6, &local6.sin6_addr, sizeof(record.local_adr6));
+        std::memcpy(record.remote_adr6, &remote6.sin6_addr, sizeof(record.remote_adr6));
+        record.local_port = local6.sin6_port;
+        record.remote_port = remote6.sin6_port;
+        record.flags |= NET_SOCKINFO_F_IPV6;
+    } else {
+        const auto& local4 = reinterpret_cast<const sockaddr_in&>(local);
+        const auto& remote4 = reinterpret_cast<const sockaddr_in&>(remote);
+        record.local_adr = local4.sin_addr.s_addr;
+        record.remote_adr = remote4.sin_addr.s_addr;
+        record.local_port = local4.sin_port;
+        record.remote_port = remote4.sin_port;
+    }
+    return 0;
+}
+
+int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32_t capacity, std::uint32_t flags) {
+    if ((flags & ~(NET_SOCKINFO_TIME_WAIT | NET_SOCKINFO6_IPV46)) != 0) return fail(NET_EINVAL);
+    const bool includeIpv4 = (flags & NET_SOCKINFO6_IPV46) != 0;
+    std::vector<int> listed;
+    if (s < 0) {
+        std::lock_guard lk(g_mutex);
+        for (const auto& [descriptor, socket] : g_socks) {
+            if (socket.family == NET_AF_INET6 || (includeIpv4 && socket.family == NET_AF_INET)) listed.push_back(descriptor);
+        }
+    }
+    if (!info) return s < 0 ? static_cast<int>(listed.size()) : fail(NET_EINVAL);
+    if (static_cast<std::int32_t>(capacity) < 1) return fail(NET_EINVAL);
+    NetSockInfo6 record;
+    if (s >= 0) {
+        if (const int error = fill_sock_info6(s, record, includeIpv4)) return fail(error);
+        *info = record;
+        return 1;
+    }
+    int written = 0;
+    for (const int descriptor : listed) {
+        if (written == static_cast<std::int32_t>(capacity)) break;
+        const int error = fill_sock_info6(descriptor, record, includeIpv4);
+        if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
+        if (error != 0) return fail(error);
+        info[written] = record;
         ++written;
     }
     return written;
@@ -2330,11 +2465,6 @@ int APS5_VABI sceNetResolverConnectDestroy(NetResolverConnection* connection) {
     return 0;
 }
 
-int APS5_VABI sceNetGetSockInfo6(std::int32_t socket, NetSockInfo6* info, std::uint32_t capacity, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNetSetDns6Info(const NetDns6Info* info, std::uint32_t flags) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2600,18 +2730,20 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 }
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!parameter) return fail(NET_EINVAL);
+    Pthread created = nullptr;
+    const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (result != 0) return result;
+    if (thread) *thread = created;
     return 0;
 }
 
-int APS5_VABI sceNetThreadExit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNetThreadExit() {
+    scePthreadExit(nullptr);
 }
 
 int APS5_VABI sceNetThreadJoin(void* thread) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePthreadJoin(static_cast<Pthread>(thread), nullptr);
 }
 
 int APS5_VABI sceNetUsleep(int microseconds) {
@@ -3167,14 +3299,12 @@ int APS5_VABI sceNetEmulationDebugSettingsGet(NetEmulationParameter* parameter, 
     return 0;
 }
 
-int APS5_VABI sceNetEmulationSet(const NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetEmulationSet(const NetEmulationParameter*, std::uint32_t) {
+    return fail(NET_EOPNOTSUPP);
 }
 
-int APS5_VABI sceNetEmulationGet(NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetEmulationGet(NetEmulationParameter*, std::uint32_t) {
+    return fail(NET_EOPNOTSUPP);
 }
 
 }

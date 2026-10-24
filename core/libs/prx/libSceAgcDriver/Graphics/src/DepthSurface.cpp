@@ -2105,6 +2105,12 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             const bool overlapped = !surface->syncing && plane < end && address < plane + planeBytes;
             if (overlapped && (surface->pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) surface->MarkAllStale(planeBytes);
             if (overlapped && (scope == DepthPlaneScope::Whole || anyUnit(surface->StaleUnitsIn(planeBytes, address, end)))) {
+                if (GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty()) {
+                    static std::atomic<bool> reported{false};
+                    if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] depth plane 0x%llx+0x%llx was unmapped with GPU results pending; they are dropped\n", static_cast<unsigned long long>(plane), static_cast<unsigned long long>(planeBytes));
+                    surface->ClearStale();
+                    continue;
+                }
                 surface->SyncFromMemory(resource);
                 auto units = scope == DepthPlaneScope::Whole ? surface->staleUnits : surface->StaleUnitsIn(planeBytes, address, end);
                 if (anyUnit(units)) {

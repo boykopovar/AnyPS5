@@ -416,7 +416,7 @@ private:
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;
     std::unordered_map<std::uint64_t, std::shared_ptr<const DrawRelocation>> drawRelocations;
-    std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawAliases;
+    std::unordered_map<std::uint64_t, std::uint64_t> drawAliases;
     DrawRelocationPending drawRelocationPending;
     std::unordered_map<std::uint64_t, DrawRelocationTrial> drawRelocationTrials;
     DrawRelocationCounters drawRelocationCounters;

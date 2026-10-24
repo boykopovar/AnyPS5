@@ -51,6 +51,9 @@ int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
 void APS5_VABI sceNetCtlTerm(void);
 int APS5_VABI sceNetCtlUnregisterCallback(int);
 int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
+int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int);
+int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void);
 }
 
 namespace {
@@ -283,6 +286,9 @@ int main() {
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallback(-1) == invalidId);
     Require(sceNetCtlUnregisterCallbackV6(-1) == invalidId);
+    Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
     CheckCallbacks();
 
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);

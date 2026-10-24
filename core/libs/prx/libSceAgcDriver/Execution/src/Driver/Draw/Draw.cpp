@@ -541,6 +541,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (drawHit || verifyHit) {
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
+            if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
+                const auto donor = drawCache.find(alias->second);
+                if (donor != drawCache.end() && drawCacheHits - donor->second->touched > drawCacheEntries() / 8) {
+                    drawOrder.splice(drawOrder.begin(), drawOrder, donor->second->order);
+                    donor->second->touched = drawCacheHits;
+                    ++drawEntryCounters.touches;
+                }
+            }
         }
         if (profile && drawRelocationCounters.lookups >= 100000) reportDrawRelocation();
     }
