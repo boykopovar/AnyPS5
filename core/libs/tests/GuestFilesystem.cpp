@@ -307,13 +307,37 @@ static void TestParentTraversal() {
     Require(rmdir_nid_postfix("/parent-test-mount/slash-directory/") == 0 && !std::filesystem::exists(root / "slash-directory"));
     RemovePathAlias_nid_no_patch("parent-test-mount");
     std::error_code linkError;
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW((root / "directory-link").c_str(), L"Existing",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        linkError = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_directory_symlink("Existing", root / "directory-link", linkError);
+#endif
     if (!linkError) {
         Require(sceKernelStat((root.generic_string() + "/directory-link/../present.txt").c_str(), &status) == 0 && status.st_size == 9);
+#ifdef _WIN32
+        Require(CreateSymbolicLinkW((root / "file-link").c_str(), L"present.txt", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        Require(CreateSymbolicLinkW((root / "dangling-link").c_str(), L"missing",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+#else
         std::filesystem::create_symlink("present.txt", root / "file-link");
         std::filesystem::create_directory_symlink("missing", root / "dangling-link");
+#endif
         checkInvalid(root.generic_string() + "/file-link/..", 20);
         checkInvalid(root.generic_string() + "/dangling-link/..", 2);
+#ifdef _WIN32
+        constexpr DWORD LoopLinkFlags = SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+        Require(CreateSymbolicLinkW((root / "self-loop").c_str(), L"self-loop", LoopLinkFlags) != 0);
+        Require(CreateSymbolicLinkW((root / "loop-a").c_str(), L"loop-b", LoopLinkFlags) != 0);
+        Require(CreateSymbolicLinkW((root / "loop-b").c_str(), L"loop-a", LoopLinkFlags) != 0);
+        checkInvalid(root.generic_string() + "/self-loop/..", 62);
+        checkInvalid(root.generic_string() + "/loop-a/..", 62);
+        Require(DeleteFileW((root / "file-link").c_str()) != 0 && RemoveDirectoryW((root / "dangling-link").c_str()) != 0 &&
+            RemoveDirectoryW((root / "directory-link").c_str()) != 0 && RemoveDirectoryW((root / "self-loop").c_str()) != 0 &&
+            RemoveDirectoryW((root / "loop-a").c_str()) != 0 && RemoveDirectoryW((root / "loop-b").c_str()) != 0);
+#endif
     }
     Require(chdir_nid_postfix(root.generic_string().c_str()) == 0);
     Require(sceKernelStat("missing/../present.txt", &status) == static_cast<int>(0x80020002u));

@@ -300,6 +300,29 @@ std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::s
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
     std::error_code error;
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(host.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        const HANDLE handle = CreateFileW(host.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION information{};
+            const bool read = GetFileInformationByHandle(handle, &information);
+            CloseHandle(handle);
+            if (read) {
+                if (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return;
+                throw std::filesystem::filesystem_error("Guest path component is not a directory", host,
+                    std::make_error_code(std::errc::not_a_directory));
+            }
+        } else if (const DWORD code = GetLastError(); code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND) {
+            throw std::filesystem::filesystem_error("Guest path component is not a directory", host,
+                std::make_error_code(std::errc::no_such_file_or_directory));
+        } else if (code == ERROR_CANT_RESOLVE_FILENAME) {
+            throw std::filesystem::filesystem_error("Guest path component is not a directory", host,
+                std::make_error_code(std::errc::too_many_symbolic_link_levels));
+        }
+    }
+#endif
     const auto status = std::filesystem::status(host, error);
     if (std::filesystem::is_directory(status)) return;
     if (!error) error = std::make_error_code(std::filesystem::exists(status) ? std::errc::not_a_directory : std::errc::no_such_file_or_directory);
