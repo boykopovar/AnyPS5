@@ -36,6 +36,7 @@ inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
+inline constexpr std::uint32_t LevelsPastViewBase = 8384u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
 inline constexpr std::uint32_t StoreQuantizeWords = 4u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;

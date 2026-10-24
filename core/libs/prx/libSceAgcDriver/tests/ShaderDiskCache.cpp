@@ -332,6 +332,8 @@ CompiledVariant sampleVariant() {
     image.emulatedCompare = 0x1a07u;
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
+    image.levelUses = ImageLevelUseQuery | ImageLevelUseMipLoad;
+    image.targetMerge = true;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
