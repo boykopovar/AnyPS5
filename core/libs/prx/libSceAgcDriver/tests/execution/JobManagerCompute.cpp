@@ -1,5 +1,6 @@
 #include "VulkanTestDevice.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
@@ -284,6 +285,51 @@ void CapacityCase() {
     ::operator delete(memory, std::align_val_t{256});
 }
 
+void DeferredInputsCase() {
+    for (const bool indirect : {false, true}) {
+        const auto size = SizeFor(1, 1, true);
+        auto* memory = static_cast<std::uint8_t*>(::operator new(size, std::align_val_t{256}));
+        std::memset(memory, 0, size);
+        alignas(64) unsigned char manager[0x100]{};
+        Construct(manager);
+        Require(Initialize(manager, memory, size, 2, 1, 1, 1, nullptr) == 0, "snapshot manager initialization failed");
+        auto* factory = Factories(manager, 0);
+        Sequence* sequence = nullptr;
+        Require(factory->CreateCompute(&sequence, 1, 2, 1, 1, nullptr) == 0, "snapshot sequence creation failed");
+        auto registers = Registers;
+        auto shader = Shader;
+        const ShaderRegister* pointer = registers.data();
+        std::memcpy(shader.data() + 0x20, &pointer, sizeof(pointer));
+        alignas(16) const std::array<std::uint32_t, 4> redirected{Low(Output + 1), High(Output + 1) & 0xffffu, sizeof(Output[1]), 0x31016facu};
+        const std::string expected = indirect ? "snapshot indirect" : "snapshot direct";
+        std::array<char, 32> marker{};
+        std::memcpy(marker.data(), expected.c_str(), expected.size() + 1);
+        Released = false;
+        Output[0] = 0;
+        Output[1] = 0;
+        Value[0] = indirect ? 0x51a70002u : 0x51a70001u;
+        Require(sequence->Dispatch(BlockingJob, nullptr, 1, nullptr) == 0, "snapshot blocking job failed");
+        Require(sequence->SyncPoint() == 0, "snapshot sync point failed");
+        const int result = indirect ? sequence->DispatchComputeIndirect(shader.data(), Table.data(), IndirectArguments.data(), marker.data())
+                                    : sequence->DispatchCompute(shader.data(), Table.data(), 1, 1, 1, marker.data());
+        Require(result == 0, "snapshot dispatch failed");
+        const bool encoded = std::search(memory, memory + size, expected.begin(), expected.end()) != memory + size;
+        registers[7].value = Low(redirected.data());
+        registers[8].value = High(redirected.data());
+        std::memset(marker.data(), 'x', expected.size());
+        Released = true;
+        Require(sequence->Wait() == 0, "snapshot wait failed");
+        const bool updated = Output[0] == 0 && Output[1] == Value[0];
+        const bool markerUpdated = std::search(memory, memory + size, marker.begin(), marker.begin() + expected.size()) != memory + size;
+        Require(factory->DestroyCompute(sequence) == 0, "snapshot destruction failed");
+        Require(Shutdown(manager) == 0, "snapshot shutdown failed");
+        ::operator delete(memory, std::align_val_t{256});
+        Require(!encoded, "compute commands were encoded before their CPU barrier retired");
+        Require(updated, "queued compute commands did not read their deferred shader registers");
+        Require(markerUpdated, "queued compute commands did not read their deferred marker");
+    }
+}
+
 void StorageCase(bool directMemory) {
     constexpr std::uint64_t mask = (1u << 1) | (1u << 5) | (1u << 8);
     const MemorySizeQueryParams query{1, 2, 0, 0, 32, 8, 4, 2, mask};
@@ -305,9 +351,21 @@ void StorageCase(bool directMemory) {
     alignas(64) unsigned char manager[0x100]{};
     Construct(manager);
     Require(Initialize(manager, memory, size, 2, 0, 2, mask, nullptr) == 0, "storage manager initialization failed");
+    const auto inside = [memory, size](const void* pointer) {
+        const auto base = reinterpret_cast<std::uintptr_t>(memory);
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        return address >= base && address < base + size;
+    };
+    void* implementation = nullptr;
+    std::memcpy(&implementation, manager, sizeof(implementation));
+    Require(inside(implementation), "manager state is outside the supplied work area");
     auto* factory = Factories(manager, 0);
+    Require(inside(factory), "compute factory is outside the supplied work area");
     std::array<Sequence*, 2> sequences{};
-    for (auto& sequence : sequences) Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
+    for (auto& sequence : sequences) {
+        Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
+        Require(inside(sequence), "compute sequence is outside the supplied work area");
+    }
     for (std::uint32_t round = 0; round < 3; ++round) {
         for (auto* sequence : sequences) {
             Value[0] = 0x56780000u + round;
@@ -348,7 +406,7 @@ void StorageCase(bool directMemory) {
 
 int RunJobManagerCase(const char* name) {
     try {
-        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0, "unknown compute fixture");
+        Require(std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0 || std::strcmp(name, "execution") == 0 || std::strcmp(name, "storage") == 0 || std::strcmp(name, "capacity") == 0 || std::strcmp(name, "deferred_inputs") == 0, "unknown compute fixture");
 #ifndef ANYPS5_JOB_MANAGER_REFERENCE
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -358,6 +416,7 @@ int RunJobManagerCase(const char* name) {
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "size") == 0) SizeCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "execution") == 0) RunCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "capacity") == 0) CapacityCase();
+        if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "deferred_inputs") == 0) DeferredInputsCase();
         if (std::strcmp(name, "compute") == 0 || std::strcmp(name, "storage") == 0) {
             StorageCase(false);
             StorageCase(true);
