@@ -12,6 +12,7 @@
 #include "prx/libc/include/General.hpp"
 #include "JisX0208.hpp"
 #include "JisX0212.hpp"
+#include "JisX0213.hpp"
 #include "Cp936.hpp"
 #include "Gb18030.hpp"
 #include "Cp949.hpp"
@@ -162,6 +163,8 @@ constexpr uint8_t EUC_JP_X0208_SS2_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', 
 constexpr uint8_t EUC_JP_X0208_SS3_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', '3'};
 constexpr uint8_t SJIS_TAG[8] = {'S', 'J', 'I', 'S', '1', '9', '9', '7'};
 constexpr uint8_t SJIS_X0208_TAG[8] = {'S', 'J', 'I', 'S', 'X', '2', '0', '8'};
+constexpr uint8_t EUC_JIS2004_TAG[8] = {'E', 'U', 'C', 'J', 'I', 'S', '0', '4'};
+constexpr uint8_t SJIS2004_TAG[8] = {'S', 'J', 'I', 'S', '2', '0', '0', '4'};
 
 bool hasTag(const void* profile, const uint8_t (&tag)[8]) {
     return profile != nullptr && std::memcmp(profile, tag, sizeof(tag)) == 0;
@@ -189,6 +192,18 @@ bool isSjisX0208(const void* profile) {
 
 bool isSjis(const void* profile) {
     return hasTag(profile, SJIS_TAG) || isSjisX0208(profile);
+}
+
+bool isEucJis2004(const void* profile) {
+    return hasTag(profile, EUC_JIS2004_TAG);
+}
+
+bool isSjis2004(const void* profile) {
+    return hasTag(profile, SJIS2004_TAG);
+}
+
+bool isJis2004(const void* profile) {
+    return isEucJis2004(profile) || isSjis2004(profile);
 }
 
 struct JisChange {
@@ -477,7 +492,7 @@ bool isBig5(const void* profile) {
 }
 
 bool isMbcs(const void* profile) {
-    return isEucJp(profile) || isSjis(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
+    return isEucJp(profile) || isSjis(profile) || isJis2004(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
 }
 
 int decodeCp949(bool unified, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
@@ -569,7 +584,121 @@ int encodeDbcs(const std::vector<DbcsCell>& reverse, bool euc, uint32_t code, ui
     return 0;
 }
 
+struct Jis2004Cell {
+    uint32_t code;
+    uint16_t cell;
+    uint8_t plane;
+};
+
+const std::vector<Jis2004Cell>& jis2004Reverse() {
+    static const std::vector<Jis2004Cell> reverse = [] {
+        std::vector<Jis2004Cell> entries;
+        for (uint8_t plane = 1; plane <= 2; ++plane) {
+            const uint32_t* table = plane == 1 ? JisX0213::PLANE1 : JisX0213::PLANE2;
+            for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
+                if (table[cell] != 0) entries.push_back({table[cell], static_cast<uint16_t>(cell), plane});
+            }
+        }
+        std::stable_sort(entries.begin(), entries.end(), [](const Jis2004Cell& a, const Jis2004Cell& b) { return a.code < b.code; });
+        return entries;
+    }();
+    return reverse;
+}
+
+int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = mbcs[0];
+    if (lead < 0x80) {
+        length = 1;
+        code = lead;
+        return 0;
+    }
+    if (sjis) {
+        if (lead >= 0xA1 && lead <= 0xDF) {
+            length = 1;
+            code = 0xFF61 + (lead - 0xA1);
+            return 0;
+        }
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        int row = 0;
+        int cell = 0;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        length = 2;
+        if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
+        else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
+        return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    }
+    if (lead == 0x8E) {
+        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        length = 2;
+        code = 0xFF61 + (mbcs[1] - 0xA1);
+        return 0;
+    }
+    if (lead == 0x8F) {
+        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        length = 3;
+        code = JisX0213::PLANE2[(mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1)];
+        return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    }
+    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    length = 2;
+    code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
+int encodeJis2004(bool sjis, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    if (code < 0x80) {
+        length = 1;
+        mbcs[0] = static_cast<uint8_t>(code);
+        return 0;
+    }
+    if (code >= 0xFF61 && code <= 0xFF9F) {
+        const auto byte = static_cast<uint8_t>(0xA1 + (code - 0xFF61));
+        if (sjis) {
+            length = 1;
+            mbcs[0] = byte;
+        } else {
+            length = 2;
+            mbcs[0] = 0x8E;
+            mbcs[1] = byte;
+        }
+        return 0;
+    }
+    const auto& reverse = jis2004Reverse();
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), code, [](const Jis2004Cell& entry, uint32_t value) { return entry.code < value; });
+    if (found == reverse.end() || found->code != code) return CES_ERROR_UNASSIGNED_CODE;
+    const int row = found->cell / 94 + 1;
+    const int cell = found->cell % 94 + 1;
+    if (sjis) {
+        int sjisRow = row;
+        if (found->plane == 2) {
+            const auto* position = std::find(std::begin(JIS_X0213_PLANE2_ROWS), std::end(JIS_X0213_PLANE2_ROWS), static_cast<uint8_t>(row));
+            if (position == std::end(JIS_X0213_PLANE2_ROWS)) return CES_ERROR_UNASSIGNED_CODE;
+            sjisRow = 95 + static_cast<int>(position - std::begin(JIS_X0213_PLANE2_ROWS));
+        }
+        jisToSjis(sjisRow, cell, mbcs[0], mbcs[1]);
+        length = 2;
+        return 0;
+    }
+    if (found->plane == 2) {
+        mbcs[0] = 0x8F;
+        mbcs[1] = static_cast<uint8_t>(0xA0 + row);
+        mbcs[2] = static_cast<uint8_t>(0xA0 + cell);
+        length = 3;
+        return 0;
+    }
+    mbcs[0] = static_cast<uint8_t>(0xA0 + row);
+    mbcs[1] = static_cast<uint8_t>(0xA0 + cell);
+    length = 2;
+    return 0;
+}
+
 int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
+    if (isJis2004(profile)) return decodeJis2004(isSjis2004(profile), mbcs, mbcsMax, length, code);
     if (isEucKr(profile) || isUhc(profile)) return decodeCp949(isUhc(profile), mbcs, mbcsMax, length, code);
     if (isBig5(profile)) return decodeCp950(mbcs, mbcsMax, length, code);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return decodeGb18030(*tables, mbcs, mbcsMax, length, code);
@@ -687,6 +816,7 @@ const std::vector<JisCell>& jisReverse(bool strict) {
 }
 
 int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    if (isJis2004(profile)) return encodeJis2004(isSjis2004(profile), code, mbcs, length);
     if (isEucKr(profile) || isUhc(profile)) return encodeDbcs(cp949Reverse(), isEucKr(profile), code, mbcs, length);
     if (isBig5(profile)) return encodeDbcs(cp950Reverse(), false, code, mbcs, length);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return encodeGb18030(*tables, code, mbcs, length);
@@ -1991,6 +2121,19 @@ int APS5_VABI sceCesUtf32beToBig5(const uint32_t* utf32, const void* profile, ui
 
 int APS5_VABI sceCesUtf32leToBig5(const uint32_t* utf32, const void* profile, uint8_t* big5Buffer, uint32_t big5Max, uint32_t* big5Size) {
     return utf32ToProfiled<false>(isBig5, utf32, profile, big5Buffer, big5Max, big5Size);
+}
+
+
+void* APS5_VABI sceCesUcsProfileInitEucJis2004(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, EUC_JIS2004_TAG, sizeof(EUC_JIS2004_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, SJIS2004_TAG, sizeof(SJIS2004_TAG));
+    return sheet;
 }
 
 }
