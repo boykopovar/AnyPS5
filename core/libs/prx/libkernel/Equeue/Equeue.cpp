@@ -414,6 +414,9 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
     }
+    if (filter == EVFILT_TIMER) {
+        TriggerExpiredTimers(MonotonicNs());
+    }
     auto it = std::find_if(m_events.begin(), m_events.end(),
         [ident, filter](const auto& e) {
             return e.event.ident == ident && e.event.filter == filter;

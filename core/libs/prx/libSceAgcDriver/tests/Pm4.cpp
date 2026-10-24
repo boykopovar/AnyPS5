@@ -1128,6 +1128,63 @@ void testReleaseMemDataSelects() {
     for (const auto select : {6u, 7u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(select), 0); }, "reserved RELEASE_MEM DATA_SEL");
 }
 
+void testMemSemaphore() {
+    alignas(8) static std::uint64_t semaphore = 0;
+    alignas(8) static std::uint32_t marker = 0;
+    const auto packet = [](std::uint32_t control) { return makePacket(0x39, {low(&semaphore), high(&semaphore), control}); };
+    check(AgcDriver::Pm4::AccessesMemory(packet(0xc0100000u)[0]), "MEM_SEMAPHORE must synchronize guest memory");
+    for (const auto queue : {0u, 0x20u}) {
+        AgcDriver::Pm4::Validate(packet(0xc0100000u), queue);
+        AgcDriver::Pm4::Validate(packet(0xe0000000u), queue);
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xe0010000u), 0); }, "mailbox");
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xa0000000u), 0); }, "MEM_SEMAPHORE operation");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore), high(&semaphore), 0xc0100000u, 0}), 0); }, "packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {0, 0, 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore) + 4, high(&semaphore), 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+
+    semaphore = 0x500000000ull;
+    auto words = packet(0xc0100000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE signal of type 1 did not write 1");
+
+    semaphore = 5;
+    words = packet(0xc0000000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 6, "a MEM_SEMAPHORE signal of type 0 did not increment");
+
+    constexpr std::uint64_t queueSignals = 2000, cpuSignals = 200000;
+    semaphore = 0;
+    std::vector<std::uint32_t> graphicsWords, computeWords;
+    for (std::uint64_t index = 0; index < queueSignals; ++index) {
+        const auto signal = packet(0xc0000000u);
+        graphicsWords.insert(graphicsWords.end(), signal.begin(), signal.end());
+        computeWords.insert(computeWords.end(), signal.begin(), signal.end());
+    }
+    std::thread cpu([] {
+        for (std::uint64_t index = 0; index < cpuSignals; ++index) std::atomic_ref<std::uint64_t>(semaphore).fetch_add(1);
+    });
+    submitWords(graphicsWords);
+    submitWords(computeWords, 0x20);
+    cpu.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 2 * queueSignals + cpuSignals, "competing MEM_SEMAPHORE signals of type 0 lost an increment");
+
+    semaphore = 0;
+    marker = 0;
+    words = joinPackets({packet(0xe0000000u), makePacket(0x49, {0x0030c514, 0x20000000, low(&marker), high(&marker), 1, 0, 0})});
+    submitWords(words);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 0, "a MEM_SEMAPHORE wait passed a zero semaphore");
+    std::atomic_ref<std::uint64_t>(semaphore).store(2);
+    for (int waited = 0; waited < 2000 && std::atomic_ref<std::uint32_t>(marker).load() == 0; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 1, "work after a signalled MEM_SEMAPHORE wait never ran");
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE wait did not take one from the semaphore");
+}
+
 void testSuspendPointWritesQueuedLabels() {
     alignas(8) static std::uint32_t gate = 0, marker = 0;
     gate = 0;
@@ -2015,6 +2072,7 @@ int main(int argc, char** argv) {
         testPredicatedSubmission();
         testConditionalSubmission();
         testSuspendPointWritesQueuedLabels();
+        testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
         testWaitRegMemMasking();

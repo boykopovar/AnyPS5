@@ -1395,8 +1395,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
     if (depthKeepsSampleZero && (read(cx, 0x292) & 1u) == 0) {
         const bool filled = result.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-        const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
-        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f080000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization");
+        const auto sampleIndex = (read(cx, 0x293) & PixelShaderIteratesSamples) != 0u ? ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) : 0u;
+        const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (sampleIndex | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
+        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f080000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index input under PS_ITER_SAMPLE, a coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization");
         result.samples = 1;
         result.customSampleLocations = false;
         result.sampleLocations.fill(0);

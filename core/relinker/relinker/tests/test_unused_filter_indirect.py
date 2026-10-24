@@ -113,6 +113,9 @@ def cases():
     yield "got-slot-address-size", True, build(
         at_offset([(0, b"\x67\x48\x8d\x05" + struct.pack("<i", -2056) + b"\xc3")]),
         code_vaddr=0x100001000)
+    yield "got-slot-address-size-underflow", True, build(
+        at_offset([(0, b"\x67\x48\x8d\x05\x00\xe0\xff\xff\xc3")]),
+        slot_vaddr=(CODE + 8 - 0x2000) & 0xffffffff)
     yield "got-slot-underflow-discard", False, build(
         at_offset([(0, b"\x48\x8d\x05\x00\xe0\xff\xff\xc3")]),
         slot_vaddr=(CODE + 7 - 0x2000) & 0xffffffffffffffff)

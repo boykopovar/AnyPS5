@@ -70,6 +70,25 @@ struct ThreadForwards_nid_no_patch {
     void (APS5_VABI* exit)(void*);
 };
 extern "C" void RegisterThreadForwards_nid_no_patch(const ThreadForwards_nid_no_patch* forwards);
+struct PthreadSyncForwards_nid_no_patch {
+    int (APS5_VABI* mutexattrInit)(void**);
+    int (APS5_VABI* mutexattrSettype)(void**, int);
+    int (APS5_VABI* mutexattrDestroy)(void**);
+    int (APS5_VABI* mutexInit)(void**, void* const*, const char*);
+    int (APS5_VABI* mutexDestroy)(void**);
+    int (APS5_VABI* mutexLock)(void**);
+    int (APS5_VABI* mutexTrylock)(void**);
+    int (APS5_VABI* mutexUnlock)(void**);
+    int (APS5_VABI* condInit)(void**, void* const*, const char*);
+    int (APS5_VABI* condDestroy)(void**);
+    int (APS5_VABI* condWait)(void**, void**);
+    int (APS5_VABI* condSignal)(void**);
+    int (APS5_VABI* condBroadcast)(void**);
+    int (APS5_VABI* detach)(void*);
+    int (APS5_VABI* join)(void*, void**);
+    void (APS5_VABI* yield)();
+};
+extern "C" void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards);
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 

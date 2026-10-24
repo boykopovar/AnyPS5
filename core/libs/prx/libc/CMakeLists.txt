@@ -128,6 +128,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_floating_point PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        enable_language(ASM)
+        add_test_executable(guest_sce_v2_exceptions_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+        target_include_directories(guest_sce_v2_exceptions_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_sce_v2_exceptions_tests PRIVATE libc)
+        configure_windows_unwind(guest_sce_v2_exceptions_tests)
+        add_test(NAME guest_sce_v2_exceptions COMMAND guest_sce_v2_exceptions_tests)
+        set_tests_properties(guest_sce_v2_exceptions PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_sce_v2_exceptions PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
 endif()
 
 if(WIN32)
@@ -362,6 +377,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_random_state COMMAND guest_random_state_tests)
     if(WIN32)
         set_tests_properties(guest_random_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libc_random_seeding_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcRandomSeeding.cpp)
+    target_include_directories(guest_libc_random_seeding_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_random_seeding_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_random_seeding_tests)
+    add_test(NAME guest_libc-random-seeding COMMAND guest_libc_random_seeding_tests)
+    if(WIN32)
+        set_tests_properties(guest_libc-random-seeding PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_integer_builtins_tests ${LIBS_INCLUDE_DIR}/tests/GuestIntegerBuiltins.cpp)

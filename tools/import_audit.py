@@ -86,14 +86,18 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     dynamic = {}
     needed_offsets = []
+    terminated = False
     for position in range(0, dynamic_size, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
+            terminated = True
             break
         if tag == 1:
             needed_offsets.append(value)
         else:
             dynamic[tag] = value
+    if not terminated:
+        raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
@@ -210,12 +214,16 @@ def elf_imports(path, data):
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
+            terminated = False
             for position in range(0, size, 16):
                 tag, value = unpack("<qQ", data, offset + position, path, "dynamic entry")
                 if tag == 0:
+                    terminated = True
                     break
                 if tag == 1:
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
+            if not terminated:
+                raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     return symbols, needed
 
 
@@ -798,6 +806,7 @@ def main(argv=None):
             inputs += [file for directory in args.libs for file in directory_files(directory, "*.prx")]
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
+            inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
             output = args.json.resolve()
             if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")

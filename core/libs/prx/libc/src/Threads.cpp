@@ -554,5 +554,123 @@ int APS5_VABI _Mtx_current_owns_nid_postfix(void**) {
     return 1;
 }
 
+static std::atomic<const PthreadSyncForwards_nid_no_patch*> registeredPthreadSyncForwards{nullptr};
+
+void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards) {
+    registeredPthreadSyncForwards.store(forwards, std::memory_order_release);
+}
+
+static const PthreadSyncForwards_nid_no_patch& PthreadSync(const char* function) {
+    const auto* forwards = registeredPthreadSyncForwards.load(std::memory_order_acquire);
+    if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel synchronization is not registered");
+    return *forwards;
+}
+
+constexpr int KernelDeadlock = static_cast<int>(0x8002000b);
+constexpr int KernelNoMemory = static_cast<int>(0x8002000c);
+constexpr int KernelBusy = static_cast<int>(0x80020010);
+constexpr int RecursiveMutexType = 0x100;
+constexpr int KernelRecursiveMutex = 2;
+
+static int CreateResult(int result) {
+    if (result == 0) return threadSuccess;
+    return result == KernelNoMemory ? threadNomem : threadError;
+}
+
+static const char* SyncObjectName(const char* name) {
+    return name != nullptr && name[0] != '\0' ? name : nullptr;
+}
+
+int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
+    const auto& sync = PthreadSync(__func__);
+    *mutex = nullptr;
+    void* attr = nullptr;
+    const int created = sync.mutexattrInit(&attr);
+    if (created != 0) return CreateResult(created);
+    if ((type & RecursiveMutexType) != 0 && sync.mutexattrSettype(&attr, KernelRecursiveMutex) != 0) {
+        sync.mutexattrDestroy(&attr);
+        return threadError;
+    }
+    const int initialized = sync.mutexInit(mutex, &attr, SyncObjectName(name));
+    const int released = sync.mutexattrDestroy(&attr);
+    if (initialized != 0) return CreateResult(initialized);
+    if (released != 0) {
+        sync.mutexDestroy(mutex);
+        return threadError;
+    }
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Mtx_initEPP13pthread_mutexi_nid_postfix(void** mutex, int type) {
+    return _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(mutex, type, "SceLibcI_Mtx");
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(void** mutex) {
+    return PthreadSync(__func__).mutexDestroy(mutex);
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    const int result = PthreadSync(__func__).mutexLock(mutex);
+    if (result == 0) return threadSuccess;
+    return result == KernelDeadlock ? threadBusy : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    const int result = PthreadSync(__func__).mutexTrylock(mutex);
+    if (result == 0) return threadSuccess;
+    return result == KernelBusy ? threadBusy : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    PthreadSync(__func__).mutexUnlock(mutex);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v219_Cnd_init_with_nameEPP12pthread_condPKc_nid_postfix(void** condition, const char* name) {
+    return CreateResult(PthreadSync(__func__).condInit(condition, nullptr, SyncObjectName(name)));
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Cnd_initEPP12pthread_cond_nid_postfix(void** condition) {
+    return CreateResult(PthreadSync(__func__).condInit(condition, nullptr, "SceLibcI_Cnd"));
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(void** condition) {
+    return PthreadSync(__func__).condDestroy(condition);
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(void** condition, void** mutex) {
+    PthreadSync(__func__).condWait(condition, mutex);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** condition) {
+    PthreadSync(__func__).condSignal(condition);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition) {
+    PthreadSync(__func__).condBroadcast(condition);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {
+    return PthreadSync(__func__).detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code) {
+    void* result = nullptr;
+    if (PthreadSync(__func__).join(thread, &result) != 0) return threadError;
+    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    return threadSuccess;
+}
+
+void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix() {
+    PthreadSync(__func__).yield();
+}
+
+void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
+    return _Thrd_current_nid_postfix();
+}
+
 }
 

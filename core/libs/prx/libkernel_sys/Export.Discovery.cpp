@@ -1151,11 +1151,6 @@ int APS5_VABI sceKernelGetSubsysSubId(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetSystemExVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1167,11 +1162,6 @@ int APS5_VABI sceKernelGetSystemSwBeta(void) {
 }
 
 int APS5_VABI sceKernelGetThreadName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetTraceMemoryStats(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2334,22 +2324,7 @@ int APS5_VABI sched_setscheduler_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sem_close_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sem_setname_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_unlink_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2405,16 +2380,6 @@ int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
 }
 
 int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

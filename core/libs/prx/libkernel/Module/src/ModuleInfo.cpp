@@ -394,22 +394,32 @@ int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual
 extern "C" {
 
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
+    if (flags != 1 && flags != 2) {
+        if (!info) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: null info with flags " + std::to_string(flags));
+        *info = {};
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (flags != 2) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported flags " + std::to_string(flags));
     ModuleInfoEx result{};
-    result.st_size = sizeof(ModuleInfoEx);
 #ifdef _WIN32
-    if (!Fill(static_cast<std::uintptr_t>(address), result)) return SCE_KERNEL_ERROR_ESRCH;
+    MEMORY_BASIC_INFORMATION memory{};
+    const bool found = Fill(static_cast<std::uintptr_t>(address), result) &&
+        VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) == sizeof(memory);
+    const GuestImage image{nullptr, found ? reinterpret_cast<std::uintptr_t>(memory.AllocationBase) : 0};
 #else
     Dl_info symbol{};
     link_map* native = nullptr;
-    if (!dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) || !native)
-        return SCE_KERNEL_ERROR_ESRCH;
     ImageSearch<ModuleInfoEx> search{static_cast<std::uintptr_t>(address), &result, false};
-    dl_iterate_phdr(FindImage<ModuleInfoEx>, &search);
-    if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
-    result.id = ModuleIdForImage_nid_no_patch(native);
+    if (dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) && native)
+        dl_iterate_phdr(FindImage<ModuleInfoEx>, &search);
+    const bool found = search.found;
+    if (found) result.id = ModuleIdForImage_nid_no_patch(native);
+    const GuestImage image{native, 0};
 #endif
+    if (!found || (flags == 2 && SystemImage(image))) {
+        *info = {};
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
     *info = result;
     return 0;
 }

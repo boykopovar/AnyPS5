@@ -89,6 +89,10 @@ class Build:
                 leaves.add(name)
         return sorted(leaves)
 
+    def outputs(self, paths):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
+        return [path for path in paths if path in built]
+
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
@@ -263,7 +267,8 @@ def plan(build, graph, picked):
         return run, build.leaves(), len(listed)
     keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
-    return run, [t for t in build.leaves() if t not in skip], len(listed)
+    targets = [t for t in build.leaves() if t not in skip]
+    return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)
 
 
 def escape(name):

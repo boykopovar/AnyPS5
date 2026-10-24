@@ -2189,6 +2189,119 @@ ShaderRecompiler::DescriptorBinding binding(Role role, std::uint32_t slot) {
     return {ShaderRecompiler::DescriptorKind::StorageBuffer, role, 0, slot, 1, {}, false};
 }
 
+void partialHeapImportBudgetCase(const Context& context, const BdaTestAccess& access, std::size_t bytes, std::size_t budgetBytes, std::size_t prefixBytes) {
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) return;
+    constexpr std::size_t window = 2 * 65536;
+    const auto allocated = bytes + 65536;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(allocated, 65536);
+#ifdef _WIN32
+    GuestArena::GuestArenaCommit_nid_postfix(block, allocated, PAGE_READWRITE, allocated);
+#endif
+    auto* guest = static_cast<std::uint8_t*>(block);
+    std::memset(block, 0x39, bytes);
+    std::memset(guest + bytes, 0xa7, allocated - bytes);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = 65536;
+    const auto live = HostImportLiveBytes();
+    const auto before = MirrorCounters();
+    SetHostImportRangeWindow(window);
+    SetHostImportBudget(live + budgetBytes);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    {
+        auto withoutImports = context;
+        withoutImports.hostImportAlignment = 0;
+        GuestBufferMemory leased(withoutImports);
+        leased.AcquireRegistered();
+        leased.AddWritable(first + bytes - 16, 4);
+        leased.Upload(true);
+        std::uint32_t adjustment = 0;
+        const auto view = leased.Descriptor(first + bytes - 16, 4, adjustment);
+        access.bytes(view.buffer)[view.offset + adjustment] = std::byte{0x43};
+        leased.WriteBack();
+    }
+    Require(MirrorCounters().heapBytes == before.heapBytes + bytes && guest[bytes - 16] == 0x43, "the partial-import fixture did not start with a valid full heap mirror");
+    GuestAllocations::GuestAllocationsEnd_nid_postfix(GuestAllocations::GuestAllocationsBegin_nid_postfix());
+    const auto build = [&](bool write) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        if (write) {
+            leased.AddWritable(first + 16, 32);
+            leased.AddWritable(first + bytes - 48, 32);
+        }
+        leased.Upload(true);
+        const auto* prefix = ExistingHostImportFor(importing, first, window);
+        Require(prefix != nullptr, "a heap exceeding the import budget did not import its fitting prefix");
+        Require(HostImportLiveBytes() <= live + budgetBytes, "partial heap imports exceeded the configured budget");
+        Require(MirrorCounters().heapBytes == before.heapBytes + bytes - prefixBytes, "a partially imported heap mirrored bytes already imported in place");
+        auto covered = first;
+        for (const auto& entry : leased.AddressRanges()) {
+            if (entry.end <= first || entry.begin >= first + bytes) continue;
+            Require(entry.begin == covered && entry.end <= first + bytes, "partial heap BDA ranges have a gap or overlap");
+            if (entry.end <= first + prefixBytes) {
+                const auto* imported = ExistingHostImportFor(importing, entry.begin, static_cast<std::size_t>(entry.end - entry.begin));
+                Require(imported != nullptr && imported->bytes <= window && entry.deviceAddress == imported->address + entry.begin - imported->base, "the partial heap prefix is not served by bounded imports");
+            }
+            if (entry.begin >= first + prefixBytes) {
+                std::uint32_t adjustment = 0;
+                const auto view = leased.Descriptor(entry.begin, static_cast<std::size_t>(entry.end - entry.begin), adjustment);
+                const auto data = access.bytes(view.buffer).subspan(view.offset + adjustment);
+                Require(data[0] == static_cast<std::byte>(guest[entry.begin - first]) && data[entry.end - entry.begin - 1] == static_cast<std::byte>(guest[entry.end - first - 1]), "a partial heap mirror lost its first or last bytes");
+            }
+            covered = entry.end;
+        }
+        Require(covered == first + bytes, "a partially imported heap does not cover its registered range");
+        if (write) {
+            for (const auto at : {first + 16, first + bytes - 48}) {
+                if (at < first + prefixBytes) guest[at - first] = 0x71;
+                else {
+                    std::uint32_t adjustment = 0;
+                    const auto view = leased.Descriptor(at, 32, adjustment);
+                    access.bytes(view.buffer)[view.offset + adjustment] = std::byte{0x71};
+                }
+                guest[at - first + 8] = 0x52;
+            }
+        }
+        leased.WriteBack();
+    };
+    build(true);
+    Require(guest[16] == 0x71 && guest[24] == 0x52 && guest[bytes - 48] == 0x71 && guest[bytes - 40] == 0x52, "partial heap write-back lost GPU or genuine CPU stores");
+    guest[bytes - 1] = 0x67;
+    build(false);
+    const auto quiet = MirrorCounters();
+    guest[bytes + 9] = 0x8a;
+    build(false);
+    Require(MirrorCounters().blocksCopied == quiet.blocksCopied, "a neighboring CPU write refreshed an unrelated partial heap mirror");
+    Require(guest[bytes + 9] == 0x8a && guest[bytes] == 0xa7 && guest[allocated - 1] == 0xa7, "partial heap uses changed unregistered neighboring memory");
+    registry(false);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    }
+    Require(MirrorCounters().heapBytes == before.heapBytes, "a partial heap mirror outlived its registered range");
+    SetHostImportBudget(0);
+    SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+    GuestArena::GuestArenaReset_nid_postfix(block, allocated);
+    GuestArena::GuestArenaRelease_nid_postfix(block, allocated);
+}
+
+void partialHeapImportBudgetTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t window = 2 * 65536;
+    partialHeapImportBudgetCase(context, access, 3 * window, 2 * window, 2 * window);
+    partialHeapImportBudgetCase(context, access, 3 * window + 65536, 3 * window, 2 * window);
+    SetHostImportMaxBytes(window);
+    partialHeapImportBudgetCase(context, access, 3 * window, 2 * window, 2 * window);
+    SetHostImportMaxBytes(0);
+}
+
 void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access) {
     if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
         std::cout << "guest arena unavailable or not write-watched: heap mirrors of imported ranges not tested\n";
@@ -3725,6 +3838,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importReportRefusalMemoryTests(context, access);
     sparseImportedHeapTests(context, access);
     heapMirrorTests(context, access);
+    partialHeapImportBudgetTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();
     importedFreshTests(context);

@@ -1737,6 +1737,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     std::vector<NativePollDescriptor> native;
     std::vector<std::uint32_t> owners;
     std::vector<std::uint32_t> pipes;
+    std::vector<std::uint32_t> kqueues;
     int ready = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         auto& entry = descriptors[i];
@@ -1753,6 +1754,10 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
                 entry.revents = GuestPollInvalid;
                 ++ready;
+                continue;
+            }
+            if (IsKqueueDescriptor(entry.descriptor)) {
+                kqueues.push_back(i);
                 continue;
             }
             if (File::IsRandomDevice(entry.descriptor)) {
@@ -1777,7 +1782,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
 #else
             if (!IsPipe(entry.descriptor, entry.events))
 #endif
-                throw std::runtime_error("poll: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file nor a directory");
+                throw std::runtime_error("poll: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
             pipes.push_back(i);
             continue;
         }
@@ -1800,7 +1805,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         owners.push_back(index);
     }
 #endif
-    if (native.empty() && pipes.empty()) {
+    if (native.empty() && pipes.empty() && kqueues.empty()) {
         if (ready || timeout == 0) return ready;
         if (timeout < 0) throw std::runtime_error("poll: an infinite wait without sockets or pipes never returns");
         PreciseSleepUs(static_cast<unsigned long long>(timeout) * 1000);
@@ -1821,18 +1826,35 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
         if (entry.revents) ++ready;
     };
-#ifdef _WIN32
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
+#ifdef _WIN32
+    const bool sliced = !pipes.empty() || !kqueues.empty();
+#else
+    const bool sliced = !kqueues.empty();
+#endif
     for (;;) {
-        int pipeReady = 0;
+        int checkedReady = 0;
+#ifdef _WIN32
         for (const auto index : pipes) {
             auto& entry = descriptors[index];
             PipeReadiness(entry.descriptor, entry.events, entry.revents);
-            if (entry.revents) ++pipeReady;
+            if (entry.revents) ++checkedReady;
+        }
+#endif
+        for (const auto index : kqueues) {
+            auto& entry = descriptors[index];
+            const auto readable = KqueueReadable(entry.descriptor);
+            if (!readable && DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
+                if (timeout < 0) return poll_nid_postfix(descriptors, count, -1);
+                const auto left = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now()).count();
+                return poll_nid_postfix(descriptors, count, static_cast<int>(std::max<long long>(0, (left + 999) / 1000)));
+            }
+            entry.revents = !readable ? GuestPollInvalid : *readable ? static_cast<short>(entry.events & GuestPollReadable) : short{0};
+            if (entry.revents) ++checkedReady;
         }
         int slice = 0;
-        if (!ready && !pipeReady) {
-            if (pipes.empty()) slice = timeout;
+        if (!ready && !checkedReady) {
+            if (!sliced) slice = timeout;
             else if (timeout < 0) slice = 1;
             else {
                 const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
@@ -1841,8 +1863,12 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         }
         if (!native.empty()) {
             for (auto& request : native) request.revents = 0;
+#ifdef _WIN32
             if (WSAPoll(native.data(), static_cast<ULONG>(native.size()), slice) < 0) return Fail(NativeError());
-        } else if (!ready && !pipeReady) {
+#else
+            if (::poll(native.data(), static_cast<nfds_t>(native.size()), slice) < 0) return Fail(NativeError());
+#endif
+        } else if (!ready && !checkedReady) {
             const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
             PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
         }
@@ -1850,19 +1876,16 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         for (const auto& request : native)
             if (request.revents) ++socketReady;
         const bool expired = timeout >= 0 && std::chrono::steady_clock::now() >= deadline;
-        if (ready || pipeReady || socketReady || expired || pipes.empty()) {
-            ready += pipeReady;
+        if (ready || checkedReady || socketReady || expired || !sliced) {
+            ready += checkedReady;
+#ifdef _WIN32
             for (std::size_t i = 0; i < native.size(); ++i) collect(i, false);
+#else
+            for (std::size_t i = 0; i < native.size(); ++i) collect(i, i >= socketCount);
+#endif
             return ready;
         }
     }
-#else
-    const int wait = ready ? 0 : timeout;
-    const int result = ::poll(native.data(), static_cast<nfds_t>(native.size()), wait);
-    if (result < 0) return Fail(NativeError());
-    for (std::size_t i = 0; i < native.size(); ++i) collect(i, i >= socketCount);
-    return ready;
-#endif
 }
 }
 

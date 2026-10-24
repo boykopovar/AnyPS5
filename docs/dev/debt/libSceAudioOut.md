@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [sceAudioOut2LoTerminate](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) - returns 0, as the PS5 12.00 module (0x248d0) does whether or not the low-latency service runs. The module disconnects from the audio server and clears the service tables; here `sceAudioOut2LoInit` starts no service and open contexts and ports are left as they are
+- [sceAudioOutMasteringTerm](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - returns 0 without doing anything: there is no mastering stage to tear down, and `sceAudioOutMasteringInit` keeps no state. Whether the console fails a Term without a matching Init is unknown
 
 ### Unknown function info
 
@@ -47,10 +48,6 @@
 - [sceAudioOutExGetLastOutputTime](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetInfoOpenNum](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutMasteringInit](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutMasteringSetParam](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutMasteringGetState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutMasteringTerm](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetPadSpkVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetPadJackVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetUsbVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
@@ -113,6 +110,8 @@
 
 ### Functional
 
+- [sceAudioOutMasteringInit, sceAudioOutMasteringTerm and sceAudioOutMasteringSetParam](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - non-zero flags, a null pointer and a params id other than 1 throw; a repeated Init, a Term without Init and a SetParam or GetState before Init are unknown. There is no mastering stage, so Init and Term keep no state and SetParam reads only the id. The signatures and the default params id 1 follow [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut.cs#L312-L344), not a console measurement. SharpProspero documents flag bit 0 as `SwapEqCompressor`, and shadPS4's PS4 stub [rejects any non-zero Init flags](https://github.com/shadps4-emu/shadPS4/blob/8d50471b7dc141dd700b51276b8edd1f293bce26/src/core/libraries/audio/audioout.cpp#L956-L962) with 0x80260201
+- [sceAudioOutMasteringGetState](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - the states id 1 and the meter offsets 32, 128, 240, 272 and 304 in a 336-byte struct follow [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Audio/AudioOutMastering.cs#L97-L110), not a console measurement. With no mastering stage it zeroes the compressor input RMS and gain, and the limiter input, output and gain peaks, and leaves the other bytes, including the descriptors the AudioOut2 call writes, untouched; zero is not known to be what the console reports for an idle chain. A null pointer and a states id other than 1 throw; the console error codes are unknown
 - [sceAudioOut2EnableChat and sceAudioOut2DisableChat](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) - both PS5 exports take no arguments, return 0x80268006 before AudioOut2 initialization, and invoke the system chat service with selector 3. A negative service result maps to 0x80268000, otherwise they return zero. The host only records a local enabled flag, without initialization validation or a chat service; repeated-call and no-session behavior therefore still depends on the missing service.
 - [sceAudioOut2Set3DLatency](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - the two 32-bit arguments and selector validation match the system library: selector 0 accepts outputs 0 through 2; selector 255 accepts outputs 1 and 2. No third latency argument exists. The host has no system 3D rendering stage, so the call still does not apply latency and does not reproduce the system initialization and output-availability checks.
 - [AudioOut2 contexts](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) with an SDL device and no `sceAudioOut2ContextAdvance` calls read a grain's port buffers at the next push, at least 100 us after the grain was pushed, and play the mix behind a 40 ms cushion that the queue level leaves out. When the hardware reads the buffers is not known. The timing follows a title whose mixer fills a buffer after pushing it, reuses it two pushes later, and may still be writing it when the next push follows within microseconds. The last grain pushed before a title stops pushing is never read or played.

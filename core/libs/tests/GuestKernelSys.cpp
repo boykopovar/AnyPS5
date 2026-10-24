@@ -62,6 +62,7 @@ int APS5_VABI setsid_nid_postfix(void);
 int APS5_VABI link_nid_postfix(const char*, const char*);
 int APS5_VABI symlink_nid_postfix(const char*, const char*);
 int APS5_VABI openat_nid_postfix(int, const char*, int, ...);
+int APS5_VABI _openat_nid_postfix(int, const char*, int, ...);
 int APS5_VABI unlinkat_nid_postfix(int, const char*, int);
 std::int64_t APS5_VABI readlinkat_nid_postfix(int, const char*, char*, std::size_t);
 int APS5_VABI mkdirat_nid_postfix(int, const char*, std::uint16_t);
@@ -791,6 +792,22 @@ int main() {
     const int plain = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
     Require(plain >= 0);
     Require(openat_nid_postfix(plain, "file.txt", SCE_KERNEL_O_RDONLY) == -1 && Error() == 20);
+    const int aliased = _openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_RDONLY);
+    byte = 0;
+    Require(aliased >= 0 && sceKernelRead(aliased, &byte, 1) == 1 && byte == 'x');
+    Require(sceKernelClose(aliased) == 0);
+    const int aliasMade = _openat_nid_postfix(base, "alias.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0600);
+    Require(aliasMade >= 0 && sceKernelClose(aliasMade) == 0 && std::filesystem::is_regular_file(root / "alias.bin"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "alias.bin").permissions() & std::filesystem::perms::all) ==
+        (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    const int aliasWritten = _openat_nid_postfix(base, "alias.bin", SCE_KERNEL_O_WRONLY);
+    Require(aliasWritten >= 0 && sceKernelClose(aliasWritten) == 0);
+    Require(_openat_nid_postfix(base, "alias.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0600) == -1 && Error() == 17);
+    Require(_openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
+    Require(_openat_nid_postfix(-1, "file.txt", SCE_KERNEL_O_RDONLY) == -1 && Error() == 9);
+    Require(_openat_nid_postfix(plain, "file.txt", SCE_KERNEL_O_RDONLY) == -1 && Error() == 20);
     Require(readlinkat_nid_postfix(base, "file.txt", buffer, sizeof(buffer)) == -1 && Error() == 22);
     Require(readlinkat_nid_postfix(base, "missing.bin", buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(readlinkat_nid_postfix(base, "file.txt/child", buffer, sizeof(buffer)) == -1 && Error() == 20);

@@ -3,7 +3,7 @@
 ### Silent stubs
 
 - [sceNetShowIfconfig, sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) return the native not-initialized error and set errno before initialization. Initialized calls throw because native diagnostic collection and formatting are not implemented.
-- [sceNetShowRoute, sceNetShowRoute6](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - return success without printing anything: the `()` signatures and the success return follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net.cpp), which stubs each the same way. PPSA01530 fails to load without the `sceNetShowIfconfig` export (#3177); PPSA11386 imports `sceNetShowNetstat` but does not call it during start-up. What the console prints and where is unverified
+- [sceNetShowPolicy, sceNetShowRoute, sceNetShowRoute6](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - return success without printing anything: the `()` signatures and the success return follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net.cpp), which stubs each the same way. PPSA01530 fails to load without the `sceNetShowIfconfig` export (#3177); PPSA11386 imports `sceNetShowNetstat` but does not call it during start-up. What the console prints and where is unverified
 
 ### Unknown function info
 

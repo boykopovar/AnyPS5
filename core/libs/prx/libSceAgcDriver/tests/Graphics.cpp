@@ -910,43 +910,24 @@ void msaaEnableClearOneSampleTargetTests() {
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
     Require(AgcDriver::Graphics::PixelProgramSkipped(queue), "the depth-only draw did not skip its pixel program");
     requireOneSampleDepth(queue, 0, "a one-sample depth target whose skipped pixel program has PS_ITER_SAMPLE and sample index and coverage inputs");
-    constexpr std::string_view depthRefused = "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization";
     for (const bool color : {false, true}) {
-        for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-            queue = depthTarget(color);
-            queue.context[0x203] |= 0x40u;
-            queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
-        }
+        queue = depthTarget(color);
+        queue.context[0x203] |= 0x40u;
+        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+        Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the ANCILLARY draw skipped its pixel program");
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+        queue.context[0x1b3] = queue.context[0x1b4] = 0x2b01u;
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads PERSP_SAMPLE, the position and ANCILLARY without PS_ITER_SAMPLE");
         queue = depthTarget(color);
         queue.context[0x203] |= 0x40u;
         queue.context[0x293] = 0x10000u;
         Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the PS_ITER_SAMPLE draw skipped its pixel program");
         requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program has PS_ITER_SAMPLE and no sample index or coverage input");
         Require(!DecodeState(queue).perSampleShading, "a PS_ITER_SAMPLE program drawn as one sample still shades per sample");
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x1c4] = 9;
-        queue.context[0x203] |= 0x100u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x2dc] = 0x0000aa01u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        for (const auto primitive : {2u, 3u}) {
-            queue = depthTarget(color);
-            queue.userConfig[0x242] = primitive;
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
-        }
         for (const auto eqaa : {0x00040000u, 0x00050000u}) {
             queue = depthTarget(color);
             queue.context[0x201] = eqaa;
             requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target under a 4x PA_SC_AA_CONFIG without MSAA_ENABLE with DB_EQAA INTERPOLATE_COMP_Z");
-        }
-        for (const auto eqaa : {0x00090002u, 0x000d0000u, 0x01010002u, 0x08010002u}) {
-            queue = depthTarget(color);
-            queue.context[0x201] = eqaa;
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
         }
     }
     queue = depthTarget(true);

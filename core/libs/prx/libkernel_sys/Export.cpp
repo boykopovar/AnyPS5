@@ -581,6 +581,24 @@ int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
     return result;
 }
 
+int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
+    int mode = 0;
+    if (flags & SCE_KERNEL_O_CREAT) {
+#ifdef _WIN32
+        __builtin_sysv_va_list arguments;
+        __builtin_sysv_va_start(arguments, flags);
+        mode = __builtin_va_arg(arguments, int);
+        __builtin_sysv_va_end(arguments);
+#else
+        std::va_list arguments;
+        va_start(arguments, flags);
+        mode = va_arg(arguments, int);
+        va_end(arguments);
+#endif
+    }
+    return openat_nid_postfix(fd, path, flags, mode);
+}
+
 int APS5_VABI mkdir_nid_postfix(const char* path, std::uint16_t mode);
 
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
