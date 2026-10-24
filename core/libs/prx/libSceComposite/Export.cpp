@@ -26,13 +26,11 @@ int APS5_VABI sceCompositorCommandGpuPerfEnd() {
 }
 
 int APS5_VABI sceCompositorCreateIndirectRenderTarget() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80d40006);
 }
 
 int APS5_VABI sceCompositorDeleteIndirectRenderTarget() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80d40006);
 }
 
 int APS5_VABI sceCompositorFlush() {
@@ -261,17 +259,14 @@ int APS5_VABI sceCompositorSetGnmContextCommand() {
 }
 
 int APS5_VABI sceCompositorSetIndirectCanvasCommand() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompositorSetIndirectCompositionCommand() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompositorSetIndirectRenderTargetConfigCommand() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
