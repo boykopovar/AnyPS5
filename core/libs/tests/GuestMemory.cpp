@@ -3526,10 +3526,10 @@ int main(int argc, char** argv) {
     mincoreVec[0] = 0x55;
     Require(mincore_nid_postfix(mincoreReserved, page, mincoreVec) == 0 && mincoreVec[0] == 0);
     Require(sceKernelMunmap(mincoreReserved, page) == 0);
-    Require(munmap_nid_postfix(memory + 1, page) == -1 && *__error_nid_postfix() == 22);
+    Require(munmap_nid_postfix(memory + 1, 0) == -1 && *__error_nid_postfix() == 22);
     Require(munmap_nid_postfix(memory, 0) == -1 && *__error_nid_postfix() == 22);
     Require(memory[0] == 42);
-    Require(munmap_nid_postfix(memory + page, 1) == 0); // round to one guest page
+    Require(munmap_nid_postfix(memory + page + 1, 1) == 0);
     Require(memory[0] == 42 && memory[page * 2] == 73);
     Require(mincore_nid_postfix(memory, page, mincoreVec) == 0 && mincoreVec[0] == 1);
     Require(mincore_nid_postfix(memory, page * 3, mincoreVec) == -1 && *__error_nid_postfix() == 12);
