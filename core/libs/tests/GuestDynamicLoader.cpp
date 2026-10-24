@@ -229,9 +229,11 @@ int main(int argc, char** argv) {
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
-    Require(ThrowsRuntimeError([] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
     int local = 0;
-    Require(ThrowsRuntimeError([&] { _sceKernelRtldThreadAtexitIncrement_nid_postfix(&local); }));
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(nullptr) == -1);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(&local) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(nullptr) == 0);
 #ifndef _WIN32
     Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
     Require(dlsym_nid_postfix(nullptr, "dlopen") == nullptr);
