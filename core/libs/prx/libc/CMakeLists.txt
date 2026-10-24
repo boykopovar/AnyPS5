@@ -23,6 +23,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_stream_purge_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamPurge.cpp)
+    target_include_directories(guest_stream_purge_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_stream_purge_tests PRIVATE libc)
+    configure_windows_unwind(guest_stream_purge_tests)
+    add_test(NAME guest_stream_purge COMMAND guest_stream_purge_tests)
+    set_tests_properties(guest_stream_purge PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_stream_purge PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_safe_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSafeErrors.cpp)
     target_include_directories(guest_safe_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_safe_error_tests PRIVATE libc)
@@ -71,6 +81,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp

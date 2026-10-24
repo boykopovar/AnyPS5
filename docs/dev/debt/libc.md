@@ -59,6 +59,8 @@
 
 - [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) reject sizes above `INT_MAX + 1` with `EOVERFLOW` (84), a terminating NUL and return value -1, following FreeBSD 11.4 [snprintf.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/snprintf.c) and [vsnprintf.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/vsnprintf.c). This limit is unverified on the console. A null buffer at an oversized nonzero size returns the error without writing, where FreeBSD dereferences it.
 
+- [fpurge](../../../core/libs/prx/libc/src/StreamPurge.cpp) follows FreeBSD 11.4 [fpurge.c](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/stdio/fpurge.c): discard buffered input, pushback and output without writing or seeking, preserving EOF and error status, and report `EBADF` for a closed stream. Console behavior is unverified. The Windows path resets the existing host UCRT buffer representation; Linux and macOS use their native purge operations. Null streams throw as existing stream wrappers do.
+
 ### Functional
 
 - [_Cosh](../../../core/libs/prx/libc/src/Math.cpp) (libc) follows the two-argument Dinkumware CRT helper used by `std::complex`, including a scaled large-finite-input path; the signature, exact result and floating-point exception behavior are not verified against the console.
