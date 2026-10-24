@@ -595,13 +595,26 @@ void importJoinTests(const Context& context) {
     auto* heap = guest + 3 * large + 2 * piece;
     change(heap, piece, true);
     change(heap + piece, piece, true);
-    Require(bind(reinterpret_cast<std::uintptr_t>(heap + piece) - 16).second != 0 && HostImportFor(importing, reinterpret_cast<std::uintptr_t>(heap + piece) - 16, 32) == nullptr, "two pieces no larger than the import window were joined");
     const auto heapBase = reinterpret_cast<std::uintptr_t>(heap);
+    const auto [intoBuffer, intoCopied] = bind(heapBase, piece + 16);
+    const auto* into = HostImportFor(importing, heapBase, piece + 16);
+    Require(into != nullptr && into->base == heapBase && into->bytes == 2 * piece && intoBuffer == into->buffer && intoCopied == 0, "a buffer bound from one piece into the next, both no larger than the import window, was not imported over both pieces");
+    const auto [acrossBuffer, acrossCopied] = bind(heapBase + piece - 16);
+    Require(acrossBuffer == into->buffer && acrossCopied == 0, "a later bind across the joined pieces did not use their import");
     const auto [piecesBuffer, piecesCopied] = bind(heapBase, 2 * piece);
     const auto* pieces = HostImportFor(importing, heapBase, 2 * piece);
     Require(pieces != nullptr && pieces->base == heapBase && pieces->bytes == 2 * piece && piecesBuffer == pieces->buffer && piecesCopied == 0, "a buffer bound exactly over two pieces no larger than the import window was not imported as one");
     change(heap + 2 * piece, piece, true);
-    static_cast<void>(bind(heapBase + 2 * piece - 16));
+    const auto [extendedBuffer, extendedCopied] = bind(heapBase + 2 * piece - 16);
+    const auto* extended = HostImportFor(importing, heapBase + 2 * piece - 16, 32);
+    Require(extended != nullptr && extendedBuffer == extended->buffer && extendedCopied == 0, "a bind into a piece registered after the joined pieces was not bound in place");
+    const auto [lowBuffer, lowCopied] = bind(heapBase + piece - 16);
+    Require(lowBuffer != extendedBuffer && lowCopied != 0 && HostImportFor(importing, heapBase + 2 * piece - 16, 32)->buffer == extendedBuffer, "a bind across a grown heap joined more than the import window or retired the newer import");
+    for (int round = 0; round < 3; ++round) {
+        const auto [lower, lowerCopied] = bind(heapBase + piece - 16);
+        const auto [upper, upperCopied] = bind(heapBase + 2 * piece - 16);
+        Require(lowerCopied != 0 && upper == extendedBuffer && upperCopied == 0, "binds alternating across the boundaries of a grown heap re-imported it");
+    }
     const auto* kept = HostImportFor(importing, first, 16);
     Require(kept != nullptr && kept->buffer == joinedBuffer && kept->bytes == 2 * large, "a registry change elsewhere re-imported the joined ranges");
     change(guest + 2 * large, large, true);
@@ -1971,7 +1984,7 @@ void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& ac
     SetHostImportWindow(window);
     const auto change = [&](std::uint8_t* range, bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, false, true);
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, range == guest + 2 * piece, true);
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
@@ -2011,7 +2024,7 @@ void spaceReadAcrossImportsWrittenTests(const Context& context) {
     SetHostImportWindow(window);
     const auto change = [&](std::uint8_t* range, bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, false, true);
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, range == guest + 2 * piece, true);
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
