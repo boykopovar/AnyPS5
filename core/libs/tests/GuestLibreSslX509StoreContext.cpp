@@ -12,6 +12,7 @@ int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void*);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void*, int);
 int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void*);
 void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(void*);
+void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -26,6 +27,7 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
 }
 
 constexpr std::size_t ContextSize = 240;
+constexpr std::size_t ChainOffset = 160;
 constexpr std::size_t ErrorDepthOffset = 180;
 constexpr std::size_t ErrorOffset = 184;
 constexpr std::size_t CurrentCertOffset = 192;
@@ -99,10 +101,22 @@ static void TestGetCurrentCert() {
     RequireThrows([] { X509_STORE_CTX_get_current_cert_nid_postfix(nullptr); });
 }
 
+static void TestGetChain() {
+    TestContext context;
+    int chain = 0;
+    context.Write<void*>(ChainOffset, nullptr);
+    Require(X509_STORE_CTX_get_chain_nid_postfix(&context) == nullptr);
+    context.Write<void*>(ChainOffset, &chain);
+    Require(X509_STORE_CTX_get_chain_nid_postfix(&context) == &chain);
+    Require(OnlyChanged(context, ChainOffset, 8));
+    RequireThrows([] { X509_STORE_CTX_get_chain_nid_postfix(nullptr); });
+}
+
 int main() {
     TestGetError();
     TestSetError();
     TestGetErrorDepth();
     TestGetCurrentCert();
+    TestGetChain();
     std::puts("libSceLibreSsl X509_STORE_CTX tests passed");
 }

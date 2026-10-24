@@ -62,4 +62,8 @@ void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(LibreSslX509StoreCon
     return Context(context, __func__)->currentCert;
 }
 
+void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(LibreSslX509StoreContext* context) {
+    return Context(context, __func__)->chain;
+}
+
 }
