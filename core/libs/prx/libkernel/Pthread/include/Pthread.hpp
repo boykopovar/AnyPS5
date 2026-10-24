@@ -131,6 +131,7 @@ struct PthreadPrivate {
     std::atomic<bool> inWait{false};
     std::atomic<int> pendingException{0};
     std::atomic<int> schedPolicy{1};
+    int inheritSched = 4;
     void* wakeEvent = nullptr;
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
