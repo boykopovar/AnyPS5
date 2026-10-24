@@ -719,9 +719,7 @@ void forgetSingleClears(std::uintptr_t address, std::size_t bytes) {
     anySingleClears().store(!singleClears().empty(), std::memory_order_release);
 }
 
-void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
-    forgetSingleClears(address, bytes);
-    RetireUnmappedDepth_nid_no_patch(address, bytes);
+void retireCovered(std::uint64_t address, std::size_t bytes) {
     std::unique_lock lock(guardedMutex());
     std::erase_if(guarded(), [&](const auto& range) {
         if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) range.metadataValid->store(false, std::memory_order_release);
@@ -731,6 +729,18 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     });
     std::erase_if(guarded(), [](const auto& range) { return range.metadataValid && !range.active->load(std::memory_order_acquire); });
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
+void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
+    forgetSingleClears(address, bytes);
+    RetireUnmappedDepth_nid_no_patch(address, bytes);
+    retireCovered(address, bytes);
+}
+
+bool overwrittenTarget(const GuardedRange& range, std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten) {
+    return std::ranges::any_of(guarded(), [&](const auto& plane) {
+        return plane.active == range.active && !plane.metadataValid && std::ranges::any_of(overwritten, [&](const auto& run) { return run.first <= plane.address && plane.address + plane.bytes <= run.second; });
+    });
 }
 
 void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid) {
@@ -1321,20 +1331,26 @@ void ClearMultisampleTargets(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten) {
     RequireNoResidentDepthRead_nid_no_patch(address, bytes);
-    RequireNoMultisampleColorTarget(address, bytes, access);
+    RequireNoMultisampleColorTarget(address, bytes, access, overwritten);
 }
 
-void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access) {
+void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access, std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
     std::shared_lock lock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
+        if (!overwritten.empty() && overwrittenTarget(range, overwritten)) continue;
         char text[256];
         std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps multisampled color target 0x%llx+0x%llx (%u samples), whose samples are only on the host: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
         throw std::runtime_error(text);
     }
+}
+
+void RetireOverwrittenMultisampleColorTargets(std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten) {
+    if (!anyGuarded().load(std::memory_order_acquire)) return;
+    for (const auto& [begin, end] : overwritten) retireCovered(begin, static_cast<std::size_t>(end - begin));
 }
 
 }

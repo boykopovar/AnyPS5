@@ -500,6 +500,7 @@ struct DescriptorBinding {
     std::vector<bool> samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     std::vector<bool> imageWritten;
+    std::vector<bool> imageRead;
     std::vector<bool> imageDepthCompare;
     std::vector<bool> imageAtomic;
     std::vector<bool> imageAtomic64;

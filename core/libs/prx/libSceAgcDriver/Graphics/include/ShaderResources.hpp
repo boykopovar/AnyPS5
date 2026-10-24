@@ -359,8 +359,10 @@ private:
         int tileMode = 0;
         std::uint64_t dccAddress = 0;
         bool imageTable = false;
+        bool overwrites = false;
     };
     std::vector<DescribedRange> describedRanges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> overwrittenImages;
     struct Allocation {
         std::uint64_t address;
         std::size_t size;

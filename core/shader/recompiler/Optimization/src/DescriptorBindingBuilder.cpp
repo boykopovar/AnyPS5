@@ -471,6 +471,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto& mode = info.runtimeImageModes.at(resource).at(imageModes[resource]);
                 entry.identityImageSwizzle.push_back(mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits);
                 physical.imageWritten.push_back(image.written || image.atomic);
+                physical.imageRead.push_back(image.read);
                 physical.imageDepthCompare.push_back(mode.depthCompare);
                 physical.imageAtomic.push_back(image.atomic);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
@@ -613,6 +614,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
+                physical.imageRead.push_back(true);
                 physical.imageAtomic.push_back(element.atomic);
                 std::uint32_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {

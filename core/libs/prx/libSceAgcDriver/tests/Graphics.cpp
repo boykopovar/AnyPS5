@@ -11168,7 +11168,7 @@ void ResourceContentKeyTests(bool benchmark) {
         images.count = count;
         images.guestDescriptor.resize(static_cast<std::size_t>(count) * 8u);
         for (std::size_t i = 0; i < images.guestDescriptor.size(); ++i) images.guestDescriptor[i] = static_cast<std::uint32_t>(i * 1664525u + 1013904223u);
-        for (auto* bits : {&images.imageWritten, &images.samplerDepthCompare, &images.imageDepthCompare, &images.imageAtomic, &images.samplerUnnormalized, &images.samplerIntegerBorder, &images.imageUnnormalized, &images.imageUnnormalizedBaseLevel, &images.bufferWritten}) {
+        for (auto* bits : {&images.imageWritten, &images.imageRead, &images.samplerDepthCompare, &images.imageDepthCompare, &images.imageAtomic, &images.samplerUnnormalized, &images.samplerIntegerBorder, &images.imageUnnormalized, &images.imageUnnormalizedBaseLevel, &images.bufferWritten}) {
             bits->resize(count);
             for (std::size_t i = 0; i < bits->size(); ++i) (*bits)[i] = i % 3u == 0;
         }
@@ -11201,7 +11201,7 @@ void ResourceContentKeyTests(bool benchmark) {
             Require(ShaderResources::ContentKey(shader, dataWords, movable) != original, "content key ignored the written-buffer mask");
             program.bindings[2].bufferWritten[0] = false;
             if (count != 0) {
-                for (auto* bits : {&program.bindings[0].imageWritten, &program.bindings[0].samplerDepthCompare, &program.bindings[0].imageDepthCompare, &program.bindings[0].imageAtomic, &program.bindings[0].samplerUnnormalized, &program.bindings[0].samplerIntegerBorder, &program.bindings[0].imageUnnormalized, &program.bindings[0].imageUnnormalizedBaseLevel}) {
+                for (auto* bits : {&program.bindings[0].imageWritten, &program.bindings[0].imageRead, &program.bindings[0].samplerDepthCompare, &program.bindings[0].imageDepthCompare, &program.bindings[0].imageAtomic, &program.bindings[0].samplerUnnormalized, &program.bindings[0].samplerIntegerBorder, &program.bindings[0].imageUnnormalized, &program.bindings[0].imageUnnormalizedBaseLevel}) {
                     bits->back().flip();
                     Require(ShaderResources::ContentKey(shader, dataWords, movable) != original, "content key ignored the last packed flag");
                     bits->back().flip();
