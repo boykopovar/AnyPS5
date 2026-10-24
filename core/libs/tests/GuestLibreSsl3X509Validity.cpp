@@ -35,6 +35,7 @@ static int After;
 
 extern "C" {
 void* APS5_VABI X509_getm_notBefore_nid_postfix(const TestX509*);
+void* APS5_VABI X509_getm_notAfter_nid_postfix(const TestX509*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -65,7 +66,25 @@ static void TestGetmNotBefore() {
     Require(X509_getm_notBefore_nid_postfix(&certificate) == nullptr);
 }
 
+static void TestGetmNotAfter() {
+    TestValidity validity {};
+    TestCertInfo info {};
+    TestX509 certificate {};
+    Require(X509_getm_notAfter_nid_postfix(nullptr) == nullptr);
+    Require(X509_getm_notAfter_nid_postfix(&certificate) == nullptr);
+    certificate.certInfo = &info;
+    Require(X509_getm_notAfter_nid_postfix(&certificate) == nullptr);
+    info.validity = &validity;
+    Require(X509_getm_notAfter_nid_postfix(&certificate) == nullptr);
+    validity.notBefore = &Before;
+    validity.notAfter = &After;
+    Require(X509_getm_notAfter_nid_postfix(&certificate) == &After);
+    validity.notAfter = nullptr;
+    Require(X509_getm_notAfter_nid_postfix(&certificate) == nullptr);
+}
+
 int main() {
     TestGetmNotBefore();
+    TestGetmNotAfter();
     return 0;
 }
