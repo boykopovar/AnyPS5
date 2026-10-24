@@ -72,7 +72,7 @@ static void CheckOwnershipAndRelativeLock() {
     Require(pthread_mutex_isowned_np_nid_postfix(&adaptive) == 0 && adaptive == AdaptiveInitializer);
     Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == 0 && mutex != nullptr);
     Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 1);
-    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EDEADLK);
+    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_ETIMEDOUT);
     OtherThread other{&mutex};
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, CheckFromOtherThread, &other, nullptr) == SCE_OK);

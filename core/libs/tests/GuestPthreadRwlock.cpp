@@ -206,7 +206,7 @@ static void CheckFailedLockAttempts() {
     PthreadRwlock rwlock = nullptr;
     Require(pthread_rwlock_wrlock_nid_postfix(&rwlock) == 0);
     const KernelTimespec timeout = After(10);
-    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &timeout) == GUEST_EDEADLK);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &timeout) == GUEST_ETIMEDOUT);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == GUEST_EBUSY);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
@@ -430,9 +430,10 @@ int main() {
     Require(pthread_rwlock_trywrlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == GUEST_EBUSY);
     Require(pthread_rwlock_trywrlock_nid_postfix(&rwlock) == GUEST_EBUSY);
-    KernelTimespec deadline = After(5000);
-    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &deadline) == GUEST_EDEADLK);
-    Require(pthread_rwlock_timedwrlock_nid_postfix(&rwlock, &deadline) == GUEST_EDEADLK);
+    KernelTimespec deadline = After(20);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &deadline) == GUEST_ETIMEDOUT);
+    deadline = After(20);
+    Require(pthread_rwlock_timedwrlock_nid_postfix(&rwlock, &deadline) == GUEST_ETIMEDOUT);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == GUEST_EPERM);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == 0);
