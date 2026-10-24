@@ -1146,6 +1146,28 @@ std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderS
 
 namespace {
 
+std::atomic<std::uint64_t> pushlessPixelVariantsSkipped{0};
+
+}
+
+std::uint64_t PushlessPixelVariantsSkipped() {
+    return pushlessPixelVariantsSkipped.load(std::memory_order_relaxed);
+}
+
+std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request) {
+    std::vector<ShaderRecompiler::RecompileRequest> requests{request};
+    if (request.context.compute) {
+        requests.push_back(request);
+        requests.back().context.compute->partialThreads = {1, 1, 1};
+    } else if (request.context.pixel && !request.target.fixedPushSlots) {
+        requests.push_back(request);
+        requests.back().layout.pushConstantSizeBytes = 0;
+    }
+    return requests;
+}
+
+namespace {
+
 template<typename TValue>
 std::vector<TValue> ReadHeaderArray(const ShaderSnapshot& snapshot, const TValue* pointer, std::size_t count) {
     if (count == 0) return {};
@@ -1341,14 +1363,17 @@ void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Gra
 }
 
 std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& plan) {
-    auto& request = *plan.request;
+    const auto& request = *plan.request;
+    const auto requests = RegistrationRequests(request);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && request.context.pixel && request.target.fixedPushSlots) pushlessPixelVariantsSkipped.fetch_add(1, std::memory_order_relaxed);
     std::vector<PreparedShaders::Entry> entries;
     ShaderRecompiler::ShaderPreparationContext preparation;
-    const auto append = [&] {
+    const auto append = [&](const ShaderRecompiler::RecompileRequest& variant) {
         PerformanceTimer timing("Shader.PrepareArtifact");
-        entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(request, &preparation)});
+        entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(variant, &preparation)});
     };
-    append();
+    append(requests.front());
     if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && !LibraryPrebuildDisabled()) {
         try {
             PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes);
@@ -1356,13 +1381,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
     }
-    if (request.context.compute) {
-        request.context.compute->partialThreads = {1, 1, 1};
-        append();
-    } else if (request.context.pixel) {
-        request.layout.pushConstantSizeBytes = 0;
-        append();
-    }
+    for (std::size_t index = 1; index < requests.size(); ++index) append(requests[index]);
     if (plan.registration) {
         for (const auto& entry : entries) {
             if (entry.handle != nullptr) ShaderRecompiler::ReleaseUndrawnResourcePlan(*entry.handle);

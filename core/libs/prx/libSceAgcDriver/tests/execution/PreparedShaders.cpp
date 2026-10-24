@@ -104,6 +104,22 @@ void NullPixelAtDraw(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == snapshot.prepared->entries.back().handle && snapshot.prepared->entries.size() == 2, "the null pixel program was prepared again for the same draw");
 }
 
+void RegistrationVariants() {
+    std::array<std::uint32_t, 1> code{0xbf810000u};
+    std::array<std::uint32_t, 4> users{};
+    const auto pixel = AgcDriver::Graphics::DecodePixelStageInfo({}, {}, true);
+    ShaderRecompiler::RecompileRequest fragment{{ShaderRecompiler::ShaderStage::Fragment, 0x10000u, code, 0, {}}, {32, 0, users, {}, pixel, {}, {}}, {}, {0, 0, 128, 128}};
+    fragment.target.fixedPushSlots = true;
+    Require(AgcDriver::DriverDetail::RegistrationRequests(fragment).size() == 1, "registration prepared a pixel variant without push data for a target whose pipelines give the pixel stage a fixed push slot");
+    fragment.target.fixedPushSlots = false;
+    const auto unfixed = AgcDriver::DriverDetail::RegistrationRequests(fragment);
+    Require(unfixed.size() == 2 && unfixed[0].layout.pushConstantSizeBytes == 128 && unfixed[1].layout.pushConstantSizeBytes == 0, "registration did not prepare the pixel variant without push data for a target without fixed push slots");
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1, {}};
+    const ShaderRecompiler::RecompileRequest dispatch{{ShaderRecompiler::ShaderStage::Compute, 0x10000u, code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, {}, {0, 0, 0, 128}};
+    const auto partial = AgcDriver::DriverDetail::RegistrationRequests(dispatch);
+    Require(partial.size() == 2 && partial[1].context.compute->partialThreads == std::array<std::uint32_t, 3>{1, 1, 1}, "registration did not prepare the partial-workgroup compute variant");
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     NullPixelAtDraw(device);
     alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
@@ -1459,6 +1475,7 @@ int main(int argc, char** argv) {
             std::cout << "deferred undecodable shader tests passed\n";
             return 0;
         }
+        RegistrationVariants();
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
