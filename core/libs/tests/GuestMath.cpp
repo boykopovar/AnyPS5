@@ -142,6 +142,7 @@ float APS5_VABI asinhf_nid_postfix(float);
 double APS5_VABI acosh_nid_postfix(double);
 float APS5_VABI acoshf_nid_postfix(float);
 double APS5_VABI atanh_nid_postfix(double);
+double APS5_VABI pow_nid_postfix(double, double);
 float APS5_VABI atanhf_nid_postfix(float);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
 std::int64_t APS5_VABI llround_nid_postfix(double);
@@ -681,6 +682,60 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckPowConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x4000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x7ff8000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x3ff0000000000000ull, 0x7ff8000000000000ull, 0x7ff8000000000000ull, 0},
+        {0x7ff8000000000000ull, 0x3ff0000000000000ull, 0x7ff8000000000000ull, 0},
+        {0xbff0000000000000ull, 0x7ff0000000000000ull, 0xfff8000000000000ull, 0},
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0xfff8000000000000ull, 0},
+        {0x3fe0000000000000ull, 0x7ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x4000000000000000ull, 0xfff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x4000000000000000ull, 0x3ff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x4000000000000000ull, 0xbff0000000000000ull, 0x3fe0000000000000ull, 0},
+        {0x4008000000000000ull, 0x4000000000000000ull, 0x4022000000000000ull, 0},
+        {0x4010000000000000ull, 0x3fe0000000000000ull, 0x4000000000000000ull, 0},
+        {0xc010000000000000ull, 0x3fe0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xbff0000000000000ull, 0x3fe0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xc020000000000000ull, 0x4008000000000000ull, 0xc080000000000000ull, 0},
+        {0xc020000000000000ull, 0x4000000000000000ull, 0x4050000000000000ull, 0},
+        {0x0000000000000000ull, 0xbff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0x8000000000000000ull, 0xbff0000000000000ull, 0xfff0000000000000ull, 0},
+        {0x8000000000000000ull, 0x4008000000000000ull, 0x8000000000000000ull, 0},
+        {0xfff0000000000000ull, 0x4008000000000000ull, 0xfff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0x3fe0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0x4000000000000000ull, 0x4090000000000000ull, 0x7ff0000000000000ull, ERANGE},
+        {0x4000000000000000ull, 0x408ff80000000000ull, 0x7fe0000000000000ull, 0},
+        {0x4000000000000000ull, 0xc090c80000000000ull, 0x0000000000000001ull, 0},
+        {0x4000000000000000ull, 0xc090cc0000000000ull, 0x0000000000000000ull, ERANGE},
+        {0xc000000000000000ull, 0xc090cc0000000000ull, 0x8000000000000000ull, ERANGE},
+        {0x4024000000000000ull, 0x4073400000000000ull, 0x7fe1ccf385ebc8a0ull, 0},
+        {0x4024000000000000ull, 0x4073500000000000ull, 0x7ff0000000000000ull, ERANGE},
+        {0x3ff0000000000001ull, 0x41e65a0bc0000000ull, 0x3ff00000b2d061e7ull, 0},
+        {0x3fefffffffffffffull, 0x4415af1d78b58c40ull, 0x0000000000000000ull, 0},
+        {0x3ff8000000000000ull, 0x4415af1d78b58c40ull, 0x7ff0000000000000ull, 0},
+        {0x3fe0000000000000ull, 0xc415af1d78b58c40ull, 0x7ff0000000000000ull, 0},
+        {0x0000000000004000ull, 0x3fe0000000000000ull, 0x1ed0000000000000ull, 0},
+        {0x3feafced736ee4feull, 0xc0361f9e443ea358ull, 0x4045a8e0115e099aull, 0},
+        {0x4020c8a6b98feb33ull, 0xc04fb31e9d251450ull, 0x33c584ca7f0d8a62ull, 0},
+        {0x3ffaa8c75ac92f7cull, 0x4035319a10c8dee4ull, 0x40e86e36977bcdeeull, 0},
+        {0x4021c28586753c01ull, 0x401dc8b81f794880ull, 0x4165fe6822ba5fe2ull, 0},
+        {0x4018b0117d5d403cull, 0x40529e2d085a832eull, 0x4c274a3831ef8852ull, 0},
+        {0x40203852c518da08ull, 0xc04961929b871429ull, 0x365a3a0c99ab236eull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(pow_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 static void CheckExpm1ConsoleBits() {
@@ -1668,6 +1723,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckPowConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);

@@ -712,7 +712,218 @@ float APS5_VABI powf_nid_postfix(float base, float exp) {
     if (base == 1.0f) return 1.0f;
     return std::pow(base, exp);
 }
-double APS5_VABI pow_nid_postfix(double base, double exp) { return std::pow(base, exp); }
+static double SetLowWord(double x, std::uint32_t low) {
+    return std::bit_cast<double>((std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull) | low);
+}
+
+static double SetHighWord(double x, std::uint32_t high) {
+    return std::bit_cast<double>((static_cast<std::uint64_t>(high) << 32) | (std::bit_cast<std::uint64_t>(x) & 0xffffffffull));
+}
+
+double APS5_VABI pow_nid_postfix(double x, double y) {
+    static constexpr double bp[] = {1.0, 1.5};
+    static constexpr double dp_h[] = {0.0, 5.84962487220764160156e-01};
+    static constexpr double dp_l[] = {0.0, 1.35003920212974897128e-08};
+    const double two53 = 9007199254740992.0;
+    const double huge = 1.0e300;
+    const double tiny = 1.0e-300;
+    const double L1 = 5.99999999999994648725e-01;
+    const double L2 = 4.28571428578550184252e-01;
+    const double L3 = 3.33333329818377432918e-01;
+    const double L4 = 2.72728123808534006489e-01;
+    const double L5 = 2.30660745775561754067e-01;
+    const double L6 = 2.06975017800338417784e-01;
+    const double P1 = 1.66666666666666019037e-01;
+    const double P2 = -2.77777777770155933842e-03;
+    const double P3 = 6.61375632143793436117e-05;
+    const double P4 = -1.65339022054652515390e-06;
+    const double P5 = 4.13813679705723846039e-08;
+    const double lg2 = 6.93147180559945286227e-01;
+    const double lg2_h = 6.93147182464599609375e-01;
+    const double lg2_l = -1.90465429995776804525e-09;
+    const double ovt = 8.0085662595372944372e-0017;
+    const double cp = 9.61796693925975554329e-01;
+    const double cp_h = 9.61796700954437255859e-01;
+    const double cp_l = -7.02846165095275826516e-09;
+    const double ivln2 = 1.44269504088896338700e+00;
+    const double ivln2_h = 1.44269502162933349609e+00;
+    const double ivln2_l = 1.92596299112661746887e-08;
+    const std::uint64_t xbits = std::bit_cast<std::uint64_t>(x);
+    const std::uint64_t ybits = std::bit_cast<std::uint64_t>(y);
+    const std::int32_t hx = static_cast<std::int32_t>(xbits >> 32);
+    const std::int32_t hy = static_cast<std::int32_t>(ybits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(xbits);
+    const std::uint32_t ly = static_cast<std::uint32_t>(ybits);
+    std::int32_t ix = hx & 0x7fffffff;
+    const std::int32_t iy = hy & 0x7fffffff;
+    if ((iy | ly) == 0) {
+        return 1.0;
+    }
+    if (ix > 0x7ff00000 || (ix == 0x7ff00000 && lx != 0) || iy > 0x7ff00000 || (iy == 0x7ff00000 && ly != 0)) {
+        return (x + 0.0) + (y + 0.0);
+    }
+    int yisint = 0;
+    if (hx < 0) {
+        if (iy >= 0x43400000) {
+            yisint = 2;
+        } else if (iy >= 0x3ff00000) {
+            const std::int32_t k = (iy >> 20) - 0x3ff;
+            if (k > 20) {
+                const std::uint32_t j = ly >> (52 - k);
+                if ((j << (52 - k)) == ly) yisint = 2 - static_cast<int>(j & 1);
+            } else if (ly == 0) {
+                const std::int32_t j = iy >> (20 - k);
+                if ((j << (20 - k)) == iy) yisint = 2 - (j & 1);
+            }
+        }
+    }
+    if (ly == 0) {
+        if (iy == 0x7ff00000) {
+            if (((ix - 0x3ff00000) | static_cast<std::int32_t>(lx)) == 0) {
+                return y - y;
+            }
+            if (ix >= 0x3ff00000) {
+                return hy >= 0 ? y : 0.0;
+            }
+            return hy < 0 ? -y : 0.0;
+        }
+        if (iy == 0x3ff00000) {
+            return hy < 0 ? 1.0 / x : x;
+        }
+        if (hy == 0x40000000) {
+            return x * x;
+        }
+        if (hy == 0x3fe00000 && hx >= 0) {
+            return std::sqrt(x);
+        }
+    }
+    double ax = std::fabs(x);
+    if (lx == 0 && (ix == 0x7ff00000 || ix == 0 || ix == 0x3ff00000)) {
+        double z = ax;
+        if (hy < 0) z = 1.0 / z;
+        if (hx < 0) {
+            if (((ix - 0x3ff00000) | yisint) == 0) {
+                errno = EDOM;
+                z = (z - z) / (z - z);
+            } else if (yisint == 1) {
+                z = -z;
+            }
+        }
+        return z;
+    }
+    std::int32_t n = static_cast<std::int32_t>((static_cast<std::uint32_t>(hx) >> 31) - 1);
+    if ((n | yisint) == 0) {
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    double s = 1.0;
+    if ((n | (yisint - 1)) == 0) s = -1.0;
+    double t1;
+    double t2;
+    if (iy > 0x41e00000) {
+        if (iy > 0x43f00000) {
+            if (ix <= 0x3fefffff) return hy < 0 ? huge * huge : tiny * tiny;
+            if (ix >= 0x3ff00000) return hy > 0 ? huge * huge : tiny * tiny;
+        }
+        if (ix < 0x3fefffff) return hy < 0 ? s * huge * huge : s * tiny * tiny;
+        if (ix > 0x3ff00000) return hy > 0 ? s * huge * huge : s * tiny * tiny;
+        const double t = ax - 1.0;
+        const double w = (t * t) * (0.5 - t * (3.3333333333333331e-01 - t * 0.25));
+        const double u = ivln2_h * t;
+        const double v = t * ivln2_l - w * ivln2;
+        t1 = SetLowWord(u + v, 0);
+        t2 = v - (t1 - u);
+    } else {
+        n = 0;
+        if (ix < 0x00100000) {
+            ax *= two53;
+            n -= 53;
+            ix = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(ax) >> 32);
+        }
+        n += (ix >> 20) - 0x3ff;
+        const std::int32_t j = ix & 0x000fffff;
+        ix = j | 0x3ff00000;
+        int k;
+        if (j <= 0x3988e) {
+            k = 0;
+        } else if (j < 0xbb67a) {
+            k = 1;
+        } else {
+            k = 0;
+            n += 1;
+            ix -= 0x00100000;
+        }
+        ax = SetHighWord(ax, static_cast<std::uint32_t>(ix));
+        double u = ax - bp[k];
+        double v = 1.0 / (ax + bp[k]);
+        const double ss = u * v;
+        const double s_h = SetLowWord(ss, 0);
+        double t_h = SetHighWord(0.0, static_cast<std::uint32_t>(((ix >> 1) | 0x20000000) + 0x00080000 + (k << 18)));
+        double t_l = ax - (t_h - bp[k]);
+        const double s_l = v * ((u - s_h * t_h) - s_h * t_l);
+        double s2 = ss * ss;
+        double r = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
+        r += s_l * (s_h + ss);
+        s2 = s_h * s_h;
+        t_h = SetLowWord(3 + s2 + r, 0);
+        t_l = r - ((t_h - 3) - s2);
+        u = s_h * t_h;
+        v = s_l * t_h + t_l * ss;
+        const double p_h = SetLowWord(u + v, 0);
+        const double p_l = v - (p_h - u);
+        const double z_h = cp_h * p_h;
+        const double z_l = cp_l * p_h + p_l * cp + dp_l[k];
+        const double t = n;
+        t1 = SetLowWord(((z_h + z_l) + dp_h[k]) + t, 0);
+        t2 = z_l - (((t1 - t) - dp_h[k]) - z_h);
+    }
+    const double y1 = SetLowWord(y, 0);
+    const double p_l = (y - y1) * t1 + y * t2;
+    double p_h = y1 * t1;
+    double z = p_l + p_h;
+    std::uint64_t zbits = std::bit_cast<std::uint64_t>(z);
+    std::int32_t j = static_cast<std::int32_t>(zbits >> 32);
+    const std::int32_t i0 = static_cast<std::int32_t>(static_cast<std::uint32_t>(zbits));
+    if (j >= 0x40900000) {
+        if (((j - 0x40900000) | i0) != 0 || p_l + ovt > z - p_h) {
+            errno = ERANGE;
+            return s * huge * huge;
+        }
+    } else if ((j & 0x7fffffff) >= 0x4090cc00) {
+        if (((static_cast<std::uint32_t>(j) - 0xc090cc00u) | static_cast<std::uint32_t>(i0)) != 0 || p_l <= z - p_h) {
+            errno = ERANGE;
+            return s * tiny * tiny;
+        }
+    }
+    const std::int32_t i = j & 0x7fffffff;
+    std::int32_t k = (i >> 20) - 0x3ff;
+    n = 0;
+    if (i > 0x3fe00000) {
+        n = j + (0x00100000 >> (k + 1));
+        k = ((n & 0x7fffffff) >> 20) - 0x3ff;
+        const double t = SetHighWord(0.0, static_cast<std::uint32_t>(n & ~(0x000fffff >> k)));
+        n = ((n & 0x000fffff) | 0x00100000) >> (20 - k);
+        if (j < 0) n = -n;
+        p_h -= t;
+    }
+    double t = SetLowWord(p_l + p_h, 0);
+    const double u = t * lg2_h;
+    const double v = (p_l - (t - p_h)) * lg2 + t * lg2_l;
+    z = u + v;
+    const double w = v - (z - u);
+    t = z * z;
+    const double t1b = z - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    const double r = (z * t1b) / (t1b - 2.0) - (w + z * w);
+    z = 1.0 - (r - z);
+    j = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(z) >> 32);
+    j += static_cast<std::int32_t>(static_cast<std::uint32_t>(n) << 20);
+    if ((j >> 20) <= 0) {
+        z = std::scalbn(z, n);
+    } else {
+        z = SetHighWord(z, static_cast<std::uint32_t>(j));
+    }
+    return s * z;
+}
 float APS5_VABI __powisf2_nid_postfix(float base, int exponent) {
     const bool reciprocal = exponent < 0;
     float result = 1.0f;
