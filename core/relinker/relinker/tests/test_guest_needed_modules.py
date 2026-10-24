@@ -86,11 +86,89 @@ def check_guest_needed(relinker, work):
             assert not output.exists() and not (case / "app0").exists(), output
 
 
+def check_needed_outside(relinker, work):
+    self_container = bytes.fromhex("4f153d1d") + b"\0" * 60
+    sce_module = module_with_symbol(True)
+    struct.pack_into("<H", sce_module, 16, 0xFE18)
+    message = "Needed module not converted: "
+
+    def convert(case, options=(), needed=NEEDED):
+        source = case / "input.elf"
+        source.write_bytes(executable_with_needed(needed))
+        result = subprocess.run([str(relinker), *options, str(source), str(case / "output.elf")],
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (case.name, result.stdout, result.stderr)
+        return [line for line in result.stdout.splitlines() if line.startswith(message)]
+
+    case = work / "outside-self-root"
+    (case / "sce_module").mkdir(parents=True)
+    (case / "sce_module" / "wrapped.prx").write_bytes(self_container)
+    (case / "needed.prx").write_bytes(self_container)
+    assert convert(case) == [message + "needed.prx at needed.prx; add --module-dir . and unwrap the SELF container"]
+
+    case = work / "outside-alias-nested"
+    (case / "sce_module").mkdir(parents=True)
+    (case / "Media" / "Modules").mkdir(parents=True)
+    (case / "Media" / "Modules" / "needed.sprx").write_bytes(sce_module)
+    (case / "Media" / "Modules" / "needed.prx.guest.prx").write_bytes(sce_module)
+    (case / "Media" / "other.prx").write_bytes(sce_module)
+    assert convert(case) == [message + "needed.prx at Media/Modules/needed.sprx; add --module-dir Media/Modules"]
+    assert convert(case, ["--module-dir", "Media/Modules"]) == []
+    assert (case / "app0" / "Media" / "Modules" / "needed.sprx.guest.prx").is_file()
+
+    case = work / "outside-two-copies"
+    (case / "sce_module").mkdir(parents=True)
+    for name in ("first", "second"):
+        (case / name).mkdir()
+        (case / name / "needed.prx").write_bytes(sce_module)
+    assert convert(case) == [message + "needed.prx at first/needed.prx; add --module-dir first",
+                             message + "needed.prx at second/needed.prx; add --module-dir second"]
+
+    case = work / "outside-not-sce"
+    (case / "sce_module").mkdir(parents=True)
+    (case / "libs").mkdir()
+    (case / "libs" / "needed.prx").write_bytes(module_with_symbol(True))
+    (case / "needed.prx").write_text("not ELF")
+    (case / "sce_module" / "needed.prx").mkdir()
+    assert convert(case) == []
+
+    case = work / "outside-converted"
+    (case / "sce_module").mkdir(parents=True)
+    (case / "sce_module" / "needed.prx").write_bytes(sce_module)
+    (case / "needed.prx").write_bytes(sce_module)
+    assert convert(case) == []
+
+    case = work / "outside-skipped"
+    case.mkdir()
+    (case / "needed.prx").write_bytes(sce_module)
+    assert convert(case, ["--skip-sce-module"]) == []
+
+    case = work / "outside-case"
+    (case / "sce_module").mkdir(parents=True)
+    (case / "Media").mkdir()
+    (case / "Media" / "NEEDED.PRX").write_bytes(sce_module)
+    assert convert(case) == []
+    assert convert(case, ["--windows"]) == [message + "needed.prx at Media/NEEDED.PRX; add --module-dir Media"]
+
+    if os.name != "nt" and os.geteuid() != 0:
+        case = work / "outside-unreadable"
+        (case / "sce_module").mkdir(parents=True)
+        (case / "Media").mkdir()
+        (case / "Media" / "needed.prx").write_bytes(sce_module)
+        (case / "needed.prx").write_bytes(self_container)
+        (case / "needed.prx").chmod(0)
+        try:
+            assert convert(case) == [message + "needed.prx at Media/needed.prx; add --module-dir Media"]
+        finally:
+            (case / "needed.prx").chmod(0o644)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
         check_guest_needed(relinker, work)
+        check_needed_outside(relinker, work)
 
         def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
