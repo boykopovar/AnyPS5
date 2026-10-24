@@ -130,4 +130,6 @@ int APS5_VABI tcsetpgrp_nid_postfix(int descriptor, int group) {
     static_cast<void>(group);
     return Fail(ProcessGroupError(descriptor, "tcsetpgrp: the SIGIO owner of a pipe is not supported"));
 }
+
+int APS5_VABI tcgetsid_nid_postfix(int descriptor) { return Fail(TerminalError(descriptor)); }
 }
