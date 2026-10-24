@@ -6,6 +6,7 @@
 class MutexOperations {
 public:
     static int Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime);
+    static bool IsOwned(const PthreadMutex* mutex);
 };
 
 extern "C" {
@@ -20,6 +21,10 @@ int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec);
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexGetspinloops(PthreadMutex* mutex, int* count);
+int APS5_VABI scePthreadMutexSetspinloops(PthreadMutex* mutex, int count);
+int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count);
+int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count);
 
 }
 

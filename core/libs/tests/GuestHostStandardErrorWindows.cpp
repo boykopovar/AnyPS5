@@ -1,9 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/HostStandardStreams.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
@@ -12,15 +15,7 @@
 #endif
 
 extern "C" {
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI puts_nid_postfix(const char*);
-int APS5_VABI fprintf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-void APS5_VABI perror_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
+
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
@@ -84,6 +79,7 @@ static void GuestText(int standard, const std::string& text) {
         Require(fprintf_nid_postfix(&_Stderr_nid_postfix, "guest-fprintf\n") >= 0);
         *__error_nid_postfix() = 2;
         perror_nid_postfix("guest-perror");
+
         Require(fflush_nid_postfix(&_Stderr_nid_postfix) == 0);
     }
     std::string got(text.size(), '\0');
@@ -96,7 +92,55 @@ static void GuestText(int standard, const std::string& text) {
     ::_close(guest[1]);
 }
 
-int main() {
+static void Buffering(int standard) {
+    int capture[2]{-1, -1};
+    Require(::_pipe(capture, 65536, _O_BINARY) == 0);
+    const int original = ::_dup(standard);
+    Require(original >= 0 && ::_dup2(capture[1], standard) == 0);
+    auto* guestStream = standard == 1 ? &_Stdout_nid_postfix : &_Stderr_nid_postfix;
+    char buffer[4096]{};
+    flockfile_nid_postfix(guestStream);
+
+    if (standard == 1) setbuf_nid_postfix(guestStream, buffer);
+    else Require(setvbuf_nid_postfix(guestStream, buffer, 0, sizeof(buffer)) == 0);
+    funlockfile_nid_postfix(guestStream);
+
+    Require(fprintf_nid_postfix(guestStream, "guest-buffered") == 14);
+    Require(std::fputs("host-immediate", standard == 1 ? stdout : stderr) >= 0);
+    char bytes[64]{};
+    DWORD read = 0;
+    Require(Available(capture[0], bytes, sizeof(bytes), read) == 14);
+    Require(read == 14 && std::string(bytes, read) == "host-immediate");
+    Require(::_read(capture[0], bytes, 14) == 14);
+    Require(Available(capture[0], bytes, sizeof(bytes), read) == 0);
+    Require(fflush_nid_postfix(guestStream) == 0);
+    Require(Available(capture[0], bytes, sizeof(bytes), read) == 14);
+    Require(read == 14 && std::string(bytes, read) == "guest-buffered");
+    Require(::_read(capture[0], bytes, 14) == 14);
+
+    int guest[2]{-1, -1};
+    Require(pipe_nid_postfix(guest) == 0 && dup2_nid_postfix(guest[1], standard) == standard);
+    Require(fprintf_nid_postfix(guestStream, "guest-redirected") == 16 && fflush_nid_postfix(guestStream) == 0);
+    Require(std::fputs("host-original", standard == 1 ? stdout : stderr) >= 0);
+    Require(Available(capture[0], bytes, sizeof(bytes), read) == 13);
+    Require(read == 13 && std::string(bytes, read) == "host-original");
+    Require(Available(guest[0], bytes, sizeof(bytes), read) == 16);
+    Require(read == 16 && std::string(bytes, read) == "guest-redirected");
+    Require(setvbuf_nid_postfix(guestStream, nullptr, 2, 0) == 0);
+    Require(::_dup2(original, standard) == 0);
+    ::_close(original);
+    ::_close(capture[0]);
+    ::_close(capture[1]);
+    ::_close(guest[0]);
+    ::_close(guest[1]);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--buffering") == 0) {
+        Buffering(2);
+        Buffering(1);
+        return 0;
+    }
     Split(2);
     Split(1);
     GuestText(1, "guest-printf\nguest-puts\n");

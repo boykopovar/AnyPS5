@@ -235,6 +235,14 @@ constexpr DWORD GccException = 0x20474343u;
 constexpr std::uint64_t GccExceptionClass = 0x474e5543432b2b00ull;
 constexpr std::uint64_t CxaExceptionTypeOffset = 80;
 
+PWSTR ThreadDescription(HANDLE thread) {
+    using GetDescription = HRESULT (WINAPI *)(HANDLE, PWSTR*);
+    static const auto getDescription = reinterpret_cast<GetDescription>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription"));
+    PWSTR description = nullptr;
+    if (!getDescription || FAILED(getDescription(thread, &description))) return nullptr;
+    return description;
+}
+
 std::uint64_t FrameWithoutUnwindData(const CONTEXT& start) {
     const HMODULE runtime[] = {GetModuleHandleA("KERNELBASE.dll"), GetModuleHandleA("libgcc_s_seh-1.dll"), GetModuleHandleA("libstdc++-6.dll")};
     CONTEXT context = start;
@@ -363,8 +371,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     const auto* context = info->ContextRecord;
     char line[MAX_PATH + 64];
     char threadName[128] = "";
-    PWSTR description = nullptr;
-    if (SUCCEEDED(GetThreadDescription(GetCurrentThread(), &description)) && description) {
+    if (PWSTR description = ThreadDescription(GetCurrentThread())) {
         WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
         LocalFree(description);
     }
@@ -481,6 +488,16 @@ void ReportCallTrace() {
         Report("    #%llu thread %llu %s %s from %s\n", static_cast<unsigned long long>(entries[index].sequence),
             static_cast<unsigned long long>(entries[index].thread), entries[index].library, entries[index].name, line);
     }
+    static CallTraceEntry own[32];
+    const std::uint64_t thread = GetCurrentThreadId();
+    const std::size_t owned = CopyThreadCallTrace_nid_no_patch(thread, own, std::size(own));
+    if (owned != 0) {
+        Report("  last traced calls of thread %llu:\n", static_cast<unsigned long long>(thread));
+        for (std::size_t index = 0; index < owned; ++index) {
+            DescribeAddress(own[index].returnAddress, line, sizeof(line));
+            Report("    #%llu %s %s from %s\n", static_cast<unsigned long long>(own[index].sequence), own[index].library, own[index].name, line);
+        }
+    }
     static CallTraceCount counts[32];
     std::uint64_t total = 0;
     const std::size_t counted = CopyCallCounts_nid_no_patch(counts, std::size(counts), &total);
@@ -572,8 +589,7 @@ void ReportAllThreads() {
             const std::size_t candidateCount = haveContext && frameCount < 2 ? CaptureStackCandidates(context.Rsp, candidates, sizeof(candidates) / sizeof(candidates[0])) : 0;
             ResumeThread(thread);
             char name[128] = "";
-            PWSTR description = nullptr;
-            if (SUCCEEDED(GetThreadDescription(thread, &description)) && description) {
+            if (PWSTR description = ThreadDescription(thread)) {
                 WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
                 LocalFree(description);
             }

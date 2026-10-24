@@ -115,7 +115,7 @@ def split(text):
 def render_index(index):
     out = []
     for kind, item in index:
-        if kind == "heading" and out and out[-1] != "":
+        if kind in ("heading", "text") and out and out[-1] != "":
             out.append("")
         out.append(item)
         if kind == "heading" or kind == "text":

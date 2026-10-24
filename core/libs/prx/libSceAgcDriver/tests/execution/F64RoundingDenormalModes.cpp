@@ -137,6 +137,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         const Mode modes[] = {
             {"without a known float mode", std::nullopt},
             {"f64 denormal mode 0, IEEE mode on", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}},

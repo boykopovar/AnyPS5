@@ -270,13 +270,13 @@ void verifyRequest(const char* path) {
     std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path, result.addedBlocks, result.clonedInstructions, result.routeVariables);
 }
 
-std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
+std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t waveSize = 64u) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
     const std::array<std::uint32_t, 2> capabilities{1u, 61u};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
-    request.context.waveSize = 64;
+    request.context.waveSize = waveSize;
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
     request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
@@ -294,6 +294,26 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
     const auto result = Recompile(request);
     require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
     return result.spirv.size();
+}
+
+void verifyCallLinkOverwrittenByWave64Compare() {
+    const std::vector<std::uint32_t> code{0xbb080007u, 0xd4060008u, 0x0001e500u, 0xd5010001u, 0x0021e880u, 0xe0700000u, 0x80010100u, 0xbf810000u, 0xbe802008u, 0xbf9f0000u};
+    static_cast<void>(recompile("a wave64 compare that overwrites a call's link pair before a v_cndmask reads it", code, 64u));
+}
+
+void verifyCallLinkMaskReadByScalarInstruction() {
+    const std::array<std::uint32_t, 3> readers{0xbe8a2408u, 0xbe8a0408u, 0xbe8a0309u};
+    for (const auto reader : readers) {
+        const std::vector<std::uint32_t> code{0xbb080007u, 0xd4060008u, 0x0001e500u, reader, 0xbf800000u, 0xe0700000u, 0x80010100u, 0xbf810000u, 0xbe802008u, 0xbf9f0000u};
+        static_cast<void>(recompile("a wave64 scalar read of a compare mask in a call's link pair", code, 64u));
+        bool refused = false;
+        try {
+            static_cast<void>(recompile("a wave32 scalar read of a call's return address", code, 32u, 32u));
+        } catch (const std::exception& error) {
+            refused = std::string_view(error.what()).find("escapes the constant-offset call/return model") != std::string_view::npos;
+        }
+        require(refused, "a wave32 program reading a call's return address high half was not refused");
+    }
 }
 
 void verifyLargeLoopExitFallback() {
@@ -422,6 +442,26 @@ void verifyProgram(const Program& program) {
     if (!program.reference.empty()) {
         const auto reference = recompile(name, program.reference, 64u);
         require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
+    }
+}
+
+const std::vector<std::uint32_t> TestedHeaderLatchStore{
+    0xbe880380u, 0x7e020280u, 0xbf0a8408u, 0xbf840004u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf82fffau, 0xbf810000u};
+const std::vector<std::uint32_t> SelfLoopLatchStore{
+    0xbe880380u, 0x7e020280u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf0a8408u, 0xbf85fffbu, 0xbf810000u};
+
+void verifyEmptyLoopContinues() {
+    for (const auto& [name, code] : {std::pair{"a loop whose latch stores behind a tested header", &TestedHeaderLatchStore}, std::pair{"a single-block loop that stores", &SelfLoopLatchStore}}) {
+        auto graph = GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(*code));
+        Structurizer{}.Structurize(graph);
+        bool loops = false;
+        for (const auto& block : graph.blocks) {
+            if (!block.terminator.loopHeader) continue;
+            loops = true;
+            const auto& continueTarget = graph.FindBlock(block.terminator.continueBlock);
+            require(continueTarget.instructionBegin == continueTarget.instructionEnd, std::string(name) + ": the continue block " + std::to_string(continueTarget.id) + " of the loop at block " + std::to_string(block.id) + " holds instructions");
+        }
+        require(loops, std::string(name) + ": no loop was structured");
     }
 }
 
@@ -691,6 +731,18 @@ loop:
   s_cbranch_scc1 loop
   s_endpgm)",
          {0xbe880380u, 0x7e020280u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf0a8408u, 0xbf85fffbu, 0xbf810000u}, Split::None},
+        {"memory access in a loop latch behind a tested header", R"(
+  s_mov_b32 s8, 0
+  v_mov_b32 v1, 0
+loop:
+  s_cmp_lt_u32 s8, 4
+  s_cbranch_scc0 done
+  buffer_store_dword v1, off, s[0:3], 0
+  s_add_u32 s8, s8, 1
+  s_branch loop
+done:
+  s_endpgm)",
+         TestedHeaderLatchStore, Split::None},
         {"shared tail in a loop", R"(
   s_mov_b32 s8, 0
   v_mov_b32 v1, 0
@@ -1397,8 +1449,11 @@ done:
         verifyScheduledJumpTable();
         VerifyUserDataTail();
         VerifyConstantHighTail();
+        verifyCallLinkOverwrittenByWave64Compare();
+        verifyCallLinkMaskReadByScalarInstruction();
         verifyLargeLoopExitFallback();
         verifyNestedExitForwarders();
+        verifyEmptyLoopContinues();
         verifyIrreducibleLoopEntry();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

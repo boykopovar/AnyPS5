@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -9,8 +10,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-
-extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
 
 namespace {
 constexpr std::size_t PathMax = 1024;

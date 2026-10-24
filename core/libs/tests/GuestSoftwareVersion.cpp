@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <cstddef>
@@ -5,21 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 
-struct SceKernelProsperoSystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
-
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, version) == 0x24);
 static_assert(sizeof(SceKernelProsperoSystemSwVersion) == 0x28);
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoSystemSwVersion*);
-int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(std::uint32_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

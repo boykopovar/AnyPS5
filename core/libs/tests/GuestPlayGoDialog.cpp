@@ -1,37 +1,31 @@
+#include "prx/libScePlayGoDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
-extern "C" {
-int APS5_VABI scePlayGoDialogInitialize(void);
-int APS5_VABI scePlayGoDialogTerminate(void);
-int APS5_VABI scePlayGoDialogOpen(const void* param);
-int APS5_VABI scePlayGoDialogClose(void);
-int APS5_VABI scePlayGoDialogUpdateStatus(void);
-int APS5_VABI scePlayGoDialogGetStatus(void);
-int APS5_VABI scePlayGoDialogGetResult(void* result);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
-    constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x80ED0001);
-    constexpr std::int32_t alreadyInitialized = static_cast<std::int32_t>(0x80ED0002);
-    constexpr std::int32_t paramInvalid = static_cast<std::int32_t>(0x80ED0003);
-    constexpr std::int32_t invalidState = static_cast<std::int32_t>(0x80ED0005);
+    constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x80B80003);
+    constexpr std::int32_t alreadyInitialized = static_cast<std::int32_t>(0x80B80004);
+    constexpr std::int32_t paramInvalid = static_cast<std::int32_t>(0x80B8000D);
     constexpr std::int32_t notFinished = static_cast<std::int32_t>(0x80B80005u);
 
     Require(scePlayGoDialogGetStatus() == 0);
     Require(scePlayGoDialogTerminate() == notInitialized);
     Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
-    Require(scePlayGoDialogGetResult(nullptr) == notInitialized);
+    Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
 
     const int openParam = 1;
-    Require(scePlayGoDialogOpen(&openParam) == invalidState);
+    Require(scePlayGoDialogOpen(&openParam) == notInitialized);
 
+    PlayGoDialogResult early{};
+    Require(scePlayGoDialogGetResult(&early) == notInitialized);
+    early.reserved[31] = 1;
+    Require(scePlayGoDialogGetResult(&early) == static_cast<std::int32_t>(0x80B8000Au));
     Require(scePlayGoDialogInitialize() == 0);
     Require(scePlayGoDialogGetStatus() == 1);
     Require(scePlayGoDialogInitialize() == alreadyInitialized);
@@ -47,8 +41,13 @@ int main() {
 
     PlayGoDialogResult result{};
     Require(scePlayGoDialogGetResult(&result) == 0);
-    Require(result.result == 0);
-    Require(scePlayGoDialogClose() == 0);
+    Require(result.result == 0 && result.errorCode == 0);
+    result.errorCode = 7;
+    result.result = 9;
+    result.reserved[0] = 1;
+    Require(scePlayGoDialogGetResult(&result) == static_cast<std::int32_t>(0x80B8000Au));
+    Require(result.errorCode == 7 && result.result == 9 && result.reserved[0] == 1);
+    Require(scePlayGoDialogClose() == static_cast<std::int32_t>(0x80B8000Bu));
     Require(scePlayGoDialogTerminate() == 0);
     Require(scePlayGoDialogGetStatus() == 0);
     Require(scePlayGoDialogTerminate() == notInitialized);

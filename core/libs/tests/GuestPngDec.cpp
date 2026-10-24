@@ -1,3 +1,4 @@
+#include "prx/libScePngDec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
@@ -7,14 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI scePngDecQueryMemorySize(const PngDecCreateParam*);
-std::int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI scePngDecDelete(void*);
-std::int32_t APS5_VABI scePngDecParseHeader(const PngDecParseParam*, PngDecImageInfo*);
-std::int32_t APS5_VABI scePngDecDecode(void*, const PngDecDecodeParam*, PngDecImageInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -81,8 +74,8 @@ int main() {
 
     const PngDecCreateParam param{sizeof(PngDecCreateParam), 0, 1920};
     const std::int32_t memorySize = scePngDecQueryMemorySize(&param);
-    Require(memorySize > 0);
-    Require(scePngDecQueryMemorySize(nullptr) == invalidParam);
+    Require(memorySize == 69264);
+    Require(scePngDecQueryMemorySize(nullptr) == invalidAddr);
     const PngDecCreateParam badSize{sizeof(PngDecCreateParam) - 1, 0, 1920};
     Require(scePngDecQueryMemorySize(&badSize) == invalidSize);
     const PngDecCreateParam badAttribute{sizeof(PngDecCreateParam), 2, 1920};
@@ -94,21 +87,21 @@ int main() {
     const PngDecCreateParam overWidth{sizeof(PngDecCreateParam), 1, 1000001};
     Require(scePngDecQueryMemorySize(&overWidth) == invalidParam);
     const PngDecCreateParam maxWidth{sizeof(PngDecCreateParam), 1, 1000000};
-    Require(scePngDecQueryMemorySize(&maxWidth) == memorySize);
+    Require(scePngDecQueryMemorySize(&maxWidth) == 16054416);
 
     std::vector<unsigned char> memory(static_cast<std::size_t>(memorySize) + 1);
     unsigned char* unaligned = memory.data() + 1;
     void* handle = nullptr;
-    Require(scePngDecCreate(nullptr, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidParam);
+    Require(scePngDecCreate(nullptr, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&badSize, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidSize);
     Require(scePngDecCreate(&overWidth, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidParam);
     Require(scePngDecCreate(&param, nullptr, static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
-    Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize) - 1, &handle) == invalidWorkMemory);
+    Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize) - 1, &handle) == invalidSize);
     Require(handle == nullptr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == 0);
-    Require(reinterpret_cast<std::uintptr_t>(handle) % 8 == 0);
-    Require(static_cast<unsigned char*>(handle) >= unaligned && static_cast<unsigned char*>(handle) < unaligned + 8);
+    Require(reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
+    Require(static_cast<unsigned char*>(handle) >= unaligned && static_cast<unsigned char*>(handle) < unaligned + 16);
 
     const std::vector<std::uint8_t> rgbPng = RgbPng();
     PngDecImageInfo info{};
@@ -125,7 +118,7 @@ int main() {
     }
     const PngDecParseParam completeTransparency{PALETTE_TRNS, 73, 0};
     Require(scePngDecParseHeader(&completeTransparency, &info) == 0 && info.image_flag == 2);
-    Require(scePngDecParseHeader(nullptr, &info) == invalidParam);
+    Require(scePngDecParseHeader(nullptr, &info) == invalidAddr);
     Require(scePngDecParseHeader(&parse, nullptr) == invalidAddr);
     const PngDecParseParam parseNull{nullptr, 16, 0};
     Require(scePngDecParseHeader(&parseNull, &info) == invalidAddr);
@@ -213,7 +206,7 @@ int main() {
 
     decode = DecodeParam(rgbPng, image);
     Require(scePngDecDecode(nullptr, &decode, &info) == invalidHandle);
-    Require(scePngDecDecode(handle, nullptr, &info) == invalidParam);
+    Require(scePngDecDecode(handle, nullptr, &info) == invalidAddr);
     decode.png_mem_addr = nullptr;
     Require(scePngDecDecode(handle, &decode, &info) == invalidAddr);
     decode = DecodeParam(rgbPng, image);
@@ -253,9 +246,11 @@ int main() {
     Require(scePngDecDecode(handle, &decode, &info) == decodeError);
 
     void* deepHandle = nullptr;
-    std::vector<unsigned char> deepMemory(static_cast<std::size_t>(memorySize));
     const PngDecCreateParam deepParam{sizeof(PngDecCreateParam), 1, 1920};
-    Require(scePngDecCreate(&deepParam, deepMemory.data(), static_cast<std::uint32_t>(memorySize), &deepHandle) == 0);
+    const auto deepSize = scePngDecQueryMemorySize(&deepParam);
+    Require(deepSize == 85136);
+    std::vector<unsigned char> deepMemory(static_cast<std::size_t>(deepSize));
+    Require(scePngDecCreate(&deepParam, deepMemory.data(), static_cast<std::uint32_t>(deepSize), &deepHandle) == 0);
     decode = DecodeParam(gray16Png, gray16Image);
     Require(ThrowsRuntimeError([&] { scePngDecDecode(deepHandle, &decode, &info); }));
     decode = DecodeParam(rgbPng, image);

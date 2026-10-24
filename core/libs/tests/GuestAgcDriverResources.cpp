@@ -1,3 +1,6 @@
+#include "prx/libSceAgcDriver/State/include/Status.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstddef>
@@ -5,30 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceAgcDriverRegisterDefaultOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterOwner(std::uint32_t*, const char*);
-int APS5_VABI sceAgcDriverRegisterResource(std::uint32_t*, std::uint32_t, const void*, std::size_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverRegisterMultipleResources(std::uint32_t*, std::uint32_t, const void*, std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterGdsResource(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverUnregisterAllResourcesForOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t, const void*);
-int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t);
-int APS5_VABI sceAgcDriverGetDefaultOwner(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceRegistrationMaxNameLength(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetOwnerName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceType(std::uint32_t, std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceUserData(std::uint32_t, std::uint64_t*);
-int APS5_VABI sceAgcDriverSetResourceUserData(std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverGetResourceBaseAddressAndSizeInBytes(std::uint32_t, void**, std::size_t*);
-int APS5_VABI sceAgcDriverGetResourceShaderGuid(std::uint32_t, void*);
-int APS5_VABI sceAgcDriverFindResourcesPublic(const void*, void*);
-bool APS5_VABI sceAgcDriverIsCaptureInProgress(void);
-bool APS5_VABI sceAgcDriverIsTraceInProgress(void);
-bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
-}
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
 static void Require(bool value) { if (!value) std::abort(); }
@@ -89,9 +68,29 @@ int main() {
     Require(sceAgcDriverFindResourcesPublic(nullptr, nullptr) == Unavailable);
     Require(sceAgcDriverUnregisterAllResourcesForOwner(owner) == Unavailable);
     Require(std::string_view(name) == "unchanged");
+    constexpr int InvalidStream = static_cast<int>(0x8A6C0033);
+    constexpr int NullStream = static_cast<int>(0x8A6C0035);
+    constexpr int StreamNotRegistered = static_cast<int>(0x8A6C003A);
+    for (const std::uint32_t id : {0u, 32u, 0x101u, 0xffffffffu}) {
+        Require(sceAgcDriverRegisterWorkloadStream(id, memory) == InvalidStream);
+        Require(sceAgcDriverRegisterWorkloadStream(id, nullptr) == InvalidStream);
+        Require(sceAgcDriverUnregisterWorkloadStream(id) == InvalidStream);
+    }
+    Require(sceAgcDriverRegisterWorkloadStream(2u, nullptr) == NullStream);
+    Require(sceAgcDriverUnregisterWorkloadStream(2u) == StreamNotRegistered);
+    Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == 0);
+    Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == InvalidStream);
+    Require(sceAgcDriverRegisterWorkloadStream(1u, nullptr) == InvalidStream);
+    Require(sceAgcDriverRegisterWorkloadStream(31u, reinterpret_cast<const char*>(memory) + 1) == 0);
+    Require(sceAgcDriverUnregisterWorkloadStream(1u) == 0);
+    Require(sceAgcDriverUnregisterWorkloadStream(1u) == StreamNotRegistered);
     Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == 0);
     Require(sceAgcDriverUnregisterWorkloadStream(1u) == 0);
+    Require(sceAgcDriverUnregisterWorkloadStream(31u) == 0);
     Require(!sceAgcDriverIsCaptureInProgress());
     Require(!sceAgcDriverIsTraceInProgress());
     Require(!sceAgcDriverIsSubmitValidationEnabled());
+    Require(sceAgcDriverRegisterOwnerForSystem() == Unavailable);
+    Require(sceAgcDriverInitResourceRegistrationInterface() == Unavailable);
+    Require(sceAgcDriverSetResourceRegistrationInfo() == 0);
 }

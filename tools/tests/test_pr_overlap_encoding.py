@@ -42,6 +42,8 @@ def command_output(stdout, stderr="", returncode=0):
             f"sys.exit({returncode})\n")
 
     def run(command, **kwargs):
+        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return RUN(command, **kwargs)
         return RUN([sys.executable, "-c", code], **kwargs)
 
     with simulated_cp1252(), \

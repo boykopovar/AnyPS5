@@ -89,10 +89,7 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+        module = CreateShaderModule(context, TEXTURE_DETILE_SPV, sizeof(TEXTURE_DETILE_SPV), "vkCreateShaderModule");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
         pipelineLayoutInfo.pSetLayouts = &imageDescriptorLayout;
@@ -111,6 +108,7 @@ void TextureDetiler::release() noexcept {
     for (const auto pool : readbackDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
     for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
+    if (multisampleUploadModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, multisampleUploadModule, nullptr);
     if (readbackPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, readbackPipelineLayout, nullptr);
     if (readbackDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, readbackDescriptorLayout, nullptr);
     for (const auto pool : cmaskDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
@@ -168,10 +166,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
     if (image && imageModule == VK_NULL_HANDLE) {
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_IMAGE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_IMAGE_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &imageModule), "vkCreateShaderModule");
+        imageModule = CreateShaderModule(context, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV), "vkCreateShaderModule");
     }
     std::array<VkSpecializationMapEntry, 22> entries{};
     for (std::uint32_t index = 0; index < entries.size(); ++index) entries[index] = {index, index * 4u, 4};
@@ -273,10 +268,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel repack needs a command buffer and its buffers");
     Require(bytes != 0 && bytes % 4u == 0 && sourceOffset % 4u == 0 && destinationOffset % 4u == 0, "a texel repack needs whole aligned words");
     if (repackPipeline == VK_NULL_HANDLE) {
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_REPACK_SPV);
-        moduleInfo.pCode = TEXTURE_REPACK_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &repackModule), "vkCreateShaderModule repack");
+        repackModule = CreateShaderModule(context, TEXTURE_REPACK_SPV, sizeof(TEXTURE_REPACK_SPV), "vkCreateShaderModule repack");
         VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         stage.module = repackModule;
@@ -347,11 +339,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &cmaskPipelineLayout), "vkCreatePipelineLayout CMASK clear");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(CMASK_CLEAR_SPV);
-        moduleInfo.pCode = CMASK_CLEAR_SPV;
-        VkShaderModule cmaskModule = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &cmaskModule), "vkCreateShaderModule CMASK clear");
+        VkShaderModule cmaskModule = CreateShaderModule(context, CMASK_CLEAR_SPV, sizeof(CMASK_CLEAR_SPV), "vkCreateShaderModule CMASK clear");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;

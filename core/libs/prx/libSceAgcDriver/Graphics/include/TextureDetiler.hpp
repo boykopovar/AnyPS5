@@ -56,9 +56,11 @@ namespace AgcDriver::Graphics {
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write, std::uint32_t slice = 0);
         std::uint32_t CmaskErrors();
         void DispatchMultisampleReadback(VkCommandBuffer commands, VkFormat format, VkBuffer destination, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
+        void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
+        VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
         void release() noexcept;
         struct DescriptorRing {
@@ -94,6 +96,7 @@ namespace AgcDriver::Graphics {
         std::array<VkShaderModule, 2> readbackModules{};
         std::vector<std::pair<std::uint32_t, VkPipeline>> readbackPipelines;
         DescriptorRing readbackDescriptorSets;
+        VkShaderModule multisampleUploadModule = VK_NULL_HANDLE;
     };
 
 }

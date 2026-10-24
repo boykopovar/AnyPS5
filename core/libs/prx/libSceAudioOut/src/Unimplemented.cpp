@@ -1,3 +1,5 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -10,47 +12,12 @@ int APS5_VABI sceAudioOut2UserCreateEx(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2LoPortDestroy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextDestroy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOutOpenEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAudioOut2LoPortSetAttributes(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextAdvance(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextPush(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextGetQueueLevel(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOutSetSystemDebugState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoPortGetState(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -71,8 +38,7 @@ int APS5_VABI sceAudioOutChangeAppModuleState(void) {
 }
 
 int APS5_VABI sceAudioOutGetSimulatedHandleStatusInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809B00FF);
 }
 
 int APS5_VABI sceAudioOutGetSimulatedBusUsableStatusByBusType(void) {
@@ -126,32 +92,10 @@ int APS5_VABI sceAudioOutExGetLastOutputTime(void) {
 }
 
 int APS5_VABI sceAudioOutGetInfoOpenNum(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAudioOutGetInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringSetParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringGetState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -315,21 +259,6 @@ int APS5_VABI sceAudioOutSysGetOutputInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2LoContextQueryMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextCreate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoContextSetAttributes(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2MbusInit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -385,11 +314,6 @@ int APS5_VABI sceAudioOut2AllAudioMainToHeadphoneForDiag(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2LoPortCreate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2LoPortGetStateEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -420,11 +344,6 @@ int APS5_VABI sceAudioOut2GetSystemStateEx(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2MasteringInitEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2SetDebugHeadphoneMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -435,27 +354,12 @@ int APS5_VABI sceAudioOut2DebugStateCtrl(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOut2LoInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2LoTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2ContextBedWrite(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAudioOut2PortCreateEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2InitializeEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

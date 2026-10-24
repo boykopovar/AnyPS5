@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -19,6 +20,14 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -124,6 +133,79 @@ Outcome WindowsFollowTheirRange() {
     return Outcome::Passed;
 }
 
+Outcome ResidentMappingsImportAfterCollection() {
+#ifdef _WIN32
+    constexpr std::size_t bytes = MiB;
+    auto* data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 0x200000));
+    Require(data != nullptr, "cannot allocate resident import address");
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE, 0, bytes, nullptr);
+    Require(section != nullptr, "cannot reserve resident import backing");
+    GuestArena::GuestArenaMapDirect_nid_postfix(data, bytes, section, 0, PAGE_READWRITE);
+    std::memset(data, 0x37, bytes);
+    GuestAllocations::Mutation().Add(data, bytes, true, true, true);
+    const auto address = reinterpret_cast<std::uint64_t>(data);
+    Require(AgcDriver::GuestMemory::CollectWritesUncached(address, bytes) != 0, "resident import memory is not watched");
+    {
+        auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "resident import test lost its Vulkan device");
+        const auto context = Probe(*device);
+        for (unsigned int pass = 0; pass < 2; ++pass) {
+            Require(AgcDriver::GuestMemory::CollectWritesUncached(address, bytes) != 0, "resident import collection failed");
+            Require(Fill(*device, address), "resident memory could not be filled after collecting its writes");
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(Graphics::HostImportCovers(context, address, ProbeBytes), "resident import did not cover its data");
+            Graphics::ClearHostImports(device->Device());
+        }
+        Require(Fill(*device, address), "resident memory could not be filled after collecting its writes");
+        std::uint32_t first = 0;
+        std::memcpy(&first, data, sizeof(first));
+        Require(first == 0x11111111u && data[ProbeBytes] == 0x37 && data[bytes - 1] == 0x37, "resident import lost the GPU fill or neighboring bytes");
+        Graphics::ClearHostImports(device->Device());
+    }
+    GuestAllocations::Mutation().Remove(data);
+    GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+    GuestArena::GuestArenaForgetSection_nid_postfix(section);
+    CloseHandle(section);
+#endif
+    return Outcome::Passed;
+}
+
+Outcome SmallMappingsImportOnFirstUse() {
+    GuestBlock small(GuestAlignment);
+    GuestBlock large(2 * GuestAlignment);
+    auto device = OpenVulkanTestDevice();
+    if (!device) return Outcome::NoDevice;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    if (context.hostImportAlignment == 0) return Outcome::NoImport;
+    for (auto* guest : {&small, &large}) {
+        Graphics::ClearHostImports(device->Device());
+        GuestAllocations::Mapped ranges;
+        for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+            if (range->address == guest->Address()) ranges.push_back(range);
+        }
+        Require(ranges.size() == 1, "mapped import test lost its registered range");
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(Graphics::ImportMappedRanges(context, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "mapped import test could not adopt the device");
+        }
+        Require(Graphics::HostImportCovers(context, guest->Address(), ProbeBytes) == (guest == &large), "mapping did not defer exactly the small import");
+        Require(Fill(*device, guest->Address()), "first GPU use could not import the mapped buffer");
+        Require(Graphics::HostImportCovers(context, guest->Address(), ProbeBytes), "first GPU use left the mapped buffer unimported");
+        constexpr std::array<std::uint32_t, 4> pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
+        for (std::size_t offset = 0; offset < ProbeBytes; offset += sizeof(std::uint32_t)) {
+            std::uint32_t actual = 0;
+            std::memcpy(&actual, guest->Data() + offset, sizeof(actual));
+            Require(actual == pattern[(offset / sizeof(actual)) % pattern.size()], "first GPU use changed the fill result");
+        }
+        for (std::size_t offset = ProbeBytes; offset < GuestAlignment; ++offset) {
+            Require(guest->Data()[offset] == 0, "first GPU use overwrote bytes outside the fill");
+        }
+    }
+    Graphics::ClearHostImports(device->Device());
+    return Outcome::Passed;
+}
+
 }
 
 int main() {
@@ -136,6 +218,8 @@ int main() {
         }
         const auto windows = WindowsFollowTheirRange();
         Require(windows == Outcome::Passed, "host import windows: the device stopped importing guest memory between two scenarios");
+        Require(ResidentMappingsImportAfterCollection() == Outcome::Passed, "resident import test failed");
+        Require(SmallMappingsImportOnFirstUse() == Outcome::Passed, "mapped import test lost its Vulkan device or host import support");
         std::puts("host import windows tests passed");
         return 0;
     } catch (const std::exception& error) {

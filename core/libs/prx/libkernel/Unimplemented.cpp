@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -123,6 +124,20 @@ int APS5_VABI sceKernelUnknown19(void) {
 }
 
 int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelGetProcessAbiType() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI __Ux86_64_setcontext() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -27,3 +27,12 @@ execute_process(COMMAND "${TOOL}" "${CAPTURE}/missing" RESULT_VARIABLE code OUTP
 if(NOT code STREQUAL "2" OR NOT errors MATCHES "cannot open")
     message(FATAL_ERROR "agc_pm4_replay exited with ${code} instead of 2 on a missing capture:\n${output}${errors}")
 endif()
+
+set(unicodeCapture "${CAPTURE}-ação-日本")
+file(REMOVE_RECURSE "${unicodeCapture}")
+file(COPY "${CAPTURE}/" DESTINATION "${unicodeCapture}")
+execute_process(COMMAND "${TOOL}" "${unicodeCapture}" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+file(REMOVE_RECURSE "${unicodeCapture}")
+if(NOT code STREQUAL "1" OR NOT output MATCHES "unreleased 1\n")
+    message(FATAL_ERROR "agc_pm4_replay exited with ${code} on a copy of the capture under a non-ASCII path:\n${output}${errors}")
+endif()

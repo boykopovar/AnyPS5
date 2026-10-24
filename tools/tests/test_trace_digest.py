@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +47,25 @@ STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll
 
 
 class TraceDigestTests(unittest.TestCase):
+    def test_cli_rejects_invalid_event_container_shapes_without_partial_output(self):
+        cases = [(value, "trace must be an event array or object") for value in (None, True, 7, "trace")]
+        cases += [({"traceEvents": value}, "traceEvents must be an array")
+                  for value in (None, False, 0, "", {}, "events")]
+        cases += [([value], "trace event 0 must be an object") for value in (None, True, 7, "event", [])]
+        cases.append(({"traceEvents": [{}, None]}, "trace event 1 must be an object"))
+        for document, message in cases:
+            for compressed in (False, True):
+                with self.subTest(document=document, compressed=compressed):
+                    path = Path(self.directory.name) / ("invalid.json.gz" if compressed else "invalid.json")
+                    data = json.dumps(document).encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAIL: " + message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_reports_unreadable_inputs_without_partial_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -123,6 +143,8 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(empty_dict.presents, [])
         empty_list = trace_digest.Trace([])
         self.assertEqual(empty_list.presents, [])
+        empty_events = trace_digest.Trace({"traceEvents": []})
+        self.assertEqual(empty_events.presents, [])
 
     def result(self):
         return trace_digest.digest(trace_digest.load_trace(self.trace), trace_digest.load_summary(None, self.trace),
@@ -554,6 +576,36 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("summary file not found", error.getvalue())
 
+    def test_thread_filter_keeps_frame_bounds_and_capture_summary(self):
+        command = [sys.executable, trace_digest.__file__, str(self.trace)]
+        result = subprocess.run([*command, "--thread", "queue worker 0x0", "--json"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["frames"], 3)
+        self.assertEqual(report["summary"], SUMMARY)
+        self.assertEqual(report["thread_filter"], ["queue worker 0x0"])
+        self.assertEqual([thread["thread"] for thread in report["threads"]], ["queue worker 0x0"])
+        self.assertTrue(all("Present" not in entry["name"] for entry in report["top_slices_ms_per_frame"]))
+        self.assertTrue(all(wait["thread"] == "queue worker 0x0" for wait in report["longest_waits"]))
+        result = subprocess.run([*command, "--thread", "presenter", "--thread", "queue worker 0x0", "--json"],
+                                capture_output=True, text=True)
+        unfiltered = trace_digest.digest(trace_digest.load_trace(self.trace), SUMMARY)
+        report = json.loads(result.stdout)
+        del report["thread_filter"]
+        self.assertEqual(report, unfiltered)
+        result = subprocess.run([*command, "--thread", "presenter"], capture_output=True, text=True)
+        self.assertIn("Thread filter:", result.stdout)
+        self.assertIn("capture-wide", result.stdout)
+        result = subprocess.run([*command, "--thread", "misspelled"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown thread", result.stderr)
+        self.assertEqual(result.stdout, "")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace.with_suffix(".jsonl")),
+                                 "--thread", "presenter"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("event trace", result.stderr)
+
+
 
 def interval_line(start, end, p99, gpu_ms, **changes):
     line = dict(SUMMARY, window={"spec": "summary_every 30", "first_present": 0, "ms": (end - start) * 1000.0}, interval_start_s=start, interval_end_s=end,
@@ -692,6 +744,33 @@ class IntervalDigestTests(unittest.TestCase):
             summary_file.write_bytes(b"\xef\xbb\xbf" + json.dumps(SUMMARY).encode("utf-8") + b"\n")
             loaded = trace_digest.load_summary(str(summary_file), SUMMARY["trace"])
             self.assertEqual(loaded["commit"], SUMMARY["commit"])
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(trace_digest.sys, "stdout", out), mock.patch.object(trace_digest.sys, "stderr", err):
+            try:
+                trace_digest.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

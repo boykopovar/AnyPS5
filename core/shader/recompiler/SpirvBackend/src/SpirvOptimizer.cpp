@@ -3,16 +3,59 @@
 #include <spirv-tools/optimizer.hpp>
 #include <spirv/unified1/spirv.hpp>
 #include <array>
+#include <atomic>
 #include <cstdlib>
+#include <exception>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 
 namespace ShaderRecompiler {
 
 namespace {
 
 constexpr std::uint32_t ScalarReplacementLimit = 64;
+constexpr std::uintptr_t InlineOptimizerStackBytes = 256 * 1024;
+
+std::atomic<std::uint64_t> optimizerHostThreads{0};
+
+bool StackHoldsOptimizer() {
+#ifdef _WIN32
+    ULONG_PTR low = 0;
+    ULONG_PTR high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+#else
+    struct Bounds {
+        std::uintptr_t low = 0;
+        std::uintptr_t high = 0;
+        Bounds() {
+            pthread_attr_t attributes;
+            if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
+            void* base = nullptr;
+            std::size_t size = 0;
+            if (pthread_attr_getstack(&attributes, &base, &size) == 0 && base != nullptr) {
+                low = reinterpret_cast<std::uintptr_t>(base);
+                high = low + size;
+            }
+            pthread_attr_destroy(&attributes);
+        }
+    };
+    thread_local const Bounds bounds;
+    const auto low = bounds.low;
+    const auto high = bounds.high;
+#endif
+    const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
+    return frame >= low && frame < high && frame - low >= InlineOptimizerStackBytes;
+}
 
 bool HasLimitedUseTypes(std::span<const std::uint32_t> spirv) {
     if (spirv.size() < 5) throw std::runtime_error("SPIRV-Tools: incomplete module header");
@@ -101,9 +144,7 @@ std::vector<std::uint32_t> CollapseBlockBallots(std::span<const std::uint32_t> s
     return collapsed;
 }
 
-}
-
-std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand, bool optimize, bool specialize) {
+std::vector<std::uint32_t> ValidateAndOptimizeSpirvInline(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand, bool optimize, bool specialize) {
     spv_target_env environment;
     const auto apiVersion = vulkanVersion & ~0xfffu;
     std::uint32_t maxSpirvVersion = 0;
@@ -219,6 +260,29 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
         throw std::runtime_error("SPIR-V validation after optimization failed:\n" + diagnostics);
     }
     return optimized;
+}
+
+}
+
+std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand, bool optimize, bool specialize) {
+    if (StackHoldsOptimizer()) return ValidateAndOptimizeSpirvInline(spirv, vulkanVersion, spirvVersion, allowOffsetTextureOperand, optimize, specialize);
+    std::vector<std::uint32_t> result;
+    std::exception_ptr failure;
+    std::thread host([&] {
+        try {
+            result = ValidateAndOptimizeSpirvInline(spirv, vulkanVersion, spirvVersion, allowOffsetTextureOperand, optimize, specialize);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    optimizerHostThreads.fetch_add(1, std::memory_order_relaxed);
+    host.join();
+    if (failure) std::rethrow_exception(failure);
+    return result;
+}
+
+std::uint64_t OptimizerHostThreads() {
+    return optimizerHostThreads.load(std::memory_order_relaxed);
 }
 
 }

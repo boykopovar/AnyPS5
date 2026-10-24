@@ -1,4 +1,6 @@
+import contextlib
 import copy
+import io
 import json
 import os
 import stat
@@ -10,6 +12,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pad_input
 import pad_timeline
 
 
@@ -71,6 +74,26 @@ class TimelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 pad_timeline.compile_timeline(self.document, 1, repeat, gap)
 
+    def test_repeated_event_count_at_capacity(self):
+        rows = pad_timeline.compile_timeline(self.document, 42, 2048, 0).splitlines()
+        self.assertEqual(rows[0], "APS5_PAD_TIMELINE 1 42 4096")
+        self.assertEqual(len(rows) - 1, 4096)
+        self.assertEqual(rows[1:3], ["200 100 18432", "500 200 64"])
+        self.assertEqual(rows[2047:2051], [
+            "716300 100 18432", "716600 200 64", "717000 100 18432", "717300 200 64",
+        ])
+        self.assertEqual(rows[-2:], ["1433100 100 18432", "1433400 200 64"])
+        with self.assertRaisesRegex(ValueError, "1 to 4096 events after repetition"):
+            pad_timeline.compile_timeline(self.document, 42, 2049, 0)
+
+    def test_repeated_duration_includes_inter_iteration_gaps_only(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 5000, "buttons": ["cross"]}]}
+        self.assertEqual(
+            pad_timeline.compile_timeline(document, 42, 2, 3590000),
+            "APS5_PAD_TIMELINE 1 42 2\n0 5000 16384\n3595000 5000 16384\n")
+        with self.assertRaisesRegex(ValueError, "repeated timeline exceeds one hour"):
+            pad_timeline.compile_timeline(document, 42, 2, 3590001)
+
     def test_sequence_bounds(self):
         for sequence in [0, -1, True, 2**64]:
             with self.assertRaises(ValueError):
@@ -131,6 +154,26 @@ class TimelineTests(unittest.TestCase):
             os.link(timeline, linked)
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
+
+    def test_sequence_advances_past_existing_command_after_clock_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            with mock.patch.object(sys, "argv", ["pad_timeline.py", str(timeline), str(output)]), \
+                    mock.patch.object(pad_input.time, "monotonic_ns", return_value=1000), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                output.write_text("2000 16384 300\n", encoding="utf-8")
+                pad_timeline.main()
+                self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 2001 2\n"))
+                pad_timeline.main()
+                self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 2002 2\n"))
+                exhausted = f"{2**64 - 1} 16384 300\n"
+                output.write_text(exhausted, encoding="utf-8")
+                with self.assertRaises(SystemExit) as error:
+                    pad_timeline.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(output.read_text(encoding="utf-8"), exhausted)
 
 
 if __name__ == "__main__":

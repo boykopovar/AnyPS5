@@ -150,7 +150,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             }
 
             if (info.SegmentPrefix == 0x65 && !insidePrevious) {
-                gsTraps.emplace_back(rva, info.Length);
+                if (info.HasMemoryOperand)
+                    gsTraps.emplace_back(rva, info.Length);
                 continue;
             }
             if (info.SegmentPrefix != 0 && !(insidePrevious && info.SegmentPrefix != 0x64)) {

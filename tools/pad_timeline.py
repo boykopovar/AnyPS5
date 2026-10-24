@@ -4,9 +4,8 @@ import os
 import stat
 from pathlib import Path
 import tempfile
-import time
 
-from pad_input import BUTTONS
+from pad_input import BUTTONS, next_sequence
 
 
 def integer(value, field, minimum, maximum):
@@ -88,7 +87,7 @@ def main():
         if args.timeline.resolve() == args.path.resolve() or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
             raise ValueError("the command file must be separate from the timeline JSON")
         document = json.loads(args.timeline.read_text(encoding="utf-8"))
-        text = compile_timeline(document, time.monotonic_ns(), args.repeat, args.gap_ms)
+        text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
     except (OSError, ValueError) as error:
         parser.exit(2, f"pad_timeline: {error}\n")

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -5,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -38,8 +40,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size);
 
 namespace {
 
@@ -191,9 +191,9 @@ void testContextAndBases() {
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
     execute(state, makePacket(0x12, {0}));
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore stencil defaults");
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
@@ -321,6 +321,45 @@ void testIndexedDraw() {
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "guest");
 }
 
+void testIndirectDrawRange() {
+    AgcDriver::QueueState state;
+    alignas(4) std::array<std::uint32_t, 1> indices{};
+    state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
+    state.indexBufferSize = 1;
+    state.indexType = 1;
+    state.userConfig[0x24a] = 0;
+    for (const auto opcode : {0x24u, 0x25u, 0x2cu, 0x38u}) {
+        const bool indexed = opcode == 0x25 || opcode == 0x38;
+        const bool multi = opcode == 0x2c || opcode == 0x38;
+        const std::uint32_t recordBytes = indexed ? 20u : 16u;
+        const std::uint32_t initiator = indexed ? 0u : 2u;
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        const auto wrapping = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, 1, 0, 0, recordBytes, initiator})
+                                    : makePacket(opcode, {0, 0x280, 0x280, initiator});
+        expectFailure([&] { AgcDriver::Pm4::ResolveDraw(wrapping, state); }, "record range overflow");
+        for (const auto count : {1u, 3u, std::numeric_limits<std::uint32_t>::max()}) {
+            if (!multi && count != 1) continue;
+            for (const auto stride : {recordBytes, 64u, 0xfffffffcu}) {
+                if (!multi && stride != recordBytes) continue;
+                const auto packet = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, count, 0, 0, stride, initiator})
+                                          : makePacket(opcode, {0, 0x280, 0x280, initiator});
+                const auto bytes = static_cast<std::uint64_t>(count - 1) * stride + recordBytes;
+                state.drawIndirectBase = (std::numeric_limits<std::uint64_t>::max() - bytes) & ~std::uint64_t{3};
+                const auto draw = AgcDriver::Pm4::ResolveDraw(packet, state);
+                check(draw.indirect.has_value() && draw.indirect->RangeBytes() == bytes, "indirect draw rejected or changed a fitting record range");
+                state.drawIndirectBase += 4;
+                expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "record range overflow");
+            }
+        }
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        if (multi) {
+            const auto empty = makePacket(opcode, {0, 0x280, 0x280, 0x280, 0, 0, 0, recordBytes, initiator});
+            const auto draw = AgcDriver::Pm4::ResolveDraw(empty, state);
+            check(draw.indirect.has_value() && draw.indirect->RangeBytes() == 0, "empty indirect draw consumed a record");
+        }
+    }
+}
+
 void testIndirectDraw() {
     check(AgcDriver::Pm4::AccessesMemory(0xc0032400u) && AgcDriver::Pm4::AccessesMemory(0xc0083800u), "indirect draws must synchronize guest memory");
     check(AgcDriver::Pm4::UnsupportedReason(0xc0032400u).empty() && AgcDriver::Pm4::UnsupportedReason(0xc0082c00u).empty(), "indirect draws are rejected");
@@ -362,8 +401,17 @@ void testIndirectDraw() {
     alignas(4) std::array<std::uint16_t, 8> indices{};
     state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
     state.indexType = 0;
+    state.indexBufferSize.reset();
+    const auto unlimited = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
+    check(unlimited.indexed && unlimited.indirect && !unlimited.indirect->indexLimitKnown && unlimited.indexCount == 0 && unlimited.indexAddress == state.indexBase && unlimited.indexSize == 2 && unlimited.indirect->recordBytes == 20, "an indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    const auto unlimitedMulti = AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state);
+    check(unlimitedMulti.indirect && !unlimitedMulti.indirect->indexLimitKnown && unlimitedMulti.indirect->count == 3 && unlimitedMulti.indirect->stride == 20, "a multi indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    execute(state, makePacket(0x13, {0}));
+    check(state.indexBufferSize.has_value() && *state.indexBufferSize == 0, "INDEX_BUFFER_SIZE of zero was not recorded as written");
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state); }, "INDEX_BUFFER_SIZE");
+    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state); }, "INDEX_BUFFER_SIZE");
     state.indexBufferSize = 8;
+    check(AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state).indirect->indexLimitKnown, "a written INDEX_BUFFER_SIZE resolved with an unknown limit");
     const auto indexed = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
     check(indexed.indexed && indexed.indexAddress == state.indexBase && indexed.indexCount == 8 && indexed.indexSize == 2 && indexed.indirect->recordBytes == 20 && indexed.indirect->stride == 20 && indexed.firstVertex == 0 && indexed.indirect->indxOffset == 0, "indexed indirect draw mismatch");
     check(indexed.indirect->VertexDwordOffset() == 12 && indexed.indirect->InstanceDwordOffset() == 16, "indexed record geometry mismatch");
@@ -1020,8 +1068,9 @@ void testInvalidRegisterListEntries() {
     check(!AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 2>{0xffffffffu, 0}), "the sentinel was taken as a register offset");
     check(AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 4>{0x10, 1, 0x70000011u, 2}), "a valid register list was rejected");
     AgcDriver::QueueState state;
+    const auto initial = state.context;
     expectFailure([&] { AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state); }, "extended register");
-    check(!state.context.contains(0x10) && !state.context.contains(0x11), "a rejected register list partially changed state");
+    check(state.context == initial, "a rejected register list partially changed state");
     AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state, true);
     check(state.context.at(0x10) == 41 && state.context.at(0x11) == 42 && !state.context.contains(0x38f), "skipping an invalid entry lost the valid ones or wrote the invalid one");
 }
@@ -1076,6 +1125,72 @@ void testIndexAttributesReadAtExecution() {
     std::atomic_ref<std::uint32_t>(gate).store(1);
     AgcDriverWaitIdle_nid_postfix();
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "INDEX_ATTRIBUTES_INDIRECT did not read its record when the packet ran");
+}
+
+void testReleaseMemDataSelects() {
+    alignas(8) static std::uint64_t target = 0;
+    const auto release = [](std::uint32_t select) { return makePacket(0x49, {0x0030c514, select << 29u, low(&target), high(&target), 1, 0, 0}); };
+    for (std::uint32_t select = 0; select <= 3; ++select) AgcDriver::Pm4::Validate(release(select), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(4), 0); }, "64-bit system counter (DATA_SEL 4)");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(5), 0); }, "GDS RELEASE_MEM data");
+    for (const auto select : {6u, 7u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(select), 0); }, "reserved RELEASE_MEM DATA_SEL");
+}
+
+void testMemSemaphore() {
+    alignas(8) static std::uint64_t semaphore = 0;
+    alignas(8) static std::uint32_t marker = 0;
+    const auto packet = [](std::uint32_t control) { return makePacket(0x39, {low(&semaphore), high(&semaphore), control}); };
+    check(AgcDriver::Pm4::AccessesMemory(packet(0xc0100000u)[0]), "MEM_SEMAPHORE must synchronize guest memory");
+    for (const auto queue : {0u, 0x20u}) {
+        AgcDriver::Pm4::Validate(packet(0xc0100000u), queue);
+        AgcDriver::Pm4::Validate(packet(0xe0000000u), queue);
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xe0010000u), 0); }, "mailbox");
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xa0000000u), 0); }, "MEM_SEMAPHORE operation");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore), high(&semaphore), 0xc0100000u, 0}), 0); }, "packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {0, 0, 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore) + 4, high(&semaphore), 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+
+    semaphore = 0x500000000ull;
+    auto words = packet(0xc0100000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE signal of type 1 did not write 1");
+
+    semaphore = 5;
+    words = packet(0xc0000000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 6, "a MEM_SEMAPHORE signal of type 0 did not increment");
+
+    constexpr std::uint64_t queueSignals = 2000, cpuSignals = 200000;
+    semaphore = 0;
+    std::vector<std::uint32_t> graphicsWords, computeWords;
+    for (std::uint64_t index = 0; index < queueSignals; ++index) {
+        const auto signal = packet(0xc0000000u);
+        graphicsWords.insert(graphicsWords.end(), signal.begin(), signal.end());
+        computeWords.insert(computeWords.end(), signal.begin(), signal.end());
+    }
+    std::thread cpu([] {
+        for (std::uint64_t index = 0; index < cpuSignals; ++index) std::atomic_ref<std::uint64_t>(semaphore).fetch_add(1);
+    });
+    submitWords(graphicsWords);
+    submitWords(computeWords, 0x20);
+    cpu.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 2 * queueSignals + cpuSignals, "competing MEM_SEMAPHORE signals of type 0 lost an increment");
+
+    semaphore = 0;
+    marker = 0;
+    words = joinPackets({packet(0xe0000000u), makePacket(0x49, {0x0030c514, 0x20000000, low(&marker), high(&marker), 1, 0, 0})});
+    submitWords(words);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 0, "a MEM_SEMAPHORE wait passed a zero semaphore");
+    std::atomic_ref<std::uint64_t>(semaphore).store(2);
+    for (int waited = 0; waited < 2000 && std::atomic_ref<std::uint32_t>(marker).load() == 0; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 1, "work after a signalled MEM_SEMAPHORE wait never ran");
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE wait did not take one from the semaphore");
 }
 
 void testSuspendPointWritesQueuedLabels() {
@@ -1158,6 +1273,11 @@ void testConditionalSubmission() {
     rejected(joinPackets({sentinel, indirectBuffer(unaligned)}), "ends inside a packet");
     rejected(joinPackets({sentinel, indirectBuffer(overlong), writeWord(results[13], 1)}), "exceeds its command buffer");
     check(results[13] == 0, "a rejected conditional submission executed a guarded packet");
+}
+
+void testRewindPayloadBits() {
+    for (const auto payload : {0x00000000u, 0x80000000u, 0x01000000u, 0x81000000u}) AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0);
+    for (const auto payload : {0x82000000u, 0x80000001u, 0x00800000u}) expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0); }, "unsupported REWIND payload bits");
 }
 
 void testNopPadSubmission() {
@@ -1631,6 +1751,53 @@ void testStallWatchdogRewind() {
     check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 REWIND 00000000") != std::string::npos; }), "the stall dump does not decode the stalled REWIND");
 }
 
+void testRewindTailTrace() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    if (DrawPipeline::Depth() == 0) throw std::runtime_error("the REWIND trace test needs the pipelined draw path");
+    check(AgcDriver::PerformanceTrace::Configured(), "the REWIND trace test runs without a trace window");
+    const char* directory = std::getenv("APS5_TRACE_DIR");
+    check(directory != nullptr, "the REWIND trace test has no APS5_TRACE_DIR");
+    const auto summaryPath = std::filesystem::path(directory) / "aps5-summary.jsonl";
+    std::filesystem::remove(summaryPath);
+    alignas(8) static std::uint32_t started = 0;
+    static auto warm = joinPackets({writeWord(started, 1)});
+    submitWords(warm);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(started).load() == 1, "the queue worker did not start");
+    constexpr std::size_t Tails = 12;
+    alignas(8) static std::array<std::uint32_t, Tails> gates{};
+    alignas(8) static std::uint32_t done = 0;
+    static std::vector<std::uint32_t> words;
+    words.clear();
+    for (std::size_t index = 0; index < Tails; ++index) {
+        const auto rewind = makePacket(0x59, {0x80000000u});
+        const auto wait = makePacket(0x3c, {0x13, low(&gates[index]), high(&gates[index]), 1, 0xffffffffu, 0x19});
+        words.insert(words.end(), rewind.begin(), rewind.end());
+        words.insert(words.end(), wait.begin(), wait.end());
+    }
+    const auto last = writeWord(done, 1);
+    words.insert(words.end(), last.begin(), last.end());
+    AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+    submitWords(words);
+    for (auto& gate : gates) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the last REWIND tail did not run");
+    AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+    AgcDriver::PerformanceTrace::StopOutput();
+    std::ifstream summary(summaryPath);
+    std::string line;
+    check(static_cast<bool>(std::getline(summary, line)), "the trace window wrote no summary line");
+    const std::string_view key = "\"worker_busy_pct\":{\"queue worker 0x0\":";
+    const auto at = line.find(key);
+    check(at != std::string::npos, "the summary line has no busy share for queue worker 0x0");
+    const double busy = std::strtod(line.c_str() + at + key.size(), nullptr);
+    std::printf("queue worker 0x0 busy over %zu released REWIND tails: %.1f%%\n", Tails, busy);
+    check(busy <= 150.0, "the queue worker's busy share counts nested REWIND tails more than once");
+}
+
 struct RenderingGateState {
     std::mutex mutex;
     std::condition_variable changed;
@@ -1858,7 +2025,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
@@ -1879,6 +2046,7 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();
         testRegisters();
@@ -1886,6 +2054,7 @@ int main(int argc, char** argv) {
         testContextAndBases();
         testIndexedDraw();
         testAutoDraw();
+        testIndirectDrawRange();
         testIndirectDraw();
         testIndexAttributesIndirect();
         testMemory();
@@ -1896,6 +2065,7 @@ int main(int argc, char** argv) {
         testConditionalValidation();
         testConditionReadSynchronization();
         testEventWrite();
+        testReleaseMemDataSelects();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();
@@ -1910,6 +2080,7 @@ int main(int argc, char** argv) {
         testPredicatedSubmission();
         testConditionalSubmission();
         testSuspendPointWritesQueuedLabels();
+        testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
         testWaitRegMemMasking();

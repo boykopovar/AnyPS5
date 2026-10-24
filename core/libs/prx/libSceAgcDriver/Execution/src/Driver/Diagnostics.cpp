@@ -1,7 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include <cstdio>
 #include <cstdlib>
+#include <mutex>
+#include <set>
 #include <stdexcept>
+#include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
@@ -13,6 +17,23 @@ double TraceMs() {
 std::uint64_t SkippedShader() {
     static const std::uint64_t skipped = [] { const char* text = std::getenv("APS5_SKIP_SHADER"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
     return skipped;
+}
+
+bool SkipRefusedDraws() {
+    static const bool skip = std::getenv("APS5_SKIP_REFUSED_DRAWS") != nullptr;
+    return skip;
+}
+
+void ReportRefusedDraw(const RefusedDraw& refused) {
+    static std::mutex reportedMutex;
+    static std::set<std::uint64_t> reported;
+    {
+        std::lock_guard lock(reportedMutex);
+        if (!reported.insert(refused.address).second) return;
+    }
+    const std::string_view what = refused.what();
+    const auto line = what.substr(0, what.find('\n'));
+    std::fprintf(stderr, "[gpu] APS5_SKIP_REFUSED_DRAWS: skipping the draws that use shader 0x%llx: %.*s\n", static_cast<unsigned long long>(refused.address), static_cast<int>(line.size()), line.data());
 }
 
 void require(bool condition, const char* reason) {

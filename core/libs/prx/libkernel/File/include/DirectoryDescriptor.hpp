@@ -20,7 +20,7 @@ std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd);
 void ForgetDirectoryDescriptor(int fd);
 void DuplicateDirectoryDescriptor(int from, int to);
 std::optional<std::int64_t> SeekDirectoryDescriptor(int fd, std::int64_t offset, int whence);
-int ReadDirectoryDescriptor(int fd, char* buf, int nbytes);
+int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base = nullptr);
 
 }
 

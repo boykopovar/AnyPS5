@@ -23,6 +23,7 @@ constexpr int SYSTEM_SERVICE_PARAM_ID_TIME_ZONE = 4;
 constexpr int SYSTEM_SERVICE_PARAM_ID_SUMMERTIME = 5;
 constexpr int SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME = 6;
 constexpr int SYSTEM_SERVICE_PARAM_ID_GAME_PARENTAL_LEVEL = 7;
+constexpr int SYSTEM_SERVICE_PARAM_ID_100 = 100;
 constexpr int SYSTEM_SERVICE_PARAM_ID_400 = 400;
 constexpr int SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN = 1000;
 
@@ -34,8 +35,6 @@ constexpr int SYSTEM_SERVICE_PARAM_LANG_ARABIC = 21;
 constexpr int SYSTEM_SERVICE_PARAM_LANG_UKRAINIAN = 30;
 constexpr int SYSTEM_SERVICE_PARAM_DATE_FORMAT_DDMMYYYY = 1;
 constexpr int SYSTEM_SERVICE_PARAM_TIME_FORMAT_24HOUR = 1;
-constexpr int SYSTEM_SERVICE_PARAM_GAME_PARENTAL_OFF = 0;
-constexpr int SYSTEM_SERVICE_PARAM_ENTER_BUTTON_CROSS = 1;
 
 inline int SystemServiceConsoleLanguage(std::string_view caller) {
     const char* configured = std::getenv("ANYPS5_LANGUAGE");

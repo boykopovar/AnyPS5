@@ -1,8 +1,12 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/System/include/HostCpu.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -19,22 +23,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI getpid_nid_postfix();
-extern "C" std::uint64_t APS5_VABI sceKernelGetTscFrequency(void);
-struct GuestRlimit {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-extern "C" int APS5_VABI getrlimit_nid_postfix(int resource, GuestRlimit* limit);
-
-struct SceKernelSystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
 
 namespace {
 
@@ -67,6 +55,16 @@ constexpr SystemString SystemStrings[] = {
     {{6, 1}, "hw.machine", "amd64"},
 };
 
+struct SystemInteger {
+    int mib[2];
+    const char* name;
+    std::int32_t value;
+};
+
+constexpr SystemInteger SystemIntegers[] = {
+    {{1, 24}, "kern.osreldate", 1104001},
+};
+
 const SystemString* FindSystemString(const int* name) {
     for (const auto& entry : SystemStrings) {
         if (name[0] == entry.mib[0] && name[1] == entry.mib[1]) return &entry;
@@ -74,8 +72,26 @@ const SystemString* FindSystemString(const int* name) {
     return nullptr;
 }
 
+const SystemInteger* FindSystemInteger(const int* name) {
+    for (const auto& entry : SystemIntegers) {
+        if (name[0] == entry.mib[0] && name[1] == entry.mib[1]) return &entry;
+    }
+    return nullptr;
+}
+
 bool IsLeafMib(const int* name) {
-    return (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 37 || name[1] == 50));
+    return FindSystemInteger(name) != nullptr || (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 21 || name[1] == 37 || name[1] == 50));
+}
+
+KernelTimeval BootTime() {
+    static const KernelTimeval bootTime = [] {
+        KernelTimespec now{};
+        KernelTimespec uptime{};
+        if (clock_gettime_nid_postfix(0, &now) != 0 || clock_gettime_nid_postfix(5, &uptime) != 0) throw std::runtime_error("kern.boottime: reading CLOCK_REALTIME or CLOCK_UPTIME failed");
+        const std::int64_t nanos = (now.tv_sec - uptime.tv_sec) * 1000000000LL + now.tv_nsec - uptime.tv_nsec;
+        return KernelTimeval{nanos / 1000000000LL, nanos % 1000000000LL / 1000LL};
+    }();
+    return bootTime;
 }
 
 bool IsMeasuredAbsentMib(const int* name, std::uint32_t nameLength) {
@@ -175,7 +191,7 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
             result = 128;
             break;
         case 5: { // _SC_OPEN_MAX
-            GuestRlimit limit{};
+            GuestResourceLimit limit{};
             if (getrlimit_nid_postfix(8, &limit) == 0) {
                 result = limit.rlim_cur;
             }
@@ -281,6 +297,13 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             }
             return CopyOut(entry->value, std::strlen(entry->value) + 1, oldValue, oldLength);
         }
+        if (const auto* entry = FindSystemInteger(name)) {
+            if (newValue != nullptr) {
+                *__error_nid_postfix() = 1;
+                return -1;
+            }
+            return CopyOut(&entry->value, sizeof(entry->value), oldValue, oldLength);
+        }
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 12) {
         if (newValue != nullptr) {
@@ -299,6 +322,21 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
     }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength != 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        if (name[3] != getpid_nid_postfix()) {
+            *__error_nid_postfix() = 3;
+            return -1;
+        }
+        return CopyOut(nullptr, 0, oldValue, oldLength);
+    }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 32) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
@@ -314,6 +352,14 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         }
         const auto entries = GuestVmEntries();
         return CopyOut(entries.data(), entries.size() * sizeof(GuestVmEntry), oldValue, oldLength);
+    }
+    if (nameLength == 2 && name[0] == 1 && name[1] == 21) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        const KernelTimeval bootTime = BootTime();
+        return CopyOut(&bootTime, sizeof(bootTime), oldValue, oldLength);
     }
     if (nameLength == 2 && name[0] == 1 && name[1] == 37) {
         if (newValue != nullptr) {
@@ -360,6 +406,9 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
     for (const auto& entry : SystemStrings) {
         if (std::strcmp(name, entry.name) == 0) return sysctl_nid_postfix(entry.mib, 2, oldValue, oldLength, newValue, newLength);
     }
+    for (const auto& entry : SystemIntegers) {
+        if (std::strcmp(name, entry.name) == 0) return sysctl_nid_postfix(entry.mib, 2, oldValue, oldLength, newValue, newLength);
+    }
     if (IsUnansweredName(name)) {
         if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": writing " + name);
         *__error_nid_postfix() = 2;
@@ -368,6 +417,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
     if (std::strcmp(name, "kern.proc.pathname") == 0) {
         static constexpr int mib[] = {1, 14, 12};
         return sysctl_nid_postfix(mib, 3, oldValue, oldLength, newValue, newLength);
+    }
+    if (std::strcmp(name, "kern.boottime") == 0) {
+        static constexpr int mib[] = {1, 21};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "kern.arandom") == 0) {
         static constexpr int mib[] = {1, 37};
@@ -425,7 +478,8 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {6, 12};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 
 int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* version) {
@@ -435,6 +489,31 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     std::memset(version->versionString, 0, sizeof(version->versionString));
     std::memcpy(version->versionString, "01.000.000", sizeof("01.000.000"));
     version->version = 0x01000000;
+    return 0;
+}
+
+int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
+    if (first == nullptr || second == nullptr) {
+        return 22;
+    }
+    *first = '\0';
+    *second = '\0';
+    return 0;
+}
+
+int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
+    if (version == nullptr) {
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
+    *version = '\0';
+    return 0;
+}
+
+int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* version) {
+    if (version == nullptr) {
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
+    *version = 0;
     return 0;
 }
 
@@ -453,6 +532,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"hw.physmem", {6, 5}, 2},
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},
+        {"kern.boottime", {1, 21}, 2},
         {"kern.clockrate", {1, 12}, 2},
         {"kern.maxfiles", {1, 7}, 2},
         {"kern.maxfilesperproc", {1, 27}, 2},
@@ -484,6 +564,10 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     for (const auto& entry : SystemStrings) {
         if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, 2);
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
+    for (const auto& entry : SystemIntegers) {
+        if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, 2);
+    }
+    *__error_nid_postfix() = 2;
+    return -1;
 }
 }

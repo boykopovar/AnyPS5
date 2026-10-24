@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
@@ -67,6 +68,7 @@ void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
 std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* function) {
     Reserve(buffer, count, function);
     auto* result = buffer->cursor_up;
+    AgcDriverPrepareCommandWrite_nid_no_patch(reinterpret_cast<std::uint64_t>(result), static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     buffer->cursor_up += count;
     return result;
 }

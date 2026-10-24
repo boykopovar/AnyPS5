@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import io
 import json
@@ -12,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_web
 import package_release
+import test_web
 
 FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "output-directory.mjs", "worker.mjs",
          "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
@@ -115,6 +117,94 @@ class WebReleaseTests(unittest.TestCase):
             build_web.main()
         self.assertEqual((self.output / "native/relinker_wasm.wasm").read_bytes(), self.contents["native/relinker_wasm.wasm"])
         self.assertEqual((self.output / "index.html").read_bytes(), self.contents["index.html"])
+
+    def test_publication_replaces_obsolete_files_and_directory_conflicts(self):
+        self.seed_previous()
+        conflict = self.output / "native/relinker_wasm.mjs"
+        conflict.mkdir()
+        (conflict / "obsolete.txt").write_bytes(b"previous layout")
+        self.publish()
+        expected = {*FILES, "web-release.json", "release.json", ".nojekyll"}
+        manifest = json.loads((self.output / "release.json").read_text())
+        expected.update(asset["path"] for asset in manifest["platforms"].values())
+        self.assertEqual(set(self.snapshot()), expected)
+        for name, content in self.contents.items():
+            self.assertEqual((self.output / name).read_bytes(), content)
+
+    def test_failed_publication_restores_the_previous_site(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        rename = Path.rename
+
+        def failed_rename(path, destination):
+            if path != self.output and Path(destination) == self.output and path.name == "site":
+                raise PermissionError("publication blocked")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", failed_rename):
+            with self.assertRaisesRegex(PermissionError, "publication blocked"):
+                self.publish()
+        self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_failed_first_publication_leaves_no_output(self):
+        self.output.rmdir()
+        rename = Path.rename
+
+        def failed_rename(path, destination):
+            if Path(destination) == self.output:
+                raise PermissionError("publication blocked")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", failed_rename):
+            with self.assertRaisesRegex(PermissionError, "publication blocked"):
+                self.publish()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_output_file_is_rejected_without_replacing_it(self):
+        self.output.rmdir()
+        self.output.write_bytes(b"unrelated file")
+        with self.assertRaisesRegex(ValueError, "Release output is not a directory"):
+            self.publish()
+        self.assertEqual(self.output.read_bytes(), b"unrelated file")
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_failed_backup_keeps_the_previous_site(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        rename = Path.rename
+
+        def failed_rename(path, destination):
+            if path == self.output:
+                raise PermissionError("previous site is in use")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", failed_rename):
+            with self.assertRaisesRegex(PermissionError, "previous site is in use"):
+                self.publish()
+        self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_failed_restoration_retains_the_backup_and_reports_its_path(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        rename = Path.rename
+
+        def failed_rename(path, destination):
+            if path != self.output and Path(destination) == self.output:
+                raise PermissionError("destination is unavailable")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", failed_rename):
+            with self.assertRaisesRegex(RuntimeError, "Previous site is preserved at") as error:
+                self.publish()
+        temporary, = self.build.glob(".web-release-*")
+        backup = temporary / "previous"
+        self.assertIn(str(backup), str(error.exception))
+        self.assertEqual({path.relative_to(backup).as_posix(): path.read_bytes()
+                          for path in backup.rglob("*") if path.is_file()}, previous)
+        self.assertFalse(self.output.exists())
 
     def test_release_mode_does_not_require_a_local_wasm_build(self):
         with patch.object(build_web, "request", self.request), \
@@ -285,6 +375,66 @@ class WebPackageTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("--revision", result.stderr)
                 self.assertEqual(self.asset.read_bytes(), b"previous asset")
+
+
+class TestWebRunnerTests(unittest.TestCase):
+    def test_main_rejects_missing_archive_file_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            build.mkdir()
+            with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("archive module does not exist", err.getvalue())
+
+    def test_main_rejects_archive_missing_zip_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_text("const x = 1;\n", encoding="utf-8")
+            with patch("subprocess.run"):
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                    test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("zip library URL not found", err.getvalue())
+
+    def test_main_decodes_archive_with_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_text('\ufefffrom "https://cdn.jsdelivr.net/example/zip.mjs";\n', encoding="utf-8")
+            with patch("subprocess.run"), \
+                    patch("urllib.request.urlopen") as mock_url:
+                mock_resp = mock_url.return_value.__enter__.return_value
+                mock_resp.read.return_value = b"zip-content"
+                result = test_web.main(["--build", str(build)])
+                self.assertEqual(result, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                return len(text)
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(test_web.sys, "stdout", out), patch.object(test_web.sys, "stderr", err):
+            with self.assertRaises(SystemExit) as error:
+                test_web.main([])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include <cstdint>
@@ -6,11 +7,6 @@
 #include <initializer_list>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capacity,
-                               const ime_filter::FilterParam* param, const char16_t* src, uint32_t src_length);
-}
 
 namespace {
 
@@ -60,6 +56,7 @@ void CheckArguments() {
     Require(sceImeFilterText(dst, nullptr, 4, &param, src, 1) == kInvalidAddress, "null length");
     Require(sceImeFilterText(dst, &count, 4, nullptr, src, 1) == kInvalidAddress, "null parameter");
     Require(sceImeFilterText(dst, &count, 4, &param, nullptr, 1) == kInvalidAddress, "null source");
+    Require(Run(0, 1, 0, {u'a'}).code == kInvalidParam, "capacity 0");
     Require(Run(0, 1, 1, {u'a'}).code == kInvalidParam, "capacity below 2");
     Require(Run(0, 5, 16, {u'a'}).code == kInvalidParam, "type 5");
     Require(Run(0, 0xff, 16, {u'a'}).code == kInvalidParam, "type 0xff");
@@ -85,6 +82,7 @@ void CheckClassifiedType() {
     Expect(Run(0, 0, 32, {0x31, 0x2c, 0x42, 0x39, 0xe9, 0x3b1, 0x430, 0x4e2d, 0x3042, 0xe01, 0x627, 0xac00}),
            {0x31, 0x2c, 0x42, 0x39, 0xe9, 0x3b1, 0x430, 0x4e2d, 0x3042, 0xe01, 0x627, 0xac00}, "default classes");
     Expect(Run(0x400001f, 0, 16, {0x41, 0xe01, 0xe5b, 0xe80, 0x627}), {0x41, 0xe01, 0xe5b}, "thai class");
+    Expect(Run(0x20000041full, 0, 16, {0x41, 0x410, 0x411}), {0x41, 0x410, 0x411}, "cyrillic class");
 }
 
 void CheckBounds() {

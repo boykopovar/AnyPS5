@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -7,43 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-
-extern "C" {
-void APS5_VABI bcopy_nid_postfix(const void*, void*, std::size_t);
-char* APS5_VABI basename_nid_postfix(const char*);
-char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int);
-char* APS5_VABI dirname_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-long long APS5_VABI strtonum_nid_postfix(const char*, long long, long long, const char**);
-int APS5_VABI strcasecmp_nid_postfix(const char*, const char*);
-int APS5_VABI strncasecmp_nid_postfix(const char*, const char*, std::size_t);
-std::size_t APS5_VABI strnlen_nid_postfix(const char*, std::size_t);
-std::size_t APS5_VABI strnlen_s_nid_postfix(const char*, std::size_t);
-char* APS5_VABI strncat_nid_postfix(char*, const char*, std::size_t);
-char* APS5_VABI strpbrk_nid_postfix(const char*, const char*);
-const char* APS5_VABI strchr_nid_postfix(const char*, int);
-char* APS5_VABI strrchr_nid_postfix(const char*, int);
-std::size_t APS5_VABI strcspn_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI strlcat_nid_postfix(char*, const char*, std::size_t);
-char* APS5_VABI stpcpy_nid_postfix(char*, const char*);
-char* APS5_VABI strtok_r_nid_postfix(char*, const char*, char**);
-char* APS5_VABI strtok_nid_postfix(char*, const char*);
-char* APS5_VABI strsep_nid_postfix(char**, const char*);
-char* APS5_VABI strcasestr_nid_postfix(const char*, const char*);
-int APS5_VABI strcpy_s_nid_postfix(char*, std::size_t, const char*);
-int APS5_VABI strncpy_s_nid_postfix(char*, std::size_t, const char*, std::size_t);
-int APS5_VABI strcat_s_nid_postfix(char*, std::size_t, const char*);
-int APS5_VABI strncat_s_nid_postfix(char*, std::size_t, const char*, std::size_t);
-int APS5_VABI memcpy_s_nid_postfix(void*, std::size_t, const void*, std::size_t);
-int APS5_VABI memmove_s_nid_postfix(void*, std::size_t, const void*, std::size_t);
-int APS5_VABI memset_s_nid_postfix(void*, std::size_t, int, std::size_t);
-char* APS5_VABI strnstr_nid_postfix(const char*, const char*, std::size_t);
-std::size_t APS5_VABI strxfrm_nid_postfix(char*, const char*, std::size_t);
-int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
-int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
-int APS5_VABI __inet_aton_nid_postfix(const char*, void*);
-std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char*);
-}
 
 static void Require(bool condition) {
     if (!condition) {
@@ -128,6 +93,13 @@ static void CheckBoundsCheckedFunctions() {
     Require(memcpy_s_nid_postfix(bytes, 2, source, 4) == 34 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 3);
     char overlap[6] = "abcde";
     Require(memmove_s_nid_postfix(overlap + 1, 5, overlap, 3) == 0 && std::strcmp(overlap, "aabce") == 0);
+    char strOverlap[16] = "abcdef";
+    Require(strncpy_s_nid_postfix(strOverlap + 1, 10, strOverlap, 3) == 22 && strOverlap[1] == '\0');
+    char catOverlap[16] = "abcdef";
+    Require(strncat_s_nid_postfix(catOverlap + 3, 10, catOverlap, 3) == 22 && catOverlap[3] == '\0');
+    char nonOverlap[16] = {};
+    std::strcpy(nonOverlap + 8, "cd");
+    Require(strcpy_s_nid_postfix(nonOverlap, SIZE_MAX >> 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
     Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 8) == 22 && bytes[0] == 9 && bytes[3] == 9);
     char sentinel[4] = {1, 2, 3, 4};
     Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 7, 2) == 0 && sentinel[1] == 7 && sentinel[2] == 3);
@@ -171,18 +143,17 @@ static void CheckSecureStringSizeLimits() {
 
 static void CheckCaseInsensitiveComparison() {
     Require(strcasecmp_nid_postfix("", "") == 0 && strcasecmp_nid_postfix("AbC", "aBc") == 0);
-    Require(strcasecmp_nid_postfix("A", "b") == 'a' - 'b' && strcasecmp_nid_postfix("b", "A") == 'b' - 'a');
-    Require(strcasecmp_nid_postfix("ab", "A") == 'b' && strcasecmp_nid_postfix("AB", "a") == 'b');
-    Require(strcasecmp_nid_postfix("A", "aB") == -'b' && strcasecmp_nid_postfix("a", "AB") == -'b');
-    Require(strcasecmp_nid_postfix("", "Z") == -'z' && strcasecmp_nid_postfix("Z", "") == 'z');
-    Require(strncasecmp_nid_postfix("abc", "ABD", 2) == 0 && strncasecmp_nid_postfix("abc", "ABD", 3) == 'c' - 'd');
-    Require(strncasecmp_nid_postfix("Ab", "a", 2) == 'b' && strncasecmp_nid_postfix("a", "AB", 5) == -'b');
-    Require(strncasecmp_nid_postfix("Q", "", 1) == 'q' && strncasecmp_nid_postfix("", "Q", 1) == -'q');
+    Require(strcasecmp_nid_postfix("A", "b") == -1 && strcasecmp_nid_postfix("b", "A") == 1);
+    Require(strcasecmp_nid_postfix("ab", "A") == 1 && strcasecmp_nid_postfix("AB", "a") == 1);
+    Require(strcasecmp_nid_postfix("A", "aB") == -1 && strcasecmp_nid_postfix("a", "AB") == -1);
+    Require(strcasecmp_nid_postfix("", "Z") == -1 && strcasecmp_nid_postfix("Z", "") == 1);
+    Require(strncasecmp_nid_postfix("abc", "ABD", 2) == 0 && strncasecmp_nid_postfix("abc", "ABD", 3) == -1);
+    Require(strncasecmp_nid_postfix("Ab", "a", 2) == 1 && strncasecmp_nid_postfix("a", "AB", 5) == -1);
+    Require(strncasecmp_nid_postfix("Q", "", 1) == 1 && strncasecmp_nid_postfix("", "Q", 1) == -1);
     Require(strncasecmp_nid_postfix("x", "y", 0) == 0 && strncasecmp_nid_postfix("same", "SAME", 99) == 0);
 }
 
 static void CheckSscanfS() {
-#ifndef _WIN32
     int number = 0;
     char word[4] = "zz";
     char letter = 0;
@@ -199,7 +170,6 @@ static void CheckSscanfS() {
     Require(sscanf_s_nid_postfix("7 %", "%d %%%n", &number, &position) == 1 && position == 3);
     Require(sscanf_s_nid_postfix("   ", "%d", &number) == EOF);
     Require(sscanf_s_nid_postfix("x", "%d", &number) == 0);
-#endif
 }
 
 static bool CheckDirnameLengths() {
@@ -255,6 +225,7 @@ static void CheckBcopy() {
                 auto expected = original;
                 for (std::size_t i = 0; i < count; ++i) expected[destination + i] = original[source + i];
                 bcopy_nid_postfix(actual.data() + source, actual.data() + destination, count);
+
                 Require(actual == expected);
             }
         }
@@ -262,8 +233,10 @@ static void CheckBcopy() {
     auto destination = original;
     destination.fill(0xff);
     bcopy_nid_postfix(original.data(), destination.data(), original.size());
+
     Require(destination == original);
     bcopy_nid_postfix(nullptr, nullptr, 0);
+
 }
 
 static void CheckStrtonum() {
@@ -360,6 +333,15 @@ int main() {
     Require(std::strcmp(basename_nid_postfix("one\\two"), "one\\two") == 0);
     const std::string longName(1024, 'x');
     Require(basename_nid_postfix(longName.c_str()) == nullptr && *__error_nid_postfix() == 63);
+    char baseBuffer[1024];
+    Require(basename_r_nid_postfix(path, baseBuffer) == baseBuffer && std::strcmp(baseBuffer, "two") == 0);
+    Require(basename_r_nid_postfix(nullptr, baseBuffer) == baseBuffer && std::strcmp(baseBuffer, ".") == 0);
+    Require(basename_r_nid_postfix("///", baseBuffer) == baseBuffer && std::strcmp(baseBuffer, "/") == 0);
+    Require(basename_r_nid_postfix("plain", baseBuffer) == baseBuffer && std::strcmp(baseBuffer, "plain") == 0);
+    const std::string longest(1023, 'y');
+    Require(basename_r_nid_postfix(("/a/" + longest).c_str(), baseBuffer) == baseBuffer && std::strlen(baseBuffer) == 1023);
+    *__error_nid_postfix() = 0;
+    Require(basename_r_nid_postfix(longName.c_str(), baseBuffer) == nullptr && *__error_nid_postfix() == 63);
     const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
     unsigned int loopback;
     std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
@@ -513,6 +495,16 @@ int main() {
     Require(strcasestr_nid_postfix("", "a") == nullptr);
     const char highBytes[] = {static_cast<char>(0xff), 'A', 0};
     Require(strcasestr_nid_postfix(highBytes, "a") == highBytes + 1);
+    const char hay[] = "hello world";
+    Require(memmem_nid_postfix(hay, 11, "world", 5) == hay + 6);
+    Require(memmem_nid_postfix(hay, 11, "world", 0) == hay);
+    Require(memmem_nid_postfix(hay, 5, "world", 5) == nullptr);
+    Require(memmem_nid_postfix(hay, 11, "xyz", 3) == nullptr);
+    char dest[16] = {};
+    Require(memccpy_nid_postfix(dest, "abc:def", ':', 8) == dest + 4);
+    Require(std::memcmp(dest, "abc:", 4) == 0);
+    Require(memccpy_nid_postfix(dest, "abcdef", ':', 6) == nullptr);
+    Require(memccpy_nid_postfix(dest, "abcdef", ':', 0) == nullptr);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     return CheckMemcpyOverlap() ? 0 : 1;

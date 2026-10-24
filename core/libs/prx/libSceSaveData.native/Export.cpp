@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData.native/include/Api.hpp"
+#include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -37,6 +39,7 @@ static std::string save_root() {
 static std::mutex g_state_mutex;
 static std::deque<SaveDataEvent> g_events;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_BACKUP = 2;
+constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_CONVERT = 5;
 
 static bool dir_name_match(const char* str, const char* pattern) {
     if (pattern == nullptr || pattern[0] == '\0') {
@@ -280,7 +283,7 @@ extern "C" {
 
 int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     if (backup == nullptr || backup->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataBackup: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     // The system copies the save directory to its backup area asynchronously; the copy itself is
     // not observable by the title, only its completion event.
@@ -477,7 +480,7 @@ int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, Sa
 int APS5_VABI sceSaveDataGetEventResult(const void* event_param, SaveDataEvent* event) {
     (void)event_param;
     if (event == nullptr) {
-        throw std::runtime_error("sceSaveDataGetEventResult: null event");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_state_mutex);
     if (g_events.empty()) {
@@ -952,6 +955,13 @@ static int convert(const SaveDataConvert* param) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     g_convertProgress = 1.0f;
+    SaveDataEvent event{};
+    event.type = SAVE_DATA_EVENT_TYPE_CONVERT;
+    event.error_code = SAVE_DATA_OK;
+    event.user_id = param->user_id;
+    event.dir_name = *param->dir_name;
+    std::lock_guard lock(g_state_mutex);
+    g_events.push_back(event);
     return SAVE_DATA_OK;
 }
 
@@ -978,7 +988,7 @@ int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     return rc;
 }
 
-int APS5_VABI sceSaveDataCancel() {
+int APS5_VABI sceSaveDataCancel(std::uint32_t cancelArgument) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -989,54 +999,108 @@ int APS5_VABI sceSaveDataDirNameSearch2(const SaveDataDirNameSearchCond* cond, S
     return rc;
 }
 
-int APS5_VABI sceSaveDataPrepareForTransferring() {
+int APS5_VABI sceSaveDataPrepareForTransferring(const SaveDataMountPoint* mountPoint, const SaveDataPrepareParam* param) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataCheckIpmiIfSize() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebug() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugCheckBackupData() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugCleanMount() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugCompiledSdkVersion() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugCreateSaveDataRoot() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugProspero() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugRemoveSaveDataRoot() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSaveDataDebugTarget() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+}
+
+namespace {
+
+}
+
+extern "C" {
+
+int APS5_VABI sceSaveDataInitialize(const void* init) {
+    return sceSaveDataInitialize3(init);
+}
+
+int APS5_VABI sceSaveDataMount(const SaveDataMountPs4* mount, SaveDataMountResult* mount_result) {
+    if (mount == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (mount->title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
+    SaveDataMount3 converted{};
+    converted.user_id = mount->user_id;
+    converted.dir_name = mount->dir_name;
+    converted.blocks = mount->blocks;
+    converted.mount_mode = mount->mount_mode;
+    return sceSaveDataMount3(&converted, mount_result);
+}
+
+int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint* mount_point) {
+    return sceSaveDataUmount2(0, mount_point);
+}
+
+int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t user_id, std::size_t memory_size, const SaveDataParam* param) {
+    SaveDataMemorySetup2 setup{};
+    setup.user_id = user_id;
+    setup.memory_size = memory_size;
+    SaveDataMemorySetupResult result{};
+    if (const int rc = sceSaveDataSetupSaveDataMemory2(&setup, &result); rc != SAVE_DATA_OK) return rc;
+    if (param == nullptr) return SAVE_DATA_OK;
+    SaveDataMemorySet2 set{};
+    set.user_id = user_id;
+    set.param = param;
+    return sceSaveDataSetSaveDataMemory2(&set);
+}
+
+int APS5_VABI sceSaveDataGetSaveDataMemory(std::int32_t user_id, void* buf, std::size_t buf_size, std::int64_t offset) {
+    SaveDataMemoryData data{};
+    data.buf = buf;
+    data.buf_size = buf_size;
+    data.offset = static_cast<std::size_t>(offset);
+    SaveDataMemoryGet2 get{};
+    get.user_id = user_id;
+    get.data = &data;
+    return sceSaveDataGetSaveDataMemory2(&get);
+}
+
+int APS5_VABI sceSaveDataSetSaveDataMemory(std::int32_t user_id, void* buf, std::size_t buf_size, std::int64_t offset) {
+    SaveDataMemoryData data{};
+    data.buf = buf;
+    data.buf_size = buf_size;
+    data.offset = static_cast<std::size_t>(offset);
+    SaveDataMemorySet2 set{};
+    set.user_id = user_id;
+    set.data = &data;
+    set.data_num = 1;
+    return sceSaveDataSetSaveDataMemory2(&set);
 }
 
 }

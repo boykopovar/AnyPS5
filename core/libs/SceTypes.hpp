@@ -333,7 +333,7 @@ struct VaList {
 };
 #pragma pack(pop)
 
-using FiberEntry = void* (*)(std::uint64_t, void*);
+using FiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
 
 struct FiberOptParam {
     std::uint32_t magic;
@@ -431,6 +431,48 @@ using AcmBatchId = std::uint32_t;
 struct AcmBatchError {
     std::uint32_t reserved[8];
 };
+
+struct AcmReverbBuffer {
+    void* samples;
+    const void* blockMetadata;
+};
+
+struct AcmReverbInput {
+    std::uint32_t blockSize;
+    std::uint32_t blockCount;
+    std::uint32_t channelCount;
+    std::uint32_t sampleFormat;
+    std::uint32_t currentBlock;
+    std::uint32_t availableBlocks;
+    const AcmReverbBuffer* const* history;
+    const void* const* inputChannels;
+    std::uint32_t pendingBlocks;
+};
+
+struct AcmReverbFilter {
+    std::uint32_t blockSize;
+    std::uint32_t blockCount;
+    std::uint32_t channelCount;
+    std::uint32_t sampleFormat;
+    const void* blockMetadata;
+    const AcmReverbBuffer* const* channels;
+};
+
+struct AcmReverbOutput {
+    std::uint32_t blockSize;
+    std::uint32_t channelCount;
+    void* const* samples;
+    void* const* workspace;
+    float gain;
+    float previousGain;
+    void* const* previousSamples;
+};
+
+static_assert(sizeof(AcmReverbBuffer) == 16);
+static_assert(offsetof(AcmReverbInput, history) == 24);
+static_assert(offsetof(AcmReverbInput, pendingBlocks) == 40);
+static_assert(sizeof(AcmReverbFilter) == 32);
+static_assert(offsetof(AcmReverbOutput, previousSamples) == 32);
 
 struct AcmBatchInfo {
     void* buffer;
@@ -612,6 +654,13 @@ struct AudioOutPortState {
     std::uint64_t flag;
     std::uint64_t activeState;
 };
+
+struct AudioOutSystemState {
+    float loudness;
+    std::uint8_t reserved8[4];
+    std::uint64_t reserved[3];
+};
+static_assert(sizeof(AudioOutSystemState) == 32);
 
 struct Audio3dOpenParameters {
     std::uint64_t size_this;
@@ -933,12 +982,59 @@ struct AudiodecM4aacInfo {
     std::int32_t i_result;
 };
 
+struct VoiceEvent {
+    std::int32_t type;
+    std::uint32_t reserved;
+    void* userData;
+    union {
+        struct {
+            std::uint16_t count;
+            std::uint16_t ports[7];
+        } dataReady;
+        struct {
+            std::uint16_t port;
+            std::uint8_t state;
+            std::uint8_t reserved[13];
+        } deviceState;
+    };
+};
+
+using VoiceEventHandler = void (APS5_VABI*)(const VoiceEvent* event);
+
+struct VoiceThreadsParams {
+    std::uint32_t mode;
+    std::int32_t firstPriority;
+    std::uint64_t firstAffinity;
+    std::int32_t secondPriority;
+    std::uint32_t reserved20;
+    std::uint64_t secondAffinity;
+    std::int32_t thirdPriority;
+    std::uint32_t reserved36;
+    std::uint64_t thirdAffinity;
+};
+
+static_assert(sizeof(VoiceEvent) == 32);
+static_assert(offsetof(VoiceEvent, userData) == 8);
+static_assert(offsetof(VoiceEvent, dataReady) == 16);
+static_assert(offsetof(VoiceEvent, deviceState) == 16);
+static_assert(sizeof(VoiceThreadsParams) == 48);
+static_assert(offsetof(VoiceThreadsParams, firstAffinity) == 8);
+static_assert(offsetof(VoiceThreadsParams, secondPriority) == 16);
+static_assert(offsetof(VoiceThreadsParams, secondAffinity) == 24);
+static_assert(offsetof(VoiceThreadsParams, thirdPriority) == 32);
+static_assert(offsetof(VoiceThreadsParams, thirdAffinity) == 40);
+
 struct VoiceInitParam {
     std::int32_t app_type;
-    std::uint64_t on_event;
+    VoiceEventHandler on_event;
     void* user_data;
-    std::uint8_t reserved[32 - sizeof(std::int32_t) - sizeof(std::uint64_t) - sizeof(void*)];
+    std::uint8_t reserved[16];
 };
+
+static_assert(sizeof(VoiceInitParam) == 40);
+static_assert(offsetof(VoiceInitParam, on_event) == 8);
+static_assert(offsetof(VoiceInitParam, user_data) == 16);
+static_assert(offsetof(VoiceInitParam, reserved) == 24);
 
 struct VoicePortParam {
     std::int32_t port_type;
@@ -962,13 +1058,29 @@ struct VoicePortInfo {
     std::uint16_t reserved;
 };
 
-struct VoiceResourceInfo {
-    std::uint16_t max_voice_input_ports;
-    std::uint16_t max_voice_output_ports;
-    std::uint16_t max_device_input_ports;
-    std::uint16_t max_device_output_ports;
-    std::uint16_t max_ports;
+struct NpAuthClientId;
+
+struct NpAuthAuthorizedAppCodeParameter {
+    std::uint64_t size;
+    std::int32_t userId;
+    const NpAuthClientId* clientId;
+    const char* scope;
+    std::uint32_t option;
 };
+
+static_assert(sizeof(NpAuthAuthorizedAppCodeParameter) == 40);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, clientId) == 16);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, scope) == 24);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, option) == 32);
+
+struct VoiceResourceInfo {
+    std::uint16_t maxVoiceInputPorts;
+    std::uint16_t maxVoiceOutputPorts;
+    std::uint16_t maxDeviceInputPorts;
+    std::uint16_t maxDeviceOutputPorts;
+};
+
+static_assert(sizeof(VoiceResourceInfo) == 8);
 
 struct VoiceStartParam {
     void* container;
@@ -1155,8 +1267,8 @@ struct ImeKeycode {
     std::uint64_t timestamp;
 };
 
-using ImeTextFilter = std::int32_t (APS5_VABI *)(char16_t* out_text, std::uint32_t* out_text_length, const char16_t* source_text, std::uint32_t source_text_length);
-using ImeExtKeyboardFilter = int (APS5_VABI *)(const ImeKeycode* source_keycode, std::uint16_t* out_keycode, std::uint32_t* out_status, void* reserved);
+using ImeTextFilter = std::int32_t (APS5_VABI*)(char16_t* outText, std::uint32_t* outTextLength, const char16_t* sourceText, std::uint32_t sourceTextLength);
+using ImeExtKeyboardFilter = int (APS5_VABI*)(const ImeKeycode* sourceKeycode, std::uint16_t* outKeycode, std::uint32_t* outStatus, void* reserved);
 
 struct ImeExtendedParam {
     std::uint32_t option;
@@ -1318,7 +1430,12 @@ struct NetEpollEvent {
     NetEpollData data;
 };
 
-struct NetCtlNatInfo { std::uint8_t opaque[128]; };
+struct NetCtlNatInfo {
+    std::uint32_t size;
+    std::uint8_t opaque[12];
+};
+
+static_assert(sizeof(NetCtlNatInfo) == 16);
 
 union NetCtlInfo { std::uint8_t opaque[256]; };
 
@@ -1333,10 +1450,10 @@ using NetCtlCallback = void (APS5_VABI *)(int, void*);
 
 struct HttpEpoll;
 using HttpEpollHandle = HttpEpoll*;
-using HttpsCallback = int (*)(int, unsigned int, void* const*, int, void*);
-using HttpRedirectCallback = int (*)(int, std::int32_t, std::int32_t*, const char*, void*);
-using HttpCookieRecvCallback = int (*)(int, const char*, const char*, std::uint64_t, void*);
-using HttpAuthInfoCallback = int (*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
+using HttpsCallback = int (APS5_VABI*)(int, unsigned int, void* const*, int, void*);
+using HttpRedirectCallback = int (APS5_VABI*)(int, std::int32_t, std::int32_t*, const char*, void*);
+using HttpCookieRecvCallback = int (APS5_VABI*)(int, const char*, const char*, std::uint64_t, void*);
+using HttpAuthInfoCallback = int (APS5_VABI*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
 
 struct HttpNBEvent { std::uint8_t opaque[64]; };
 
@@ -1394,6 +1511,24 @@ struct NpUnifiedEntitlementLabel {
     char data[17];
     char padding[3];
 };
+
+struct NpServiceEntitlementLabel {
+    char data[7];
+    std::uint8_t reserved[13];
+};
+
+struct NpEntitlementAccessTransactionId {
+    char data[65];
+    std::uint8_t reserved[7];
+};
+
+struct NpEntitlementAccessListParameter;
+struct NpEntitlementAccessUnifiedInfo;
+struct NpEntitlementAccessServiceInfo;
+
+static_assert(sizeof(NpUnifiedEntitlementLabel) == 20);
+static_assert(sizeof(NpServiceEntitlementLabel) == 20);
+static_assert(sizeof(NpEntitlementAccessTransactionId) == 72);
 
 struct NpEntitlementAccessInitParam { char reserved[32]; };
 struct NpEntitlementAccessBootParam { char reserved[32]; };
@@ -1459,6 +1594,26 @@ struct NpWebApi2ResponseInformationOption {
     std::size_t error_object_size;
     std::size_t response_data_size;
 };
+
+struct NpWebApi2IntInitializeArgs {
+    std::int32_t lib_http_ctx_id;
+    std::int32_t reserved;
+    std::uint64_t pool_size;
+    const char* name;
+    std::uint64_t struct_size;
+};
+static_assert(sizeof(NpWebApi2IntInitializeArgs) == 32);
+
+struct NpWebApi2IntInitialize2Args {
+    std::int32_t lib_http_ctx_id;
+    std::int32_t reserved;
+    std::uint64_t pool_size;
+    const char* name;
+    std::uint32_t push_config_group;
+    std::int32_t reserved2;
+    std::uint64_t struct_size;
+};
+static_assert(sizeof(NpWebApi2IntInitialize2Args) == 40);
 
 struct GameUpdateCheckParam {
     std::size_t size;
@@ -1670,6 +1825,34 @@ struct AppContentBootParam {
 
 struct AppContentMountPoint { char data[16]; };
 
+using ContentExportMallocCallback = void* (APS5_VABI *)(std::size_t size, void* userData);
+using ContentExportFreeCallback = void (APS5_VABI *)(void* memory, void* userData);
+using ContentExportDataCallback = std::int32_t (APS5_VABI *)(const void** data, std::size_t* size, void* userData);
+
+struct ContentExportInitParam {
+    ContentExportMallocCallback mallocFunc;
+    ContentExportFreeCallback freeFunc;
+    void* userData;
+};
+
+static_assert(sizeof(ContentExportInitParam) == 24);
+static_assert(offsetof(ContentExportInitParam, freeFunc) == 8);
+static_assert(offsetof(ContentExportInitParam, userData) == 16);
+
+struct ContentExportSfParam {
+    std::size_t size;
+    const char* metadata;
+    const std::int64_t* contentIds;
+    std::uint32_t contentCount;
+    std::uint32_t option;
+};
+
+static_assert(sizeof(ContentExportSfParam) == 32);
+static_assert(offsetof(ContentExportSfParam, metadata) == 8);
+static_assert(offsetof(ContentExportSfParam, contentIds) == 16);
+static_assert(offsetof(ContentExportSfParam, contentCount) == 24);
+static_assert(offsetof(ContentExportSfParam, option) == 28);
+
 struct ContentExportInitParam2 {
     void* malloc_func;
     void* free_func;
@@ -1877,11 +2060,22 @@ union PlayGoOptionalChunk {
 };
 
 struct PlayGoDialogResult {
+    std::int32_t errorCode;
     std::int32_t result;
-    std::int32_t reserved[9];
+    std::uint8_t reserved[32];
 };
 
-using RudpEventHandler = void (*)(int ctx_id, int event_id, int error_code, void* arg);
+struct RudpPollEvent {
+    std::int32_t contextId;
+    std::uint16_t events;
+    std::uint16_t returnedEvents;
+};
+
+static_assert(sizeof(RudpPollEvent) == 8);
+static_assert(offsetof(RudpPollEvent, events) == 4);
+static_assert(offsetof(RudpPollEvent, returnedEvents) == 6);
+
+using RudpEventHandler = void (APS5_VABI*)(int ctxId, int eventId, int errorCode, void* arg);
 
 struct SystemServiceStatus {
     std::int32_t event_num = 0;
@@ -1900,6 +2094,15 @@ struct SystemServiceDisplaySafeAreaInfo {
     float ratio;
     std::uint8_t reserved[128];
 };
+
+struct SystemServicePlayerDialogParam {
+    std::uint64_t size;
+    std::int32_t mode;
+    std::int32_t user_id;
+    std::uint64_t target_account_id;
+    std::uint8_t reserved[40];
+};
+static_assert(sizeof(SystemServicePlayerDialogParam) == 0x40);
 
 struct SystemServiceHdrToneMapLuminance {
     float max_full_frame_tone_map_luminance;
@@ -1969,11 +2172,15 @@ struct UserServiceGamePresets {
     std::uint32_t audio_language;
 };
 
-struct UltMutexOptParam {
-    std::uint32_t reserved_header[2];
+struct alignas(8) UltMutexOptParam {
+    std::uint32_t header[3];
+    std::uint32_t buildVersion;
     std::uint32_t attribute;
-    std::uint32_t reserved0;
+    std::uint32_t reserved[27];
 };
+
+static_assert(sizeof(UltMutexOptParam) == 128);
+static_assert(offsetof(UltMutexOptParam, attribute) == 16);
 
 struct UltUlthreadRuntimeOptParam { std::uint8_t bytes[128]; };
 

@@ -41,7 +41,8 @@ int main() {
         require(coverage.Covers(base + block, block), "clipping an import excluded the rest of the arena");
         coverage.Initialize(base, 4 * block + 1);
         coverage.Exclude(base, 4 * block + 1);
-        require(!coverage.Restore(base + 1, block - 1) && !coverage.Covers(base, block), "a partial replacement restored an excluded block");
+        require(coverage.Restore(base + 1, block - 1) && coverage.Covers(base + 4096, block - 4096), "a partial replacement did not restore its complete pages");
+        require(!coverage.Covers(base, 4096) && !coverage.Covers(base, block), "a partial replacement restored an incompletely remapped page");
         require(coverage.Restore(base + block, block) && coverage.Covers(base + block, block), "fresh private backing stayed excluded");
         require(!coverage.Restore(base + block, block), "restoring an already watched block reports a change");
         require(!coverage.Covers(base, block) && !coverage.Covers(base + 2 * block, block), "restoring one block restored its neighbours");
@@ -60,6 +61,44 @@ int main() {
         coverage.Exclude(base, block, 7);
         require(!coverage.Restore(base, block, 6) && !coverage.Covers(base, block), "a delayed mapping notification erased a repeated import");
         require(coverage.Restore(base, block, 8), "a fresh replacement did not restore the latest import exclusion");
+        coverage.Initialize(base, 2 * block);
+        coverage.Exclude(base, block, 10);
+        require(coverage.Restore(base + 16384, 16384, 11), "a fresh partial-block private mapping stayed excluded");
+        require(coverage.Covers(base + 16384, 16384), "the restored private pages are not watched");
+        require(!coverage.Covers(base, 16384) && !coverage.Covers(base + 32768, 32768), "restoring private pages watched an imported neighbour");
+        require(!coverage.Covers(base + 16383, 2) && !coverage.Covers(base + 32767, 2), "a boundary query included excluded pages");
+        require(!coverage.Restore(base + 32768, 4096, 10), "a stale partial mapping restored an exclusion");
+        coverage.Exclude(base + 4096, 1, 12);
+        require(!coverage.Covers(base + 16384, 16384), "a repeated import kept partial coverage from an older mapping");
+        require(!coverage.Restore(base + 16384, 16384, 11), "a delayed partial mapping restored a newer import");
+        require(coverage.Restore(base + 16384, 16384, 13), "fresh partial coverage was not restored after re-import");
+        constexpr std::size_t page = 4096;
+        for (std::size_t first = 0; first < block / page; ++first) {
+            for (std::size_t count = 1; count <= block / page - first; ++count) {
+                coverage.Initialize(base, 3 * block);
+                coverage.Exclude(base + block, block, 20);
+                require(coverage.Restore(base + block + first * page, count * page, 21), "a complete-page replacement was not restored");
+                for (std::size_t index = 0; index < 3 * block / page; ++index) {
+                    const bool expected = index < block / page || index >= 2 * block / page || (index >= block / page + first && index < block / page + first + count);
+                    require(coverage.Covers(base + index * page, page) == expected, "partial restoration changed an unrelated page");
+                    if (index != 0) {
+                        const bool previous = index - 1 < block / page || index - 1 >= 2 * block / page || (index - 1 >= block / page + first && index - 1 < block / page + first + count);
+                        require(coverage.Covers(base + index * page - 1, 2) == (previous && expected), "a page boundary proof ignored an excluded page");
+                    }
+                }
+                require(coverage.Covers(base + block, block) == (count == block / page), "partial page coverage proved a whole block");
+                require(!coverage.Restore(base + block + first * page, count * page, 21), "restoring watched pages again reports a change");
+            }
+        }
+        coverage.Initialize(base, 2 * block + 17);
+        coverage.Exclude(base + 2 * block, 17, 30);
+        require(!coverage.Restore(base + 2 * block, 16, 31), "an incomplete terminal page was restored");
+        require(coverage.Restore(base + 2 * block, 17, 31) && coverage.Covers(base + 2 * block, 17), "a complete terminal arena page stayed excluded");
+        coverage.Initialize(base, 2 * block);
+        coverage.Exclude(base, block, 40);
+        coverage.Exclude(base + block, block, 43);
+        require(coverage.Restore(base + block - page, 2 * page, 42), "a newer boundary page was not restored");
+        require(coverage.Covers(base + block - page, page) && !coverage.Covers(base + block, page), "a stale boundary mapping erased a newer neighbouring exclusion");
         std::cout << "write watch coverage passed\n";
         return 0;
     } catch (const std::exception& error) {

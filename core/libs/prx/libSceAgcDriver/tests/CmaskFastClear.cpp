@@ -157,6 +157,32 @@ void unknownCode(AgcDriver::VulkanDevice& device) {
     expect(device, color, [](std::uint32_t, std::uint32_t) { return Clear; }, "fast-cleared target eliminated after a CMASK code 3");
 }
 
+void expectRefused(const std::function<void()>& action, const std::string& message, const std::string& what) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        Require(std::string(error.what()).find(message) != std::string::npos, what + ": refused with " + error.what());
+        return;
+    }
+    throw std::runtime_error(what + ": was not refused");
+}
+
+void oneFragment(AgcDriver::VulkanDevice& device) {
+    auto color = target(ColorTileMode::RenderTarget);
+    color.coverageSamples = 4;
+    prepare(color, [](std::uint32_t tileX, std::uint32_t tileY) { return tileX == 2 && tileY == 0; }, 3);
+    expectRefused([&] { eliminate(device, color); }, "CMASK code 0x3 of a one-fragment color target is not implemented", "a one-fragment target with CMASK code 3");
+    prepare(color, [](std::uint32_t, std::uint32_t) { return true; });
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t, std::uint32_t) { return Clear; }, "a fast-cleared one-fragment target eliminated");
+    prepare(color, [](std::uint32_t tileX, std::uint32_t tileY) { return tileX == 7 && tileY == 1; });
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t x, std::uint32_t y) { return x >= 56 && y >= 8 ? Clear : Stale; }, "a one-fragment target with one fast-cleared tile eliminated");
+    prepare(color, [](std::uint32_t tileX, std::uint32_t) { return tileX < 4; }, 0xc);
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t, std::uint32_t) { return Stale; }, "a one-fragment target with CMASK codes 0xc and 0xf eliminated");
+}
+
 }
 
 int main() {
@@ -178,6 +204,7 @@ int main() {
         run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X");
         for (const std::uint32_t slice : {1u, 2u, 3u, 8u}) run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X", slice);
         unknownCode(*device);
+        oneFragment(*device);
         device->WaitIdle();
         device.reset();
         {
