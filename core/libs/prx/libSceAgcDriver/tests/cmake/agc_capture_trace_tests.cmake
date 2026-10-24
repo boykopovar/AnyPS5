@@ -38,4 +38,19 @@ if(BUILD_TESTING)
                 agc_capture_trace_disabled PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(agc_capture_trace_failure_tests tests/CaptureTraceFailure.cpp)
+    target_include_directories(agc_capture_trace_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    if(MINGW)
+        target_compile_options(agc_capture_trace_failure_tests PRIVATE -fasynchronous-unwind-tables)
+    endif()
+    foreach(mode IN ITEMS write flush)
+        add_test(NAME agc_capture_trace_${mode}_failure
+            COMMAND "${CMAKE_COMMAND}"
+                "-DFIXTURE=$<TARGET_FILE:agc_capture_trace_failure_tests>"
+                "-DMODE=${mode}"
+                "-DOUTPUT_ROOT=${agcCaptureTraceDirectory}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceFailure.cmake")
+        set_tests_properties(agc_capture_trace_${mode}_failure PROPERTIES TIMEOUT 20)
+    endforeach()
 endif()
