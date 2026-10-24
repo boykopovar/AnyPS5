@@ -4,6 +4,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -247,6 +248,10 @@ static void TestParentTraversal() {
     checkInvalid("/" + root.generic_string() + "/missing/..", 2);
     checkInvalid(root.generic_string() + "/missing/../../" + root.generic_string(), 2);
     AddPathAlias_nid_no_patch("parent-test-mount", std::filesystem::absolute(root).string().c_str());
+    const char* missingCreateAlias = "/parent-test-mount/missing-create/";
+    Require(sceKernelOpen(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == SCE_KERNEL_ERROR_ENOENT);
+    Require(open_nid_postfix(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(!std::filesystem::exists(root / "missing-create"));
     checkInvalid("/PARENT-TEST-MOUNT/missing/..", 2);
     checkInvalid("/parent-test-mount/present.txt/..", 20);
     FileStat status{};

@@ -199,6 +199,14 @@ static int SceIoErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
 }
 
+static int TrailingSlashCreationError(const std::filesystem::path& native, int flags) {
+    if ((flags & SCE_KERNEL_O_CREAT) == 0 || native.has_filename() || !native.has_relative_path()) return 0;
+    std::error_code error;
+    const auto status = std::filesystem::status(native, error);
+    if (error) return FilesystemError(error);
+    return status.type() == std::filesystem::file_type::not_found ? 2 : 0;
+}
+
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
     if (const auto archived = File::OpenArchivedFile(native, flags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
@@ -241,6 +249,12 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         }
     }
 #endif
+    if (fd < 0 && (errno == EISDIR || errno == EINVAL)) {
+        const int openError = errno;
+        const int lookupError = TrailingSlashCreationError(native, flags);
+        errno = lookupError == 2 ? ENOENT : openError;
+        if (lookupError != 0 && lookupError != 2) return SceKernelError(lookupError);
+    }
 #ifdef _WIN32
     if (fd < 0 && (errno == ENOENT || errno == ENOTDIR)) {
         std::error_code metadataError;
