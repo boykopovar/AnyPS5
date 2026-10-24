@@ -28,6 +28,7 @@ int APS5_VABI sceHttp2SetCookieMaxSize(int, std::uint32_t);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static constexpr int OutOfMemory = static_cast<int>(0x817B1022);
 static constexpr int UnknownScheme = static_cast<int>(0x817B1061);
 static constexpr int InvalidId = static_cast<int>(0x817B1100);
 static constexpr int OutOfSize = static_cast<int>(0x817B1104);
@@ -57,6 +58,11 @@ static Http2CookieStats Stats(int box) {
 
 int main() {
     static_assert(sizeof(Http2CookieStats) == 40);
+    constexpr std::size_t maxSize = static_cast<std::size_t>(-1);
+    Require(sceHttp2CreateCookieBox(maxSize) == OutOfMemory);
+    Require(sceHttp2CreateCookieBox(maxSize - 0x3fff) == OutOfMemory);
+    Require(sceHttp2CreateCookieBox(maxSize - 0x4000) == OutOfMemory);
+    Require(sceHttp2CreateCookieBox(maxSize / 2) == OutOfMemory);
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(box > 0);
 

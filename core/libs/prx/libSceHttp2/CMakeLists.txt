@@ -14,6 +14,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_http2_cookie_tests PRIVATE libSceHttp2 libkernel libc)
     configure_windows_unwind(guest_http2_cookie_tests)
     add_test(NAME guest_http2_cookies COMMAND guest_http2_cookie_tests)
+    add_asan_test_options(guest_http2_cookies allocator_may_return_null=1)
     if(WIN32)
         set_tests_properties(guest_http2 guest_http2_cookies PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")

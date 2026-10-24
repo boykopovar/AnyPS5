@@ -9,6 +9,7 @@
 #include <deque>
 #include <mutex>
 #include <memory>
+#include <new>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -17,6 +18,7 @@
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
+static constexpr int ERROR_OUT_OF_MEMORY = static_cast<int>(0x817B1022);
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 
@@ -364,9 +366,10 @@ int APS5_VABI sceHttp2CookieFlush(int id) {
 
 int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
     if (poolSize < 0x10000) return static_cast<int>(0x817b121du);
-    if (poolSize > std::numeric_limits<std::size_t>::max() - 0x3fff) throw std::overflow_error("sceHttp2CreateCookieBox: pool size overflow");
+    if (poolSize > std::numeric_limits<std::size_t>::max() - 0x3fff) return ERROR_OUT_OF_MEMORY;
     const auto allocationSize = (poolSize + 0x3fff) & ~std::size_t{0x3fff};
-    auto memory = std::make_shared<std::byte[]>(allocationSize);
+    std::shared_ptr<std::byte[]> memory(new (std::nothrow) std::byte[allocationSize]);
+    if (!memory) return ERROR_OUT_OF_MEMORY;
     std::lock_guard lock(g_handlesMutex);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     g_handles[id] = {Http2Kind::CookieBox, 0, poolSize, std::move(memory)};
