@@ -140,6 +140,22 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
     return 0;
 }
 
+int APS5_VABI FT_Attach_File_nid_postfix(GuestFaceRec* face, const char* filepathname) {
+    if (!filepathname) return FT_Err_Invalid_Argument;
+    const GuestFace* owner = FaceOf(face);
+    if (!owner) return FT_Attach_File(nullptr, filepathname);
+    std::vector<unsigned char> bytes;
+    if (!ReadFontFile(filepathname, bytes)) return FT_Err_Cannot_Open_Resource;
+    if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<FT_Long>::max())) {
+        throw std::runtime_error("FT_Attach_File: a file larger than the host FT_Long range is not implemented");
+    }
+    FT_Open_Args native{};
+    native.flags = FT_OPEN_MEMORY;
+    native.memory_base = bytes.data();
+    native.memory_size = static_cast<FT_Long>(bytes.size());
+    return FT_Attach_Stream(owner->host, &native);
+}
+
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec* face) {
     GuestFace* owner = FaceOf(face);
     const FT_Error error = FT_Done_Face(owner ? owner->host : nullptr);
