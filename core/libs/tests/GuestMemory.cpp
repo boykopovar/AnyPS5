@@ -3330,6 +3330,130 @@ static void CheckMunmapOverUnmappedPages() {
     Require(sceKernelMunmap(memory, 0) == SCE_KERNEL_ERROR_EINVAL);
 }
 
+static void CheckArenaFirstFitAcrossDefaultAndLowRanges() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = page * 64;
+    constexpr std::uintptr_t defaultStart = 0x200000000ull + GuestArena::GuestAddressOffset;
+    using namespace GuestArena;
+    std::uintptr_t arenaBase = 0;
+    std::size_t arenaBytes = 0;
+    GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
+    auto low = (arenaBase + page - 1) & ~(page - 1);
+    while (low < defaultStart && bytes <= defaultStart - low) {
+        std::uintptr_t usedStart = 0;
+        std::uintptr_t usedEnd = 0;
+        if (!GuestArenaNextUsed_nid_no_patch(low, &usedStart, &usedEnd) || usedStart >= low + bytes) break;
+        low = (usedEnd + page - 1) & ~(page - 1);
+    }
+    const bool hasLowRange = low < defaultStart && bytes <= defaultStart - low;
+    if (hasLowRange) {
+        void* initial = GuestArenaAllocateAtOrAbove_nid_postfix(low, bytes, page);
+        Require(reinterpret_cast<std::uintptr_t>(initial) == low);
+        GuestArenaRelease_nid_postfix(initial, bytes);
+    }
+    const auto high = reinterpret_cast<std::uintptr_t>(GuestArenaAllocate_nid_postfix(bytes, page));
+    Require(high >= defaultStart);
+    void* tail = GuestArenaAllocateAtOrAbove_nid_postfix(high, page, page);
+    Require(reinterpret_cast<std::uintptr_t>(tail) >= high + bytes);
+    if (hasLowRange) {
+        void* first = GuestArenaAllocateAtOrAbove_nid_postfix(low, bytes, page);
+        Require(reinterpret_cast<std::uintptr_t>(first) == low);
+        GuestArenaRelease_nid_postfix(first, bytes);
+        void* second = GuestArenaAllocateFromHint_nid_postfix(low, bytes, page);
+        Require(reinterpret_cast<std::uintptr_t>(second) == low);
+        GuestArenaRelease_nid_postfix(second, bytes);
+    }
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(high + page * 17), page * 3);
+    Require(reinterpret_cast<std::uintptr_t>(GuestArenaAllocateAtOrAbove_nid_postfix(high, page * 2, page)) == high + page * 17);
+    Require(reinterpret_cast<std::uintptr_t>(GuestArenaAllocateFromHint_nid_postfix(high, page, page)) == high + page * 19);
+    GuestArenaRelease_nid_postfix(tail, page);
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(high), bytes);
+}
+
+static void CheckArenaFirstFitAfterPartialRelease() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t pages = 8192;
+    using namespace GuestArena;
+    const auto begin = reinterpret_cast<std::uintptr_t>(GuestArenaAllocate_nid_postfix(page * pages, page));
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin), page * pages);
+    for (std::size_t i = 0; i < pages; ++i) {
+        Require(reinterpret_cast<std::uintptr_t>(GuestArenaAllocateAtOrAbove_nid_postfix(begin, page, page)) == begin + i * page);
+    }
+    void* after = GuestArenaAllocateAtOrAbove_nid_postfix(begin, page, page);
+    Require(reinterpret_cast<std::uintptr_t>(after) >= begin + pages * page);
+    GuestArenaRelease_nid_postfix(after, page);
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin + page * 17), page * 3);
+    Require(reinterpret_cast<std::uintptr_t>(GuestArenaAllocateAtOrAbove_nid_postfix(begin, page * 2, page)) == begin + page * 17);
+    Require(reinterpret_cast<std::uintptr_t>(GuestArenaAllocateAtOrAbove_nid_postfix(begin, page, page)) == begin + page * 19);
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin), page * pages);
+    void* first = GuestArenaAllocate_nid_postfix(page, page);
+    GuestArenaRelease_nid_postfix(first, page);
+    std::uintptr_t arenaBase = 0;
+    std::size_t arenaBytes = 0;
+    GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
+    void* wrapped = GuestArenaAllocateFromHint_nid_postfix(arenaBase + arenaBytes, page, page);
+    Require(wrapped == first);
+    GuestArenaRelease_nid_postfix(wrapped, page);
+}
+
+static void CheckArenaFirstFitAgainstPageModel() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t pages = 128;
+    using namespace GuestArena;
+    const auto begin = reinterpret_cast<std::uintptr_t>(GuestArenaAllocate_nid_postfix(page * (pages + 8), page * 16));
+    const auto end = begin + page * pages;
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin), page * pages);
+    std::array<bool, pages> used{};
+    std::uint32_t random = 0x5a6e1234;
+    const auto next = [&] {
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        return random;
+    };
+    for (std::size_t operation = 0; operation < 4096; ++operation) {
+        const auto first = next() % pages;
+        const auto count = std::min<std::size_t>(1 + next() % 8, pages - first);
+        const auto address = begin + first * page;
+        const auto kind = next() % 4;
+        if (kind == 0) {
+            GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(address), count * page);
+            std::fill_n(used.begin() + first, count, false);
+        } else if (kind == 1) {
+            const bool overlaps = std::any_of(used.begin() + first, used.begin() + first + count, [](bool value) { return value; });
+            bool rejected = false;
+            try {
+                GuestArenaMarkUsed_nid_postfix(reinterpret_cast<void*>(address), count * page);
+            } catch (const std::runtime_error&) {
+                rejected = true;
+            }
+            Require(rejected == overlaps);
+            if (!overlaps) std::fill_n(used.begin() + first, count, true);
+        } else {
+            const auto alignment = page << (next() % 5);
+            std::size_t expected = pages;
+            for (std::size_t i = first; i + count <= pages; ++i) {
+                if ((begin + i * page) % alignment != 0) continue;
+                if (std::none_of(used.begin() + i, used.begin() + i + count, [](bool value) { return value; })) {
+                    expected = i;
+                    break;
+                }
+            }
+            void* result = kind == 2 ? GuestArenaAllocateAtOrAbove_nid_postfix(address, count * page, alignment)
+                                    : GuestArenaAllocateFromHint_nid_postfix(address, count * page, alignment);
+            const auto placed = reinterpret_cast<std::uintptr_t>(result);
+            if (expected == pages) {
+                Require(placed >= end);
+                GuestArenaRelease_nid_postfix(result, count * page);
+            } else {
+                Require(placed == begin + expected * page);
+                std::fill_n(used.begin() + expected, count, true);
+            }
+        }
+    }
+    GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin), page * (pages + 8));
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "1000");
@@ -3343,6 +3467,9 @@ int main(int argc, char** argv) {
         return 0;
     }
     Require(argc == 1);
+    CheckArenaFirstFitAcrossDefaultAndLowRanges();
+    CheckArenaFirstFitAfterPartialRelease();
+    CheckArenaFirstFitAgainstPageModel();
     CheckAvailableDirectMemoryIsLargestFreeBlock();
     CheckVirtualQuerySplitFlexibleRanges();
     CheckVirtualQueryForNonReadableGuestRange();
