@@ -80,6 +80,34 @@ static void CompareBitmap(GuestLibrary& library, FT_Library native, const Shape&
     Require(params.source == &guest);
 }
 
+static void CompareNegativePitchBitmap(GuestLibrary& library, FT_Library native, const Shape& shape, unsigned char mode) {
+    std::vector<GuestVector> guestPoints;
+    for (const FT_Vector& point : shape.points) guestPoints.push_back({point.x, point.y});
+    std::vector<FT_Vector> nativePoints = shape.points;
+    std::vector<unsigned char> tags = shape.tags;
+    std::vector<unsigned short> contours = shape.contours;
+    const auto count = static_cast<std::uint16_t>(shape.points.size());
+    GuestOutline guest{1, count, guestPoints.data(), tags.data(), contours.data(), 0};
+    FT_Outline expected{1, count, nativePoints.data(), tags.data(), contours.data(), 0};
+    const std::int32_t pitch = mode == FT_PIXEL_MODE_MONO ? 2 : 12;
+    constexpr std::uint32_t rows = 12;
+    std::vector<unsigned char> guestPixels(static_cast<std::size_t>(pitch) * rows, 0);
+    std::vector<unsigned char> nativePixels = guestPixels;
+    auto* guestBuffer = guestPixels.data() + static_cast<std::size_t>(pitch) * (rows - 1);
+    auto* nativeBuffer = nativePixels.data() + static_cast<std::size_t>(pitch) * (rows - 1);
+    const GuestBitmap guestBitmap{rows, 12, -pitch, guestBuffer, static_cast<std::uint16_t>(mode == FT_PIXEL_MODE_MONO ? 2 : 256), mode, 0, nullptr};
+    FT_Bitmap nativeBitmap{rows, 12, -pitch, nativeBuffer, guestBitmap.num_grays, mode, 0, nullptr};
+    GuestRasterParams params{};
+    params.target = &guestBitmap;
+    params.flags = mode == FT_PIXEL_MODE_MONO ? 0 : FT_RASTER_FLAG_AA;
+    FT_Raster_Params nativeParams{};
+    nativeParams.target = &nativeBitmap;
+    nativeParams.flags = params.flags;
+    Require(FT_Outline_Render_nid_postfix(&library, &guest, &params) == FT_Outline_Render(native, &expected, &nativeParams));
+    Require(guestPixels == nativePixels);
+    Require(params.source == &guest);
+}
+
 static void CompareSpans(GuestLibrary& library, FT_Library native, const Shape& shape, bool clip) {
     std::vector<GuestVector> guestPoints;
     for (const FT_Vector& point : shape.points) guestPoints.push_back({point.x, point.y});
@@ -109,12 +137,41 @@ static void CompareSpans(GuestLibrary& library, FT_Library native, const Shape& 
     Require(params.clipBox.xMax == nativeParams.clip_box.xMax && params.clipBox.yMax == nativeParams.clip_box.yMax);
 }
 
+static void CheckInvalidOutlinePreservesOutputs(GuestLibrary& library, FT_Library native) {
+    Shape shape = Square();
+    shape.points[1].x = 0x1000001;
+    shape.points[2].x = 0x1000001;
+    std::vector<GuestVector> guestPoints;
+    for (const FT_Vector& point : shape.points) guestPoints.push_back({point.x, point.y});
+    FT_Outline nativeOutline{1, static_cast<unsigned short>(shape.points.size()), shape.points.data(), shape.tags.data(), shape.contours.data(), 0};
+    GuestOutline guestOutline{1, static_cast<std::uint16_t>(guestPoints.size()), guestPoints.data(), shape.tags.data(), shape.contours.data(), 0};
+    void* source = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    constexpr GuestBBox clip{11, 12, 13, 14};
+    GuestRasterParams guestParams{};
+    guestParams.flags = FT_RASTER_FLAG_DIRECT;
+    guestParams.source = source;
+    guestParams.clipBox = clip;
+    FT_Raster_Params nativeParams{};
+    nativeParams.flags = guestParams.flags;
+    nativeParams.source = source;
+    nativeParams.clip_box = {clip.xMin, clip.yMin, clip.xMax, clip.yMax};
+
+    const FT_Error expected = FT_Outline_Render(native, &nativeOutline, &nativeParams);
+    Require(expected != 0 && nativeParams.source == source);
+    Require(nativeParams.clip_box.xMin == clip.xMin && nativeParams.clip_box.yMin == clip.yMin && nativeParams.clip_box.xMax == clip.xMax && nativeParams.clip_box.yMax == clip.yMax);
+    Require(FT_Outline_Render_nid_postfix(&library, &guestOutline, &guestParams) == expected);
+    Require(guestParams.source == source);
+    Require(guestParams.clipBox.xMin == clip.xMin && guestParams.clipBox.yMin == clip.yMin && guestParams.clipBox.xMax == clip.xMax && guestParams.clipBox.yMax == clip.yMax);
+}
+
 int main() {
     GuestLibrary library{};
     FT_Library native = nullptr;
     Require(FT_Init_FreeType(&library.host) == 0 && FT_Init_FreeType(&native) == 0);
+    CheckInvalidOutlinePreservesOutputs(library, native);
     for (const auto& make : {+[] { return Square(); }, +[] { return Triangle(); }, +[] { return Curve(); }}) {
         for (const unsigned char mode : {static_cast<unsigned char>(FT_PIXEL_MODE_GRAY), static_cast<unsigned char>(FT_PIXEL_MODE_MONO)}) CompareBitmap(library, native, make(), mode);
+        for (const unsigned char mode : {static_cast<unsigned char>(FT_PIXEL_MODE_GRAY), static_cast<unsigned char>(FT_PIXEL_MODE_MONO)}) CompareNegativePitchBitmap(library, native, make(), mode);
         CompareSpans(library, native, make(), false);
         CompareSpans(library, native, make(), true);
     }

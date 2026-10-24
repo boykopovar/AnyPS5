@@ -70,11 +70,18 @@ int APS5_VABI FT_Outline_Render_nid_postfix(GuestLibrary* library, GuestOutline*
                                  HostCoordinate(params->clipBox.yMax)};
     }
     const std::size_t pitch = params->target ? static_cast<std::size_t>(params->target->pitch < 0 ? -static_cast<std::int64_t>(params->target->pitch) : params->target->pitch) : 0;
-    GuestArena::HostWrite write(params->target ? params->target->buffer : nullptr, params->target && params->target->buffer ? pitch * params->target->rows : 0);
+    auto* writeStart = params->target ? static_cast<unsigned char*>(params->target->buffer) : nullptr;
+    if (writeStart && params->target->pitch < 0 && params->target->rows > 0) {
+        const auto rowOffset = static_cast<std::int64_t>(params->target->pitch) * (params->target->rows - 1);
+        writeStart += rowOffset;
+    }
+    GuestArena::HostWrite write(writeStart, writeStart ? pitch * params->target->rows : 0);
     const FT_Error error = FT_Outline_Render(host, &native, &nativeParams);
-    params->source = outline;
-    if (params->flags & FT_RASTER_FLAG_DIRECT) {
-        params->clipBox = {nativeParams.clip_box.xMin, nativeParams.clip_box.yMin, nativeParams.clip_box.xMax, nativeParams.clip_box.yMax};
+    if (nativeParams.source == &native) {
+        params->source = outline;
+        if (params->flags & FT_RASTER_FLAG_DIRECT) {
+            params->clipBox = {nativeParams.clip_box.xMin, nativeParams.clip_box.yMin, nativeParams.clip_box.xMax, nativeParams.clip_box.yMax};
+        }
     }
     return error;
 }
