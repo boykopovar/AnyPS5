@@ -53,6 +53,7 @@ float APS5_VABI truncf_nid_postfix(float);
 float APS5_VABI ceilf_nid_postfix(float);
 float APS5_VABI floorf_nid_postfix(float);
 double APS5_VABI nearbyint_nid_postfix(double);
+float APS5_VABI nearbyintf_nid_postfix(float);
 double APS5_VABI fma_nid_postfix(double, double, double);
 long double APS5_VABI acosl_nid_postfix(long double);
 long double APS5_VABI asinl_nid_postfix(long double);
@@ -684,6 +685,26 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckRoundingNaNConsoleBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull}, {0xfff0000000000000ull, 0xfff0000000000000ull},
+    };
+    constexpr std::uint32_t floatCases[][2] = {
+        {0x7f800001u, 0x7fc00001u}, {0xffa00123u, 0xffe00123u}, {0x7fc00456u, 0x7fc00456u}, {0x7f800000u, 0x7f800000u}, {0xff800000u, 0xff800000u},
+    };
+    for (const auto function : {trunc_nid_postfix, ceil_nid_postfix, floor_nid_postfix, nearbyint_nid_postfix}) {
+        for (const auto& [input, expected] : cases) {
+            Require(std::bit_cast<std::uint64_t>(function(std::bit_cast<double>(input))) == expected);
+        }
+    }
+    for (const auto function : {truncf_nid_postfix, ceilf_nid_postfix, floorf_nid_postfix, nearbyintf_nid_postfix}) {
+        for (const auto& [input, expected] : floatCases) {
+            Require(std::bit_cast<std::uint32_t>(function(std::bit_cast<float>(input))) == expected);
+        }
+    }
 }
 
 static void CheckExpm1ConsoleBits() {
@@ -1708,6 +1729,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckRoundingNaNConsoleBits();
     CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
