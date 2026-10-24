@@ -48,9 +48,8 @@ int APS5_VABI sceNpPartyGetId(void* id) {
     return notInParty(id);
 }
 
-int APS5_VABI sceNpPartyGetMemberInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpPartyGetMemberInfo(std::uint16_t, void* memberInfo) {
+    return notInParty(memberInfo);
 }
 
 int APS5_VABI sceNpPartyGetMemberInfoA(std::uint16_t, void* memberInfo) {
@@ -65,9 +64,8 @@ int APS5_VABI sceNpPartyGetMemberVoiceInfo(std::uint16_t, std::uint16_t, std::ui
     return notInParty(memberVoiceState);
 }
 
-int APS5_VABI sceNpPartyGetMembers(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpPartyGetMembers(void* memberList) {
+    return notInParty(memberList);
 }
 
 int APS5_VABI sceNpPartyGetMembersA(void* memberList) {
@@ -105,15 +103,14 @@ int APS5_VABI sceNpPartyLeave(void) {
     return 0;
 }
 
-int APS5_VABI sceNpPartyRegisterHandler(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpPartyRegisterHandlerA(const void* handlers, void*) {
     if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!handlers) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return 0;
+}
+
+int APS5_VABI sceNpPartyRegisterHandler(const void* handlers, void* userdata) {
+    return sceNpPartyRegisterHandlerA(handlers, userdata);
 }
 
 int APS5_VABI sceNpPartyRegisterPrivateHandler(void) {
