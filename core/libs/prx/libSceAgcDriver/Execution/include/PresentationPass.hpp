@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstdint>
 #include <map>
@@ -25,10 +26,12 @@ public:
 
     void Bind(std::size_t slot, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer = 0);
     void RecordPresent(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
+    void RecordStage(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
     void RecordDump(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride, VkBuffer destination);
     void Release(std::size_t slot) noexcept;
     static bool TenBitFormat(VkFormat format);
     static VkExtent2D DumpExtent(std::uint32_t width, std::uint32_t height, std::uint32_t stride);
+    static VkSubpassDependency ExitDependency(VkImageLayout finalLayout);
 
 private:
     struct Target {
@@ -56,6 +59,7 @@ private:
     void ensureDumpTarget(Slot& slot, VkExtent2D extent);
     void releaseDumpTarget(Slot& slot) noexcept;
     void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, const std::int32_t (&parameters)[9]) const;
+    void recordInto(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout, const AspectFitRect& rect);
     void release() noexcept;
 
     Graphics::Context context;

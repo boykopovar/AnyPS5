@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PresentationUpscaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ToneMapLuminance.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
@@ -35,6 +36,7 @@ using AgcDriver::OverlayMetrics;
 using AgcDriver::OverlayRect;
 using AgcDriver::PerformanceOverlay;
 using AgcDriver::PresentationPass;
+using AgcDriver::PresentationUpscaler;
 
 constexpr int VulkanTestSkipped = 77;
 constexpr std::uint64_t Bgra8 = 0x8000000000000000ull;
@@ -430,6 +432,52 @@ void sdrOverlayTest(const Context& context, PerformanceOverlay& overlay) {
     std::printf("SDR overlay: panel %dx%d at %d,%d (scale %d), FPS digits drawn bit for bit\n", bounds.width, bounds.height, bounds.x, bounds.y, scale);
 }
 
+std::vector<std::uint32_t> upscaleAndOverlay(const Context& context, PresentationUpscaler& upscaler, PerformanceOverlay* overlay, VkExtent2D source, VkExtent2D extent, const VkClearColorValue& clear, const OverlayContent& content, OverlayRect* bounds) {
+    constexpr VkFormat Format = VK_FORMAT_B8G8R8A8_UNORM;
+    Image destination(context, Format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    Buffer readback(context, static_cast<std::size_t>(extent.width) * extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        const auto stage = upscaler.Stage(0, Format, PresentationUpscaler::StageExtent(source.width, source.height, extent));
+        upscaler.RecordStageTransferDestination(commands, 0);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, stage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+        upscaler.RecordStageWritten(commands, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        upscaler.RecordPresent(commands, 0, source.width, source.height, destination.Handle(), extent, overlay != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        if (overlay != nullptr) *bounds = overlay->Record(commands, 0, destination.Handle(), Format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, content, OverlayCorner::TopLeft);
+        readImage(context, commands, destination, readback);
+        batch.SubmitAndWait();
+    }
+    upscaler.Release(0);
+    if (overlay != nullptr) overlay->Release(0);
+    return wordsOf(readback, extent);
+}
+
+void upscaledOverlayTest(const Context& context, PerformanceOverlay& overlay) {
+    const VkExtent2D source{960, 540};
+    const VkExtent2D extent{1280, 720};
+    Require(PresentationUpscaler::Upscales(source.width, source.height, extent), "960x540 into 1280x720 does not run EASU");
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.75f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.25f;
+    clear.float32[3] = 1.0f;
+    const auto content = sixtyFps();
+    PresentationUpscaler upscaler(context, 1, 0.2f);
+    OverlayRect bounds{};
+    const auto upscaled = upscaleAndOverlay(context, upscaler, nullptr, source, extent, clear, content, nullptr);
+    Require(std::all_of(upscaled.begin(), upscaled.end(), [&](std::uint32_t word) { return word == upscaled.front(); }), "FSR did not keep a flat 960x540 frame flat at 1280x720");
+    const auto drawn = upscaleAndOverlay(context, upscaler, &overlay, source, extent, clear, content, &bounds);
+    onlyInside(upscaled, drawn, extent, bounds, "FSR 960x540 into 1280x720");
+    const auto scale = AgcDriver::OverlayScale(extent, content);
+    const std::string digits = "60.0";
+    const auto firstColumn = content.above.front().find(digits);
+    Require(firstColumn != std::string::npos, "the FPS line has no '60.0'");
+    requireTextDrawn(drawn, extent, bounds, scale, upscaled.front(), content.above.front(), OverlayMetrics::Padding, firstColumn, digits.size());
+    std::printf("overlay over FSR: EASU and RCAS 960x540 into 1280x720, then the panel %dx%d at %d,%d (scale %d); FPS digits drawn bit for bit\n", bounds.width, bounds.height, bounds.x, bounds.y, scale);
+}
+
 void hdrOverlayTest(const Context& context, PerformanceOverlay& overlay) {
     const auto format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
     VkFormatProperties properties{};
@@ -714,6 +762,7 @@ int main(int argc, char** argv) {
         {
             PerformanceOverlay overlay(context, 1);
             sdrOverlayTest(context, overlay);
+            upscaledOverlayTest(context, overlay);
             hdrOverlayTest(context, overlay);
             cornerTest(context, overlay);
             fullPanelTest(*device, overlay);
