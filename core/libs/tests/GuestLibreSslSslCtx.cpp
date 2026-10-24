@@ -34,6 +34,7 @@ int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(TestCtx*);
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(TestCtx*);
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(TestCtx*, int);
 void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(TestCtx*, void*);
+void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(TestCtx*, void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -95,10 +96,21 @@ static void TestSetPasswordCallback() {
     Require(ctx.defaultPasswdCallback == nullptr);
 }
 
+static void TestSetPasswordUserdata() {
+    int userdata = 0;
+    TestCtx ctx {};
+    RequireThrows([&] { SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(nullptr, &userdata); });
+    SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(&ctx, &userdata);
+    Require(ctx.defaultPasswdCallbackUserdata == &userdata && ctx.defaultPasswdCallback == nullptr && ctx.internal == nullptr);
+    SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(&ctx, nullptr);
+    Require(ctx.defaultPasswdCallbackUserdata == nullptr);
+}
+
 int main() {
     TestGetVerifyMode();
     TestGetCertStore();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
+    TestSetPasswordUserdata();
     return 0;
 }
