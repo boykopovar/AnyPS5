@@ -14,6 +14,7 @@
 #include "ShaderCacheDirectory.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
+#include "ShaderDiskCache.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -25,6 +26,7 @@
 #include <sys/mman.h>
 #endif
 #include <array>
+#include <utility>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -344,6 +346,23 @@ void JournalTests() {
         const auto final = Snapshot();
         Require(final.journal.recordedGraphics == 1 && final.journal.recordedCompute == 1 && final.journal.recordedModules == 3, "the second run recorded pipelines the journal already held");
     }
+    constexpr std::array<std::pair<const char*, const char*>, 3> limits{{{"1", ""}, {"1", "0"}, {"0", "1"}}};
+    for (const auto& [graphicsLimit, computeLimit] : limits) {
+        SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", graphicsLimit);
+        SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", computeLimit);
+        const auto before = Snapshot();
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "a bounded replay's device could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto bounded = Snapshot();
+        const auto graphics = bounded.journal.replayedGraphics - before.journal.replayedGraphics;
+        const auto compute = bounded.journal.replayedCompute - before.journal.replayedCompute;
+        const auto wantGraphics = std::string(graphicsLimit) == "0" ? 0u : 1u;
+        const auto wantCompute = std::string(computeLimit) == "0" ? 0u : 1u;
+        Require(graphics == wantGraphics && compute == wantCompute && device->ComputePipelinesCreated() == wantCompute, "a replay bounded to " + std::string(graphicsLimit) + " graphics and " + (*computeLimit == '\0' ? std::string("the default") : std::string(computeLimit)) + " compute entries replayed " + std::to_string(graphics) + " graphics and " + std::to_string(compute) + " compute pipelines");
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "");
 }
 
 void HeldModuleTests() {
@@ -362,6 +381,14 @@ void HeldModuleTests() {
         for (std::size_t index = 0; index < results.size(); ++index) device->Dispatch(results[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
         device->WaitIdle();
         AgcDriver::Graphics::FlushPipelineJournal();
+        std::uint64_t encoded = 0;
+        for (const auto& result : results) {
+            std::vector<std::byte> bytes;
+            ShaderRecompiler::ShaderDiskCache::EncodeResult(result, bytes);
+            encoded += bytes.size();
+        }
+        const auto journalBytes = std::filesystem::file_size(AgcDriver::Graphics::PipelineJournalPath());
+        Require(journalBytes < encoded, "the journal is " + std::to_string(journalBytes) + " bytes with 16 of its modules alone encoding to " + std::to_string(encoded) + " bytes, so it does not store them compressed");
     }
     SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "1");
     const auto before = Snapshot();
@@ -492,7 +519,8 @@ void NewestEntriesTests() {
         const auto after = Snapshot();
         Require(after.journal.recordedCompute == recorded.journal.recordedCompute + 3, "the three compute pipelines were not recorded");
     }
-    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "2");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "0");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "2");
     const auto before = Snapshot();
     {
         const auto device = OpenVulkanTestDevice();
@@ -514,6 +542,7 @@ void NewestEntriesTests() {
         Require(device->ComputePipelinesCreated() == created + 1, "the oldest pipeline was built by the replay");
     }
     SetEnvironment("APS5_PIPELINE_JOURNAL_ENTRIES", "1024");
+    SetEnvironment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", "");
 }
 
 void EvictionTests() {
@@ -676,7 +705,9 @@ void OversizedRecordKeepsTheJournal() {
         device->WaitForPipelineJournalReplay();
         const auto code = ComputeCode(2);
         auto result = CompileCompute(*device, code, words, 32);
-        result.shaderDataUserWords.assign(400000u, 0u);
+        result.shaderDataUserWords.resize(400000u);
+        std::uint32_t noise = 0x9e3779b9u;
+        for (auto& word : result.shaderDataUserWords) word = noise = noise * 1664525u + 1013904223u;
         AgcDriver::Graphics::RecordComputePipeline(result, false);
         AgcDriver::Graphics::FlushPipelineJournal();
     }
