@@ -3,12 +3,12 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "prx/libSceFont/include/FontWords.hpp"
 
 struct FontGraphicsDevice;
 struct FontGraphicsDeviceParam;
 struct FontGraphicsService;
 struct FontGraphicsServiceParam;
-struct FontWords;
 struct FontGlyphSupport;
 struct FontOutlineProfile;
 struct FontMetrics;
@@ -159,8 +159,7 @@ int APS5_VABI sceFontCreateGraphicsServiceWithEdition(const FontMemory* memory, 
 }
 
 int APS5_VABI sceFontCreateWords(const FontMemory* memory, FontTextSource* source, std::uint64_t unusedSlot, FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateWords(memory, source, words);
 }
 
 int APS5_VABI sceFontDestroyGraphicsDevice(FontGraphicsDevice** device) {
@@ -174,8 +173,7 @@ int APS5_VABI sceFontDestroyGraphicsService(FontGraphicsService** service) {
 }
 
 int APS5_VABI sceFontDestroyWords(FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::DestroyWords(words);
 }
 
 
@@ -470,8 +468,7 @@ int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
 }
 
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill) {
