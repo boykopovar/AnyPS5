@@ -396,6 +396,7 @@ struct Sock {
     std::shared_ptr<NativeSocketHandle> native;
     bool bound = false;
     bool listening = false;
+    bool connectAttempted = false;
     bool aborted = false;
     bool read_shut = false;
     int reported_error = 0;
@@ -734,7 +735,24 @@ int wait_for_datagram(const Sock& socket, std::chrono::steady_clock::time_point 
 }
 
 int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
-    if (socket.type == NET_SOCK_STREAM || socket.bound) return 0;
+    if (socket.type == NET_SOCK_STREAM) {
+#ifdef _WIN32
+        if (!empty) return 0;
+        sockaddr_storage peer{};
+        NativeLength length = sizeof(peer);
+        if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) != 0) {
+            const int error = native_error();
+            return !socket.connectAttempted && !socket.aborted && !socket.read_shut && error == NET_ENOTCONN ? error : 0;
+        }
+        WSAPOLLFD state{};
+        state.fd = socket.native->value;
+        state.events = POLLRDNORM;
+        return WSAPoll(&state, 1, 0) >= 0 && (state.revents & (POLLERR | POLLHUP | POLLNVAL)) == 0 ? RECEIVE_NOTHING : 0;
+#else
+        return 0;
+#endif
+    }
+    if (socket.bound) return 0;
     const bool named = has_local_address(socket.native->value);
     if (!named && (socket.read_shut || empty)) return RECEIVE_NOTHING;
     if (!named && (socket.native->nonblock || (flags & NET_MSG_DONTWAIT) != 0)) return NET_EAGAIN;
@@ -1148,6 +1166,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     Sock connection;
     connection.family = listener.family;
     connection.type = NET_SOCK_STREAM;
+    connection.connectAttempted = true;
     connection.native = std::move(handle);
 #ifdef _WIN32
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
@@ -1230,6 +1249,11 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     if (socket.type == NET_SOCK_STREAM) RefuseClosedLoopbackAtOnce_nid_no_patch(socket.native->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
+    if (socket.type == NET_SOCK_STREAM) {
+        std::lock_guard lock(g_mutex);
+        const auto current = g_socks.find(s);
+        if (current != g_socks.end() && current->second.native == socket.native) current->second.connectAttempted = true;
+    }
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
