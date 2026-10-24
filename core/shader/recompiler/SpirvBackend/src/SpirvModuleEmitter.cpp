@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvFormatConvert.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include "PipelineSpecialization.hpp"
@@ -471,14 +472,84 @@ MergeTexel MergeTargetTexel(SpirvEmitterState& state) {
     const auto& images = state.program.Info().images;
     const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.targetMerge; });
     if (image == images.end()) FailEmit("the color target merge image was not collected");
-    if (InputVariableForKind(state, StageInputKind::FragCoord) == 0u || (pixel.mergeSamples > 1u && InputVariableForKind(state, StageInputKind::SampleId) == 0u)) FailEmit("the color target merge inputs were not declared");
+    if (InputVariableForKind(state, StageInputKind::FragCoord) == 0u || (pixel.mergeSamples > 1u && InputVariableForKind(state, StageInputKind::SampleId) == 0u) || (pixel.mergeLayered && InputVariableForKind(state, StageInputKind::Layer) == 0u)) FailEmit("the color target merge inputs were not declared");
     if (state.mergeWordVariable == 0u || state.mergePendingVariable == 0u) FailEmit("the color target merge variables were not declared");
     const auto position = [&](std::uint32_t component) { return Unary(state, spv::OpConvertFToU, TypeU32(state), Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component))); };
     const auto x = position(0u);
     const auto y = position(1u);
     const auto coord = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2u), coord, x, y);
+    if (pixel.mergeLayered) {
+        const auto slice = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeU32(state), slice, GlslStd450(state), GLSLstd450UMin, EmitAddU32(state, EmitBuiltinU32(state, StageInputKind::Layer, 0u), ConstantU32(state, pixel.mergeFirstSlice)), ConstantU32(state, pixel.mergeLastSlice));
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 3u), coord, x, y, slice);
+    } else {
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2u), coord, x, y);
+    }
     return {static_cast<std::uint32_t>(image - images.begin()), coord, pixel.mergeSamples > 1u ? EmitBuiltinU32(state, StageInputKind::SampleId, 0u) : 0u};
+}
+
+std::uint32_t PackedBlendFactor(SpirvEmitterState& state, std::uint32_t factor, std::uint32_t source, std::uint32_t destination, std::uint32_t sourceAlpha) {
+    const auto one = ConstantF32Value(state, 1.0f);
+    const auto minus = [&](std::uint32_t value) { return Binary(state, spv::OpFSub, TypeF32(state), one, value); };
+    switch (factor) {
+        case 1: return one;
+        case 2: return source;
+        case 3: return minus(source);
+        case 4: return sourceAlpha;
+        case 5: return minus(sourceAlpha);
+        case 6: return one;
+        case 7: return ConstantF32Value(state, 0.0f);
+        case 8: return destination;
+        case 9: return minus(destination);
+        case 10: {
+            const auto saturated = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeF32(state), saturated, GlslStd450(state), GLSLstd450FMin, sourceAlpha, ConstantF32Value(state, 0.0f));
+            return saturated;
+        }
+        default: FailEmit("a blended packed color target has an unsupported blend factor");
+    }
+}
+
+std::uint32_t PackedBlendTerm(SpirvEmitterState& state, std::uint32_t factor, std::uint32_t value, std::uint32_t source, std::uint32_t destination, std::uint32_t sourceAlpha) {
+    if (factor == 0u) return ConstantF32Value(state, 0.0f);
+    if (factor == 1u) return value;
+    return Binary(state, spv::OpFMul, TypeF32(state), value, PackedBlendFactor(state, factor, source, destination, sourceAlpha));
+}
+
+std::uint32_t BlendPackedColor(SpirvEmitterState& state, IrBufferFormat format, std::uint32_t color, std::uint32_t stored, std::uint32_t control) {
+    const auto info = GetFormatInfo(format);
+    const auto sourceFactor = control & 0x1fu;
+    const auto combine = (control >> 5u) & 7u;
+    const auto destinationFactor = (control >> 8u) & 0x1fu;
+    const auto sourceAlpha = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), sourceAlpha, color, 3u);
+    std::array<std::uint32_t, 4> components{};
+    for (std::uint32_t component = 0; component < components.size(); ++component) {
+        const auto source = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), source, color, component);
+        if (component >= info.componentCount) {
+            components[component] = source;
+            continue;
+        }
+        const auto field = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, stored, ConstantU32(state, info.componentBitOffset[component])), ConstantU32(state, (1u << info.componentBits[component]) - 1u));
+        const auto destination = Unary(state, spv::OpBitcast, TypeF32(state), NormalizeFormatComponent(state, info, component, field));
+        const auto glsl = [&](std::uint32_t op) {
+            const auto result = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeF32(state), result, GlslStd450(state), op, source, destination);
+            return result;
+        };
+        switch (combine) {
+            case 0: components[component] = Binary(state, spv::OpFAdd, TypeF32(state), PackedBlendTerm(state, sourceFactor, source, source, destination, sourceAlpha), PackedBlendTerm(state, destinationFactor, destination, source, destination, sourceAlpha)); break;
+            case 1: components[component] = Binary(state, spv::OpFSub, TypeF32(state), PackedBlendTerm(state, sourceFactor, source, source, destination, sourceAlpha), PackedBlendTerm(state, destinationFactor, destination, source, destination, sourceAlpha)); break;
+            case 2: components[component] = glsl(GLSLstd450FMin); break;
+            case 3: components[component] = glsl(GLSLstd450FMax); break;
+            case 4: components[component] = Binary(state, spv::OpFSub, TypeF32(state), PackedBlendTerm(state, destinationFactor, destination, source, destination, sourceAlpha), PackedBlendTerm(state, sourceFactor, source, source, destination, sourceAlpha)); break;
+            default: FailEmit("a blended packed color target has an unsupported combine function");
+        }
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4u), result, components[0], components[1], components[2], components[3]);
+    return result;
 }
 
 void MergeColorTarget(SpirvEmitterState& state, std::uint32_t color) {
@@ -486,7 +557,11 @@ void MergeColorTarget(SpirvEmitterState& state, std::uint32_t color) {
     const auto [resource, coord, sample] = MergeTargetTexel(state);
     const auto stored = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), stored, EmitStorageImageRead(state, resource, coord, sample), 0u);
-    const auto word = PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color);
+    const bool floating = pixel.mergePacking == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10);
+    if (!floating && pixel.mergePacking != static_cast<std::uint8_t>(ColorExportPacking::Unorm4_4_4_4)) FailEmit("a color target merge into an unsupported packing");
+    if (pixel.mergeBlendControl != 0u && !floating) FailEmit("a blending color target merge into a target other than 11_11_10 float");
+    const auto format = floating ? IrBufferFormat::Format10_11_11Float : IrBufferFormat::Format4_4_4_4UNorm;
+    const auto word = PackExport(state, format, pixel.mergeBlendControl != 0u ? BlendPackedColor(state, format, color, stored, pixel.mergeBlendControl) : color);
     const auto kept = EmitBinaryU32(state, spv::OpBitwiseAnd, stored, ConstantU32(state, ~static_cast<std::uint32_t>(pixel.mergeMask)));
     const auto merged = EmitOrU32(state, kept, EmitBinaryU32(state, spv::OpBitwiseAnd, word, ConstantU32(state, pixel.mergeMask)));
     state.module.AddFunction(spv::OpStore, state.mergeWordVariable, merged);

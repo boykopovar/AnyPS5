@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -9940,7 +9941,26 @@ void unorm4_4_4_4TargetTests() {
             const auto partial = AgcDriver::Graphics::DecodeState(depthQueue);
             const auto merge = AgcDriver::Graphics::ExportTargetMerge(partial);
             Require(partial.depth.has_value() == ((control & 0xbu) != 0u) && partial.depthBoundsTest == ((control & 8u) != 0u) && merge.mask == 0xf000u && AgcDriver::Graphics::DepthStencilWrites(partial) == writes && merge.depthStencilWrites == writes && merge.depthStencilTests == ((control & 0xbu) != 0u), "a partial 4_4_4_4 write under " + what + (writes ? " did not report" : " reported") + " depth or stencil writes");
+            auto killing = depthQueue;
+            killing.context[0x203] = 0x40u;
+            const bool split = (control & 0x7u) == 0x6u;
+            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(partial) == 0u && AgcDriver::Graphics::LateTestMergeSplitTargets(AgcDriver::Graphics::DecodeState(killing)) == (split ? 0xfu : 0u), "a partial 4_4_4_4 write that kills under late tests and " + what + (split ? " did not split" : " split"));
         }
+        auto killing = depthQueue;
+        killing.context[0x203] = 0x40u;
+        killing.context[0x10b] = 0x00050050u;
+        killing.context[0x10c] = killing.context[0x10d] = 0x01ffff01u;
+        for (const auto& [control, shaderControl, what] : {std::tuple{0x00700717u, 0x40u, "a stencil write"}, std::tuple{0x00700706u, 0x40u, "ZFUNC NEVER"}, std::tuple{0x00700716u, 0x1040u, "DEPTH_BEFORE_SHADER"}}) {
+            auto refused = killing;
+            refused.context[0x200] = control;
+            refused.context[0x203] = shaderControl;
+            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(AgcDriver::Graphics::DecodeState(refused)) == 0u, std::string("a partial 4_4_4_4 write that writes depth under late tests split despite ") + what);
+        }
+        killing.context[0x200] = 0x00700716u;
+        auto second = AgcDriver::Graphics::DecodeState(killing);
+        Require(second.colors.size() == 1u && second.colors[0].slot == 0u, "the merged target did not decode in slot 0");
+        second.colors[0].slot = 1u;
+        Require(AgcDriver::Graphics::LateTestMergeSplitTargets(second) == 0xf0u, "a merged target in slot 1 did not split on CB_TARGET_MASK bits 4..7");
         auto truncated = depthQueue;
         truncated.context[0x200] = 0x00700712u;
         truncated.context[0x010] = 0x22900987u;
@@ -10245,10 +10265,70 @@ void float11_11_10TargetTests() {
     changed = queue;
     changed.context[0x1e0] = 0x60010101u;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    const auto additive = AgcDriver::Graphics::DecodeState(changed);
+    Require(additive.color.mergeBlend == 0x40000101u && additive.color.partialWriteMask == 0xffffffffu && !additive.blends[0].blendEnable && additive.blends[0].colorWriteMask == 0u, "an additive blend into an 11_11_10 float target did not decode as a blending merge of the whole word");
+    const auto additiveMerge = AgcDriver::Graphics::ExportTargetMerge(additive);
+    Require(additiveMerge.mask == 0xffffffffu && additiveMerge.packing == ColorExportPacking::Float11_11_10 && additiveMerge.blendControl == 0x40000101u, "the additive 11_11_10 float blend did not reach the pixel shader's target merge");
+    auto cube = additive;
+    auto& face = cube.colors.at(0);
+    face.arrayAddress = face.surfaceAddress;
+    face.surfaceExtent = {128u, 128u};
+    face.mipCount = 8u;
+    face.mip = 3u;
+    face.arrayLastSlice = 5u;
+    face.arraySlice = 2u;
+    face.layers = 4u;
+    cube.color = face;
+    const auto cubeMerge = AgcDriver::Graphics::ExportTargetMerge(cube);
+    const auto cubeSurface = AgcDriver::Graphics::DecodeTextureResource(cubeMerge.descriptor);
+    Require(cubeMerge.layered && cubeMerge.firstSlice == 2u && cubeMerge.lastSlice == 5u && cubeSurface.dimension == AgcDriver::Graphics::TextureDimension::k2DArray && cubeSurface.baseAddress == face.arrayAddress && cubeSurface.width == 128u && cubeSurface.height == 128u && cubeSurface.mipCount == 8u && cubeSurface.baseLevel == 3u && cubeSurface.lastLevel == 3u && cubeSurface.baseArray == 0u && cubeSurface.depthOrLastArray == 5u && cubeSurface.format == AgcDriver::Graphics::SurfaceForTarget(face).format, "the merge of mip 3 of slices 2..5 of a mipmapped 11_11_10 float array does not address its whole array at that mip");
+    Require(!additiveMerge.layered && additiveMerge.firstSlice == 0u && additiveMerge.lastSlice == 0u, "the merge of a one-layer 11_11_10 float target was marked layered");
+    {
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, cube, mergeCode);
+        merging.context.pixel->targetMerge = cubeMerge;
+        const std::array<std::uint32_t, 4> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityGeometry};
+        merging.target.supportedCapabilities = capabilities;
+        const ShaderRecompiler::RequestSerializer serializer;
+        Require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerge == cubeMerge, "the layered 11_11_10 float target merge was lost in serialization");
+        auto flat = merging;
+        flat.context.pixel->targetMerge = additiveMerge;
+        auto shifted = merging;
+        shifted.context.pixel->targetMerge.firstSlice = 0u;
+        std::vector<std::uint64_t> layeredKey, flatKey, shiftedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(merging, layeredKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(flat, flatKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(shifted, shiftedKey);
+        Require(layeredKey != flatKey && layeredKey != shiftedKey, "the static shader key does not separate a layered merge from a one-layer merge or from another first slice");
+        const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
+        bool arrayed = false, layer = false, geometry = false, clamped = false;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpTypeImage && words[at + 3] == spv::Dim2D && words[at + 5] == 1u && words[at + 7] == 2u) arrayed = true;
+            if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn && words[at + 3] == spv::BuiltInLayer) layer = true;
+            if (op == spv::OpCapability && words[at + 1] == spv::CapabilityGeometry) geometry = true;
+            if (op == spv::OpExtInst && words[at + 4] == GLSLstd450UMin) clamped = true;
+        }
+        Require(arrayed && layer && geometry && clamped && interlockShape(words) == "capability extension ordered begin end ", "a layered 11_11_10 float merge module does not address an arrayed storage image by gl_Layer, clamped to the view's last slice, inside a pixel interlock");
+        auto multisampled = merging;
+        multisampled.context.pixel->targetMerge.samples = 2u;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(multisampled)); }, "a color target merge into a multisampled array");
+    }
+    changed.context[0x1e0] = 0x65040504u;
+    Require(AgcDriver::Graphics::DecodeState(changed).color.mergeBlend == 0x40000504u, "a source-over blend into an 11_11_10 float target did not keep its color equation");
+    changed.context[0x1e0] = 0x40000001u;
+    const auto replace = AgcDriver::Graphics::DecodeState(changed);
+    Require(replace.color.mergeBlend == 0x40000001u && replace.color.partialWriteMask == 0xffffffffu && !replace.blends[0].blendEnable, "a ONE/ZERO/ADD blend into an 11_11_10 float target did not merge with its color equation");
+    changed.context[0x1e0] = 0x40000d01u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target with a constant color factor");
+    changed.context[0x1e0] = 0x40000f01u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "dual-source blending into an 11_11_10 float color target");
+    changed.context[0x1e0] = 0x400001a1u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported blend operation 5");
     changed = queue;
     changed.context[0x8e] = 6;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of an 11_11_10 float color target");
+    const auto partial = AgcDriver::Graphics::DecodeState(changed);
+    Require(partial.color.partialWriteMask == 0x001fffffu && partial.color.mergeBlend == 0u, "a green and blue write of an 11_11_10 float target did not merge into the word's low 21 bits");
     changed.context[0x8e] = 7;
     Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Float11_11_10, "an RGB write of an 11_11_10 float target was refused");
     for (const auto format : {5u, 6u}) {

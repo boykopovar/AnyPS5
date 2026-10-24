@@ -221,6 +221,11 @@ private:
         append(key, value.targetMerge.target);
         append(key, value.targetMerge.mask);
         append(key, value.targetMerge.samples);
+        append(key, value.targetMerge.packing);
+        append(key, value.targetMerge.blendControl);
+        append(key, value.targetMerge.layered);
+        append(key, value.targetMerge.firstSlice);
+        append(key, value.targetMerge.lastSlice);
         append(key, value.targetMerge.depthStencilWrites);
         append(key, value.targetMerge.depthStencilTests);
         append(key, value.sampleOrder);

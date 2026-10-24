@@ -35,7 +35,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -44,7 +44,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 9u;
+constexpr std::uint32_t FileFormat = 10u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -196,6 +196,7 @@ void encodeState(Writer& writer, const State& state) {
         writer.U32(color.exportIndex);
         writer.Raw(color.componentMapping);
         writer.Raw(color.partialWriteMask);
+        writer.Raw(color.mergeBlend);
     }
     writer.Raws(std::span<const VkPipelineColorBlendAttachmentState>(state.blends));
     for (const auto value : state.blendConstants) writer.Raw(value);
@@ -261,7 +262,8 @@ void decodeState(Reader& reader, State& state) {
         color.format = static_cast<VkFormat>(reader.U32());
         color.exportIndex = reader.U32();
         color.componentMapping = reader.Raw<std::uint8_t>();
-        color.partialWriteMask = reader.Raw<std::uint16_t>();
+        color.partialWriteMask = reader.Raw<std::uint32_t>();
+        color.mergeBlend = reader.Raw<std::uint32_t>();
         state.colors.push_back(color);
     }
     reader.Raws(state.blends, 8u);
@@ -1041,6 +1043,7 @@ State CanonicalPipelineState(const State& state) {
         canonicalColor.exportIndex = color.exportIndex;
         canonicalColor.componentMapping = color.componentMapping;
         canonicalColor.partialWriteMask = color.partialWriteMask;
+        canonicalColor.mergeBlend = color.mergeBlend;
         canonical.colors.push_back(canonicalColor);
     }
     canonical.blends = state.blends;
