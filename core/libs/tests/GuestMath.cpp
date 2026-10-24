@@ -544,6 +544,22 @@ static void CheckAtanfConsoleBits() {
     }
 }
 
+static void CheckAtan2fConsoleBits() {
+    constexpr std::uint32_t cases[][3] = {
+        {0x3d6f53e1u, 0x3fb6a73eu, 0x3d279f68u}, {0x3e587cf9u, 0x3f8f2054u, 0x3e3f5992u}, {0xbe8d427du, 0x3e57a3bau, 0xbf6b3a09u},
+        {0x40162421u, 0xbd5afe7bu, 0x3fcbfa85u}, {0xc0d9c130u, 0xbd9ebbffu, 0xbfca8510u}, {0xbe077b06u, 0x40786368u, 0xbd0b9407u},
+        {0xbe51a574u, 0xbdf4773fu, 0xc006505au}, {0x3fe6cdabu, 0xbf7fff9bu, 0x4004f006u}, {0x3f800000u, 0x3f800000u, 0x3f490fdbu},
+        {0x40000000u, 0x3f800000u, 0x3f8db70du}, {0x00000000u, 0xbf800000u, 0x40490fdbu}, {0x80000000u, 0xbf800000u, 0xc0490fdbu},
+        {0x3f800000u, 0x00000000u, 0x3fc90fdbu}, {0xbf800000u, 0x80000000u, 0xbfc90fdbu}, {0x7f800000u, 0x7f800000u, 0x3f490fdbu},
+        {0xff800000u, 0xff800000u, 0xc016cbe4u}, {0x3f800000u, 0xff800000u, 0x40490fdbu}, {0xbf800000u, 0x7f800000u, 0x80000000u},
+        {0x7f800000u, 0x3f000000u, 0x3fc90fdbu}, {0x4e000000u, 0x3f800001u, 0x3fc90fdbu}, {0x30000000u, 0xc0000000u, 0x40490fdbu},
+        {0x7fc00000u, 0xffc00001u, 0x7fc00000u}, {0x3f800000u, 0x7fc00002u, 0x7fc00002u},
+    };
+    for (const auto& [y, x, expected] : cases) {
+        Require(std::bit_cast<std::uint32_t>(atan2f_nid_postfix(std::bit_cast<float>(y), std::bit_cast<float>(x))) == expected);
+    }
+}
+
 static void CheckHypotSpecialValue() {
     Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(INFINITY, std::bit_cast<double>(0x7ff0000000000001ull))) == 0x7ff0000000000000ull);
     Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(std::bit_cast<double>(0x7ff0000000000001ull), INFINITY)) == 0x7ff0000000000000ull);
@@ -1768,6 +1784,7 @@ int main() {
     CheckLogfConsoleBits();
     CheckHypotSpecialValue();
     CheckAtanfConsoleBits();
+    CheckAtan2fConsoleBits();
     CheckFloatUnderflowErrno();
     CheckFmodErrno();
     CheckFmodfErrno();
