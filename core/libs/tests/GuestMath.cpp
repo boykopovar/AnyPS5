@@ -567,7 +567,33 @@ static void CheckExp2Errno() {
 }
 
 static void CheckPowfSpecialValue() {
-    Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(1.0f, std::bit_cast<float>(0x7f800001u))) == 0x3f800000u);
+    constexpr struct {
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x3f9e2cf9u, 0xbf5a98dcu, 0x3f55ab48u, 0}, {0x3fad4946u, 0x40c1ad7au, 0x40c82840u, 0}, {0x3f1467ddu, 0x40b9b6f1u, 0x3d2d08eeu, 0},
+        {0x3fda2303u, 0x3f002254u, 0x3fa724dau, 0}, {0x3ff3e78du, 0xc1db422eu, 0x32b5d534u, 0}, {0x3f8d3e01u, 0x3f9f7952u, 0x3f90b3f4u, 0},
+        {0x3f800000u, 0x7f800001u, 0x7fc00001u, 0}, {0x3f800000u, 0x7fc00000u, 0x7fc00000u, 0}, {0x3f800000u, 0x7f800000u, 0xffc00000u, 0},
+        {0xbf800000u, 0xff800000u, 0xffc00000u, 0}, {0x3f800000u, 0x40000000u, 0x3f800000u, 0}, {0x40000000u, 0x00000000u, 0x3f800000u, 0},
+        {0x7fc00001u, 0x00000000u, 0x3f800000u, 0}, {0x40000000u, 0x3f000000u, 0x3fb504f3u, 0}, {0x40800000u, 0x3f000000u, 0x40000000u, 0},
+        {0xc0000000u, 0x40400000u, 0xc1000000u, 0}, {0xc0000000u, 0x3fc00000u, 0xffc00000u, EDOM}, {0xbf800000u, 0x3fc00000u, 0xffc00000u, EDOM},
+        {0x00000000u, 0xc0000000u, 0x7f800000u, 0}, {0x80000000u, 0xc0400000u, 0xff800000u, 0}, {0x42c80000u, 0x42c80000u, 0x7f800000u, ERANGE},
+        {0x3c23d70au, 0x42c80000u, 0x00000000u, ERANGE}, {0x40000000u, 0x43000000u, 0x7f800000u, ERANGE}, {0x40000000u, 0xc3160000u, 0x00000000u, ERANGE},
+        {0x40000000u, 0xc3150000u, 0x00000001u, 0}, {0x40000000u, 0x4e000000u, 0x7f800000u, 0}, {0x3f000000u, 0x4e000000u, 0x00000000u, 0},
+        {0xc0000000u, 0x4f000000u, 0x7f800000u, 0}, {0x7f800000u, 0xbf800000u, 0x00000000u, 0}, {0xff800000u, 0x40400000u, 0xff800000u, 0},
+        {0x7fc00001u, 0xffc00002u, 0x7fc00001u, 0}, {0xffc00002u, 0x7fc00001u, 0xffc00002u, 0}, {0x7f800001u, 0x7fc00003u, 0x7fc00001u, 0},
+        {0x7fc00003u, 0x7f800001u, 0x7fc00003u, 0}, {0xff800002u, 0x7fc00003u, 0xffc00002u, 0}, {0x7fc00003u, 0xff800002u, 0x7fc00003u, 0},
+        {0x7f800001u, 0xff800002u, 0x7fc00001u, 0}, {0xff800002u, 0x7f800001u, 0xffc00002u, 0}, {0x7fffffffu, 0xffffffffu, 0x7fffffffu, 0},
+        {0x7f800001u, 0x00000000u, 0x3f800000u, 0}, {0xff800002u, 0x80000000u, 0x3f800000u, 0}, {0xff800002u, 0x7f800000u, 0xffc00002u, 0},
+        {0xff800000u, 0xff800002u, 0xffc00002u, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(std::bit_cast<float>(item.x), std::bit_cast<float>(item.y))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 struct RestoreFloatingPointState {

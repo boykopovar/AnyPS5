@@ -708,9 +708,166 @@ float APS5_VABI atanf_nid_postfix(float x) {
     return hx < 0 ? -result : result;
 }
 double APS5_VABI atan2_nid_postfix(double y, double x) { return std::atan2(y, x); }
-float APS5_VABI powf_nid_postfix(float base, float exp) {
-    if (base == 1.0f) return 1.0f;
-    return std::pow(base, exp);
+static inline std::int32_t PowfWord(float f) { return std::bit_cast<std::int32_t>(f); }
+static inline float PowfFloat(std::int32_t w) { return std::bit_cast<float>(w); }
+
+float APS5_VABI powf_nid_postfix(float x, float y) {
+    static const float bp[] = {1.0f, 1.5f}, dp_h[] = {0.0f, static_cast<float>(5.84960938e-01)}, dp_l[] = {0.0f, static_cast<float>(1.56322085e-06)};
+    const float zero = 0.0f, half = 0.5f, qrtr = 0.25f, thrd = static_cast<float>(3.33333343e-01), one = 1.0f, two = 2.0f, two24 = 16777216.0f;
+    const float huge = 1.0e30f, tiny = 1.0e-30f;
+    const float L1 = static_cast<float>(6.0000002384e-01), L2 = static_cast<float>(4.2857143283e-01), L3 = static_cast<float>(3.3333334327e-01);
+    const float L4 = static_cast<float>(2.7272811532e-01), L5 = static_cast<float>(2.3066075146e-01), L6 = static_cast<float>(2.0697501302e-01);
+    const float P1 = static_cast<float>(1.6666667163e-01), P2 = static_cast<float>(-2.7777778450e-03), P3 = static_cast<float>(6.6137559770e-05);
+    const float P4 = static_cast<float>(-1.6533901999e-06), P5 = static_cast<float>(4.1381369442e-08);
+    const float lg2 = static_cast<float>(6.9314718246e-01), lg2_h = static_cast<float>(6.93145752e-01), lg2_l = static_cast<float>(1.42860654e-06);
+    const float ovt = static_cast<float>(4.2995665694e-08), cp = static_cast<float>(9.6179670095e-01), cp_h = static_cast<float>(9.6191406250e-01);
+    const float cp_l = static_cast<float>(-1.1736857402e-04), ivln2 = static_cast<float>(1.4426950216e+00), ivln2_h = static_cast<float>(1.4426879883e+00);
+    const float ivln2_l = static_cast<float>(7.0526075433e-06);
+    float z, ax, z_h, z_l, p_h, p_l, y1, t1, t2, r, s, sn, t, u, v, w;
+    std::int32_t i, j, k, yisint, n, is;
+    const std::int32_t hx = PowfWord(x), hy = PowfWord(y);
+    std::int32_t ix = hx & 0x7fffffff;
+    const std::int32_t iy = hy & 0x7fffffff;
+    if (iy == 0) return one;
+    if (ix > 0x7f800000 || iy > 0x7f800000) {
+        if ((ix > 0x7f800000 && (ix & 0x00400000) == 0) ||
+            (iy > 0x7f800000 && (iy & 0x00400000) == 0)) std::feraiseexcept(FE_INVALID);
+        return PowfFloat((ix > 0x7f800000 ? hx : hy) | 0x00400000);
+    }
+    yisint = 0;
+    if (hx < 0) {
+        if (iy >= 0x4b800000) yisint = 2;
+        else if (iy >= 0x3f800000) {
+            k = (iy >> 23) - 0x7f;
+            j = iy >> (23 - k);
+            if ((j << (23 - k)) == iy) yisint = 2 - (j & 1);
+        }
+    }
+    if (iy == 0x7f800000) {
+        if (ix == 0x3f800000) return y - y;
+        else if (ix > 0x3f800000) return hy >= 0 ? y : zero;
+        else return hy < 0 ? -y : zero;
+    }
+    if (iy == 0x3f800000) return hy < 0 ? one / x : x;
+    if (hy == 0x40000000) return x * x;
+    if (hy == 0x3f000000) {
+        if (hx >= 0) return std::sqrt(x);
+    }
+    ax = std::fabs(x);
+    if (ix == 0x7f800000 || ix == 0 || ix == 0x3f800000) {
+        z = ax;
+        if (hy < 0) z = one / z;
+        if (hx < 0) {
+            if (((ix - 0x3f800000) | yisint) == 0) {
+                errno = EDOM;
+                z = (z - z) / (z - z);
+            }
+            else if (yisint == 1) z = -z;
+        }
+        return z;
+    }
+    n = static_cast<std::int32_t>((static_cast<std::uint32_t>(hx) >> 31) - 1);
+    if ((n | yisint) == 0) {
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    sn = one;
+    if ((n | (yisint - 1)) == 0) sn = -one;
+    if (iy > 0x4d000000) {
+        if (ix < 0x3f7ffff8) return hy < 0 ? sn * huge * huge : sn * tiny * tiny;
+        if (ix > 0x3f800007) return hy > 0 ? sn * huge * huge : sn * tiny * tiny;
+        t = ax - 1;
+        w = (t * t) * (half - t * (thrd - t * qrtr));
+        u = ivln2_h * t;
+        v = t * ivln2_l - w * ivln2;
+        t1 = u + v;
+        is = PowfWord(t1);
+        t1 = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+        t2 = v - (t1 - u);
+    } else {
+        float s2, s_h, s_l, t_h, t_l;
+        n = 0;
+        if (ix < 0x00800000) { ax *= two24; n -= 24; ix = PowfWord(ax); }
+        n += (ix >> 23) - 0x7f;
+        j = ix & 0x007fffff;
+        ix = j | 0x3f800000;
+        if (j <= 0x1cc471) k = 0;
+        else if (j < 0x5db3d7) k = 1;
+        else { k = 0; n += 1; ix -= 0x00800000; }
+        ax = PowfFloat(ix);
+        u = ax - bp[k];
+        v = one / (ax + bp[k]);
+        s = u * v;
+        s_h = s;
+        is = PowfWord(s_h);
+        s_h = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+        is = ((ix >> 1) & static_cast<std::int32_t>(0xfffff000)) | 0x20000000;
+        t_h = PowfFloat(is + 0x00400000 + (k << 21));
+        t_l = ax - (t_h - bp[k]);
+        s_l = v * ((u - s_h * t_h) - s_h * t_l);
+        s2 = s * s;
+        r = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
+        r += s_l * (s_h + s);
+        s2 = s_h * s_h;
+        t_h = 3 + s2 + r;
+        is = PowfWord(t_h);
+        t_h = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+        t_l = r - ((t_h - 3) - s2);
+        u = s_h * t_h;
+        v = s_l * t_h + t_l * s;
+        p_h = u + v;
+        is = PowfWord(p_h);
+        p_h = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+        p_l = v - (p_h - u);
+        z_h = cp_h * p_h;
+        z_l = cp_l * p_h + p_l * cp + dp_l[k];
+        t = static_cast<float>(n);
+        t1 = (((z_h + z_l) + dp_h[k]) + t);
+        is = PowfWord(t1);
+        t1 = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+        t2 = z_l - (((t1 - t) - dp_h[k]) - z_h);
+    }
+    is = PowfWord(y);
+    y1 = PowfFloat(is & static_cast<std::int32_t>(0xfffff000));
+    p_l = (y - y1) * t1 + y * t2;
+    p_h = y1 * t1;
+    z = p_l + p_h;
+    j = PowfWord(z);
+    if (j > 0x43000000 || (j == 0x43000000 && p_l + ovt > z - p_h)) {
+        errno = ERANGE;
+        return sn * huge * huge;
+    }
+    if ((j & 0x7fffffff) > 0x43160000 || (static_cast<std::uint32_t>(j) == 0xc3160000u && p_l <= z - p_h)) {
+        errno = ERANGE;
+        return sn * tiny * tiny;
+    }
+    i = j & 0x7fffffff;
+    k = (i >> 23) - 0x7f;
+    n = 0;
+    if (i > 0x3f000000) {
+        n = j + (0x00800000 >> (k + 1));
+        k = ((n & 0x7fffffff) >> 23) - 0x7f;
+        t = PowfFloat(n & ~(0x007fffff >> k));
+        n = ((n & 0x007fffff) | 0x00800000) >> (23 - k);
+        if (j < 0) n = -n;
+        p_h -= t;
+    }
+    t = p_l + p_h;
+    is = PowfWord(t);
+    t = PowfFloat(is & static_cast<std::int32_t>(0xffff8000));
+    u = t * lg2_h;
+    v = (p_l - (t - p_h)) * lg2 + t * lg2_l;
+    z = u + v;
+    w = v - (z - u);
+    t = z * z;
+    t1 = z - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    r = (z * t1) / (t1 - two) - (w + z * w);
+    z = one - (r - z);
+    j = PowfWord(z);
+    j += static_cast<std::int32_t>(static_cast<std::uint32_t>(n) << 23);
+    if ((j >> 23) <= 0) z = std::scalbn(z, n);
+    else z = PowfFloat(j);
+    return sn * z;
 }
 double APS5_VABI pow_nid_postfix(double base, double exp) { return std::pow(base, exp); }
 float APS5_VABI __powisf2_nid_postfix(float base, int exponent) {
