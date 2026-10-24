@@ -76,6 +76,8 @@ constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 constexpr int GuestEnotempty = 66;
 constexpr int GuestEoverflow = 84;
+constexpr int GuestEnotsup = 45;
+constexpr std::uint64_t TerminalSetControlling = 0x20007461;
 constexpr int GuestAtFdcwd = -100;
 constexpr int GuestAtRemovedir = 0x800;
 constexpr std::size_t GuestPathMax = 1024;
@@ -924,6 +926,35 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* wor
 int APS5_VABI sceKernelGetProcessType(int pid) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
     return 0;
+}
+
+int APS5_VABI pthread_mutex_isowned_np_nid_postfix(void* mutex);
+int APS5_VABI getsid_nid_postfix(int pid);
+int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
+
+int APS5_VABI scePthreadMutexIsowned(void* mutex) {
+    return pthread_mutex_isowned_np_nid_postfix(mutex);
+}
+
+int APS5_VABI pthread_switch_add_np_nid_postfix(void (*routine)(void*, void*)) {
+    (void)routine;
+    return GuestEnotsup;
+}
+
+int APS5_VABI pthread_switch_delete_np_nid_postfix(void (*routine)(void*, void*)) {
+    (void)routine;
+    return GuestEnotsup;
+}
+
+int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length) {
+    (void)address;
+    (void)length;
+    return 0;
+}
+
+int APS5_VABI tcsetsid_nid_postfix(int fd, int pid) {
+    if (pid != getsid_nid_postfix(0)) return static_cast<int>(Fail(GuestEinval));
+    return ioctl_nid_postfix(fd, TerminalSetControlling, nullptr);
 }
 
 }
