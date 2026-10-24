@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <fcntl.h>
 #include <io.h>
 #else
@@ -1174,6 +1175,13 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     const int ipv6Only = 1;
     if (family == 28 && ::setsockopt(native, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&ipv6Only), sizeof(ipv6Only)))
         return Fail(NativeError());
+#ifdef _WIN32
+    BOOL reportUnreachable = FALSE;
+    DWORD returned = 0;
+    if (nativeType == SOCK_DGRAM && WSAIoctl(native, SIO_UDP_CONNRESET, &reportUnreachable, sizeof(reportUnreachable), nullptr, 0,
+            &returned, nullptr, nullptr) != 0)
+        return Fail(NativeError());
+#endif
     try {
         auto socket = std::make_shared<Socket>(native, family, plainType);
         guard.value = Invalid;

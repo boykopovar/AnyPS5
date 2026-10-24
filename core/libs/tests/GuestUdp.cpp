@@ -48,6 +48,34 @@ std::int64_t APS5_VABI sceKernelWritev(int, const Iovec*, int);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void CheckUnreachablePortIgnored() {
+    const int closing = socket_nid_postfix(2, 2, 0);
+    Require(closing >= 0);
+    std::array<unsigned char, 16> unreachable{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(closing, unreachable.data(), unreachable.size()) == 0);
+    std::uint32_t size = unreachable.size();
+    Require(getsockname_nid_postfix(closing, unreachable.data(), &size) == 0 && size == unreachable.size());
+    const int receiver = socket_nid_postfix(2, 2 | 0x20000000, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    Require(close_nid_postfix(closing) == 0);
+    Require(sendto_nid_postfix(receiver, "x", 1, 0, unreachable.data(), unreachable.size()) == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    char received[4]{};
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    Require(sendto_nid_postfix(sender, "ok", 2, 0, address.data(), address.size()) == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == 2 && received[0] == 'o');
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 static void CheckAddressLengths(int family) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
     const int receiver = socket_nid_postfix(family, 2, 0);
@@ -337,4 +365,5 @@ int main() {
     Require(closeOnExec >= 0 && fcntl_nid_postfix(closeOnExec, 3) == 2);
     Require(close_nid_postfix(closeOnExec) == 0);
     Require(socket_nid_postfix(2, 0x20000000, 0) == -1 && *__error_nid_postfix() == 43);
+    CheckUnreachablePortIgnored();
 }
