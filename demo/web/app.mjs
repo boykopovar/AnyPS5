@@ -262,12 +262,16 @@ async function selectInputs(inputs) {
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  worker?.terminate();
+  worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
-  file = null;
-  summary = null;
+  selectedInputs = [];
+  summaries = [];
+  inspectionComplete = false;
   $("file").value = "";
   $("folder").value = "";
-  for (const id of ["selection", "warnings", "error", "done", "download"]) $(id).hidden = true;
+  $("app-list").replaceChildren();
+  for (const id of ["selection", "warnings", "error", "done", "download", "app-list"]) $(id).hidden = true;
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();
