@@ -99,6 +99,7 @@ downloads/
 
 *.json
 !demo/web/i18n/*.json
+!tools/titles.json
 
 !/assets/*.jpg
 !/assets/*.png
