@@ -44,4 +44,9 @@ int APS5_VABI UI_get_string_type_nid_postfix(const LibreSslUiString* string) {
     return string->type;
 }
 
+int APS5_VABI UI_get_input_flags_nid_postfix(const LibreSslUiString* string) {
+    if (!string) return 0;
+    return string->inputFlags;
+}
+
 }
