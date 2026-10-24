@@ -10255,6 +10255,19 @@ std::string stencilRefShape(std::span<const std::uint32_t> words) {
 }
 
 void stencilRefExportTests() {
+    {
+        AgcDriver::Graphics::Context context{};
+        context.limits.maxColorAttachments = 8u;
+        AgcDriver::Graphics::State state{};
+        state.depth = AgcDriver::Graphics::DepthTarget{0u, 1u, {64u, 4u}, VK_FORMAT_D24_UNORM_S8_UINT, 1.0f, 0u};
+        state.stencilTest = true;
+        state.renderExtent = {64u, 4u};
+        state.stencilFront = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 0u};
+        state.stencilBack = state.stencilFront;
+        expectFailure([&] { AgcDriver::Graphics::ValidateStencilAttachment(context, state); }, "requires enabled independentBlend");
+        context.independentBlend = true;
+        AgcDriver::Graphics::ValidateStencilAttachment(context, state);
+    }
     for (const auto shaderControl : {0x52u, 0x12u, 0x02u, 0x03u}) {
         for (const auto zFormat : {2u, 9u}) {
             const auto queue = stencilRefExportQueue(shaderControl, zFormat);

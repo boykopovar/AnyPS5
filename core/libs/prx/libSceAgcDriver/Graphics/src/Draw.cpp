@@ -3058,7 +3058,10 @@ struct StencilAttachment {
     }
 };
 
+}
+
 void ValidateStencilAttachment(const Context& context, const State& state) {
+    Require(context.independentBlend, "stencil attachment export requires enabled independentBlend");
     Require(state.samples == 1u && state.depth && state.depth->samples == 1u && state.depth->stencilAddress != 0 && HasStencil(state.depth->format), "stencil attachment export requires a single-sample depth/stencil target");
     Require(state.stencilTest && !state.pixelEarlyZ, "stencil attachment export requires a late stencil test");
     Require(state.renderLayers == 1u && state.layerExports == 0u && !state.rectList && !state.stages.mesh && !state.stages.tessellation, "stencil attachment export requires a single-layer vertex draw");
@@ -3069,6 +3072,8 @@ void ValidateStencilAttachment(const Context& context, const State& state) {
     const auto supportedFace = [](const VkStencilOpState& face) { return face.compareOp == VK_COMPARE_OP_ALWAYS && face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_REPLACE && face.writeMask == 0xffu; };
     Require(supportedFace(state.stencilFront) && supportedFace(state.stencilBack), "stencil attachment export requires ALWAYS, full-byte pass replacement and KEEP on failure on both faces");
 }
+
+namespace {
 
 // The state with the outputs the pixel shader lacks masked: Vulkan leaves attachments a pixel
 // shader has no output for undefined, so their writes are masked (shaders that only store to
