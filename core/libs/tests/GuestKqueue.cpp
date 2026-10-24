@@ -232,6 +232,27 @@ static void UserEvents() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void UserEventWakesEveryWaiter() {
+    const int kq = kqueue_nid_postfix();
+    Require(Apply(kq, Change(8, EvfiltUser, EvAdd)) == 0);
+    std::chrono::steady_clock::duration waited[2]{};
+    auto wait = [kq, &waited](int index) {
+        const KernelTimespec limit{5, 0};
+        KernelEvent event{};
+        const auto start = std::chrono::steady_clock::now();
+        Require(kevent_nid_postfix(kq, nullptr, 0, &event, 1, &limit) == 1 && event.ident == 8);
+        waited[index] = std::chrono::steady_clock::now() - start;
+    };
+    std::thread first(wait, 0);
+    std::thread second(wait, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(Apply(kq, Change(8, EvfiltUser, 0, NoteTrigger)) == 0);
+    first.join();
+    second.join();
+    Require(waited[0] < std::chrono::seconds(2) && waited[1] < std::chrono::seconds(2));
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void PipeRead() {
     const int kq = kqueue_nid_postfix();
     int pipe[2];
@@ -1190,6 +1211,7 @@ int main() {
     PipeWrite();
 #endif
     UserEvents();
+    UserEventWakesEveryWaiter();
     WatchKqueue();
     SocketPair();
 #ifdef __linux__
