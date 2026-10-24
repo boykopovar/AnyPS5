@@ -57,9 +57,9 @@ int main() {
     GuestLibrary uninitialized{};
     GuestOutline untouched{1, 2, nullptr, nullptr, nullptr, 3};
     Require(FT_Outline_New_nid_postfix(&uninitialized, 3, 1, &untouched) == FT_Err_Invalid_Argument);
-    Require(untouched.n_points == 1 && untouched.n_contours == 2 && untouched.flags == 3);
+    Require(untouched.n_points == 2 && untouched.n_contours == 1 && untouched.flags == 3);
     Require(FT_Outline_Done_nid_postfix(&uninitialized, &untouched) == FT_Err_Invalid_Argument);
-    Require(untouched.n_points == 1 && untouched.n_contours == 2 && untouched.flags == 3);
+    Require(untouched.n_points == 2 && untouched.n_contours == 1 && untouched.flags == 3);
 
     GuestVector borrowedPoints[2]{};
     unsigned char borrowedTags[2]{};
