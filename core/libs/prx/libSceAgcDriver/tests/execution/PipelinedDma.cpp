@@ -90,7 +90,7 @@ int main() {
         elsewhere.fill(0);
         using namespace AgcDriver::DriverDetail;
         const auto drainedBefore = storesDrained.load();
-        const auto cpuBefore = storesOnCpu.load() + storesOnGpu.load() + storesBehindCompletions.load();
+        const auto cpuBefore = storesOnCpu.load() + storesSyncedUnimported.load() + storesOnGpu.load() + storesBehindCompletions.load();
         std::vector<std::uint32_t> words;
         const auto fill = DmaData(true, 0, 0x5eed1234u, reinterpret_cast<std::uintptr_t>(first.data()), static_cast<std::uint32_t>(sizeof(first)));
         const auto copy = DmaData(false, reinterpret_cast<std::uintptr_t>(first.data()), 0, reinterpret_cast<std::uintptr_t>(second.data()), 512);
@@ -100,7 +100,7 @@ int main() {
         AgcDriverWaitIdle_nid_postfix();
         for (const auto word : first) check(word == 0x5eed1234u, "the immediate fill did not land");
         for (std::size_t i = 0; i < second.size(); ++i) check(second[i] == (i < 128 ? 0x5eed1234u : 0u), "the copy did not see the fill before it, or wrote past its bytes");
-        const auto stores = storesOnCpu.load() + storesOnGpu.load() + storesBehindCompletions.load() - cpuBefore;
+        const auto stores = storesOnCpu.load() + storesSyncedUnimported.load() + storesOnGpu.load() + storesBehindCompletions.load() - cpuBefore;
         check(stores == 2, "the DMA_DATA packets were not committed (" + std::to_string(stores) + " committed stores)");
         check(storesDrained.load() == drainedBefore, "a DMA_DATA packet still drained");
 

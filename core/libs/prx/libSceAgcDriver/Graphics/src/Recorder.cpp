@@ -3549,6 +3549,10 @@ void Recorder::HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value) {
     submitHoldValue = value;
 }
 
+bool Recorder::SubmitHeld() const {
+    return submitHold != VK_NULL_HANDLE || (heldSerial != 0 && unsignaled(heldSerial));
+}
+
 void Recorder::Submit() {
     PerformanceTimer frameTiming("Recorder.Submit");
     // The work count is cleared even when nothing is open: the driver counts a dispatch after its
@@ -3624,6 +3628,7 @@ void Recorder::Submit() {
     Check(result, "vkQueueSubmit recorder");
     batch->submitted = true;
     batch->serial = ++submissions;
+    if (hold != VK_NULL_HANDLE) heldSerial = batch->serial;
     batch->submittedAt = std::chrono::steady_clock::now();
     if (DrawProfiled()) {
         const auto us = std::chrono::duration<double, std::micro>(batch->submittedAt - submitStart).count();
