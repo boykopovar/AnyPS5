@@ -201,11 +201,15 @@ int main() {
             Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
         }
-        for (const std::uint32_t reduction : {1u, 2u}) {
-            auto sampler = SamplerDescriptor();
-            sampler[0] |= reduction << 29u;
-            Draw(*device, VolumeDescriptor(), sampler, 8.0f);
-            Check();
+        if (!device->SamplerFilterMinmax()) {
+            std::puts("the device has no min/max sampler reduction with component mapping: the reduction cases are skipped");
+        } else {
+            for (const std::uint32_t reduction : {1u, 2u}) {
+                auto sampler = SamplerDescriptor();
+                sampler[0] |= reduction << 29u;
+                Draw(*device, VolumeDescriptor(), sampler, 8.0f);
+                Check();
+            }
         }
         auto integerTexture = VolumeDescriptor();
         integerTexture[1] = (integerTexture[1] & ~(0x1ffu << 20u)) | (60u << 20u);
