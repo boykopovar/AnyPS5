@@ -144,6 +144,8 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(png);
     if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
     if (imageInfo) fillImageInfo(*header, imageInfo);
+    const bool packedDimensions = header->width <= MAX_PACKED_DIMENSION && header->height <= MAX_PACKED_DIMENSION;
+    if (!imageInfo && !packedDimensions) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (header->bitDepth == 16 && context->attribute == ATTRIBUTE_BIT_DEPTH_16) {
         throw std::runtime_error("scePngDecDecode: 16-bit output is not implemented");
     }
@@ -178,7 +180,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
         }
     }
 
-    if (header->width > MAX_PACKED_DIMENSION || header->height > MAX_PACKED_DIMENSION) return 0;
+    if (!packedDimensions) return 0;
     return static_cast<std::int32_t>(header->width << 16 | header->height);
 }
 
