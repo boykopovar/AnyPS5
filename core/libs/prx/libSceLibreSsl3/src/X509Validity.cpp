@@ -47,4 +47,9 @@ void* APS5_VABI X509_getm_notBefore_nid_postfix(const LibreSsl3ValidityX509* cer
     return validity ? validity->notBefore : nullptr;
 }
 
+void* APS5_VABI X509_getm_notAfter_nid_postfix(const LibreSsl3ValidityX509* certificate) {
+    const LibreSsl3X509Validity* validity = Validity(certificate);
+    return validity ? validity->notAfter : nullptr;
+}
+
 }
