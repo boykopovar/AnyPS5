@@ -1544,6 +1544,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
     if (NativeFchmod(d, mode & 07777) != 0) return SceErrorFromErrno(errno);
     return 0;

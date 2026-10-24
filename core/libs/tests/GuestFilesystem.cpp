@@ -956,6 +956,8 @@ int main() {
         Require(fsync_nid_postfix(end) == -1 && *__error_nid_postfix() == 22);
         Require(fdatasync_nid_postfix(end) == -1 && *__error_nid_postfix() == 22);
         Require(sceKernelFsync(end) == static_cast<int>(0x80020016u) && sceKernelFdatasync(end) == static_cast<int>(0x80020016u));
+        Require(fchmod_nid_postfix(end, 0600) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelFchmod(end, 0600) == static_cast<int>(0x80020016u));
     }
     Require(close_nid_postfix(syncPipe[0]) == 0 && close_nid_postfix(syncPipe[1]) == 0);
     Require(close_nid_postfix(socket) == 0);
