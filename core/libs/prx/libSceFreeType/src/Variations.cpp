@@ -67,4 +67,13 @@ int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std:
     return error;
 }
 
+int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates) {
+    const GuestFace* owner = FaceOf(face);
+    std::vector<FT_Fixed> host(coordinates ? count : 0, 0);
+    FT_Fixed placeholder = 0;
+    const FT_Error error = FT_Get_Var_Design_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
+    if (error == 0 && coordinates) PublishCoordinates(coordinates, host);
+    return error;
+}
+
 }
