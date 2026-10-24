@@ -68,7 +68,7 @@ void require(bool condition, std::source_location location = std::source_locatio
     }
 }
 
-void installProcessParameters() {
+void installProcessParameters(bool present = true) {
 #ifdef _WIN32
     auto* image = reinterpret_cast<std::byte*>(GetModuleHandleW(nullptr));
     require(image != nullptr);
@@ -83,8 +83,8 @@ void installProcessParameters() {
         }
     }
     require(target != nullptr);
-    processParameterMetadata[0] = static_cast<std::uint32_t>(process.data() - image);
-    processParameterMetadata[1] = static_cast<std::uint32_t>(process.size());
+    processParameterMetadata[0] = present ? static_cast<std::uint32_t>(process.data() - image) : 0;
+    processParameterMetadata[1] = present ? static_cast<std::uint32_t>(process.size()) : 0;
     DWORD oldProtect = 0;
     require(VirtualProtect(target, sizeof(*target), PAGE_READWRITE, &oldProtect) != 0);
     std::memcpy(target->Name, ".procpar", 8);
@@ -289,6 +289,20 @@ int main(int argc, char** argv) {
         require(initializes == 1);
         return 0;
     }
+#ifdef _WIN32
+    if (argc > 1 && std::strcmp(argv[1], "none") == 0) {
+        installProcessParameters(false);
+        auto* pointer = static_cast<unsigned char*>(_Znwm_nid_postfix(40));
+        require(pointer != nullptr && pointer != reinterpret_cast<unsigned char*>(storage.data()) && lastSize == 0 && initializes == 0);
+        std::memset(pointer, 0x6b, 40);
+        _ZdlPv_nid_postfix(pointer);
+        void* aligned = nullptr;
+        require(posix_memalign_nid_postfix(&aligned, 64, 100) == 0 && aligned != nullptr && reinterpret_cast<std::uintptr_t>(aligned) % 64 == 0);
+        require(posixCalls == 0);
+        ApplicationHeapFree_nid_no_patch(aligned);
+        return 0;
+    }
+#endif
     if (argc > 1 && std::strcmp(argv[1], "default") == 0) {
         std::array<void*, 10> partial{};
         partial[0] = reinterpret_cast<void*>(&allocate);
