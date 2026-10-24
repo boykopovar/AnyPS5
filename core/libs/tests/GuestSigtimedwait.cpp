@@ -119,6 +119,44 @@ static void CheckTimeoutWithUnrelatedSignals() {
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, &poll) == -1 && *__error_nid_postfix() == 35);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
 }
+constexpr int RoundCount = 300;
+struct RoundSender {
+    Pthread target = nullptr;
+    std::atomic<int> go{0};
+    std::atomic<int> sent{0};
+};
+static void* APS5_VABI SendTwoCodes(void* arg) {
+    auto& sender = *static_cast<RoundSender*>(arg);
+    for (int round = 1; round <= RoundCount; ++round) {
+        while (sender.go.load() != round) std::this_thread::yield();
+        Require(kill_nid_postfix(getpid_nid_postfix(), 2) == 0);
+        Require(pthread_kill_nid_postfix(sender.target, 2) == 0);
+        sender.sent.store(round);
+    }
+    return nullptr;
+}
+static void CheckReportedCodeBelongsToConsumedSignal() {
+    const GuestSignalSet interrupt{{1u << 1, 0, 0, 0}};
+    const GuestTimespec patience{5, 0};
+    const GuestTimespec poll{0, 0};
+    GuestSignalSet previous{};
+    Require(_sigprocmask_nid_postfix(1, &interrupt, &previous) == 0);
+    RoundSender sender;
+    sender.target = scePthreadSelf();
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, SendTwoCodes, &sender, nullptr) == 0);
+    for (int round = 1; round <= RoundCount; ++round) {
+        GuestSiginfo first{};
+        GuestSiginfo second{};
+        sender.go.store(round);
+        Require(sigtimedwait_nid_postfix(&interrupt, &first, &patience) == 2);
+        while (sender.sent.load() != round) std::this_thread::yield();
+        const bool twice = sigtimedwait_nid_postfix(&interrupt, &second, &poll) == 2;
+        Require(twice ? first.code == 0x10001 && second.code == 0x10007 : first.code == 0x10007);
+    }
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
 int main() {
     const GuestSignalSet empty{{0, 0, 0, 0}};
     const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
@@ -225,4 +263,5 @@ int main() {
     }
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
     CheckTimeoutWithUnrelatedSignals();
+    CheckReportedCodeBelongsToConsumedSignal();
 }

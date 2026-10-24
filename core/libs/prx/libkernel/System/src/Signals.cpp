@@ -133,10 +133,11 @@ void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
     if (action.handler == 1 || (action.handler == 0 && IgnoredByDefault(guest))) TakePending(guest);
 }
 
-bool PendingInSet(const GuestSignalSet& set, int* guest) {
+bool PendingInSet(const GuestSignalSet& set, int* guest, std::int32_t* code) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
         if (!SignalInSet(set, candidate) || !TakePending(candidate)) continue;
         *guest = candidate;
+        *code = Pending().codes[candidate].load(std::memory_order_relaxed);
         return true;
     }
     return false;
@@ -245,12 +246,12 @@ bool DeliverPendingSignal(int guest) {
     return false;
 }
 
-int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const GuestTimespec* timeout, int* guest) {
+int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const GuestTimespec* timeout, int* guest, std::int32_t* code) {
     auto& pending = Pending();
     std::unique_lock lock(pending.lock);
     std::optional<std::chrono::steady_clock::time_point> deadline;
     for (;;) {
-        if (PendingInSet(set, guest)) return 0;
+        if (PendingInSet(set, guest, code)) return 0;
         if (waitForever) {
             pending.changed.wait(lock);
             continue;
@@ -258,14 +259,14 @@ int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const Guest
         if (!deadline) deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->seconds) +
             std::chrono::nanoseconds(timeout->nanoseconds);
         if (pending.changed.wait_until(lock, *deadline) == std::cv_status::no_timeout) continue;
-        return PendingInSet(set, guest) ? 0 : GuestEagain;
+        return PendingInSet(set, guest, code) ? 0 : GuestEagain;
     }
 }
 
-void FillSiginfo(GuestSiginfo* info, int guest) {
+void FillSiginfo(GuestSiginfo* info, int guest, std::int32_t code) {
     *info = {};
     info->signo = guest;
-    info->code = Pending().codes[guest].load(std::memory_order_relaxed);
+    info->code = code;
     info->pid = info->code == GuestSiKernel ? 0 : getpid_nid_postfix();
 }
 
@@ -625,24 +626,27 @@ int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, co
         return -1;
     }
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, timeout == nullptr, timeout, &guest);
+    std::int32_t code = 0;
+    const int result = WaitForPendingInSet(*set, timeout == nullptr, timeout, &guest, &code);
     if (result != 0) { *__error_nid_postfix() = result; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest, code);
     return guest;
 }
 
 int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet* set, void* info) {
     if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
     int guest = 0;
-    if (WaitForPendingInSet(*set, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    std::int32_t code = 0;
+    if (WaitForPendingInSet(*set, true, nullptr, &guest, &code) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
+    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest, code);
     return guest;
 }
 
 int APS5_VABI sigwait_nid_postfix(const GuestSignalSet* set, int* received) {
     if (set == nullptr || received == nullptr || !SetHasSignal(*set)) return 22;
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, true, nullptr, &guest);
+    std::int32_t code = 0;
+    const int result = WaitForPendingInSet(*set, true, nullptr, &guest, &code);
     if (result != 0) return result;
     *received = guest;
     return 0;
