@@ -8,6 +8,18 @@
 #include <cstring>
 
 extern "C" {
+long double APS5_VABI copysignl_nid_postfix(long double x, long double y);
+long double APS5_VABI sqrtl_nid_postfix(long double x);
+std::int64_t APS5_VABI lrintl_nid_postfix(long double x);
+long long APS5_VABI llrintl_nid_postfix(long double x);
+std::int64_t APS5_VABI lrintf_nid_postfix(float x);
+long long APS5_VABI llrintf_nid_postfix(float x);
+float APS5_VABI scalblnf_nid_postfix(float x, std::int64_t exponent);
+float APS5_VABI scalbf_nid_postfix(float x, float exponent);
+int APS5_VABI __isinfl_nid_postfix(long double x);
+}
+
+extern "C" {
 long double APS5_VABI fdiml_nid_postfix(long double, long double);
 long double APS5_VABI fmodl_nid_postfix(long double, long double);
 long double APS5_VABI remquol_nid_postfix(long double, long double, int*);
@@ -48,6 +60,40 @@ static long double Extended(std::uint16_t signExponent, std::uint64_t mantissa) 
 }
 
 static bool SameBits(long double left, long double right) { return std::memcmp(&left, &right, 10) == 0; }
+
+static void CheckRoundingAndScaling() {
+    Require(copysignl_nid_postfix(3.0L, -1.0L) == -3.0L && copysignl_nid_postfix(-3.0L, 0.0L) == 3.0L);
+    Require(std::signbit(copysignl_nid_postfix(0.0L, -0.0L)) && !std::signbit(copysignl_nid_postfix(-0.0L, 2.0L)));
+    Require(sqrtl_nid_postfix(6.25L) == 2.5L && std::isnan(sqrtl_nid_postfix(-1.0L)));
+    Require(sqrtl_nid_postfix(-0.0L) == 0.0L && std::signbit(sqrtl_nid_postfix(-0.0L)));
+
+    const int saved = std::fegetround();
+    const struct {
+        int mode;
+        long long half;
+        long long negativeHalf;
+    } modes[] = {{FE_TONEAREST, 2, -2}, {FE_UPWARD, 3, -2}, {FE_DOWNWARD, 2, -3}, {FE_TOWARDZERO, 2, -2}};
+    for (const auto& mode : modes) {
+        Require(std::fesetround(mode.mode) == 0);
+        errno = 0;
+        Require(lrintl_nid_postfix(2.5L) == mode.half && lrintl_nid_postfix(-2.5L) == mode.negativeHalf);
+        Require(llrintl_nid_postfix(2.5L) == mode.half && llrintl_nid_postfix(-2.5L) == mode.negativeHalf);
+        Require(lrintf_nid_postfix(2.5f) == mode.half && lrintf_nid_postfix(-2.5f) == mode.negativeHalf);
+        Require(llrintf_nid_postfix(2.5f) == mode.half && llrintf_nid_postfix(-2.5f) == mode.negativeHalf);
+        Require(errno == 0);
+    }
+    std::fesetround(saved);
+    Require(llrintl_nid_postfix(3.5L) == 4 && lrintf_nid_postfix(16777216.0f) == 16777216);
+
+    Require(scalbf_nid_postfix(1.5f, 3.0f) == 12.0f && scalbf_nid_postfix(12.0f, -2.0f) == 3.0f);
+    Require(std::isnan(scalbf_nid_postfix(1.0f, 0.5f)) && std::isnan(scalbf_nid_postfix(NAN, 1.0f)));
+    Require(std::isinf(scalbf_nid_postfix(1.0f, INFINITY)) && scalbf_nid_postfix(8.0f, -INFINITY) == 0.0f);
+    Require(scalblnf_nid_postfix(1.0f, 10) == 1024.0f && scalblnf_nid_postfix(1024.0f, -10) == 1.0f);
+    Require(std::isinf(scalblnf_nid_postfix(1.0f, INT64_MAX)) && scalblnf_nid_postfix(1.0f, INT64_MIN) == 0.0f);
+
+    Require(__isinfl_nid_postfix(static_cast<long double>(INFINITY)) == 1 && __isinfl_nid_postfix(-static_cast<long double>(INFINITY)) == 1);
+    Require(__isinfl_nid_postfix(1.0L) == 0 && __isinfl_nid_postfix(static_cast<long double>(NAN)) == 0 && __isinfl_nid_postfix(0.0L) == 0);
+}
 
 static void CheckSignalingNanPassThrough() {
     const long double signaling = Extended(0x7fff, 0x8000000000001234ull);
@@ -133,6 +179,7 @@ static void CheckClassification() {
 }
 
 int main() {
+    CheckRoundingAndScaling();
     CheckSignalingNanPassThrough();
     CheckErrno();
     CheckConsoleQuirks();
