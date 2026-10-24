@@ -27,6 +27,7 @@ static_assert(sizeof(TestUiString) == 64 && offsetof(TestUiString, inputFlags) =
 
 extern "C" {
 void* APS5_VABI UI_get0_user_data_nid_postfix(const TestUi*);
+int APS5_VABI UI_get_string_type_nid_postfix(const TestUiString*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -52,7 +53,20 @@ static void TestUserData() {
     Require(UI_get0_user_data_nid_postfix(&ui) == &data);
 }
 
+static void TestStringType() {
+    TestUiString string {};
+    Require(UI_get_string_type_nid_postfix(nullptr) == 0);
+    Require(UI_get_string_type_nid_postfix(&string) == 0);
+    string.inputFlags = 1;
+    string.flags = 1;
+    for (int type = 1; type <= 5; ++type) {
+        string.type = type;
+        Require(UI_get_string_type_nid_postfix(&string) == type);
+    }
+}
+
 int main() {
     TestUserData();
+    TestStringType();
     return 0;
 }
