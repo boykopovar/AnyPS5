@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [fesetenv](../../../core/libs/prx/libc/src/Math.cpp) (libSceLibcInternal, implemented in libc, NID `Q-bLp+b-RVY`) uses the 32-byte amd64 environment and x87/MXCSR restore sequence in the [public SDK fenv.h](https://github.com/ps5-payload-dev/sdk/blob/a7685ce8e97ce1f8a4f38253a41d54241c9124f1/include/freebsd/fenv.h). The console layout, behavior and module/library versions are unmeasured. Null pointers and MXCSR bits unsupported by the current host's `FXSAVE` mask throw before changing state; a zero mask uses the architectural `0xffbf` fallback. Console fault behavior for invalid environments is unverified. The separate `__fe_dfl_env` object remains missing and its console initializer is unknown.
+
 - [strtonum](../../../core/libs/prx/libc/src/StringExtensions.cpp) (libc) is unverified on the console. Its signature, decimal parsing, inclusive bounds, error strings, error precedence and errno preservation follow [FreeBSD 11.4 strtonum.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtonum.c). Parsing uses the host `strtoll` with base 10.
 - [fegetexcept](../../../core/libs/prx/libc/src/FloatingPoint.cpp) (libSceLibcInternal, implemented in libc) has not been read from the PS5 library or measured on a console. It follows FreeBSD 11.4 amd64 [fenv.h](https://github.com/freebsd/freebsd-src/blob/4554bee35405b36ea19e9e60d6abe6ea534e36e0/lib/msun/x86/fenv.h#L121-L133), reporting the six unmasked x87 exceptions independently of MXCSR; whether the PS5 uses the same rule when the units disagree is unverified.
 
