@@ -338,8 +338,20 @@ int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
 }
 
 int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
- const int result = DoReserveVirtual(addr, len, flags, alignment);
- if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+ int result = 0;
+ try {
+  result = DoReserveVirtual(addr, len, flags, alignment);
+ } catch (const std::bad_alloc&) {
+  return SCE_KERNEL_ERROR_ENOMEM;
+ } catch (const std::exception&) {
+  return SCE_KERNEL_ERROR_EINVAL;
+ }
+ if (result == 0) {
+  try {
+   _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+  } catch (...) {
+  }
+ }
  return result;
 }
 
