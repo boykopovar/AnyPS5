@@ -31,9 +31,27 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/param.h>
+#endif
 #endif
 
 namespace {
+
+#ifndef _WIN32
+std::filesystem::path HostDescriptorTarget(int fd, std::error_code& error) {
+#ifdef __APPLE__
+    char buffer[MAXPATHLEN];
+    if (::fcntl(fd, F_GETPATH, buffer) != 0) {
+        error = std::error_code(errno, std::generic_category());
+        return {};
+    }
+    return std::filesystem::path(buffer);
+#else
+    return std::filesystem::read_symlink(std::filesystem::path("/proc/self/fd") / std::to_string(fd), error);
+#endif
+}
+#endif
 
 constexpr std::uint8_t GuestUnknownType = 0;
 constexpr std::uint8_t GuestDirectoryType = 4;
@@ -301,8 +319,7 @@ std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd) {
 #else
         if (fd < 0) return std::nullopt;
         std::error_code error;
-        const auto link = std::filesystem::path("/proc/self/fd") / std::to_string(fd);
-        const auto target = std::filesystem::read_symlink(link, error);
+        const auto target = HostDescriptorTarget(fd, error);
         if (error) return std::nullopt;
         return target;
 #endif
@@ -312,8 +329,7 @@ std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd) {
 #else
     if (fd < 0) return std::nullopt;
     std::error_code error;
-    const auto link = std::filesystem::path("/proc/self/fd") / std::to_string(fd);
-    const auto target = std::filesystem::read_symlink(link, error);
+    const auto target = HostDescriptorTarget(fd, error);
     if (error) return std::nullopt;
     if (!std::filesystem::is_directory(target, error)) return std::nullopt;
     return target;
