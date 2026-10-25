@@ -10906,11 +10906,11 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
+bool guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) {
         std::cout << "host imports or buffer device addresses unavailable: guarded key stores not tested\n";
-        return;
+        return false;
     }
     constexpr std::size_t surfaceBytes = 65536 * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
@@ -10955,7 +10955,7 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     } unregister{context, recorder, block, address, watched};
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the key store block refused: guarded key stores not tested\n";
-        return;
+        return false;
     }
     recorder.Sync();
     const auto* import = HostImportFor(context, address, bytes);
@@ -11002,13 +11002,15 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     Require(late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
     Require(!guarded || Recorder::StoreCounts().keyStoresGuarded > guardedAfterFill, "the second key store was not counted as guarded");
     Require(!guarded || !blocksWatched || Recorder::StoreCounts().keyBlocksLeftToCpu > leftBefore, "the block the CPU wrote was not counted as left to it");
-    if (!guarded) return;
+    if (!guarded) return true;
     if (!blocksWatched) {
         std::cout << "host import not write-watched: a late CPU store of the value the keys held not tested\n";
-        return;
+        return true;
     }
     Require(lateStore(0u) == 0u, "a guarded key store overwrote a late CPU store of the value the keys held");
     Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone after a same-value store");
+    std::cout << "guarded key store tests passed\n";
+    return true;
 }
 
 void integerClearTests(const Device& device) {
@@ -11876,7 +11878,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--guarded-key-store-only") {
-            guardedKeyStoreTests(device, recorder);
+            if (!guardedKeyStoreTests(device, recorder)) return 77;
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
