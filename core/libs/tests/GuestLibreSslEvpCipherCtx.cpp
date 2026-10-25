@@ -904,6 +904,17 @@ static void TestAesGcmVectors() {
                 RequireCleared(context);
             }
         }
+        for (std::size_t index = 0; index < tag.size(); ++index) {
+            unsigned char context[ContextBytes] {};
+            unsigned char computed[16] {};
+            int written = -1;
+            auto wrong = tag;
+            wrong[index] ^= 0x01;
+            Require(RunGcm(context, test, 0, false, 64) == Hex(test.plain));
+            Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 16, wrong.data()) == 1);
+            Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), computed, &written) == 0);
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
     }
 }
 
@@ -1060,6 +1071,16 @@ static void TestAesGcmTls() {
     Require(EVP_DecryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 0 && written == 0);
     for (std::size_t index = 8; index < 45; ++index) Require(record[index] == 0);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    for (std::size_t index = 45; index < 61; ++index) {
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvFixed, 4, const_cast<unsigned char*>(iv.data())) == 1);
+        aad = TlsAadFor(1, 61);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 16);
+        record = records[0];
+        record[index] ^= 0x01;
+        Require(EVP_DecryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 0 && written == 0);
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
 }
 
 static void TestEvpCleanup() {

@@ -61,6 +61,14 @@ void Wipe(void* data, std::size_t size) {
     for (std::size_t index = 0; index < size; ++index) bytes[index] = 0;
 }
 
+int TimingSafeCompare(const void* first, const void* second, std::size_t size) {
+    const auto* firstBytes = static_cast<const volatile unsigned char*>(first);
+    const auto* secondBytes = static_cast<const volatile unsigned char*>(second);
+    unsigned int difference = 0;
+    for (std::size_t index = 0; index < size; ++index) difference |= firstBytes[index] ^ secondBytes[index];
+    return static_cast<int>(difference);
+}
+
 void Copy(void* destination, const void* source, std::size_t size, const char* function) {
     if (!size) return;
     if (!destination || !source) throw std::invalid_argument(std::string(function) + ": null buffer");
@@ -204,7 +212,7 @@ int GcmFinish(GcmState& state, const unsigned char* tag, std::size_t length) {
     Multiply(state.hash, state.subkey);
     for (std::size_t index = 0; index < AesBlockBytes; ++index) state.hash[index] ^= state.mask[index];
     if (!tag || length > AesBlockBytes) return -1;
-    return std::memcmp(state.hash, tag, length);
+    return TimingSafeCompare(state.hash, tag, length);
 }
 
 void GcmTag(GcmState& state, unsigned char* tag, std::size_t length) {
@@ -394,7 +402,7 @@ int AesGcmTlsCipher(LibreSslEvpCipherCtx* ctx, GcmState& state, unsigned char* o
             }
         } else if (!GcmCrypt(state, in, out, length, false)) {
             GcmTag(state, ctx->buf, TlsTagBytes);
-            if (std::memcmp(ctx->buf, in + length, TlsTagBytes)) Wipe(out, length);
+            if (TimingSafeCompare(ctx->buf, in + length, TlsTagBytes)) Wipe(out, length);
             else result = static_cast<int>(length);
         }
     }
