@@ -672,6 +672,42 @@ void sceDynlibDataOffsets() {
                    "Strict filter accepted a RELATIVE relocation symbol outside the symbol table");
 }
 
+void relativeTableDisplacementBounds() {
+    using Relinker::UnusedNidFilter::StrictDataRegion;
+    using Relinker::UnusedNidFilter::ReadRelativeTableTargets;
+
+    StrictDataRegion underflowRegion{0x20, std::vector<std::uint8_t>(8)};
+    write<std::int32_t>(underflowRegion.Bytes, 0, -0x40);
+    write<std::int32_t>(underflowRegion.Bytes, 4, 0x10);
+    const auto underflowTargets = ReadRelativeTableTargets({underflowRegion}, 0x20, 0xFFFFFFFFFFFFFF00ull, 0x1000);
+    require(underflowTargets.empty(), "Underflowing relative table displacement produced a target");
+
+    constexpr std::uint64_t highBase = 0xFFFFFFFFFFFFFFF0ull;
+    StrictDataRegion overflowRegion{highBase, std::vector<std::uint8_t>(8)};
+    write<std::int32_t>(overflowRegion.Bytes, 0, 0x30);
+    write<std::int32_t>(overflowRegion.Bytes, 4, 0x10);
+    const auto overflowTargets = ReadRelativeTableTargets({overflowRegion}, highBase, 0x0, 0x1000);
+    require(overflowTargets.empty(), "Overflowing relative table displacement produced a target");
+
+    StrictDataRegion mixedRegion{0x3000, std::vector<std::uint8_t>(12)};
+    write<std::int32_t>(mixedRegion.Bytes, 0, static_cast<std::int32_t>(0x1020 - 0x3000));
+    write<std::int32_t>(mixedRegion.Bytes, 4, -0x4000);
+    write<std::int32_t>(mixedRegion.Bytes, 8, static_cast<std::int32_t>(0x1030 - 0x3000));
+    const auto mixedTargets = ReadRelativeTableTargets({mixedRegion}, 0x3000, 0x1000, 0x100);
+    require(mixedTargets == std::vector<std::uint64_t>{0x1020}, "Underflowing entry did not terminate table scan");
+
+    auto input = fixture();
+    ripOperand(input, 0, {0x48, 0x8D, 0x05}, 0x3000);
+    emit(input, 7, {0xFF, 0xE0});
+    importThunk(input, 32, 0x2000);
+    importThunk(input, 64, 0x2008);
+    StrictDataRegion tableData{0x3000, std::vector<std::uint8_t>(8)};
+    write<std::int32_t>(tableData.Bytes, 0, -0x4000);
+    write<std::int32_t>(tableData.Bytes, 4, static_cast<std::int32_t>(0x1020 - 0x3000));
+    input.Data.push_back(tableData);
+    require(AnalyzeStrictReachability(input).ImportSlots.empty(), "Relative table underflow did not terminate scan before valid target");
+}
+
 }
 
 int main() {
@@ -696,6 +732,7 @@ int main() {
         filterAndPltCompaction();
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
+        relativeTableDisplacementBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

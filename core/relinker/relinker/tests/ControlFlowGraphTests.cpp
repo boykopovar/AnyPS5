@@ -364,6 +364,22 @@ void CheckRelativeJumpTables() {
     Require(Relinker::FindRelativeJumpTables(cutShort, TextAddress, {{TextAddress, TextAddress + cutShort.size()}}).empty(), "Table followed by more of its function was accepted");
 }
 
+void CheckRelativeTableDisplacementBounds() {
+    constexpr VirtualAddress base = 0x20;
+    StrictDataRegion underflowData{base, std::vector<std::uint8_t>(8)};
+    const std::int32_t disp = -0x40;
+    std::memcpy(underflowData.Bytes.data(), &disp, sizeof(disp));
+    const auto targets = ReadRelativeTableTargets({underflowData}, base, 0xFFFFFFFFFFFFFF00ull, 0x1000);
+    Require(targets.empty(), "Underflowing relative table displacement returned target");
+
+    constexpr VirtualAddress highBase = 0xFFFFFFFFFFFFFFF0ull;
+    StrictDataRegion overflowData{highBase, std::vector<std::uint8_t>(8)};
+    const std::int32_t overflowDisp = 0x30;
+    std::memcpy(overflowData.Bytes.data(), &overflowDisp, sizeof(overflowDisp));
+    const auto overflowTargets = ReadRelativeTableTargets({overflowData}, highBase, 0x0, 0x1000);
+    Require(overflowTargets.empty(), "Overflowing relative table displacement returned target");
+}
+
 }
 
 int main() {
@@ -382,6 +398,7 @@ int main() {
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
+        CheckRelativeTableDisplacementBounds();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

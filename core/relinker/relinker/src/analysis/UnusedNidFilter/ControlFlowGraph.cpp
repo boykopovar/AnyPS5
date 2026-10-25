@@ -6,6 +6,7 @@
 #include <queue>
 #include <cstring>
 #include <limits>
+#include <optional>
 
 namespace Relinker::UnusedNidFilter {
 
@@ -41,6 +42,19 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
     std::queue<VirtualAddress> worklist;
     std::vector<VirtualAddress> addressTaken;
     bool speculative = false;
+
+    auto resolveRipRelative = [](VirtualAddress next, std::int32_t disp, bool is32) -> std::optional<VirtualAddress> {
+        if (is32) return static_cast<std::uint32_t>(next + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp)));
+        if (disp < 0 && next < static_cast<VirtualAddress>(-static_cast<std::int64_t>(disp))) return std::nullopt;
+        if (disp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(disp)) return std::nullopt;
+        return next + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
+    };
+
+    auto resolveBranch = [](VirtualAddress next, std::int64_t disp) -> std::optional<VirtualAddress> {
+        if (disp < 0 && next < static_cast<VirtualAddress>(-disp)) return std::nullopt;
+        if (disp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(disp)) return std::nullopt;
+        return next + static_cast<VirtualAddress>(disp);
+    };
 
     auto enqueue = [&](VirtualAddress va) {
         if (reachable.count(va) > 0) return;
@@ -103,18 +117,16 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
             if (followCodeAddresses && info.HasRipRelativeDisp && text[bufOff + info.OpcodeOffset] == 0x8d && (info.RexPrefix & 8)) {
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-                auto target = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
-                if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
-                enqueue(target);
+                if (const auto target = resolveRipRelative(nextVaddr, displacement, info.AddressSize32)) enqueue(*target);
             }
 
             if (data != nullptr && info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.Opcode == 0x8D) {
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-                auto base = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
-                if (info.AddressSize32) base = static_cast<std::uint32_t>(base);
-                takeAddress(base);
-                for (VirtualAddress target : ReadRelativeTableTargets(*data, base, textVaddr, text.size())) takeAddress(target);
+                if (const auto base = resolveRipRelative(nextVaddr, displacement, info.AddressSize32)) {
+                    takeAddress(*base);
+                    for (VirtualAddress target : ReadRelativeTableTargets(*data, *base, textVaddr, text.size())) takeAddress(target);
+                }
             }
 
             bool fallThrough = true;
@@ -123,34 +135,35 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
                 case Sequential:
                     break;
                 case ConditionalBranch:
-                    if (info.HasBranchTarget)
-                        enqueue(nextVaddr + static_cast<VirtualAddress>(info.BranchDisp));
+                    if (info.HasBranchTarget) {
+                        if (const auto target = resolveBranch(nextVaddr, info.BranchDisp)) enqueue(*target);
+                    }
                     break;
                 case UnconditionalJump:
                     fallThrough = false;
                     if (info.HasRipRelativeDisp) {
                         std::int32_t disp = 0;
                         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-                        VirtualAddress slotVaddr = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
-                        if (info.AddressSize32) slotVaddr = static_cast<std::uint32_t>(slotVaddr);
-                        auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
-                        if (resolved.has_value())
-                            enqueue(*resolved);
+                        if (const auto slotVaddr = resolveRipRelative(nextVaddr, disp, info.AddressSize32)) {
+                            auto resolved = relativeRelocations.TargetOfSlot(*slotVaddr);
+                            if (resolved.has_value())
+                                enqueue(*resolved);
+                        }
                     } else if (info.HasBranchTarget) {
-                        enqueue(nextVaddr + static_cast<VirtualAddress>(info.BranchDisp));
+                        if (const auto target = resolveBranch(nextVaddr, info.BranchDisp)) enqueue(*target);
                     }
                     break;
                 case Call:
                     if (info.HasRipRelativeDisp) {
                         std::int32_t disp = 0;
                         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-                        VirtualAddress slotVaddr = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
-                        if (info.AddressSize32) slotVaddr = static_cast<std::uint32_t>(slotVaddr);
-                        auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
-                        if (resolved.has_value())
-                            enqueue(*resolved);
+                        if (const auto slotVaddr = resolveRipRelative(nextVaddr, disp, info.AddressSize32)) {
+                            auto resolved = relativeRelocations.TargetOfSlot(*slotVaddr);
+                            if (resolved.has_value())
+                                enqueue(*resolved);
+                        }
                     } else if (info.HasBranchTarget) {
-                        enqueue(nextVaddr + static_cast<VirtualAddress>(info.BranchDisp));
+                        if (const auto target = resolveBranch(nextVaddr, info.BranchDisp)) enqueue(*target);
                     }
                     fallThrough = !zeroPaddingFollows(nextVaddr);
                     break;
