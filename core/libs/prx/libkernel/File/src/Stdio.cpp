@@ -662,6 +662,15 @@ int File::DuplicateFrom(int fd, int start) {
 }
 
 static int LookupError(const std::filesystem::path& native) {
+#ifdef _WIN32
+    const auto named = native.has_filename() ? native : WithoutTrailingSeparator(native);
+    const DWORD attributes = GetFileAttributesW(named.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        FileStat target{};
+        if (!File::TryFillFileStat(named, &target)) return SceErrorFromErrno(errno) & 0xffff;
+        return native.has_filename() || (target.st_mode & 0170000) == 0040000 ? 0 : GUEST_ENOTDIR;
+    }
+#endif
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
     if (std::filesystem::exists(status)) return native.has_filename() || std::filesystem::is_directory(status) ? 0 : GUEST_ENOTDIR;

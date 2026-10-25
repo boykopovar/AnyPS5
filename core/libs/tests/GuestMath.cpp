@@ -1315,6 +1315,15 @@ static bool Near(long double actual, long double expected) {
     return std::fabs(actual - expected) <= std::fabs(expected) * 1e-17L;
 }
 
+static void CheckAcosfMsun() {
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(0x3d58d031u))) == 0x3fc2488au);
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(0x3f00b99au))) == 0x3f859f4fu);
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(0xbf00b99au))) == 0x40064033u);
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(1.0f)) == 0u);
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(-1.0f)) == 0x40490fdbu);
+    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(0x32800000u))) == 0x3fc90fdbu);
+}
+
 static void CheckLongDoubleFunctions() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -1740,6 +1749,7 @@ int main() {
     CheckPowfSpecialValue();
     Require(abs_nid_postfix(0) == 0);
     CheckAcosfErrno();
+    CheckAcosfMsun();
     Require(abs_nid_postfix(42) == 42);
     Require(abs_nid_postfix(-42) == 42);
     Require(abs_nid_postfix(std::numeric_limits<int>::max()) == std::numeric_limits<int>::max());

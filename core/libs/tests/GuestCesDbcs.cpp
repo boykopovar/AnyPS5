@@ -86,7 +86,8 @@ static int Scalar(ToUtf8 convert, const void* profile, const char* source, std::
     std::uint32_t consumed = 77;
     std::uint32_t produced = 77;
     const int result = convert(profile, Bytes(source), sourceMax, &consumed, utf8, utf8Max, &produced);
-    if (result != 0) Require(consumed == 77 && produced == 77 && std::memcmp(utf8, "\x55\x55\x55\x55", 4) == 0);
+    const bool decodeError = source && sourceMax > 0 && (result == static_cast<int>(0x805C0011) || result == static_cast<int>(0x805C0014) || result == static_cast<int>(0x805C0020));
+    if (result != 0) Require((decodeError ? consumed != 77 && produced == 0 : consumed == 77 && produced == 77) && std::memcmp(utf8, "\x55\x55\x55\x55", 4) == 0);
     return result;
 }
 
@@ -184,17 +185,17 @@ static void RequireDecoders(const Decoders& decoders, const void* profile) {
             std::uint16_t ucs2 = 0x5555;
             std::uint32_t read = 77;
             Require(decoders.ucs2(profile, source, sizeof(source), &read, &ucs2) == expected);
-            Require(expected == 0 ? read == consumed && ucs2 == code : read == 77 && ucs2 == 0x5555);
+            Require(read == consumed && ucs2 == (expected == 0 ? code : 0));
             for (int order = 0; order < 3; ++order) {
                 std::uint16_t utf16 = 0x5555;
                 std::uint32_t units = 77;
                 read = 77;
                 Require(decoders.utf16[order](profile, source, sizeof(source), &read, &utf16, 1, &units) == expected);
-                Require(expected == 0 ? read == consumed && units == 1 && Load(&utf16, 2, order) == code : read == 77 && units == 77 && utf16 == 0x5555);
+                Require(read == consumed && (expected == 0 ? units == 1 && Load(&utf16, 2, order) == code : units == 0 && utf16 == 0x5555));
                 std::uint32_t utf32 = 0x55555555;
                 read = 77;
                 Require(decoders.utf32[order](profile, source, sizeof(source), &read, &utf32) == expected);
-                Require(expected == 0 ? read == consumed && Load(&utf32, 4, order) == code : read == 77 && utf32 == 0x55555555);
+                Require(read == consumed && (expected == 0 ? Load(&utf32, 4, order) == code : utf32 == 0));
             }
         }
     }

@@ -1787,8 +1787,7 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
 }
 
 int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
-    (void)name;
-    (void)flags;
+    if (!name || flags != 0) return fail(NET_EINVAL);
     std::lock_guard lk(g_mutex);
     const int id = g_next_epoll++;
     g_epolls.insert(id);
@@ -2074,8 +2073,7 @@ int APS5_VABI sceNetEtherStrton(const char* text, NetEtherAddr* address) {
 }
 
 int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
-    (void)flags;
-    if (addr == nullptr) {
+    if (addr == nullptr || flags != 0) {
         return fail(NET_EINVAL);
     }
     // Keep guest identity stable without exposing the host adapter address.
@@ -2088,7 +2086,7 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
 int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)name;
     (void)memid;
-    (void)flags;
+    if (flags != 0) return fail(NET_EINVAL);
     std::lock_guard lk(g_mutex);
     const int id = g_next_resolver++;
     g_resolvers[id] = {};
@@ -2148,9 +2146,7 @@ int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std
 }
 
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    (void)timeout;
-    (void)retry;
-    (void)flags;
+    if (timeout < 0 || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0) return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;

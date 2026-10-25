@@ -383,8 +383,9 @@ RelinkResult RelinkerPipeline::Relink() {
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
-            const bool function = (raw[symOff + 4] & 15) == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function});
+            const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
+            const bool function = symbolType == STT_FUNC;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
