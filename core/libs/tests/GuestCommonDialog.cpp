@@ -1,11 +1,7 @@
+#include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceCommonDialogInitialize(void);
-bool APS5_VABI sceCommonDialogIsUsed(void);
-}
 
 namespace {
 

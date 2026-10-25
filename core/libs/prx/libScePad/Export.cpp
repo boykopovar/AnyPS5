@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <stdexcept>
@@ -11,40 +12,6 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
-struct PadStickTuningParameter;
-struct PadTriggerTuningParameter;
-struct PadHuntProfile;
-struct PadLeonardoProfile;
-struct PadProfileInfo;
-struct PadActiveProfileInfo;
-struct PadSavedSettingInfo;
-struct PadUsbDetectionState;
-struct PadVrUsbConnectionStatus;
-struct PadDeviceInfo;
-struct PadLicenseControllerInformation;
-struct PadRemoteSetting;
-struct PadVirtualTriggerSetting;
-struct PadProcessFocusParameter;
-struct PadDataExtended;
-struct PadVrControllerData {
-    std::uint32_t buttons;
-    std::uint8_t stick[2];
-    std::uint8_t unused6[2];
-    std::uint8_t triggers[2];
-    std::uint8_t unused10[2];
-    std::uint32_t touchButtons;
-    std::uint8_t touchValues[4];
-    float acceleration[3];
-    float angularVelocity[3];
-    float orientation[4];
-    std::uint8_t unused60[4];
-    std::uint8_t connected;
-    std::uint8_t connectedCount;
-    std::uint8_t unused66[6];
-    std::uint64_t timestamp;
-    std::uint8_t unused80[24];
-};
-
 static_assert(sizeof(PadVrControllerData) == 104);
 static_assert(offsetof(PadVrControllerData, triggers) == 8);
 static_assert(offsetof(PadVrControllerData, touchButtons) == 12);
@@ -53,50 +20,10 @@ static_assert(offsetof(PadVrControllerData, angularVelocity) == 32);
 static_assert(offsetof(PadVrControllerData, orientation) == 44);
 static_assert(offsetof(PadVrControllerData, connected) == 64);
 static_assert(offsetof(PadVrControllerData, timestamp) == 72);
-struct PadVrControllerDeviceInformation;
-struct PadVrTriggerEffect;
-struct PadVrTriggerEffects;
-struct PadTriggerEffectExtended;
-struct PadExtensionReport;
-struct PadExtensionUnitInfo;
-struct PadTriggerInternalState;
-struct PadTrackerData;
-struct PadBlasterTrackerData;
-struct PadAstonTrackerData;
-struct PadUiData;
-struct PadUiTuningData;
-struct PadLotusButtonData;
-struct PadVersionInfo;
-struct PadTelemetryInfo;
-struct PadPortInfo;
-struct PadVrControllerCombinedState;
-struct PadLeonardoData;
-struct PadLeonardoUniqueData;
-struct PadHistoryData;
-struct PadUpdateParameter;
-struct PadVirtualDeviceParameter;
-struct PadVirtualDeviceId;
-struct PadVirtualDeviceComponentInformation;
-
-struct PadVirtualTriggerInternalState {
-    std::uint32_t states[2];
-    std::uint8_t mode;
-    std::uint8_t flags[2];
-};
 
 static_assert(sizeof(PadVirtualTriggerInternalState) == 12);
 static_assert(offsetof(PadVirtualTriggerInternalState, mode) == 8);
 static_assert(offsetof(PadVirtualTriggerInternalState, flags) == 9);
-
-struct PadLightBarBlinkingParameter {
-    std::uint8_t values[3];
-};
-
-struct PadButtonRemappingInfo {
-    std::uint8_t mapping[14];
-    std::uint8_t reserved;
-    std::uint8_t mode;
-};
 
 static_assert(sizeof(PadLightBarBlinkingParameter) == 3);
 static_assert(sizeof(PadButtonRemappingInfo) == 16);
@@ -106,41 +33,92 @@ namespace {
 
 constexpr int PAD_ERROR_DEVICE_NOT_CONNECTED = static_cast<int>(0x80920007);
 constexpr int PAD_ERROR_DEVICE_NO_HANDLE = static_cast<int>(0x80920008);
+constexpr int PAD_ERROR_ALREADY_OPENED = static_cast<int>(0x80920004);
+constexpr int PAD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081);
+constexpr int PAD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001);
+constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
+constexpr int PAD_USER_ID_INVALID = -1;
 
-bool g_opened = false;
+std::array<bool, PAD_MAX_CONTROLLERS> g_opened{false};
+std::array<bool, PAD_MAX_CONTROLLERS> g_everOpened{false};
+bool g_remoteOpened = false;
+std::array<int, PAD_SPECIAL_HANDLE_COUNT> g_specialUsers{};
 std::atomic_bool g_initialized{false};
 
+bool SpecialHandle(int handle) {
+    const int slot = handle - PAD_SPECIAL_HANDLE;
+    return slot >= 0 && slot < PAD_SPECIAL_HANDLE_COUNT && g_specialUsers[slot] != 0;
+}
+
+int SpecialHandleOf(int userId) {
+    for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
+        if (g_specialUsers[slot] == userId) return PAD_SPECIAL_HANDLE + slot;
+    }
+    return PAD_ERROR_DEVICE_NO_HANDLE;
+}
+
+int PortOf(int handle) {
+    const int port = handle - PAD_HANDLE_BASE;
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS || !g_everOpened[port]) return -1;
+    return port;
+}
+
+bool KnownHandle(int handle) {
+    return PortOf(handle) >= 0 || SpecialHandle(handle);
+}
+
+PadData SpecialData() {
+    PadData data{};
+    data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
+    data.orientation_w = 1.0f;
+    data.acceleration_y = 1.0f;
+    return data;
+}
+
+bool SystemRemote(int userId, int type) {
+    return userId == PAD_USER_ID_SYSTEM && type == PAD_PORT_TYPE_REMOTE;
+}
+
+bool RemoteHandle(int handle) {
+    return g_remoteOpened && handle == PAD_REMOTE_HANDLE;
+}
+
+int PortForUser(int userId, int type, int index) {
+    if (index != 0) return -1;
+    if (type == PAD_PORT_TYPE_STANDARD) {
+        const int port = userId - 0x10000000;
+        if (port >= 0 && port < PAD_MAX_CONTROLLERS) return port;
+    }
+    return -1;
+}
+
 bool ValidPort(int userId, int type, int index) {
-    const bool personalPort = type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL;
-    const bool systemRemote = userId == PAD_USER_ID_SYSTEM && type == PAD_PORT_TYPE_REMOTE;
-    return index == 0 && (personalPort || systemRemote);
+    if (index != 0) return false;
+    if (type == PAD_PORT_TYPE_SPECIAL || SystemRemote(userId, type)) return true;
+    return PortForUser(userId, type, index) >= 0;
 }
 
 }
-
-struct PadUpdateData {
-    std::size_t size;
-    std::uint8_t data[32768];
-};
 
 static_assert(sizeof(PadUpdateData) == 32776);
 static_assert(offsetof(PadUpdateData, data) == 8);
-
-struct PadMotionSensorPosition {
-    float x;
-    float y;
-    float z;
-};
 
 static_assert(sizeof(PadMotionSensorPosition) == 12);
 
 extern "C" {
 
 int APS5_VABI scePadClose_nid_postfix(int handle) {
- if (handle != PAD_HANDLE) {
-  return PAD_ERROR_INVALID_HANDLE;
+ if (RemoteHandle(handle)) {
+  g_remoteOpened = false;
+  return PAD_OK;
  }
- g_opened = false;
+ if (SpecialHandle(handle)) {
+  g_specialUsers[handle - PAD_SPECIAL_HANDLE] = 0;
+  return PAD_OK;
+ }
+ const int port = PortOf(handle);
+ if (port < 0) return PAD_ERROR_INVALID_HANDLE;
+ g_opened[port] = false;
  return PAD_OK;
 }
 
@@ -160,30 +138,32 @@ int APS5_VABI scePadVrControllerReadCombinedState(std::int32_t leftHandle, std::
 }
 
 int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  std::memset(info, 0, sizeof(*info));
- info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
+ info->deviceClass = SpecialHandle(handle) ? -1 : PAD_DEVICE_CLASS_STANDARD;
  return PAD_OK;
 }
 
 int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr || class_data == nullptr) return PAD_ERROR_INVALID_ARG;
  std::memset(class_data, 0, sizeof(*class_data));
+ if (SpecialHandle(handle)) return PAD_OK;
  class_data->deviceClass = PAD_DEVICE_CLASS_STANDARD;
  class_data->dataValid = data->connected;
  return PAD_OK;
 }
 
 int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) {
- if (handle != PAD_HANDLE) {
+ if (!KnownHandle(handle)) {
   return PAD_ERROR_INVALID_HANDLE;
  }
  if (info == nullptr) {
   return PAD_ERROR_INVALID_ARG;
  }
  std::memset(info, 0, sizeof(*info));
+ if (SpecialHandle(handle)) return PAD_OK;
  info->touchPadInfo.pixelDensity = 44.86f;
  info->touchPadInfo.resolution.x = kTouchPadWidth;
  info->touchPadInfo.resolution.y = kTouchPadHeight;
@@ -197,36 +177,59 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
 }
 
 int APS5_VABI scePadGetHandle(int user_id, int type, int index) {
- if (!g_opened || !ValidPort(user_id, type, index) || type == PAD_PORT_TYPE_SPECIAL) return PAD_ERROR_DEVICE_NO_HANDLE;
- return PAD_HANDLE;
+ if (!ValidPort(user_id, type, index)) return PAD_ERROR_DEVICE_NO_HANDLE;
+ if (type == PAD_PORT_TYPE_SPECIAL) return SpecialHandleOf(user_id);
+ if (SystemRemote(user_id, type)) return g_remoteOpened ? PAD_REMOTE_HANDLE : PAD_ERROR_DEVICE_NO_HANDLE;
+ const int port = PortForUser(user_id, type, index);
+ if (port < 0 || !g_opened[port]) return PAD_ERROR_DEVICE_NO_HANDLE;
+ return PAD_HANDLE_BASE + port;
 }
 
 int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  std::memset(info, 0, sizeof(*info));
- info->maxConnectCount = 4;
- info->connectedCount[0] = 1;
+ info->maxConnectCount = PAD_MAX_CONTROLLERS;
+ std::uint8_t count = 0;
+ for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
+  if (Pad::IsConnected(port)) {
+   PadInfo::PadTypeInfo& slot = info->padTypeInfo[count];
+   slot.connectPort = static_cast<std::uint8_t>(port);
+   slot.status = 1;
+   slot.deviceType = PAD_DEVICE_TYPE_DUAL_SENSE;
+   slot.connectType = PAD_CONNECT_TYPE_BLUETOOTH;
+   std::uint8_t mac[6];
+   std::memcpy(mac, PAD_BD_ADDRESS, sizeof(mac));
+   mac[5] = static_cast<std::uint8_t>(mac[5] + port);
+   std::memcpy(slot.bluetoothMacAddress, mac, sizeof(slot.bluetoothMacAddress));
+   ++count;
+  }
+ }
+ if (count == 0) {
+  PadInfo::PadTypeInfo& slot = info->padTypeInfo[0];
+  slot.connectPort = 0;
+  slot.status = 1;
+  slot.deviceType = PAD_DEVICE_TYPE_DUAL_SENSE;
+  slot.connectType = PAD_CONNECT_TYPE_BLUETOOTH;
+  std::memcpy(slot.bluetoothMacAddress, PAD_BD_ADDRESS, sizeof(slot.bluetoothMacAddress));
+  count = 1;
+ }
+ info->connectedCount[0] = count;
  info->connectedCount[1] = 0;
- PadInfo::PadTypeInfo& slot = info->padTypeInfo[0];
- slot.connectPort = 0;
- slot.status = 1;
- slot.deviceType = PAD_DEVICE_TYPE_DUAL_SENSE;
- slot.connectType = PAD_CONNECT_TYPE_BLUETOOTH;
- std::memcpy(slot.bluetoothMacAddress, PAD_BD_ADDRESS, sizeof(slot.bluetoothMacAddress));
  return PAD_OK;
 }
 
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  std::memset(info, 0, sizeof(*info));
  return PAD_OK;
 }
 
 int APS5_VABI scePadGetExtControllerInformation(int handle, void* info) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  std::memset(info, 0, 0x2c);
+ if (SpecialHandle(handle)) return PAD_OK;
  PadControllerInformation* base = static_cast<PadControllerInformation*>(info);
  base->touchPadInfo.pixelDensity = 44.86f;
  base->touchPadInfo.resolution.x = kTouchPadWidth;
@@ -258,12 +261,33 @@ int APS5_VABI scePadInit_nid_postfix(void) {
 
 int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
  (void)param;
- if (!ValidPort(userId, type, index)) {
+ const bool unknownType = type == 3 || type == 4;
+ const bool knownType = type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL || SystemRemote(userId, type);
+ if (!unknownType && !knownType) return PAD_ERROR_INVALID_ARG;
+ if (userId == PAD_USER_ID_INVALID) return PAD_ERROR_INVALID_USER_ID;
+ if (unknownType) NotImplemented_nid_no_patch(__func__);
+ if (index != 0) return PAD_ERROR_INVALID_PORT_INDEX;
+ if (type == PAD_PORT_TYPE_SPECIAL) {
+  if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
+  for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
+   if (g_specialUsers[slot] == 0) {
+    g_specialUsers[slot] = userId;
+    return PAD_SPECIAL_HANDLE + slot;
+   }
+  }
+  return PAD_ERROR_UNKNOWN_USER;
+ }
+ if (SystemRemote(userId, type)) {
+  g_remoteOpened = true;
+  return PAD_REMOTE_HANDLE;
+ }
+ const int port = PortForUser(userId, type, index);
+ if (port < 0) {
   return PAD_ERROR_INVALID_ARG;
  }
- if (type == PAD_PORT_TYPE_SPECIAL) return PAD_ERROR_DEVICE_NOT_CONNECTED;
- g_opened = true;
- return PAD_HANDLE;
+ g_opened[port] = true;
+ g_everOpened[port] = true;
+ return PAD_HANDLE_BASE + port;
 }
 
 int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param) {
@@ -283,60 +307,75 @@ int APS5_VABI scePadSetFeatureReport(std::int32_t handle, std::uint8_t reportId,
 int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, const void* data, std::uint64_t size) { NotImplemented_nid_no_patch(__func__); return 0; }
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
- return Pad::Read(data, num);
+ if (RemoteHandle(handle)) {
+  data[0] = PadData{};
+  return 1;
+ }
+ if (SpecialHandle(handle)) {
+  data[0] = SpecialData();
+  return 1;
+ }
+ return Pad::Read(data, num, PortOf(handle));
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
 
- *data = Pad::ReadState();
+ *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
 
  return 0;
 }
 
 int APS5_VABI scePadResetLightBar(int handle) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- Pad::SetLightBar(false, 0, 0, 0);
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetLightBar(PortOf(handle), false, 0, 0, 0);
  return PAD_OK;
 }
 
 int APS5_VABI scePadResetOrientation(int handle) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- Pad::ResetOrientation();
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::ResetOrientation(PortOf(handle));
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- Pad::SetAngularVelocityDeadband(enable);
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetAngularVelocityDeadband(PortOf(handle), enable);
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
- Pad::SetLightBar(true, param->r, param->g, param->b);
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetLightBar(PortOf(handle), true, param->r, param->g, param->b);
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- Pad::SetMotionEnabled(enable);
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetMotionEnabled(PortOf(handle), enable);
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- Pad::SetTiltCorrection(enabled);
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetTiltCorrection(PortOf(handle), enabled);
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
+ if (SpecialHandle(handle)) return PAD_OK;
  const std::uint8_t* bytes = static_cast<const std::uint8_t*>(param);
  const std::uint8_t mask = bytes[0];
  if ((mask & ~0x3u) != 0) {
@@ -347,25 +386,28 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  if (mode[0] > 6 || mode[1] > 6) {
   return PAD_ERROR_INVALID_ARG;
  }
+ const int port = PortOf(handle);
  for (int trigger = 0; trigger < 2; ++trigger) {
-  if ((mask & (1u << trigger)) != 0) Pad::SetTriggerCommand(trigger, bytes + 8 + 56 * trigger);
+  if ((mask & (1u << trigger)) != 0) Pad::SetTriggerCommand(port, trigger, bytes + 8 + 56 * trigger);
  }
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
- Pad::SetVibration(param->large_motor, param->small_motor);
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetVibration(PortOf(handle), param->large_motor, param->small_motor);
  return PAD_OK;
 }
 
 int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (mode <= 0) return PAD_ERROR_INVALID_ARG;
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (mode > 3 && mode != 5) return PAD_ERROR_INVALID_ARG;
- Pad::SetVibrationMode(mode);
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetVibrationMode(PortOf(handle), mode);
  return PAD_OK;
 }
 
@@ -407,15 +449,14 @@ int APS5_VABI scePadVrControllerSetTriggerEffects(std::int32_t leftHandle, std::
 }
 
 int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (remote == nullptr) return PAD_ERROR_INVALID_ARG;
  *remote = false;
  return 0;
 }
 
-
 int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled) {
- if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (enabled) NotImplemented_nid_no_patch(__func__);
  return PAD_OK;
 }
@@ -433,7 +474,7 @@ int APS5_VABI scePadVrControllerGetTriggerEffectStates(std::int32_t leftHandle, 
 int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* state) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
-    if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     *state = 0;
     return PAD_OK;
 }
@@ -583,8 +624,11 @@ int APS5_VABI scePadGetVersionInfo(std::int32_t handle, PadVersionInfo* info) {
 }
 
 int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (type == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (PortOf(handle) < 0) return PAD_ERROR_INVALID_HANDLE;
+    *type = PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadDisableDataConversion(std::int32_t handle, bool disabled) {
@@ -663,11 +707,13 @@ int APS5_VABI scePadGetLotusIrCodeSetResult(std::int32_t handle, std::int32_t* r
 }
 
 int APS5_VABI scePadSetLotusEnableIrKey(std::int32_t handle) {
+    (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI scePadSetLotusDisableIrKey(std::int32_t handle) {
+    (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1018,6 +1064,8 @@ int APS5_VABI scePadVirtualDeviceInsertTriggerInternalState(std::int32_t deviceI
 }
 
 int APS5_VABI scePadVirtualDeviceGetRemoteSetting(std::int32_t deviceId, PadRemoteSetting* setting) {
+    (void)deviceId;
+    (void)setting;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1028,6 +1076,7 @@ int APS5_VABI scePadVirtualDeviceSetTriggerEffectSetting(std::int32_t handle, co
 }
 
 int APS5_VABI scePadVirtualDeviceDisableButtonRemapping(bool disabled) {
+    (void)disabled;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -21,29 +22,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode);
-FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char*, int, int);
-FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream);
-int APS5_VABI fclose_nid_postfix(FileStream* stream);
-std::size_t APS5_VABI fread_nid_postfix(void* buffer, std::size_t size, std::size_t count, FileStream* stream);
-std::size_t APS5_VABI fwrite_nid_postfix(const void* buffer, std::size_t size, std::size_t count, FileStream* stream);
-int APS5_VABI fseek_nid_postfix(FileStream* stream, std::int64_t offset, int origin);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream);
-int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
-int APS5_VABI fflush_nid_postfix(FileStream* stream);
-int APS5_VABI remove_nid_postfix(const char* path);
-int APS5_VABI rename_nid_postfix(const char* from, const char* to);
-int APS5_VABI ferror_nid_postfix(FileStream* stream);
-int APS5_VABI feof_nid_postfix(FileStream* stream);
-void APS5_VABI clearerr_nid_postfix(FileStream* stream);
-int APS5_VABI fgetc_nid_postfix(FileStream* stream);
-int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream);
-char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream);
-int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
-int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...);
-}
 
 static void Require(bool condition, const char* message = "File stream check failed") {
     if (!condition) throw std::runtime_error(message);

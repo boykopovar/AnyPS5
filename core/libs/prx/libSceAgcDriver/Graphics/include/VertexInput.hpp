@@ -8,6 +8,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <cstring>
+#include <cstdio>
 #include <limits>
 #include <optional>
 #include <set>
@@ -29,13 +30,13 @@ inline bool NullVertexDescriptor(const ShaderRecompiler::VertexAttribute& attrib
     return fields[0] == 0 && fields[1] == 0 && fields[2] == 0 && fields[3] == 0;
 }
 
-inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
+inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t minimumComponents = 0u) {
     Require(attribute.components >= 1 && attribute.components <= 4, "invalid vertex attribute component count");
     if (NullVertexDescriptor(attribute)) {
         const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT};
         return {formats[attribute.components - 1], attribute.components * 4u, 4u, "f32"};
     }
-    const auto components = attribute.formatComponents == 0u ? attribute.components : attribute.formatComponents;
+    const auto components = std::max(attribute.formatComponents == 0u ? attribute.components : attribute.formatComponents, minimumComponents);
     Require(components >= 1u && components <= 4u, "invalid vertex format component count");
     const auto format = (attribute.resource.fields[3] >> 12u) & 0x7fu;
     switch (format) {
@@ -106,10 +107,26 @@ inline std::string VertexAttributeSignature(const ShaderRecompiler::VertexAttrib
     return std::string(format.scalar) + (attribute.components == 1 ? "" : "x" + std::to_string(attribute.components));
 }
 
+inline std::uint32_t VertexReadBytes(const ShaderRecompiler::VertexAttribute& attribute, VkFormat host) {
+    for (auto components = 1u; components <= 4u; ++components) {
+        const auto format = DecodeVertexFormat(attribute, components);
+        if (format.format == host) return format.bytes;
+    }
+    throw std::runtime_error("AGC graphics: vertex format " + std::to_string(host) + " is not a form of the attribute's buffer format");
+}
+
 struct VertexInputLayout {
     std::vector<VkVertexInputBindingDescription> bindings;
     std::vector<VkVertexInputAttributeDescription> attributes;
 };
+
+inline std::array<char, 160> VertexDescriptorFlagsMessage(const ShaderRecompiler::VertexAttribute& attribute) {
+    std::array<char, 160> message{};
+    const auto& fields = attribute.resource.fields;
+    std::snprintf(message.data(), message.size(), "unsupported vertex buffer descriptor flags at location %u (V#=[%08x %08x %08x %08x])",
+        attribute.location, fields[0], fields[1], fields[2], fields[3]);
+    return message;
+}
 
 inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     Require(attributes.size() <= context.limits.maxVertexInputBindings && attributes.size() <= context.limits.maxVertexInputAttributes, "vertex input count exceeds device limits");
@@ -120,18 +137,29 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         const auto format = DecodeVertexFormat(attribute);
         Require(attribute.location < context.limits.maxVertexInputAttributes && locations.insert(attribute.location).second, "invalid or duplicate vertex attribute location");
         Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
-        Require((fields[1] & 0x80000000u) == 0 && (fields[3] & 0x00800000u) == 0 && (fields[3] >> 30u) == 0, "unsupported vertex buffer descriptor flags");
+        if ((fields[1] & 0x80000000u) != 0 || (fields[3] & 0x00800000u) != 0 || (fields[3] >> 30u) != 0) {
+            Require(false, VertexDescriptorFlagsMessage(attribute).data());
+        }
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         Require(NullVertexDescriptor(attribute) || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
         Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
-        VkFormatProperties properties{};
-        context.formatProperties(context.physical, format.format, &properties);
-        Require((properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0, "device does not support vertex format " + std::to_string(format.format));
+        const auto supported = [&](VkFormat candidate) {
+            VkFormatProperties properties{};
+            context.formatProperties(context.physical, candidate, &properties);
+            return (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+        };
+        auto host = format.format;
+        auto hostSupported = supported(host);
+        for (auto components = 1u; !hostSupported && components <= 4u; ++components) {
+            host = DecodeVertexFormat(attribute, components).format;
+            hostSupported = supported(host);
+        }
+        Require(hostSupported, "device does not support vertex format " + std::to_string(format.format));
         const auto binding = static_cast<std::uint32_t>(result.bindings.size());
         result.bindings.push_back({binding, stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
-        result.attributes.push_back({attribute.location, binding, format.format, 0});
+        result.attributes.push_back({attribute.location, binding, host, 0});
     }
     return result;
 }

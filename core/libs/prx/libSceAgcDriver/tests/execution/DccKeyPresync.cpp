@@ -234,6 +234,22 @@ void RunKnownKeys(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     RequireSampledClear(scenario, "a dispatch behind a pending fill of the keys");
 }
 
+void RunOneKeyReadPerLookup(AgcDriver::VulkanDevice& device, const Scenario& scenario, const char* what) {
+    Reset(scenario);
+    const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
+    auto prepared = device.PrepareDispatch(sample, {}, Threads, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()));
+    const auto before = AgcDriver::Graphics::SampledLookupKeyScans();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.Dispatch(sample, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()), std::move(prepared));
+        device.WaitIdle();
+    }
+    const auto scans = AgcDriver::Graphics::SampledLookupKeyScans() - before;
+    char message[192];
+    std::snprintf(message, sizeof(message), "%s scanned the keys of its sampled texture %llu times with nothing written between the scans, expected at most once", what, static_cast<unsigned long long>(scans));
+    Require(scans <= 1u, message);
+}
+
 void RunNoWriter(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
     const auto before = AgcDriver::VulkanDevice::PresyncCounts();
@@ -273,6 +289,11 @@ int main() {
         RunLockedSync(*device, control);
         RunPresync(*device, changed);
         RunNoWriter(*device, changed);
+        GuestBlock single;
+        GuestBlock singleOutput;
+        const auto reads = Prepare(single.Data(), singleOutput.Data());
+        RunOneKeyReadPerLookup(*device, reads, "a dispatch's first lookup");
+        RunOneKeyReadPerLookup(*device, reads, "a dispatch's repeated lookup");
         RunKnownKeys(*device, fills);
         std::puts("DCC key pre-sync tests passed");
         return 0;

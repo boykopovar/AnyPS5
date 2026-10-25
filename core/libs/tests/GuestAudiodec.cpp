@@ -1,3 +1,4 @@
+#include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cmath>
@@ -7,15 +8,6 @@
 #include <numbers>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceAudiodecInitLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecTermLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl*, std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecDeleteDecoder(std::int32_t);
-std::int32_t APS5_VABI sceAudiodecDecode(std::int32_t, AudiodecCtrl*);
-std::int32_t APS5_VABI sceAudiodecClearContext(std::int32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

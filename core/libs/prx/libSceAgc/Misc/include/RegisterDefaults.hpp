@@ -4,6 +4,18 @@
 #include <cstdint>
 
 extern "C" {
-int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size);
+int APS5_VABI sceAgcGetDefaultCxStateFlat(void* outState, std::uint32_t size);
 }
+
+#include "SceShaders.hpp"
+
+extern "C" {
+
+void* APS5_VABI sceAgcGetRegisterDefaults();
+void* APS5_VABI sceAgcGetRegisterDefaultsInternal();
+void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version);
+void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version);
+
+}
+
 #endif

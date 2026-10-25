@@ -140,6 +140,20 @@ std::uint32_t EmitExt(SpirvEmitterState& state, std::uint32_t type, std::uint32_
     return result;
 }
 
+namespace {
+
+std::uint32_t ExactMul(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
+    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {lhs, rhs, ConstantF32(state, 0x80000000u)});
+    return Exact(state, Binary(state, spv::OpFMul, TypeF32(state), lhs, rhs));
+}
+
+std::uint32_t ExactSub(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
+    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {ConstantF32(state, 0xbf800000u), rhs, lhs});
+    return Exact(state, Binary(state, spv::OpFSub, TypeF32(state), lhs, rhs));
+}
+
+}
+
 std::uint32_t EmitDppWriteCondition(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<DppMoveFlags>();
@@ -969,14 +983,6 @@ std::uint32_t EmitFPMedTri32(SpirvEmitterState& state, std::uint32_t arg0, std::
     return value(Select(state, u32, anyNan, min3, median));
 }
 
-std::uint32_t EmitFPRecip32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return Binary(state, spv::OpFDiv, TypeF32(state), ConstantF32(state, 0x3f800000u), arg0);
-}
-
-std::uint32_t EmitFPRecipIFlag32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return Binary(state, spv::OpFDiv, TypeF32(state), ConstantF32(state, 0x3f800000u), arg0);
-}
-
 std::uint32_t EmitFPRecipSqrt32(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitExt(state, TypeF32(state), GLSLstd450InverseSqrt, {arg0});
 }
@@ -994,13 +1000,13 @@ std::uint32_t Log2SeriesNearOne(SpirvEmitterState& state, std::uint32_t differen
     for (const std::uint32_t coefficient : {0x3e124925u, 0xbe2aaaabu, 0x3e4ccccdu, 0xbe800000u, 0x3eaaaaabu, 0xbf000000u, 0x3f800000u}) {
         polynomial = Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {polynomial, difference, ConstantF32(state, coefficient)}));
     }
-    const auto product = Exact(state, Binary(state, spv::OpFMul, TypeF32(state), difference, polynomial));
-    return Exact(state, Binary(state, spv::OpFMul, TypeF32(state), product, ConstantF32(state, 0x3fb8aa3bu)));
+    const auto product = ExactMul(state, difference, polynomial);
+    return ExactMul(state, product, ConstantF32(state, 0x3fb8aa3bu));
 }
 
 std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto value = EmitExt(state, TypeF32(state), GLSLstd450Log2, {arg0});
-    const auto difference = Exact(state, Binary(state, spv::OpFSub, TypeF32(state), arg0, ConstantF32(state, 0x3f800000u)));
+    const auto difference = ExactSub(state, arg0, ConstantF32(state, 0x3f800000u));
     const auto series = Log2SeriesNearOne(state, difference);
     const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
     const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
@@ -1011,16 +1017,16 @@ std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
 }
 
 std::uint32_t SinTurnSeries(SpirvEmitterState& state, std::uint32_t turns) {
-    const auto square = Exact(state, Binary(state, spv::OpFMul, TypeF32(state), turns, turns));
+    const auto square = ExactMul(state, turns, turns);
     auto polynomial = ConstantF32(state, 0xc17183a8u);
     for (const std::uint32_t coefficient : {0x42283c1au, 0xc2996966u, 0x42a335e3u, 0xc2255de7u, 0x40c90fdbu}) {
         polynomial = Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {polynomial, square, ConstantF32(state, coefficient)}));
     }
-    return Exact(state, Binary(state, spv::OpFMul, TypeF32(state), turns, polynomial));
+    return ExactMul(state, turns, polynomial);
 }
 
 std::uint32_t CosTurnSeries(SpirvEmitterState& state, std::uint32_t turns) {
-    const auto square = Exact(state, Binary(state, spv::OpFMul, TypeF32(state), turns, turns));
+    const auto square = ExactMul(state, turns, turns);
     auto polynomial = ConstantF32(state, 0x40fce9c5u);
     for (const std::uint32_t coefficient : {0xc1d368f9u, 0x4270fa83u, 0xc2aae9e4u, 0x4281e0f8u, 0xc19de9e6u, 0x3f800000u}) {
         polynomial = Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {polynomial, square, ConstantF32(state, coefficient)}));
@@ -1047,9 +1053,9 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto absolute = EmitExt(state, TypeF32(state), GLSLstd450FAbs, {cycle});
     const auto signBits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), cycle), ConstantU32(state, 0x80000000u));
     const auto nearHalf = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e800000u));
-    const auto distance = Select(state, TypeF32(state), nearHalf, Exact(state, Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3f000000u), absolute)), absolute);
+    const auto distance = Select(state, TypeF32(state), nearHalf, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute), absolute);
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), distance, ConstantF32(state, 0x3e000000u));
-    const auto series = Select(state, TypeF32(state), pastEighth, CosTurnSeries(state, Exact(state, Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3e800000u), distance))), SinTurnSeries(state, distance));
+    const auto series = Select(state, TypeF32(state), pastEighth, CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3e800000u), distance)), SinTurnSeries(state, distance));
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Sin, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     const auto linearConstant = Select(state, TypeF32(state), nearHalf, ConstantF32(state, 0x40c90fdbu), ConstantF32(state, 0x40c90fd5u));
     const auto result = TrigLinearNearZero(state, value, distance, linearConstant);
@@ -1059,10 +1065,10 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cycle = EmitTrigCycleF32(state, arg0, false);
     const auto absolute = EmitExt(state, TypeF32(state), GLSLstd450FAbs, {cycle});
-    const auto distance = Exact(state, Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3e800000u), absolute));
+    const auto distance = ExactSub(state, ConstantF32(state, 0x3e800000u), absolute);
     const auto low = CosTurnSeries(state, absolute);
     const auto middle = SinTurnSeries(state, distance);
-    const auto high = Unary(state, spv::OpFNegate, TypeF32(state), CosTurnSeries(state, Exact(state, Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3f000000u), absolute))));
+    const auto high = Unary(state, spv::OpFNegate, TypeF32(state), CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute)));
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e000000u));
     const auto pastThreeEighths = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3ec00000u));
     const auto series = Select(state, TypeF32(state), pastThreeEighths, high, Select(state, TypeF32(state), pastEighth, middle, low));
@@ -1467,14 +1473,17 @@ std::uint32_t EmitFPUnordGreaterThanEqual32(SpirvEmitterState& state, std::uint3
 }
 
 std::uint32_t EmitFPAdd32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0x3f800000u), arg0, arg1);
     return Exact(state, EmitNative<spv::OpFAdd, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPSub32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0xbf800000u), arg1, arg0);
     return Exact(state, EmitNative<spv::OpFSub, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPMul32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, ConstantF32(state, 0x80000000u));
     return Exact(state, EmitNative<spv::OpFMul, IrType::F32>(state, arg0, arg1));
 }
 

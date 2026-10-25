@@ -5,6 +5,9 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#ifdef APS5_COUNT_MAPPING_QUERIES
+#include <atomic>
+#endif
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -28,18 +31,48 @@ public:
         return *mappings;
     }
 
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    static std::uint64_t MemoryQueries() {
+        return queries.load(std::memory_order_relaxed);
+    }
+#endif
+
     void* Reserve(void* address, std::size_t bytes) {
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
     }
 
     std::vector<std::pair<std::uintptr_t, std::size_t>> Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
+        if (granule == 0) throw std::invalid_argument("guest memory commit granule is zero");
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
+        const auto cut = [](std::uintptr_t at, std::size_t size, const char* operation) {
+            if (!VirtualFree(reinterpret_cast<void*>(at), size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail(operation);
+        };
+        const auto replace = [&](std::uintptr_t at, std::size_t size) {
+            if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(at), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+            if (!created.empty() && created.back().first + created.back().second == at) created.back().second += size;
+            else created.emplace_back(at, size);
+        };
         const auto end = reinterpret_cast<std::uintptr_t>(address) + bytes;
         for (auto cursor = reinterpret_cast<std::uintptr_t>(address); cursor < end;) {
             const auto memory = query(cursor);
-            const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            const auto regionEnd = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+            const auto stop = std::min(end, regionEnd);
+            if (memory.State == MEM_RESERVE && std::min(end, cursor + granule) <= regionEnd) {
+                forgetClean(cursor, stop);
+                const auto holder = reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
+                if (holder != cursor) cut(holder, cursor - holder, "split guest placeholder prefix");
+                if (stop != regionEnd) cut(cursor, stop - cursor, "split guest placeholder suffix");
+                while (cursor < stop && std::min(end, cursor + granule) <= stop) {
+                    const auto size = std::min(end, cursor + granule) - cursor;
+                    if (cursor + size != stop) cut(cursor, size, "split guest placeholder suffix");
+                    replace(cursor, size);
+                    cursor += size;
+                }
+                continue;
+            }
             if (memory.State == MEM_RESERVE) {
                 const auto limit = std::min(end, cursor + granule);
                 auto placeholderEnd = stop;
@@ -50,10 +83,7 @@ public:
                 }
                 const auto size = std::min(limit, placeholderEnd) - cursor;
                 reset(cursor, size);
-                const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
-                if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
-                if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
-                else created.emplace_back(cursor, size);
+                replace(cursor, size);
                 cursor += size;
             } else {
                 if (memory.State != MEM_COMMIT) throw std::runtime_error("guest memory is not committed");
@@ -96,6 +126,7 @@ public:
             auto shared = slot.page.lock();
             if (!shared) {
                 shared = std::make_shared<SharedPage>();
+                shared->comparedWhenShared = slot.comparedWhenShared;
                 slot.page = shared;
             }
             return shared;
@@ -139,13 +170,15 @@ public:
             const auto aliases = shared->aliases;
             for (const auto alias : aliases) {
                 if (views.at(alias).resident) demote(alias);
+                views.at(alias).aliasDemoted = false;
             }
             const auto viewBytes = std::min(pageBytes, sectionBytes - done);
             split(base, pageBytes);
             mapShared(base, section, offset + done, protection, viewProtection, viewBytes);
             slot->stored = true;
             shared->aliases.push_back(base);
-            views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, hostPages(viewBytes)});
+            const auto created = views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot, hostPages(viewBytes)}).first;
+            if (shared->comparedWhenShared) created->second.unreported = allSubpages;
             remember(freshRanges, base, base + pageBytes);
             invalidate(*shared);
             done += pageBytes;
@@ -183,6 +216,45 @@ public:
             auto& page = *it->second.page;
             if (page.pins != 0) --page.pins;
             invalidate(page);
+        }
+    }
+
+    void CompareWhenShared(std::uintptr_t address, std::size_t bytes, bool residentOnly = false) {
+        std::lock_guard lock(mutex);
+        collectableRanges.clear();
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) {
+            if (residentOnly && !it->second.resident && !it->second.aliasDemoted) continue;
+            auto& page = *it->second.page;
+            const bool marked = page.comparedWhenShared;
+            page.comparedWhenShared = true;
+            it->second.slot->comparedWhenShared = true;
+            for (const auto alias : page.aliases) {
+                auto& view = views.at(alias);
+                if (view.resident) continue;
+                if (!marked) view.unreported = allSubpages;
+                if (view.armed == 0) continue;
+                protectSubpages(alias, view.armed, view.protection, "stop arming a compared shared page", view.viewBytes);
+                view.armed = 0;
+            }
+        }
+    }
+
+    void ComparedPages(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool unreported) {
+        std::lock_guard lock(mutex);
+        const auto capacity = *count;
+        *count = 0;
+        const auto end = address + bytes;
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
+            auto& view = it->second;
+            if (view.resident || !view.page->comparedWhenShared) continue;
+            const auto listed = static_cast<std::uint8_t>(subpagesOf(it->first, address, end) & (unreported ? view.unreported : allSubpages));
+            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                const auto bit = static_cast<std::uint8_t>(1u << sub);
+                if ((listed & bit) == 0) continue;
+                if (*count == capacity) return;
+                pages[(*count)++] = reinterpret_cast<void*>(it->first + sub * subpageBytes);
+                if (unreported) view.unreported &= static_cast<std::uint8_t>(~bit);
+            }
         }
     }
 
@@ -286,7 +358,7 @@ public:
         }
         for (std::size_t done = 0; done < bytes; done += pageBytes) {
             const auto found = views.find(address + done);
-            if (found != views.end() && found->second.resident) demote(address + done);
+            if (found != views.end() && found->second.resident) demote(address + done, true);
         }
         auto view = views.find(address);
         if (view == views.end()) throw refuse("the range does not start at a shared view");
@@ -350,6 +422,7 @@ public:
                     if (!watchResident) return false;
                     continue;
                 }
+                if (it->second.page->comparedWhenShared) return false;
                 if (it->second.protection != PAGE_NOACCESS) continue;
                 for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
                     if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
@@ -496,7 +569,7 @@ private:
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
             if (const auto found = viewAt(base, position); found != views.end()) {
-                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) return false;
+                if (found->second.protection == PAGE_NOACCESS || (found->second.resident ? !watchResident : found->second.page->comparedWhenShared)) return false;
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
@@ -522,6 +595,7 @@ private:
         }();
         std::vector<std::uintptr_t> aliases;
         std::uint32_t pins = 0;
+        bool comparedWhenShared = false;
     };
     struct Section {
         HANDLE handle;
@@ -553,6 +627,7 @@ private:
     struct Physical {
         std::weak_ptr<SharedPage> page;
         bool stored = false;
+        bool comparedWhenShared = false;
         std::shared_ptr<Saved> saved;
         std::size_t savedOffset = 0;
     };
@@ -569,6 +644,8 @@ private:
         std::shared_ptr<Physical> slot;
         std::size_t viewBytes = pageBytes;
         std::uint32_t hostImports = 0;
+        bool aliasDemoted = false;
+        std::uint8_t unreported = 0;
     };
     struct Run {
         std::uintptr_t end;
@@ -716,7 +793,7 @@ private:
         return true;
     }
 
-    void demote(std::uintptr_t address) {
+    void demote(std::uintptr_t address, bool alias = false) {
         const auto run = std::prev(residentRuns.upper_bound(address));
         const auto start = run->first;
         const auto stop = run->second.end;
@@ -734,6 +811,8 @@ private:
             mapShared(page, view.section->handle, view.offset, view.protection);
             view.slot->stored = true;
             view.resident = false;
+            view.aliasDemoted = alias;
+            view.unreported = view.page->comparedWhenShared ? allSubpages : std::uint8_t{0};
             view.seen.fill(0);
             view.armed = 0;
             view.collected = 0;
@@ -890,6 +969,9 @@ private:
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
         MEMORY_BASIC_INFORMATION memory{};
+#ifdef APS5_COUNT_MAPPING_QUERIES
+        queries.fetch_add(1, std::memory_order_relaxed);
+#endif
         if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
         return memory;
     }
@@ -1023,6 +1105,9 @@ private:
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    static inline std::atomic<std::uint64_t> queries{0};
+#endif
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
