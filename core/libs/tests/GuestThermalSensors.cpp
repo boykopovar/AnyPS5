@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -11,9 +12,7 @@
 
 extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
-int APS5_VABI sceKernelGetCpuTemperature(int* outCelsius);
-int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius);
-int APS5_VABI sceKernelGetSocPowerConsumption(void* consumption);
+
 }
 
 static void Require(bool value) {

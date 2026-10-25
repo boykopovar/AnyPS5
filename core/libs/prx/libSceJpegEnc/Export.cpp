@@ -1,3 +1,4 @@
+#include "prx/libSceJpegEnc/include/Api.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>

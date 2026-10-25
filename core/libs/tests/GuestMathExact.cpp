@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cfenv>
@@ -6,35 +7,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-long double APS5_VABI fdiml_nid_postfix(long double, long double);
-long double APS5_VABI fmodl_nid_postfix(long double, long double);
-long double APS5_VABI remquol_nid_postfix(long double, long double, int*);
-int APS5_VABI ilogbl_nid_postfix(long double);
-long double APS5_VABI roundl_nid_postfix(long double);
-long double APS5_VABI modfl_nid_postfix(long double, long double*);
-long double APS5_VABI nanl_nid_postfix(const char*);
-long double APS5_VABI scalblnl_nid_postfix(long double, std::int64_t);
-long double APS5_VABI fmal_nid_postfix(long double, long double, long double);
-double APS5_VABI scalb_nid_postfix(double, double);
-double APS5_VABI scalbln_nid_postfix(double, std::int64_t);
-long double APS5_VABI remainderl_nid_postfix(long double, long double);
-double APS5_VABI drem_nid_postfix(double, double);
-float APS5_VABI dremf_nid_postfix(float, float);
-std::int64_t APS5_VABI lrint_nid_postfix(double);
-double APS5_VABI rint_nid_postfix(double);
-float APS5_VABI rintf_nid_postfix(float);
-long double APS5_VABI rintl_nid_postfix(long double);
-long long APS5_VABI llrint_nid_postfix(double);
-int APS5_VABI finite_nid_postfix(double);
-int APS5_VABI __fpclassifyl_nid_postfix(long double);
-int APS5_VABI __isnanl_nid_postfix(long double);
-int APS5_VABI __isnormall_nid_postfix(long double);
-short APS5_VABI _LDtest_nid_postfix(const long double*);
-int APS5_VABI _Dclass_nid_postfix(double);
-short APS5_VABI _LDsign_nid_postfix(long double);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -70,6 +42,7 @@ static void CheckErrno() {
     Require(std::isnan(remquol_nid_postfix(1.0L, 0.0L, &quotient)) && errno == EDOM);
     errno = 0;
     remquol_nid_postfix(NAN, 0.0L, &quotient);
+
     Require(errno == 0);
     Require(remquol_nid_postfix(-7.0L, 2.0L, &quotient) == 1.0L && quotient == -4);
     errno = 0;

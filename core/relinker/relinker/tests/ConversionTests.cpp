@@ -127,6 +127,35 @@ void convert() {
     require(progress.Events.back().Completed != 1 || progress.Events.back().Stage != Domain::ProgressStage::Executable, "Failed conversion reported completion");
 }
 
+void runtimeLifecyclePolicy() {
+    TestProgress progress;
+    const Relinker::Conversion converter(progress);
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Plugins"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        auto module = fixture();
+        Io::WriteU64(module, 0x2080, 12);
+        Io::WriteU64(module, 0x2088, 0x1000);
+        Io::WriteU64(module, 208, 160);
+        Io::WriteU64(module, 216, 160);
+        source.Modules.push_back({parent / "plugin.prx", std::move(module)});
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), {});
+        const auto& bytes = output.Modules.at(0).Bytes;
+        const auto headers = Io::ReadU64(bytes, 32);
+        bool initializesOnMapping = false;
+        for (std::uint16_t index = 0; index < Io::ReadU16(bytes, 56); ++index) {
+            const auto header = headers + index * 56;
+            if (Io::ReadU32(bytes, header) != 2) continue;
+            const auto dynamic = Io::ReadU64(bytes, header + 8);
+            const auto end = dynamic + Io::ReadU64(bytes, header + 32);
+            for (auto offset = dynamic; offset < end; offset += 16)
+                if (Io::ReadU64(bytes, offset) == 12) initializesOnMapping = Io::ReadU64(bytes, offset + 8) != 0;
+        }
+        require(initializesOnMapping == (std::string_view(directory) != "Media/Plugins"), "Default SDK directories lost their mapping initializer");
+    }
+}
+
 void fixedBase() {
     TestProgress progress;
     const Relinker::Conversion converter(progress);
@@ -348,6 +377,7 @@ void relocationValidation() {
 int main() {
     try {
         convert();
+        runtimeLifecyclePolicy();
         fixedBase();
         scanning();
         diagnosticContext();

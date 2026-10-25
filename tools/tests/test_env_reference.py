@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import env_reference
@@ -282,6 +283,34 @@ class EnvReferenceTests(unittest.TestCase):
                 self.assertEqual(code, 1, (name, flags))
                 self.assertIn("is not a directory", err.getvalue())
                 self.assertNotIn("no longer reads", out.getvalue())
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(env_reference.sys, "stdout", out), patch.object(env_reference.sys, "stderr", err):
+            try:
+                env_reference.main(["--root", "nonexistent"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

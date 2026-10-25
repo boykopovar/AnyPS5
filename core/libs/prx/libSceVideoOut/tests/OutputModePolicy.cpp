@@ -1,6 +1,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 
 static void Require(bool value, const char* reason) {

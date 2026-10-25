@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -160,8 +161,6 @@ const bool timeZoneFixed = [] {
 
 }  // namespace
 #endif
-
-extern "C" int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr);
 
 namespace {
 
@@ -538,14 +537,6 @@ char* tzname_nid_postfix[2] = {GuestZoneName(0), GuestZoneName(1)};
 int64_t timezone_nid_postfix = 0;
 int daylight_nid_postfix = 0;
 
-GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
-GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
-int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
-double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0);
-std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void* state);
-std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state);
-int APS5_VABI _Getmbcurmax_nid_postfix();
-
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
     tzname_nid_postfix[0] = GuestZoneName(0);
@@ -555,6 +546,7 @@ void APS5_VABI tzset_nid_postfix(void) {
     GuestTm local{};
     gmtime_s_nid_postfix(&now, &universal);
     localtime_s_nid_postfix(&now, &local);
+
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
 }
@@ -702,6 +694,7 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const ZoneScope zone;
     tzset_nid_postfix();
+
     return formatGuestTime(str, count, format, *timeptr);
 }
 
@@ -749,6 +742,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
         return 0;
     }
     wcsrtombs_nid_postfix(narrowFormat.get(), &formatCursor, formatLength + 1, nullptr);
+
     const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
     if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
         errno = GuestEinval;
@@ -768,6 +762,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     const std::size_t length = mbsrtowcs_nid_postfix(nullptr, &narrowCursor, 0, nullptr);
     if (length == Failed || length >= count) return 0;
     mbsrtowcs_nid_postfix(str, &narrowCursor, count, nullptr);
+
     return length;
 }
 

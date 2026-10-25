@@ -17,6 +17,7 @@
 #include "prx/libc/include/FileLock.hpp"
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
+extern "C" void PrepareStandardStreams_nid_no_patch();
 struct UcrtStreamState {
     char* pointer;
     char* base;
@@ -73,6 +74,9 @@ class FileStream {
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
+#ifdef _WIN32
+        PrepareStandardStreams_nid_no_patch();
+#endif
         _guest.flags = handle == stdin ? 4 : handle == stdout || handle == stderr ? 8 : 0x10;
 #ifdef _WIN32
         const int descriptor = _fileno(handle);

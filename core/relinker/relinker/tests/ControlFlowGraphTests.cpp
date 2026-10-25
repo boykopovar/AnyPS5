@@ -142,6 +142,26 @@ void CheckRelocatedTransfers() {
     RequireOffsets(*unresolved, {0, 6, 7, 8});
 }
 
+void CheckAddressSizeOverride() {
+    constexpr auto slot = TextAddress + 0x1000;
+    Bytes text{0x67, 0xff, 0x15, 0, 0, 0, 0, 0x90, 0xc3, 0x67, 0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90, 0xc3};
+    SetDisplacement(text, 3, 7, slot);
+    SetDisplacement(text, 12, 16, slot + 8);
+    Pointers pointers;
+    pointers.Slots = {{static_cast<std::uint32_t>(slot), TextAddress + 9}, {static_cast<std::uint32_t>(slot + 8), TextAddress + 18}};
+    RequireOffsets(*BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers), {0, 7, 8, 9, 18});
+    RequireOffsets(*BuildControlFlowGraph(text, TextAddress, TextAddress + 9, {}, pointers), {9, 18});
+
+    Bytes lea(17, 0x90);
+    const Bytes opcode{0x67, 0x48, 0x8d, 0x05};
+    std::copy(opcode.begin(), opcode.end(), lea.begin());
+    SetDisplacement(lea, 4, 8, TextAddress + 16);
+    lea[8] = lea[16] = 0xc3;
+    const Pointers missing;
+    RequireOffsets(*BuildControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, true), {0, 8});
+    RequireOffsets(*BuildAddressTakenControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, {}), {0, 8});
+}
+
 void CheckCodeAddresses() {
     Bytes text(17, 0x90);
     text[0] = 0x48;
@@ -354,6 +374,7 @@ int main() {
         CheckCallsBeforeZeroPadding();
         CheckCallsThatStillFallThrough();
         CheckRelocatedTransfers();
+        CheckAddressSizeOverride();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();
