@@ -6,15 +6,18 @@
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
+#include <string_view>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TFunction>
-static void RequireThrows(TFunction function) {
+static void RequireThrows(std::string_view expected, TFunction function) {
     try {
         function();
-    } catch (const std::runtime_error&) {
-        return;
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()) == expected) {
+            return;
+        }
     }
     std::abort();
 }
@@ -84,14 +87,14 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
 
     info.size = sizeof(info) - 1;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
+    RequireThrows("sceGameUpdateGetAddcontLatestVersion not implemented", [&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
 
     std::memset(&info, 0xAB, sizeof(info));
     info.size = sizeof(info) + 8;
     const auto original = info;
-    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
+    RequireThrows("sceGameUpdateGetAddcontLatestVersion not implemented", [&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
     Require(std::memcmp(&info, &original, sizeof(info)) == 0);
-    RequireThrows([] { sceGameUpdateCreateRequest(); });
+    RequireThrows("sceGameUpdateCreateRequest not implemented", [] { sceGameUpdateCreateRequest(); });
 
     Require(sceGameUpdateTerminate() == 0);
     Require(sceGameUpdateTerminate() == notInitialized);

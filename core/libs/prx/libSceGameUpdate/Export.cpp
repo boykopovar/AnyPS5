@@ -2,7 +2,6 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
-#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -62,7 +61,7 @@ int APS5_VABI sceGameUpdateCreateRequest(void) {
     if (!initialized.load()) {
         return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
     }
-    throw std::runtime_error("sceGameUpdateCreateRequest: patch service request creation is not implemented");
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceGameUpdateDeleteRequest(int requestId) {
@@ -80,7 +79,7 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
     if (!initialized.load()) {
         return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
     }
-    throw std::runtime_error("sceGameUpdateGetAddcontLatestVersion: entitlement version lookup is not implemented");
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceGameUpdateInitialize(void) {
