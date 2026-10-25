@@ -20,6 +20,8 @@ static_assert(sizeof(KernelTimespec)==16 && alignof(KernelTimespec)==8 && offset
 
 using TimedJoin = decltype(&pthread_timedjoin_np_nid_postfix);
 static TimedJoin timedJoin;
+using SceTimedJoin = int (APS5_VABI*)(Pthread, void**, const KernelTimespec*);
+static SceTimedJoin sceTimedJoin;
 
 void Require(bool value,const char* message) {
     if (!value) { std::fprintf(stderr,"timed join: %s\n",message); std::abort(); }
@@ -126,6 +128,17 @@ void Basic() {
     Require(timedJoin(detachedThread,nullptr,&valid)==22,"detached target");
     detached.release.store(true,std::memory_order_release);
     Wait(detached.leaving);
+    Require(sceTimedJoin(nullptr,nullptr,nullptr)==static_cast<int>(0x80020016),"sce null deadline");
+    Require(sceTimedJoin(nullptr,nullptr,&valid)==static_cast<int>(0x80020016),"sce null thread");
+    Require(sceTimedJoin(pthread_self_nid_postfix(),nullptr,&valid)==static_cast<int>(0x8002000b),"sce self join");
+    Gate sceGate;
+    Pthread sceWorker=Start(sceGate);
+    Require(sceTimedJoin(sceWorker,nullptr,&past)==static_cast<int>(0x8002003c),"sce past deadline expires");
+    sceGate.release.store(true,std::memory_order_release);
+    const KernelTimespec distantSce{std::numeric_limits<std::int64_t>::max(),999999999};
+    void* sceVal=nullptr;
+    Require(sceTimedJoin(sceWorker,&sceVal,&distantSce)==0,"sce join completed");
+    Require(sceVal==reinterpret_cast<void*>(std::uintptr_t{0x12345678}),"sce joined return value");
 }
 
 void Contention(bool cancel) {
@@ -159,12 +172,15 @@ int main(int argc,char** argv) {
     const auto library=LoadLibraryA(argv[1]);
     Require(library!=nullptr,"load kernel");
     timedJoin=reinterpret_cast<TimedJoin>(GetProcAddress(library,"pthread_timedjoin_np_nid_postfix"));
+    sceTimedJoin=reinterpret_cast<SceTimedJoin>(GetProcAddress(library,"scePthreadTimedjoin"));
 #else
     const auto library=dlopen(argv[1],RTLD_NOW);
     Require(library!=nullptr,"load kernel");
     timedJoin=reinterpret_cast<TimedJoin>(dlsym(library,"pthread_timedjoin_np_nid_postfix"));
+    sceTimedJoin=reinterpret_cast<SceTimedJoin>(dlsym(library,"scePthreadTimedjoin"));
 #endif
     Require(timedJoin!=nullptr,"pthread_timedjoin_np export is missing");
+    Require(sceTimedJoin!=nullptr,"scePthreadTimedjoin export is missing");
     Basic();
     Contention(false);
     Contention(true);

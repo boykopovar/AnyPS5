@@ -549,6 +549,7 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec);
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI scePthreadTimedjoin(Pthread thread, void** retval, const KernelTimespec* abstime);
 int APS5_VABI scePthreadDetach(Pthread thread);
 Pthread APS5_VABI scePthreadSelf();
 void APS5_VABI scePthreadYield();

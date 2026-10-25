@@ -1099,6 +1099,12 @@ int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
     return JoinThread_nid_no_patch(thread, retval, nullptr);
 }
 
+int APS5_VABI scePthreadTimedjoin(Pthread thread, void** retval, const KernelTimespec* abstime) {
+    if (abstime == nullptr || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
+        return SCE_KERNEL_ERROR_EINVAL;
+    return JoinThread_nid_no_patch(thread, retval, abstime);
+}
+
 int APS5_VABI scePthreadDetach(Pthread thread) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     {
