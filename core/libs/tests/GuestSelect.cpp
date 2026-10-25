@@ -47,6 +47,33 @@ static int SelectAll(int descriptor, GuestDescriptorSet& read, GuestDescriptorSe
     return select_nid_postfix(descriptor + 1, read.words.data(), write.words.data(), except.words.data(), &limit);
 }
 
+static void SocketsShutForReading() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(shutdown_nid_postfix(pair[0], 0) == 0);
+    GuestDescriptorSet read{};
+    read.Add(pair[0]);
+    const GuestTimeval zero{0, 0};
+    Require(select_nid_postfix(pair[0] + 1, read.words.data(), nullptr, nullptr, &zero) == 1 && read.Has(pair[0]));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    read = {};
+    read.Add(pair[0]);
+    const GuestTimeval limit{5, 0};
+    const auto start = std::chrono::steady_clock::now();
+    std::thread shutter([&pair] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+    });
+    const int ready = select_nid_postfix(pair[0] + 1, read.words.data(), nullptr, nullptr, &limit);
+    const auto waited = std::chrono::steady_clock::now() - start;
+    shutter.join();
+    Require(ready == 1 && read.Has(pair[0]));
+    Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     KernelEvent change{};
     change.ident = 7;
@@ -112,6 +139,7 @@ static void Kqueues() {
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     Kqueues();
+    SocketsShutForReading();
 
     int descriptors[2]{-1, -1};
     Require(pipe_nid_postfix(descriptors) == 0);
