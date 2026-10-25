@@ -98,13 +98,14 @@ PendingSignals& Pending() {
     return *state;
 }
 
-void MarkPending(int guest) {
+void MarkPending(int guest, bool generated = false) {
     auto& pending = Pending();
     {
         // under the same lock the waits check the set with: without it a signal raised
         // between the check and the wait is lost and the wait never returns
         std::lock_guard lock(pending.lock);
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
+        if (generated) RecordSignal(guest);
     }
     pending.changed.notify_all();
 }
@@ -297,19 +298,23 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
 }
 
 void ExpireAlarm(std::chrono::microseconds interval) {
-    RecordSignal(GuestSigalrm);
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
         handler = dispositions[GuestSigalrm].handler;
     }
-    if (handler == 1) return;
+    if (handler == 1) {
+        RecordSignal(GuestSigalrm);
+        return;
+    }
     if (SignalBlocked(GuestSigalrm)) {
-        MarkPending(GuestSigalrm);
+        MarkPending(GuestSigalrm, true);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
         handler = Disposition(GuestSigalrm).handler;
         if (handler == 1) return;
+    } else {
+        RecordSignal(GuestSigalrm);
     }
     if (handler == 0) TerminateBySigalrm("the alarm expired");
     throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented");
@@ -506,8 +511,7 @@ int APS5_VABI raise_nid_postfix(int guest) {
         return 0;
     }
     if (SignalBlocked(guest)) {
-        RecordSignal(guest);
-        MarkPending(guest);
+        MarkPending(guest, true);
         return 0;
     }
     if (action.handler == 0 && IgnoredByDefault(guest)) {
@@ -542,8 +546,11 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
-    RecordSignal(guest);
-    if (Disposition(guest).handler != 1) MarkPending(guest);
+    if (Disposition(guest).handler == 1) {
+        RecordSignal(guest);
+    } else {
+        MarkPending(guest, true);
+    }
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {

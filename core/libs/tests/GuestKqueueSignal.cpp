@@ -11,6 +11,9 @@
 #include <initializer_list>
 #include <limits>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using Handler = void (APS5_VABI *)(int);
 
@@ -460,6 +463,91 @@ static bool Until(const std::atomic<bool>& ready) {
     return ready.load();
 }
 
+#ifdef _WIN32
+struct PausedSignalCopy {
+    void* page = nullptr;
+    std::size_t bytes = 0;
+    std::atomic<bool> trapped{false};
+    std::atomic<bool> resume{false};
+    std::atomic<bool> timedOut{false};
+};
+
+static PausedSignalCopy* pausedSignalCopy = nullptr;
+
+static LONG CALLBACK PauseSignalCopy(EXCEPTION_POINTERS* exception) {
+    const auto& record = *exception->ExceptionRecord;
+    auto* pause = pausedSignalCopy;
+    if (pause == nullptr || record.ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record.NumberParameters < 2 || record.ExceptionInformation[0] != 1) return EXCEPTION_CONTINUE_SEARCH;
+    const auto address = static_cast<std::uintptr_t>(record.ExceptionInformation[1]);
+    const auto begin = reinterpret_cast<std::uintptr_t>(pause->page);
+    if (address < begin || address - begin >= pause->bytes) return EXCEPTION_CONTINUE_SEARCH;
+    pause->trapped.store(true);
+    const auto deadline = GetTickCount64() + 5000;
+    while (!pause->resume.load() && GetTickCount64() < deadline) Sleep(1);
+    if (!pause->resume.load()) pause->timedOut.store(true);
+    DWORD previous = 0;
+    return VirtualProtect(pause->page, pause->bytes, PAGE_READWRITE, &previous) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void* APS5_VABI RemotePendingOrderEntry(void*) {
+    Disposition disposition(UserSignal, Callback);
+    Blocked blocked(UserSignal);
+    Queue queue;
+    Require(Apply(queue.Get(), Change(UserSignal, EvAdd)) == 0, "registering the pending-order signal failed");
+    PausedSignalCopy pause;
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    pause.bytes = system.dwPageSize;
+    pause.page = VirtualAlloc(nullptr, pause.bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+    Require(pause.page != nullptr, "allocating the delayed sigaction output failed");
+    pausedSignalCopy = &pause;
+    void* handler = AddVectoredExceptionHandler(1, PauseSignalCopy);
+    Require(handler != nullptr, "installing the sigaction page-fault handler failed");
+    std::atomic<int> inspected{-2};
+    std::thread inspector([&] { inspected.store(sigaction_nid_postfix(UserSignal, nullptr, static_cast<GuestSigaction*>(pause.page))); });
+    const bool trapped = Until(pause.trapped);
+    const Pthread target = scePthreadSelf();
+    std::atomic<int> sent{-2};
+    std::thread producer;
+    KernelEvent early{};
+    const KernelTimespec second{1, 0};
+    const KernelTimespec zero{0, 0};
+    int observed = -2;
+    int before = -2;
+    int beforeError = 0;
+    if (trapped) {
+        producer = std::thread([&] { sent.store(pthread_kill_nid_postfix(target, UserSignal)); });
+        observed = kevent_nid_postfix(queue.Get(), nullptr, 0, &early, 1, &second);
+        before = sigtimedwait_nid_postfix(&blocked.Set(), nullptr, &zero);
+        beforeError = *__error_nid_postfix();
+    }
+    pause.resume.store(true);
+    if (!trapped) {
+        DWORD previous = 0;
+        Require(VirtualProtect(pause.page, pause.bytes, PAGE_READWRITE, &previous) != 0, "releasing the sigaction output failed");
+    }
+    inspector.join();
+    if (producer.joinable()) producer.join();
+    KernelEvent after{};
+    const int following = Poll(queue.Get(), &after);
+    const int received = sigtimedwait_nid_postfix(&blocked.Set(), nullptr, &zero);
+    Require(RemoveVectoredExceptionHandler(handler) != 0 && VirtualFree(pause.page, 0, MEM_RELEASE) != 0, "releasing the pending-order fixture failed");
+    pausedSignalCopy = nullptr;
+    Require(trapped && !pause.timedOut.load() && inspected.load() == 0, "the signal disposition copy was not paused safely");
+    std::fprintf(stderr, "remote signal publication: before kevent=%d pending=%d errno=%d; after kevent=%d pending=%d\n", observed, before, beforeError, following, received);
+    Require(observed == 0 && before == -1 && beforeError == 35, "the signal event was visible before its pending signal existed");
+    Require(sent.load() == 0 && following == 1 && after.ident == UserSignal && after.filter == EvfiltSignal && after.data == 1 && received == UserSignal, "resuming signal generation did not publish both notification and pending state");
+    Empty(queue.Get());
+    return nullptr;
+}
+
+static void RemoteNotificationFollowsPendingState() {
+    Pthread observer = nullptr;
+    Require(scePthreadCreate(&observer, nullptr, RemotePendingOrderEntry, nullptr, nullptr) == 0, "creating the signal target observer failed");
+    Require(scePthreadJoin(observer, nullptr) == 0, "joining the signal target observer failed");
+}
+#endif
+
 static void IndefiniteAndNestedWaits() {
     Disposition disposition(UserSignal, Ignore());
     Queue child;
@@ -608,6 +696,9 @@ int main() {
     InvalidChangesAndSignalProbes();
     NativeSignalsAndNestedRaises();
     RemoteThreadSignals();
+#ifdef _WIN32
+    RemoteNotificationFollowsPendingState();
+#endif
     IgnoredAlarm();
     IndefiniteAndNestedWaits();
     ConcurrentDeletionAndClose();
