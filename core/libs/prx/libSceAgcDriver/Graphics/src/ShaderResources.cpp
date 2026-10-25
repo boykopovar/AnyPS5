@@ -499,7 +499,7 @@ void refreshForView(StorageTexture& source, const GuestTextureResource& resource
     else source.Refresh();
 }
 
-std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, std::uint64_t guestBytes = 0, bool written = false, std::optional<std::pair<std::uint32_t, std::uint32_t>> layers = std::nullopt);
+std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, std::uint64_t guestBytes = 0, bool written = false, std::optional<std::pair<std::uint32_t, std::uint32_t>> layers = std::nullopt, bool widenArray = true);
 
 std::uint64_t heldBytes(const StorageTexture& image) {
     return image.BudgetBytes();
@@ -1180,10 +1180,10 @@ StorageTexture::LayerWindow StorageLayerWindow(const StorageTexture* texture, co
     return {resource.baseArray, resource.depthOrLastArray - resource.baseArray + 1u};
 }
 
-GuestTextureResource StorageSurface(const Context& context, const GuestTextureResource& viewed) {
+GuestTextureResource StorageSurface(const Context& context, const GuestTextureResource& viewed, bool widenArray) {
     auto& surfaces = ExtendedChains();
     const bool extended = viewed.mipCount > AllocatedLevels(viewed);
-    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return StorageArraySurface(context, viewed);
+    if (!extended && !surfaces.any.load(std::memory_order_acquire)) return widenArray ? StorageArraySurface(context, viewed) : viewed;
     auto surface = viewed;
     surface.mipCount = AllocatedLevels(viewed);
     const auto identity = SurfaceKey(context, surface);
@@ -1200,7 +1200,7 @@ GuestTextureResource StorageSurface(const Context& context, const GuestTextureRe
             surface.mipCount = viewed.mipCount;
         }
     }
-    return StorageArraySurface(context, surface);
+    return widenArray ? StorageArraySurface(context, surface) : surface;
 }
 
 struct WrittenStorage {
@@ -1230,7 +1230,7 @@ static WrittenStorage WrittenStorageBytes(const GuestTextureResource& viewed, st
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
-std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, std::uint32_t mip, std::uint64_t guestBytes, bool written, std::optional<std::pair<std::uint32_t, std::uint32_t>> layers) {
+std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, std::uint32_t mip, std::uint64_t guestBytes, bool written, std::optional<std::pair<std::uint32_t, std::uint32_t>> layers, bool widenArray) {
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
@@ -1257,7 +1257,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto& counters = TextureCounts();
-    auto resource = StorageSurface(context, viewed);
+    auto resource = StorageSurface(context, viewed, widenArray);
     if (resource.depthOrLastArray != viewed.depthOrLastArray || resource.baseArray != viewed.baseArray) {
         guestBytes = 0;
         if (!layers) layers = std::pair{viewed.baseArray, viewed.depthOrLastArray - viewed.baseArray + 1u};
@@ -1288,7 +1288,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             key = {context.device, SurfaceKey(context, resource)};
             it = lookup();
         }
-        if (it == cache.entries.end() && ArrayWidens(resource) && resource.baseArray == 0) {
+        if (it == cache.entries.end() && widenArray && ArrayWidens(resource) && resource.baseArray == 0) {
             auto narrower = resource;
             for (narrower.depthOrLastArray = 0; narrower.depthOrLastArray < resource.depthOrLastArray; ++narrower.depthOrLastArray) {
                 if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, narrower)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
@@ -1591,11 +1591,11 @@ bool StorageImagesCached(const Context& context, std::span<const StorageTexture*
 }
 
 std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, const GuestTextureResource& resource) {
-    return cachedStorageTexture(context, {}, resource, 0);
+    return cachedStorageTexture(context, {}, resource, 0, 0, false, std::nullopt, false);
 }
 
 std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, const GuestTextureResource& resource, std::uint32_t firstLayer, std::uint32_t layerCount) {
-    return cachedStorageTexture(context, {}, resource, 0, 0, false, std::pair{firstLayer, layerCount});
+    return cachedStorageTexture(context, {}, resource, 0, 0, false, std::pair{firstLayer, layerCount}, false);
 }
 
 bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress) {

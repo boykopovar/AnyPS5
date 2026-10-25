@@ -216,6 +216,30 @@ void ExtendMipChain(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     Require(AgcDriver::Graphics::CachedStorageLayers(context, chain, 0, 1) != nullptr, "storage array layers: the two-level chain has no storage image");
 }
 
+void ExactLookups(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const auto surface = AddressOf(texels);
+    for (std::size_t word = 0; word < SurfaceBytes / 4u; ++word) {
+        const auto value = Initial(word);
+        std::memcpy(texels + word * 4u, &value, 4u);
+    }
+    for (std::uint32_t layer = 0; layer < Layers; ++layer) StoreLayer(device, surface, 0u, layer);
+    const auto shorter = AgcDriver::Graphics::DecodeTextureResource(ArrayDescriptor(surface, 0u, 1u));
+    {
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto copied = AgcDriver::Graphics::CachedStorageSurface(context, shorter);
+        Require(copied != nullptr, "storage array layers: the copy destination has no storage image");
+        Require(copied->Descriptor().baseArray == 0 &&copied->Descriptor().depthOrLastArray == 1u, "storage array layers: a copy destination of layers 0..1 got layers 0.." + std::to_string(copied->Descriptor().depthOrLastArray));
+        const auto target = AgcDriver::Graphics::CachedStorageLayers(context, shorter, 0u, 2u);
+        Require(target != nullptr, "storage array layers: the color target has no storage image");
+        Require(target->Descriptor().baseArray == 0 &&target->Descriptor().depthOrLastArray == 1u, "storage array layers: a color target of layers 0..1 got layers 0.." + std::to_string(target->Descriptor().depthOrLastArray));
+    }
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    Check(texels, 1u, Layers);
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+}
+
 }
 
 int main() {
@@ -231,6 +255,8 @@ int main() {
         ExtendMipChain(*device, chain.Data());
         GuestBlock extended;
         Run(*device, extended.Data(), Layers);
+        GuestBlock exact;
+        ExactLookups(*device, exact.Data());
         std::puts("storage array layers tests passed");
         return 0;
     } catch (const std::exception& error) {
