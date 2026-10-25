@@ -442,14 +442,92 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
     Require(refusal.find(reason) != std::string::npos, what + " of a converted image was not refused: " + refusal);
 }
 
+void CheckPacked16(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t format) {
+    const std::array<std::uint32_t, 4> widths = format == 133u ? std::array{5u, 6u, 5u, 0u} : format == 134u ? std::array{5u, 5u, 5u, 1u} : std::array{4u, 4u, 4u, 4u};
+    const std::array<std::uint32_t, 4> offsets = format == 133u ? std::array{0u, 5u, 11u, 0u} : format == 134u ? std::array{0u, 5u, 10u, 15u} : std::array{0u, 4u, 8u, 12u};
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto value = static_cast<std::uint16_t>(index * 4051u + 0x39d7u);
+        std::memcpy(texels + index * 2u, &value, 2u);
+    }
+    Run(device, LoadXyzw, TextureDescriptor(texels, format, SwizzleXYZW, LoadWidth), {}, LoadGroups);
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto value = static_cast<std::uint16_t>(index * 4051u + 0x39d7u);
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto bits = widths[component] == 0u ? widths[0] : widths[component];
+            const auto maximum = (1u << bits) - 1u;
+            const auto actual = Output[index * 4u + component];
+            Require(std::isfinite(std::bit_cast<float>(actual)) && StoreField(actual, maximum) == ((value >> offsets[component]) & maximum), "packed image_load has the wrong channel for format " + std::to_string(format));
+        }
+    }
+    auto* target = texels + RoundTripOffset;
+    alignas(256) static constexpr std::array<std::uint32_t, 10> roundTrip{
+        0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x7e3e0280u, 0xf0001f08u, 0x00010a1eu, 0xbf8c3f70u, 0xf0201f08u,
+        0x00040a1eu, 0xbf810000u,
+    };
+    Run(device, roundTrip, TextureDescriptor(texels, format, SwizzleXYZW, LoadWidth), {}, LoadGroups, TextureDescriptor(target, format, SwizzleXYZW, LoadWidth));
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(target), LoadWidth * 2u, nullptr, "test");
+    device.WaitIdle();
+    Require(std::memcmp(texels, target, LoadWidth * 2u) == 0, "packed image load/store changed guest bytes for format " + std::to_string(format));
+    alignas(256) static constexpr auto store = StoreCode(0xfu, 0u);
+    auto* written = texels + StoreOffset;
+    alignas(256) static constexpr auto storeHalf = StoreCode(0xfu, D16);
+    constexpr std::array halfValues{0x0000u, 0x3c00u, 0x3800u, 0x3400u, 0xbc00u, 0x4000u, 0x7c00u, 0x7e00u};
+    constexpr std::array halfFloats{0.0f, 1.0f, 0.5f, 0.25f, -1.0f, 2.0f, INFINITY, NAN};
+    for (std::uint32_t pass = 0; pass < 5u; ++pass) {
+        const auto swizzle = pass == 3u ? SwizzleZYX1 : SwizzleXYZW;
+        const auto dmask = pass == 4u ? 0x5u : 0xfu;
+        std::array<std::uint16_t, Threads> expected{};
+        Input.fill(0u);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            std::uint32_t slot = 0;
+            for (std::uint32_t component = 0; component < 4u; ++component) {
+                if (((dmask >> component) & 1u) == 0u) continue;
+                auto value = StoreValues[(tid + component * 3u + pass * 4u) % StoreValues.size()];
+                if (tid == 0u) value = std::bit_cast<std::uint32_t>(pass == 0u ? std::array{1.0f, 0.5f, 0.25f, 1.0f}[component] : std::array{0.25f, 1.0f, 0.5f, 0.0f}[component]);
+                if (pass == 2u) {
+                    const auto index = (tid + component * 3u) % halfValues.size();
+                    value = std::bit_cast<std::uint32_t>(halfFloats[index]);
+                    Input[tid * 4u + slot / 2u] |= halfValues[index] << ((slot % 2u) * 16u);
+                } else {
+                    Input[tid * 4u + slot] = value;
+                }
+                ++slot;
+                const auto selected = (swizzle >> (component * 3u)) & 7u;
+                if (selected >= 4u && widths[selected - 4u] != 0u) expected[tid] |= static_cast<std::uint16_t>(StoreField(value, (1u << widths[selected - 4u]) - 1u) << offsets[selected - 4u]);
+            }
+        }
+        auto* reference = texels + FloatOffset;
+        std::memcpy(reference, expected.data(), Threads * 2u);
+        Run(device, SampleLz, TextureDescriptor(reference, format, SwizzleXYZW, Threads), PointSampler, 1);
+        std::array<std::uint32_t, 4> sampled{};
+        std::copy_n(Output.begin(), 4u, sampled.begin());
+        const auto descriptor = TextureDescriptor(written, format, SwizzleXYZW, Threads);
+        Run(device, pass == 2u ? storeHalf : pass == 4u ? StoreXz : store, TextureDescriptor(written, format, swizzle, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
+        Run(device, SampleLz, descriptor, PointSampler, 1);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            for (std::uint32_t component = 0; component < 4u; ++component) Require(Output[tid * 4u + component] == sampled[component], "sample after packed store differs for format " + std::to_string(format));
+        }
+        AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(written), Threads * 2u, nullptr, "test");
+        device.WaitIdle();
+        Require(std::memcmp(written, expected.data(), Threads * 2u) == 0, "packed image_store write-back differs for format " + std::to_string(format));
+    }
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
         auto* texels = block.Data();
+        if (argc == 3 && std::string(argv[1]) == "--packed16") {
+            const auto format = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            Require(format == 133u || format == 134u || format == 136u, "unsupported packed storage test format");
+            CheckPacked16(*device, texels, format);
+            std::cout << "Packed 16-bit storage image tests passed\n";
+            return 0;
+        }
         for (std::uint32_t index = 0; index < LoadWidth; ++index) {
             const auto texel = LoadTexel(index);
             std::memcpy(texels + index * 4u, &texel, 4u);

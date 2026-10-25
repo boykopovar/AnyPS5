@@ -1,3 +1,4 @@
+#include "prx/libSceMove/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -28,10 +29,12 @@ struct Slot {
 
 std::unordered_map<int32_t, Slot> openHandles;
 
-int checkHandle(int32_t handle) {
+int checkHandle(int32_t handle, bool validArguments = true) {
     std::lock_guard lock(stateMutex);
     if (!initialized) return MOVE_ERROR_NOT_INIT;
-    return openHandles.contains(handle) ? MOVE_OK : MOVE_ERROR_INVALID_HANDLE;
+    if (!validArguments) return MOVE_ERROR_INVALID_ARG;
+    if (!openHandles.contains(handle)) return MOVE_ERROR_INVALID_HANDLE;
+    return MOVE_OK;
 }
 
 }
@@ -73,26 +76,22 @@ int APS5_VABI sceMoveClose(int32_t handle) {
 }
 
 int APS5_VABI sceMoveGetDeviceInfo(int32_t handle, void* info) {
-    if (const int result = checkHandle(handle); result != MOVE_OK) return result;
-    if (!info) return MOVE_ERROR_INVALID_ARG;
+    if (const int result = checkHandle(handle, info != nullptr); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveGetExtensionPortInfo(int32_t handle, void* data) {
-    if (const int result = checkHandle(handle); result != MOVE_OK) return result;
-    if (!data) return MOVE_ERROR_INVALID_ARG;
+    if (const int result = checkHandle(handle, data != nullptr); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
-    if (const int result = checkHandle(handle); result != MOVE_OK) return result;
-    if (!data) return MOVE_ERROR_INVALID_ARG;
+    if (const int result = checkHandle(handle, data != nullptr); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
-    if (const int result = checkHandle(handle); result != MOVE_OK) return result;
-    if (timestamp < 0 || !data || !outCount) return MOVE_ERROR_INVALID_ARG;
+    if (const int result = checkHandle(handle, timestamp >= 0 && data != nullptr && outCount != nullptr); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 

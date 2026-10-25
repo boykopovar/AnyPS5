@@ -1,3 +1,4 @@
+#include "prx/libSceCommonDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -12,7 +13,7 @@ extern "C" {
 int APS5_VABI sceCommonDialogInitialize(void) {
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) {
-        return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+        return COMMON_DIALOG_ERROR_ALREADY_SYSTEM_INITIALIZED;
     }
     return COMMON_DIALOG_OK;
 }

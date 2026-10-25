@@ -2,9 +2,9 @@
 
 ### Silent stubs
 
-- [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp) implements only the no-device path: initialization and callback and device registration succeed, the callback is never called because no device connects, and calls that need a connected device throw
+- [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): the host still has no device backend or event worker. Registration retains only lifecycle state and never delivers the recovered 104-byte callback events. Custom worker scheduling throws; device ioctl failures and resource exhaustion are not modeled.
 
 ### Unknown function info
 
-- [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp) (libSceBluetoothHid) - signatures taken from PPSA01317: `sceBluetoothHidInit()` and `sceBluetoothHidUnregisterCallback()` without arguments, `sceBluetoothHidRegisterCallback(callback, 0, param)` with a 16-byte param, and `sceBluetoothHidRegisterDevice` / `sceBluetoothHidUnregisterDevice(vendorId, productId)`; the report and device name exports are declared without parameters
-- [sceBluetoothHidDebugGetVersion, sceBluetoothHidDisconnectDevice, sceBluetoothHidGetDeviceInfo, sceBluetoothHidGetFeatureReport, sceBluetoothHidGetReportDescriptor, sceBluetoothHidInterruptOutput, sceBluetoothHidParamInitialize, sceBluetoothHidSetFeatureReport, sceBluetoothHidThreadParamInitialize](../../../core/libs/prx/libSceBluetoothHid/Export.cpp) (libSceBluetoothHid) - throwing stubs declared without parameters from the firmware export database (aerolib.csv); their guest signatures are unverified on hardware
+- [sceBluetoothHidGetDeviceName and sceBluetoothHidGetDeviceInfo](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): output pointers are forwarded to device ioctls without accessing the buffers. Their output sizes and layouts remain unresolved. Report APIs use 64-bit device handles; device-info and disconnect APIs use 32-bit device IDs.
+- [sceBluetoothHidDebugGetVersion](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): returns a constant without reading arguments, so the supplied implementation does not establish whether the public prototype has unused parameters.

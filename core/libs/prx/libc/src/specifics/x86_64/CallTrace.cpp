@@ -14,14 +14,21 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 extern "C" void CallTraceEnter_nid_no_patch();
 
@@ -68,6 +75,39 @@ bool Selected(std::string_view library) {
         if (token == "all" || token == library) return true;
     }
     return false;
+}
+
+bool WriteCallCounts(const std::filesystem::path& path) {
+    const std::size_t recorded = g_recordCount.load(std::memory_order_acquire);
+    const ImportRecord* records = g_records.load(std::memory_order_acquire);
+    std::vector<std::pair<std::uint64_t, const ImportRecord*>> called;
+    for (std::size_t index = 0; index < recorded; ++index) {
+        const std::uint64_t calls = records[index].calls.load(std::memory_order_relaxed);
+        if (calls != 0) called.emplace_back(calls, &records[index]);
+    }
+    std::stable_sort(called.begin(), called.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    for (const auto& [calls, record] : called) file << calls << ' ' << record->library << ' ' << record->name << '\n';
+    file.flush();
+    return static_cast<bool>(file);
+}
+
+void StartCallCountWriter() {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == L'\0') return;
+    std::filesystem::path path(value);
+#else
+    const char* value = std::getenv("APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == '\0') return;
+    std::filesystem::path path(value);
+#endif
+    std::thread([path = std::move(path)] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            WriteCallCounts(path);
+        }
+    }).detach();
 }
 
 std::uint64_t CurrentThread() {
@@ -117,6 +157,7 @@ struct ModuleSegment {
 
 struct ModuleMap {
     std::size_t count;
+    std::uint64_t pageSize;
     ModuleSegment segments[256];
 };
 
@@ -135,16 +176,20 @@ void SnapshotModules() {
     if (changes == g_moduleChanges) return;
     g_moduleChanges = changes;
     auto* map = new ModuleMap{};
+    map->pageSize = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     dl_iterate_phdr([](dl_phdr_info* info, std::size_t, void* data) {
         auto& modules = *static_cast<ModuleMap*>(data);
         const char* path = info->dlpi_name != nullptr && *info->dlpi_name != '\0' ? info->dlpi_name : program_invocation_short_name;
         const char* slash = std::strrchr(path, '/');
         const char* name = slash == nullptr ? path : slash + 1;
+        std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
+        for (int index = 0; index < info->dlpi_phnum; ++index)
+            if (info->dlpi_phdr[index].p_type == PT_LOAD) first = std::min<std::uint64_t>(first, info->dlpi_phdr[index].p_vaddr & ~(modules.pageSize - 1));
         for (int index = 0; index < info->dlpi_phnum && modules.count < std::size(modules.segments); ++index) {
             const auto& header = info->dlpi_phdr[index];
             if (header.p_type != PT_LOAD || header.p_memsz == 0) continue;
             auto& segment = modules.segments[modules.count++];
-            segment.base = info->dlpi_addr;
+            segment.base = info->dlpi_addr + first;
             segment.start = info->dlpi_addr + header.p_vaddr;
             segment.end = segment.start + header.p_memsz;
             std::strncpy(segment.name, name, sizeof(segment.name) - 1);
@@ -328,6 +373,7 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
 #ifdef __linux__
         InstallAbortReport();
 #endif
+        StartCallCountWriter();
     }
 #ifdef __linux__
     SnapshotModules();
@@ -378,6 +424,11 @@ std::size_t CopyThreadCallTrace_nid_no_patch(std::uint64_t thread, CallTraceEntr
     }
     std::reverse(entries, entries + count);
     return count;
+}
+
+bool WriteCallCounts_nid_no_patch(const char* path) {
+    if (path == nullptr || *path == '\0') return false;
+    return WriteCallCounts(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
 }
 
 std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t capacity, std::uint64_t* total) {

@@ -1,3 +1,4 @@
+#include "prx/libSceHmd2/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
@@ -10,51 +11,8 @@
 #include <cstring>
 #include <stdexcept>
 
-extern "C" {
-std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0);
-std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1);
-std::int32_t APS5_VABI Hmd2WriteFourConstants(void* a0);
-std::int32_t APS5_VABI Hmd2WriteSixHalvesThenInvalidHandle(std::uint64_t a0, void* a1);
-std::int32_t APS5_VABI Hmd2WriteTwelveHalvesThenInvalidHandle(std::uint64_t a0, void* a1);
-std::int32_t APS5_VABI Hmd2SlotUpTo3CheckSecondThirdThenZero(std::uint64_t a0, const void* a1, const void* a2);
-std::int32_t APS5_VABI Hmd2SlotUpTo1ThenError1002(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo1CheckSecondThenError1002(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2SlotUpTo1ThenMinusOne(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenMinusOne(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenError1002(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenError1003(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2CheckSecondThenError002C(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2IndexZeroCheckSecondThenZero(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError0004(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenZero(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1002(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenMinusOne(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenParameterInvalid(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenError002C(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenParameterInvalid(const void*);
-std::int32_t APS5_VABI Hmd2CheckAllSixThenZero(const void*, const void*, const void*, const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenParameterInvalid(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError800d0203(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1003(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1010(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1002(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1003(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstAndThirdThenZero(const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstAndThirdThenError1003(const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenInvalidHandle(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenError1002(const void*, const void*);
-std::int32_t APS5_VABI Hmd2BeforeInitializeZero();
-std::int32_t APS5_VABI Hmd2BeforeInitializeNotInitialized();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError0004();
-std::int32_t APS5_VABI Hmd2BeforeInitializeParameterNull();
-std::int32_t APS5_VABI Hmd2BeforeInitializeParameterInvalid();
-std::int32_t APS5_VABI Hmd2BeforeInitializeReprojectionNotInitialized();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError002C();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError1002();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError1003();
-std::int32_t APS5_VABI Hmd2BeforeInitializeMinusOne();
-std::int32_t APS5_VABI Hmd2BeforeInitializeValue0400();
-std::int32_t APS5_VABI Hmd2BeforeInitializeValue20000();
+namespace Hmd2 {
+
 }
 
 namespace {
@@ -299,6 +257,16 @@ int main() {
     InstallProcessParameters();
     TestBeforeInitialize();
     TestWithoutHeadset();
+    bool threw = false;
+    try {
+        static_cast<void>(sceHmd2ReprojectionQueryBufferSizeAlign());
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "buffer size query did not throw");
+    Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");
+    Require(sceHmd2ReprojectionGetCurrentOutput(nullptr) == Hmd2::ReprojectionNotInitialized, "reprojection before initialization");
+    Require(sceHmd2SetFieldOfView(nullptr) == Hmd2::ParameterNull, "null field of view");
     std::puts("HMD2 tests passed");
     return 0;
 }

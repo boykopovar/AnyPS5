@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include <cstdint>
@@ -6,11 +7,6 @@
 #include <initializer_list>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capacity,
-                               const ime_filter::FilterParam* param, const char16_t* src, uint32_t src_length);
-}
 
 namespace {
 

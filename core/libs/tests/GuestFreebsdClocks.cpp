@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <climits>
@@ -7,20 +10,6 @@
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
-int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp);
-int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
-int APS5_VABI sceKernelClockGetres(KernelClockid clockId, KernelTimespec* tp);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz);
-std::int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
-int APS5_VABI sceKernelConvertLocaltimeToUtc(std::int64_t, std::int64_t, std::int64_t*, KernelTimesec*, std::int32_t*);
-int APS5_VABI sceKernelConvertUtcToLocaltime(std::int64_t, std::int64_t*, KernelTimesec*, std::int32_t*);
-}
 
 static constexpr int SCE_OK = 0;
 
@@ -70,6 +59,7 @@ static void UnsupportedResolutionStillThrows() {
     bool rejected = false;
     try {
         clock_getres_nid_postfix(3, &resolution);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -88,6 +78,7 @@ static void OmittedTimeIsFaultAfterClockValidation() {
     bool rejected = false;
     try {
         clock_gettime_nid_postfix(3, nullptr);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -244,6 +235,7 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
 static bool SettimeThrows(const KernelTimespec& time, const char* requested) {
     try {
         clock_settime_nid_postfix(GUEST_CLOCK_REALTIME, &time);
+
     } catch (const std::runtime_error& error) {
         return std::strstr(error.what(), requested) != nullptr;
     }

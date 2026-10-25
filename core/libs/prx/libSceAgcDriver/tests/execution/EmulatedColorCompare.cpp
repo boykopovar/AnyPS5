@@ -27,6 +27,7 @@ constexpr std::uint32_t Side = 2;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Format8UNorm = 1;
 constexpr std::uint32_t Format8_8UNorm = 14;
+constexpr std::uint32_t Format16UNorm = 7;
 constexpr std::uint32_t Format1616UNorm = 23;
 constexpr std::uint32_t Format9995Float = 132;
 constexpr std::uint32_t Format8Srgb = 128;
@@ -178,45 +179,6 @@ void FillInput() {
     Extra[0] = 0x00001f20u;
 }
 
-std::int32_t OffsetComponent(std::uint32_t tid, std::uint32_t component) {
-    const auto field = (Extra[tid * 3u] >> (component * 8u)) & 0x3fu;
-    return static_cast<std::int32_t>(field ^ 0x20u) - 0x20;
-}
-
-float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
-    const std::uint32_t clamp = sampler.clamp;
-    const int size = static_cast<int>(Side);
-    if (clamp == ClampBorder && (x < 0 || x >= size || y < 0 || y >= size)) {
-        const float border = sampler.border == BorderWhite ? 1.0f : 0.0f;
-        return reference <= border ? 1.0f : 0.0f;
-    }
-    const auto address = [&](int value) {
-        if (clamp == ClampEdge) return std::clamp(value, 0, static_cast<int>(Side) - 1);
-        const int size = static_cast<int>(Side);
-        return ((value % size) + size) % size;
-    };
-    const float red = static_cast<float>(Red[address(y) * Side + address(x)]) / 255.0f;
-    return reference <= red ? 1.0f : 0.0f;
-}
-
-float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
-    const float u = Input[tid * 3u + 1u] * static_cast<float>(Side);
-    const float v = Input[tid * 3u + 2u] * static_cast<float>(Side);
-    const float reference = std::clamp(Input[tid * 3u + 0u], 0.0f, 1.0f);
-    const int offsetX = offsets ? OffsetComponent(tid, 0u) : 0;
-    const int offsetY = offsets ? OffsetComponent(tid, 1u) : 0;
-    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY, reference, sampler);
-    const float cu = u - 0.5f;
-    const float cv = v - 0.5f;
-    const int x = static_cast<int>(std::floor(cu)) + offsetX;
-    const int y = static_cast<int>(std::floor(cv)) + offsetY;
-    const float a = cu - std::floor(cu);
-    const float b = cv - std::floor(cv);
-    const float top = ReferenceTexel(x, y, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler) * a;
-    const float bottom = ReferenceTexel(x, y + 1, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y + 1, reference, sampler) * a;
-    return top * (1.0f - b) + bottom * b;
-}
-
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true, bool cube = false) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto input = cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(sizeof(CubeInput))) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
@@ -254,9 +216,7 @@ std::uint64_t Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const float expected = Expected(tid, sampler, offsets);
-        const float tolerance = sampler.filter == FilterPoint ? 0.0f : 1e-4f;
-        Require(std::fabs(Output[tid] - expected) <= tolerance, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
+        Require(Output[tid] == 0.0f, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected 0");
     }
     return result.variantId;
 }
@@ -274,12 +234,11 @@ void RunChannels(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t>
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const float compared = Expected(tid, sampler, false);
         for (std::uint32_t reg = 0; reg < 4u; ++reg) {
             float expected = -1.0f;
             if (reg < registers) {
                 const auto select = channels[firstChannel + reg];
-                expected = select == 0u ? 0.0f : select == 1u ? 1.0f : compared;
+                expected = select == 0u ? 0.0f : select == 1u ? 1.0f : 0.0f;
             }
             const float actual = Output[tid * 4u + reg];
             Require(std::fabs(actual - expected) <= 1e-4f, std::string(name) + ": thread " + std::to_string(tid) + " register " + std::to_string(reg) + " returned " + std::to_string(actual) + ", expected " + std::to_string(expected));
@@ -304,7 +263,7 @@ void RunCube(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(CubeCode.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        Require(Output[tid] == 1.0f, std::string(name) + ": +X cube face comparison returned " + std::to_string(Output[tid]) + ", expected 1");
+        Require(Output[tid] == 0.0f, std::string(name) + ": +X cube face comparison returned " + std::to_string(Output[tid]) + ", expected 0");
     }
 }
 
@@ -314,7 +273,7 @@ bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
     });
 }
 
-void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const char* name) {
+void RunZeroCube(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const char* name) {
     FillCubeTexels();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         CubeInput[tid * 4u + 0u] = 0.5f;
@@ -332,7 +291,7 @@ void RunSrgbCubeZero(AgcDriver::VulkanDevice& device, std::uint32_t format, cons
     }
 }
 
-void RunSrgbZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const char* name, bool useCache, std::uint64_t expectedVariant) {
+void RunZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const char* name, bool useCache, std::uint64_t expectedVariant) {
     Output.fill(-1.0f);
     const auto result = Compile(device, format, sampler, Code, useCache);
     if (useCache) Require(result.cacheHit && result.variantId == expectedVariant, std::string(name) + " did not reuse the compiled comparison artifact");
@@ -366,25 +325,38 @@ int main() {
         FillTexels();
         FillInput();
         RunCube(*device, {ClampEdge, FilterPoint}, "point cube, clamp to edge");
-        Reject(*device, Format1616UNorm, {ClampEdge, FilterBilinear}, "bilinear cube comparison requires DISABLE_CUBE_WRAP", CubeCode, true, true);
+        RunCube(*device, {ClampEdge, FilterBilinear}, "bilinear cube without DISABLE_CUBE_WRAP");
         for (std::uint32_t function = 0; function < 8u; ++function) {
             const auto name = "bilinear 8_8_8_8 srgb cube function " + std::to_string(function);
-            RunSrgbCubeZero(*device, Format8888Srgb, {ClampEdge, FilterBilinear, BorderBlack, 0u, 0u, false, function}, name.c_str());
+            RunZeroCube(*device, Format8888Srgb, {ClampEdge, FilterBilinear, BorderBlack, 0u, 0u, false, function}, name.c_str());
         }
-        RunSrgbCubeZero(*device, Format8Srgb, {ClampEdge, FilterBilinear}, "bilinear 8 srgb cube without DISABLE_CUBE_WRAP");
-        RunSrgbCubeZero(*device, Format8_8Srgb, {ClampEdge, FilterBilinear}, "bilinear 8_8 srgb cube without DISABLE_CUBE_WRAP");
+        RunZeroCube(*device, Format8Srgb, {ClampEdge, FilterBilinear}, "bilinear 8 srgb cube without DISABLE_CUBE_WRAP");
+        RunZeroCube(*device, Format8_8Srgb, {ClampEdge, FilterBilinear}, "bilinear 8_8 srgb cube without DISABLE_CUBE_WRAP");
         RunCube(*device, {ClampEdge, FilterBilinear, BorderBlack, 0u, 0u, true}, "bilinear cube with DISABLE_CUBE_WRAP");
-        Reject(*device, Format9995Float, {ClampEdge, FilterPoint}, "implemented only for float, unorm and snorm formats");
+        Reject(*device, Format9995Float, {ClampEdge, FilterPoint}, "implemented only for floating-point, UNORM and SNORM formats");
         for (std::uint32_t function = 0; function < 8u; ++function) {
             const auto name = "bilinear 8_8_8_8 unorm cube function " + std::to_string(function);
-            RunSrgbCubeZero(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, 0u, 0u, false, function}, name.c_str());
+            RunZeroCube(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, 0u, 0u, false, function}, name.c_str());
         }
-        RunSrgbCubeZero(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear, BorderBlack, 0u, 0u, false, GreaterEqual}, "anisotropic bilinear 8_8_8_8 unorm cube without DISABLE_CUBE_WRAP");
-        Reject(*device, Format1616UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
-        Reject(*device, Format1616UNorm, {ClampEdge, FilterAnisoPoint}, "point or bilinear");
+        RunZeroCube(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear, BorderBlack, 0u, 0u, false, GreaterEqual}, "anisotropic bilinear 8_8_8_8 unorm cube without DISABLE_CUBE_WRAP");
+        RunZero(*device, Format1616UNorm, {ClampEdge, FilterAnisoBilinear}, "anisotropic bilinear 16_16 unorm", false, 0u);
+        RunZero(*device, Format1616UNorm, {ClampEdge, FilterAnisoPoint}, "anisotropic point 16_16 unorm", false, 0u);
         FillTexels();
+        Require(BindsDepthCompare(Compile(*device, Format16UNorm, {ClampEdge, FilterPoint})), "an R16 unorm texture left the native comparison path");
         Require(BindsDepthCompare(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
         Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
+        for (const auto format : {1u, 2u, 8u, 13u, 14u, 15u, 23u, 24u, 29u, 36u, 50u, 51u, 56u, 57u, 65u, 66u, 71u, 77u}) {
+            if (format == 51u && !device->SupportsImageFormat(VK_FORMAT_A2B10G10R10_SNORM_PACK32, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+                std::puts("measured GFX10 color format 51 returns zero: skipped, Vulkan device does not support the image format");
+                continue;
+            }
+            const auto name = "measured GFX10 color format " + std::to_string(format) + " returns zero";
+            RunZero(*device, format, {ClampEdge, FilterPoint}, name.c_str(), false, 0u);
+        }
+        for (std::uint32_t function = 0; function < 8u; ++function) {
+            const auto name = "16_16 unorm compare function " + std::to_string(function) + " returns zero";
+            RunZero(*device, Format1616UNorm, {ClampEdge, FilterPoint, BorderBlack, 0u, 0u, false, function}, name.c_str(), false, 0u);
+        }
         for (const bool useCache : {false, true}) {
             const auto variant = useCache ? Run(*device, {ClampEdge, FilterPoint}, "cached UNORM before sRGB", false, true) : 0u;
             if (useCache) Require(variant != 0, "the cached comparison has no compiled artifact identity");
@@ -392,7 +364,7 @@ int main() {
                 for (std::uint32_t function = 0; function < 8u; ++function) {
                     for (const auto filter : {FilterPoint, FilterBilinear}) {
                         const auto name = std::string(useCache ? "cached" : "uncached") + " sRGB format " + std::to_string(format) + " function " + std::to_string(function) + (filter == FilterPoint ? " point" : " bilinear");
-                        RunSrgbZero(*device, format, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function}, name.c_str(), useCache, variant);
+                        RunZero(*device, format, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function}, name.c_str(), useCache, variant);
                     }
                 }
             }
@@ -403,10 +375,11 @@ int main() {
                 for (const auto filter : {FilterPoint, FilterBilinear, FilterAnisoBilinear}) {
                     if (format != Format8888UNorm && function != LessEqual) continue;
                     const auto name = "8-bit unorm format " + std::to_string(format) + " function " + std::to_string(function) + " filter " + std::to_string(filter);
-                    RunSrgbZero(*device, format, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function}, name.c_str(), false, 0u);
+                    RunZero(*device, format, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function}, name.c_str(), false, 0u);
                 }
             }
         }
+        RunZero(*device, Format1616UNorm, {ClampEdge, FilterPoint}, "16_16 unorm comparison returns zero", false, 0u);
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge");
         Run(*device, {ClampWrap, FilterPoint}, "point, wrap");
         if (lodClamp) Run(*device, {ClampWrap, FilterPoint}, "point, wrap with negative offsets", true);

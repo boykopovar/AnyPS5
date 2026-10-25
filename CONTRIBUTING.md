@@ -3,6 +3,7 @@
 ## Code
 
 - Follow the [coding conventions](docs/dev/CONVENTIONS.md): naming, no comments except [technical debt](docs/dev/TechnicalDebt.md), Conventional Commits.
+- **Every exported PS5 function with `APS5_VABI` must have exactly one declaration in a header reachable through the library's `<library>.hpp`. Duplicate declarations in headers, `.cpp` files and tests are forbidden. This is checked by the Python test [`public_headers`](core/libs/tests/test_public_headers.py).**
 - Every function either does exactly what it is supposed to or throws. Unimplemented exports call `NotImplemented_nid_no_patch(__func__)` (see [libSceAudioIn](core/libs/prx/libSceAudioIn/Export.cpp)).
 - Pull requests that add or change shader instruction semantics say where they come from: measured on hardware (which GPU and what was checked, e.g. with the [hardware oracle](docs/dev/HW_ORACLE.md)) or the exact source (ISA section, LLVM, ACO or Mesa file). Reviewers check the semantics on hardware. Cases the source doesn't settle throw, and behaviour not verified on hardware is recorded in [technical debt](docs/dev/TechnicalDebt.md).
 - An export's signature or behaviour taken from a title's call sites or from a library's disassembly follows [reading titles and libraries](docs/dev/REVERSE_ENGINEERING.md): a call site settles the arguments, not what the library does.
@@ -11,6 +12,7 @@
 - Implement the general behaviour of a function, not what one title happens to need.
 - Don't add replacements for modules that titles ship themselves in `sce_module/`, `sce_modules/` or `prx/`: engine or middleware modules (Cohtml, FMOD, GOG Galaxy) and SDK libraries that only wrap other system libraries. The relinker converts and loads the title's own module, and a host library with the same name is left out of `DT_NEEDED`. Only system libraries, which reach the kernel or the hardware, are reimplemented in [core/libs/prx](core/libs/prx). A host copy may still exist for a wrapped library that some dumps lack entirely, like libSceNpCppWebApi: the title's own module wins whenever one is shipped, so it is only ever consulted by titles that ship nothing.
 - Avoid non-standard extensions (`__attribute__`, etc.) where standard C++ is enough. Helper symbols that must not become NIDs use the `_nid_no_patch` or `_nid_no_patch_cut` suffix.
+- `alignas` takes at most 8192: MinGW GCC, the Windows compiler, rejects static objects aligned above it. A larger block is aligned at run time inside a bigger buffer.
 - The relinker uses only the C++20 standard library.
 - Third-party code is added as a submodule under `3rdparty/` and built from source, not found on the system. With `ANYPS5_USE_SYSTEM_DEPS=ON` the packages packaged by the distributions (SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools) come from the system instead; that resolution lives in [cmake/SystemDeps.cmake](cmake/SystemDeps.cmake) and the default build never reads the system.
 - Don't add tests that only check that a symbol is exported: a missing export already fails at startup.
@@ -42,7 +44,7 @@ This manual run also builds and tests the relinker on Linux, Windows and macOS w
 
 With `--field full=false`, the manual run skips the full builds and runs only the relinker matrix on Linux, Windows and macOS, if the pull request changes a file the relinker-only build uses, such as the Python tools and their tests in `tools/`.
 
-The Conventions check runs automatically for every contributor, including first-time contributors. It uses the base branch checker and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
+The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
 
 ```
 python3 tools/check_conventions.py --base origin/main

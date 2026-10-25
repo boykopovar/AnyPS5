@@ -1,3 +1,4 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <memory>

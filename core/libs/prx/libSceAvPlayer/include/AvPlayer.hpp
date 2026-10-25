@@ -51,6 +51,13 @@ public:
     virtual void OnError() = 0;
 };
 
+struct StartInfo {
+    std::uint64_t size;
+    std::uint64_t startTime;
+};
+
+static_assert(sizeof(StartInfo) == 16);
+
 struct SourceSettings {
     AvPlayerMemAllocator memory;
     AvPlayerFileReplacement file;
@@ -66,7 +73,7 @@ public:
     virtual bool EnableStream(std::uint32_t index) = 0;
     virtual bool DisableStream(std::uint32_t index) = 0;
     virtual bool ChangeStream(std::uint32_t from, std::uint32_t to) = 0;
-    virtual int Start() = 0;
+    virtual int Start(std::uint64_t startTime) = 0;
     virtual void Stop() = 0;
     virtual void Pause() = 0;
     virtual void Resume() = 0;
@@ -80,6 +87,11 @@ public:
     virtual std::uint64_t CurrentTime() = 0;
     virtual bool Finished() = 0;
     virtual void SetClockTimeForTest(double milliseconds) = 0;
+    virtual void SetHoldAudioEofForTest(bool hold) = 0;
+    virtual bool AudioEofHeldForTest() = 0;
+    virtual bool AudioEndedForTest() = 0;
+    virtual int QueuedAudioForTest() = 0;
+    virtual bool NextQueuedAudioTimestampForTest(std::uint64_t& timestamp) = 0;
 };
 
 std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::string& path, ISourceEvents& events);
@@ -87,6 +99,11 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 std::uint32_t DetectSourceType(std::string_view path);
 
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
+void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
+bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
+bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
+int QueuedAvPlayerAudioForTest_nid_no_patch(AvPlayerInternal* h);
+bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, std::uint64_t* timestamp);
 
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
@@ -103,13 +120,14 @@ public:
     int EnableStream(std::uint32_t index);
     int DisableStream(std::uint32_t index);
     int ChangeStream(std::uint32_t from, std::uint32_t to);
-    int Start();
+    int Start(std::uint64_t startTime = 0);
     int Stop();
     int Pause();
     int Resume();
     int JumpToTime(std::uint64_t milliseconds);
     int SetLooping(bool enabled);
     int SetTrickSpeed(std::int32_t trickSpeed);
+    int SetAvailableBandwidth();
     int SetAvSyncMode(std::uint32_t mode);
     bool GetVideoData(AvPlayerFrameInfoEx& info);
     bool GetVideoData(AvPlayerFrameInfo& info);
@@ -117,6 +135,11 @@ public:
     bool IsActive();
     std::uint64_t CurrentTime();
     void SetClockTimeForTest(double milliseconds);
+    void SetHoldAudioEofForTest(bool hold);
+    bool AudioEofHeldForTest();
+    bool AudioEndedForTest();
+    int QueuedAudioForTest();
+    bool NextQueuedAudioTimestampForTest(std::uint64_t& timestamp);
 
 private:
     enum class State { Initial, Ready, Play, Pause, Stop, EndOfFile, Error };
@@ -136,7 +159,7 @@ private:
     void autoStart();
     void checkEndOfFile();
     bool readyLocked() const;
-    int startLocked();
+    int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
 
     AvPlayerFileReplacement file{};

@@ -1,3 +1,4 @@
+#include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cmath>
@@ -5,16 +6,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
+#include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceAudiodecInitLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecTermLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl*, std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecDeleteDecoder(std::int32_t);
-std::int32_t APS5_VABI sceAudiodecDecode(std::int32_t, AudiodecCtrl*);
-std::int32_t APS5_VABI sceAudiodecClearContext(std::int32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -410,6 +403,39 @@ int main() {
     aac.i_bw_pcm = 2;
     const std::int32_t floatAac = sceAudiodecCreateDecoder(&aacCtrl, 3);
     Require(floatAac > 0 && sceAudiodecDeleteDecoder(floatAac) == 0);
+    for (const std::uint32_t channels : {0u, 3u, 4u, 5u, 7u, 9u}) {
+        aac.ui_max_channels = channels;
+        Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0304));
+    }
+    aac.ui_max_channels = 6;
+    aac.ui_enable_heaac = 1;
+    Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0302));
+    struct ExtendedParam {
+        AudiodecParamM4aac base;
+        std::uint32_t extensionMode;
+        std::uint32_t outputMode;
+    } extended{{32, 1, 1, 3, 2, 0}, 0, 0};
+    aacCtrl.pParam = &extended;
+    for (const std::uint32_t size : {25u, 27u, 29u, 31u, 33u}) {
+        extended.base.ui_size = size;
+        Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == errorInvalidParamSize);
+    }
+    for (const std::uint32_t size : {28u, 32u}) {
+        extended.base.ui_size = size;
+        extended.extensionMode = 2;
+        Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0305));
+        extended.extensionMode = 1;
+        bool threw = false;
+        try { sceAudiodecCreateDecoder(&aacCtrl, 3); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw);
+        extended.extensionMode = 0;
+        const auto extendedHandle = sceAudiodecCreateDecoder(&aacCtrl, 3);
+        Require(extendedHandle > 0);
+        Require(sceAudiodecDeleteDecoder(extendedHandle) == 0);
+    }
+    extended.outputMode = 3;
+    Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == static_cast<std::int32_t>(0x807F0306));
 
     const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
     Require(handle > 0);

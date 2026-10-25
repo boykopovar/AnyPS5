@@ -2,4 +2,4 @@
 
 ### Unknown function info
 
-- [sceShellUIUtilCreateTaskToken, sceShellUIUtilGetAppUrl, sceShellUIUtilInitialize, sceShellUIUtilLaunchByUri, sceShellUIUtilLaunchTask and sceShellUIUtilTerminate](../../../core/libs/prx/libSceShellUIUtil/Export.cpp) (libSceShellUIUtil) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceShellUIUtil.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [libSceShellUIUtil](../../../core/libs/prx/libSceShellUIUtil/Export.cpp) remains unimplemented. Native wrappers confirm the export signatures, including two input strings, output buffer, 32-bit capacity and optional 32-bit output size for `GetAppUrl`. The precise string meanings and the second word of the 8-byte `LaunchByUri` parameter require the receiving IPC service; the wrapper only checks its leading size. Task completion, IPC errors and lifecycle behavior are not implemented.

@@ -7,11 +7,12 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 ## Before a run
 
 - Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
+- `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
   - Linux: `relinker --registry src/eboot.elf app.elf`
   - Windows: `relinker --windows --registry src/eboot.elf app.exe`. Without `--windows` the output is an ELF file whatever its name, and Windows refuses to start it (exit code 216, "not compatible with the version of Windows").
 - A dump whose `app0` holds `ampr_assets.index` and `ampr_assets-*.pak` was repacked for [ampr_emu](https://github.com/drakmor/ampr_emu): the packed files were removed from `app0`, and only ampr_emu reads the packs. Restore them first with ampr_emu's `tools/ampr_pack.py unpack --index app0/ampr_assets.index --output <dir>` and copy the files missing from `app0`. Without them a Unity title stops at start-up on the missing `Media/Resources/unity default resources`.
-- Convert every module the title loads from its own folders (`sce_module/`, `Media/Modules/`, `Media/Plugins/`). Unity titles need `--module-dir Media/Modules --module-dir Media/Plugins`. Put each printed `Guest module:` file next to its original `.prx` in `app0/`, and keep the original there.
+- Convert every module the title loads from its own folders (`sce_module/`, `Media/Modules/`, `Media/Plugins/`). Unity titles need `--module-dir Media/Modules --module-dir Media/Plugins`. The relinker writes each converted module as `<name>.guest.prx` into `app0/` beside the output, in the module's own folder, and lists it in the `Arrange the files like this` tree it prints. Keep the original `.prx` next to it.
 - `libs/` holds only AnyPS5's own libraries, from `build/core/libs/libs` (not `unpatched/`). A game module placed there fails to load (error 193 on Windows). A self-built `libs/` on Windows also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the toolchain's `mingw64/bin`, or every library fails with error 126 ([USAGE](../user/USAGE.md#input-and-conversion)).
 - Run `tools/import_audit.py` on the registries. Exit code 1 lists imports that will fail or throw.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
@@ -50,7 +51,12 @@ cmd /c '.\app.exe > run.log 2>&1'
   - The driver's own: Mesa (`MESA_SHADER_CACHE_DIR`, or `MESA_SHADER_CACHE_DISABLE=true`), AMD on Windows (`%LOCALAPPDATA%\AMD\VkCache`). Back a driver cache up instead of deleting it; it isn't AnyPS5's.
 
   Say in the report whether the caches were empty or warm. A first run that ends in device lost (`VK_ERROR_DEVICE_LOST`) or a GPU wait timeout while large pipelines are still being built, seen on AMD, often is the cache and not a regression: run again with the caches warm and report both runs.
-- **Power and display:** on a laptop, run on AC power; a run on battery can make a neutral change look like a regression. Note the display's refresh rate: a title that asks for 120 Hz output can stop at start on a 60 Hz display.
+- **Power and display:** on a laptop, run on AC power; a run on battery can make a neutral change look like a regression. Note the display's refresh rate: a title that asks for 120 Hz output can stop at start on a 60 Hz display. Keep the display awake for long or unattended runs: a title started while it sleeps stops with `SDL_GetWindowDisplayIndex failed: Couldn't find any displays`.
+- **Memory budgets:** two budgets come from the machine's memory and can change the frame rate several times over, so check them before comparing results from different machines.
+  - Host imports (`APS5_HOST_IMPORT_MIB`, see [ENVIRONMENT](ENVIRONMENT.md)): the default follows the physical memory and the host heap the driver reports, so two machines with the same RAM can get different budgets. Refused imports print `[gpu] host import budget: X MiB live of Y MiB (...); N imports (M MiB) refused so far`, at most every 10 s; without such a line nothing was refused. A refused range is copied on every later use instead, and those copies can take device memory the texture caches need.
+  - Texture caches (`APS5_TEXTURE_CACHE_MIB`, see [USAGE](../user/USAGE.md#texture-cache-budget)): `[gpu] sampled texture cache budget N MiB` at start and when it changes, and with `APS5_PROFILE_DRAW=1` a `[texture-cache] (10 s)` line with the evictions and the budget. Thousands of evictions per 10 s with the budget at its 2048 MiB floor mean textures are rebuilt every frame.
+
+  Report these lines. Set either variable only for a comparison, and say so.
 
 ## What to read
 
@@ -80,7 +86,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 - Measure the same spot every time: load a save, wait for the scene to settle, then measure a fixed window with no input.
 - Compare builds on the same machine, alternating them (A, B, A, B), at least two runs each. Throw away a run that was disturbed (another program, a sleeping display) and say so.
 - `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change.
-- `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames.
+- `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames. While 64 MiB of frames wait to be written, the presenter waits for the
+  writer, so a slow disk or `APS5_DUMP_SCALE=1` slows the title down instead of stopping it.
 
 ## Title notes
 
@@ -104,7 +111,7 @@ Include, in this order:
 3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate.
 4. The exact command and every `APS5_*` / `ANYPS5_*` variable, the in-game settings if they differ from the defaults, and whether the caches were empty or warm.
 5. How far the title got (menu, a save, a scene) and what stopped it: the exit code and the last 200 log lines, plus the kernel line (Linux) or crash report (Windows) for a crash.
-6. Presents per 10 s, and storage-image lines if memory is involved.
+6. Presents per 10 s, and the storage-image and budget lines (`[gpu] host import budget`, `[gpu] sampled texture cache budget`, `[texture-cache]`) if memory is involved.
 7. How many runs and how long each lasted. One run is an observation, not a reproduction.
 8. The date of the test. Leave unknown fields empty rather than filling them from another report.
 

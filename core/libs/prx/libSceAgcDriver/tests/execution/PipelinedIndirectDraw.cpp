@@ -17,6 +17,7 @@
 #include <future>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -138,20 +139,34 @@ void Flush(const std::array<std::byte, 1024>& memory) {
 }
 
 struct Blocker {
-    std::atomic<bool> release{false};
+    struct State {
+        std::atomic<bool> release{false};
+        std::atomic<bool> done{false};
+    };
+    std::shared_ptr<State> state = std::make_shared<State>();
+    void Release() { state->release = true; }
     void Enqueue() {
-        DrawPipeline::Queue0().Enqueue([this] {
-            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        DrawPipeline::Queue0().Enqueue([state = state] {
+            while (!state->release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            { std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex()); }
+            state->done = true;
         }, {});
+    }
+    void Join() const {
+        const auto start = std::chrono::steady_clock::now();
+        while (!state->done.load()) {
+            Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(20), "the blocker never ran");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 };
 
-void SubmitBehind(Blocker& blocker, std::vector<std::uint32_t>& commands) {
+void SubmitBehind(Blocker& blocker, std::vector<std::uint32_t>& commands, std::size_t queuedBefore) {
     std::unique_lock gpuLock(AgcDriver::GuestMemory::GpuMutex());
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const auto start = std::chrono::steady_clock::now();
+    while (DrawPipeline::Queue0().Outstanding() < queuedBefore && std::chrono::steady_clock::now() - start < std::chrono::seconds(60)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     blocker.Enqueue();
 }
 
@@ -190,19 +205,20 @@ void IndirectDrawsQueueBehindTheCommitter() {
     AppendTarget(commands, SecondMemory, Clipped);
     AppendIndirect(commands);
     Blocker blocker;
-    SubmitBehind(blocker, commands);
+    SubmitBehind(blocker, commands, 3);
     const auto start = std::chrono::steady_clock::now();
     while (DrawPipeline::Queue0().Outstanding() < 3) {
         if (std::chrono::steady_clock::now() - start > std::chrono::seconds(10)) {
             const auto outstanding = DrawPipeline::Queue0().Outstanding();
-            blocker.release = true;
+            blocker.Release();
             Finish();
             Require(false, "the indirect draws drained the pipeline instead of queuing behind it (" + std::to_string(outstanding) + " items outstanding, expected the blocker and two draws)");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    blocker.release = true;
+    blocker.Release();
     Finish();
+    blocker.Join();
     Flush(FirstMemory);
     Flush(SecondMemory);
     SameAsDirect(FirstMemory, "the first queued indirect draw");
@@ -219,12 +235,13 @@ void IndirectDrawWaitsForItsQueuedRecordWrite() {
     AppendTarget(commands, WrittenMemory, Clipped);
     AppendIndirect(commands);
     Blocker blocker;
-    SubmitBehind(blocker, commands);
+    const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(0x100);
+    SubmitBehind(blocker, commands, 1);
     const auto start = std::chrono::steady_clock::now();
-    while (DrawPipeline::Queue0().Outstanding() < 2 && std::chrono::steady_clock::now() - start < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    blocker.release = true;
+    while (DrawPipeline::DrainRequestsByOpcode(0x100) == drainsBefore && std::chrono::steady_clock::now() - start < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    blocker.Release();
     Finish();
+    blocker.Join();
     Flush(WrittenMemory);
     Require(LateRecords[0] == 3, "the queued label did not store the record's vertex count");
     SameAsDirect(WrittenMemory, "the indirect draw whose record a queued label wrote");

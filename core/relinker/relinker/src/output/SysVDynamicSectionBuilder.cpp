@@ -1,5 +1,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <domain/ImportModule.hpp>
+#include <algorithm>
 #include <cstring>
 
 namespace Relinker {
@@ -77,6 +79,9 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     _appendElfSym(result.DynSymData, 0, 0, 0, 0, 0, 0);
 
+    const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
+        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+
     auto stripHashSuffix = [](const std::string& value) -> std::string {
         const auto hashPos = value.find('#');
         if (hashPos == std::string::npos) return value;
@@ -98,6 +103,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     for (const auto& ref : nidReferences) {
         if (!ref.Library.empty()) result.ImportModules.emplace(ref.RelocationAddress, ref.Library);
         if (ref.Function) result.FunctionImports.insert(ref.RelocationAddress);
+        if (consoleFileNames && ref.Library.empty() && !ref.Nid.empty() && ref.Nid.find('#') == std::string::npos) result.NamedImports.insert(ref.RelocationAddress);
         std::uint32_t relType = ref.RelocationTypeValue;
         if (relType == 0) relType = R_X86_64_JUMP_SLOT;
 

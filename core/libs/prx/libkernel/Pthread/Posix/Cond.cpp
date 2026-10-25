@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "Common.hpp"
@@ -39,7 +40,7 @@ int APS5_VABI pthread_cond_signal_nid_postfix(PthreadCond* cond) {
 }
 
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
+    if (!abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
     return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, abstime));
 }
 
@@ -78,6 +79,18 @@ int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* att
     if (!pshared) throw std::runtime_error("pthread_condattr_getpshared: null pshared");
     *pshared = (*attr)->_pshared;
     return 0;
+}
+
+int APS5_VABI pthread_cond_signalto_np_nid_postfix(PthreadCond* cond, Pthread thread) {
+    return toPosix(scePthreadCondSignalto(cond, thread));
+}
+
+int APS5_VABI scePthreadCondattrSetpshared(PthreadCondattr* attr, int pshared) {
+    return PosixThread::ToSce(pthread_condattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* pshared) {
+    return PosixThread::ToSce(pthread_condattr_getpshared_nid_postfix(attr, pshared));
 }
 
 }

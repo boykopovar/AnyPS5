@@ -577,6 +577,38 @@ private:
         return value;
     }
 
+    struct FirstLaneOffset {
+        const IrValue* lane = nullptr;
+        const IrValue* mask = nullptr;
+        std::uint32_t shift = 0;
+        std::uint32_t addend = 0;
+    };
+
+    static bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) {
+        std::uint32_t addend = 0;
+        value = SplitImmediateAddend(value, addend);
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+            value = SplitImmediateAddend(value->Argument(1), addend);
+        }
+        std::uint32_t shift = 0;
+        if (depth != 0u && value->Opcode() == IrOpcode::ShiftLeftLogical32 && value->ArgumentCount() == 2u && immediateU32(value->Argument(1), shift) && shift < 32u) {
+            if (!ParseFirstLaneOffset(value->Argument(0)->Resolve(), mask, form, depth - 1u) || form.shift + shift >= 32u) return false;
+            form.shift += shift;
+            form.addend <<= shift;
+        } else if (depth != 0u && mask == nullptr && value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
+            if (!ParseFirstLaneOffset(value->Argument(0)->Resolve(), value->Argument(1)->Resolve(), form, depth - 1u)) return false;
+        } else {
+            if (mask == nullptr) return false;
+            form = FirstLaneOffset{value, mask, 0u, 0u};
+        }
+        form.addend += addend;
+        return true;
+    }
+
+    bool SameFirstLaneOffset(const FirstLaneOffset& left, const FirstLaneOffset& right) const {
+        return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
+    }
+
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan) {
         const auto expected = sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler ? 4u : 8u;
@@ -602,6 +634,8 @@ private:
         bool folded = false;
         std::uint32_t first = 0;
         bool address = false;
+        FirstLaneOffset baseLane;
+        bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
             IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
             if (read == nullptr) return false;
@@ -613,11 +647,20 @@ private:
             }
             std::uint32_t readAddend = 0;
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
+            bool sameBase = dword == 0u || EquivalentValue(m_program.Resources(), base, readBase);
+            if (!sameBase && laneBase) {
+                FirstLaneOffset lane;
+                if (ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, lane, phiSearchDepth) && SameFirstLaneOffset(baseLane, lane)) {
+                    readAddend = lane.addend;
+                    sameBase = true;
+                }
+            }
             if (dword == 0u) {
                 first = memory->offset;
                 address = addressRead;
                 base = readBase;
                 baseAddend = readAddend;
+                laneBase = ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, baseLane, phiSearchDepth) && baseLane.addend == baseAddend;
             } else if (addressRead != address || memory->offset + readAddend != first + baseAddend + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t))) {
                 return false;
             } else if (readAddend != baseAddend) {
@@ -634,7 +677,7 @@ private:
             if (heapHandle == nullptr) heapHandle = currentHandle;
             if (dword == 0u) {
                 offset = read->Argument(1)->Resolve();
-            } else if (!EquivalentValue(m_program.Resources(), base, readBase)) {
+            } else if (!sameBase) {
                 return false;
             }
             plan.memory.push_back(memoryIndex);
@@ -708,6 +751,68 @@ private:
         return true;
     }
 
+    IrValue* UnwrapTableRead(IrValue* value) const {
+        if (value == nullptr) return nullptr;
+        value = value->Resolve();
+        if (!value->IsPhi()) return value;
+        IrValue* candidate = nullptr;
+        std::vector<IrValue*> pending{value};
+        std::unordered_set<const IrValue*> visited;
+        while (!pending.empty()) {
+            auto* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            if (current->IsPhi()) {
+                for (std::size_t i = 0; i < current->ArgumentCount(); i++) {
+                    pending.push_back(current->Argument(i));
+                }
+                continue;
+            }
+            std::uint32_t memoryIndex = 0;
+            IrValue* key = nullptr;
+            std::uint32_t stride = 0;
+            std::uint32_t addend = 0;
+            if (ScalarReadMemory(*current, memoryIndex) == nullptr || !MemoryIndexBelongsTo(memoryIndex, *current) ||
+                !MatchAffineOffset(current->Argument(1), key, stride, addend)) {
+                return nullptr;
+            }
+            if (candidate == nullptr) {
+                candidate = current;
+            } else if (!EquivalentValue(m_program.Resources(), candidate, current)) {
+                std::uint32_t candidateIndex = 0;
+                const auto* candMem = ScalarReadMemory(*candidate, candidateIndex);
+                const auto* curMem = ScalarReadMemory(*current, memoryIndex);
+                if (candMem == nullptr || curMem == nullptr || candMem->offset != curMem->offset ||
+                    !EquivalentValue(m_program.Resources(), candidate->Argument(0), current->Argument(0)) ||
+                    !EquivalentValue(m_program.Resources(), candidate->Argument(1), current->Argument(1))) {
+                    return nullptr;
+                }
+            }
+        }
+        return candidate;
+    }
+
+    bool BlockDominates(const IrBlock* dominator, const IrBlock* block) const {
+        if (dominator == block) return true;
+        std::vector<const IrBlock*> pending{block};
+        std::unordered_set<const IrBlock*> visited{block};
+        while (!pending.empty()) {
+            const IrBlock* current = pending.back();
+            pending.pop_back();
+            if (current->Predecessors().empty()) return false;
+            for (const IrBlock* predecessor : current->Predecessors()) {
+                if (predecessor != dominator && visited.insert(predecessor).second) pending.push_back(predecessor);
+            }
+        }
+        return true;
+    }
+
+    bool AvailableAt(IrValue* value, const IrBlock* block) const {
+        value = value->Resolve();
+        if (value->HasImmediate() || value->Parent() == nullptr) return true;
+        return BlockDominates(value->Parent(), block);
+    }
+
     bool TryMakeIndirectColumn(IrValue& handle, IrValue& descriptorPointer, bool sampler, std::uint32_t words, std::uint32_t descriptorOffset, std::uint32_t descriptorImmediate, TableColumnPlan& plan) {
         std::vector<PointerHop> hops;
         IrValue* pointer = &descriptorPointer;
@@ -745,7 +850,10 @@ private:
         IrValue* offset = nullptr;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
-            IrValue* read = pointer->Argument(dword)->Resolve();
+            IrValue* read = UnwrapTableRead(pointer->Argument(dword));
+            if (read == nullptr) {
+                return false;
+            }
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
@@ -758,6 +866,9 @@ private:
             } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1))) {
                 return false;
             }
+        }
+        if (!AvailableAt(offset, handle.Parent())) {
+            return false;
         }
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
@@ -1664,7 +1775,7 @@ private:
                 continue;
             }
             image.table = next++;
-            if (image.atomic || image.packed || image.byElements != 0u) {
+            if (image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
             }
         }
@@ -1836,6 +1947,7 @@ private:
         const bool flatLineAccess = image.dimension == RdnaImageDimension::Dim2DArray ? flatLineLevelZero || flatLineExplicitLod : flatLineLoad || flatLineSample || flatLineExplicitLod;
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
+        image.dimensionQueryOnly = image.dimensionQueryOnly && op == IrOpcode::ImageQueryDimensions;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
             constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
             if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;

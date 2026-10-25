@@ -1,3 +1,5 @@
+#include "prx/libScePsml_debug/include/Api.hpp"
+#include "prx/libkernel/libkernel.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -16,41 +18,36 @@ namespace {
 constexpr std::int32_t SCE_PSML_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x8A810001);
 constexpr std::int32_t SCE_PSML_ERROR_INVALID_ARGUMENT = static_cast<std::int32_t>(0x8A810005);
 constexpr std::int32_t SCE_PSML_ERROR_NULL_OUTPUT = static_cast<std::int32_t>(0x8A810009);
+constexpr std::int32_t Mfsr2ErrorNotInitialized = static_cast<std::int32_t>(0x8A8A0001);
+constexpr std::int32_t Mfsr2ErrorUnsupportedConsole = static_cast<std::int32_t>(0x8A8A0012);
 constexpr std::uint64_t MfsrBlockBytes = 0x200000;
 constexpr std::uint64_t MfsrBlockCount = 4;
 constexpr std::uint32_t MfsrDispatchPacketDwords = 0x600;
+constexpr std::uint64_t MfsrSharedBlockCount = 52;
 
-struct MfsrRequirement {
- std::uint64_t blockBytes;
- std::uint64_t alignment;
- std::uint64_t blockCount;
-};
+static_assert(sizeof(Mfsr2SharedResourcesParam) == 32);
+static_assert(offsetof(Mfsr2SharedResourcesParam, blocks) == 8);
+static_assert(offsetof(Mfsr2SharedResourcesParam, blockCount) == 16);
+static_assert(offsetof(Mfsr2SharedResourcesParam, width) == 24);
+static_assert(offsetof(Mfsr2SharedResourcesParam, reserved1) == 28);
 
-struct MfsrBlock {
- std::uint64_t address;
- std::uint64_t bytes;
-};
-
-struct MfsrSharedResourcesParam {
- std::uint32_t type;
- std::uint32_t reserved;
- const MfsrBlock* blocks;
- std::uint64_t blockCount;
- std::uint64_t reserved2;
-};
-
-struct MfsrContextParam {
- std::uint32_t reserved0[2];
- const MfsrBlock* blocks;
- std::uint64_t blockCount;
- std::uint16_t inputWidth;
- std::uint16_t inputHeight;
- std::uint32_t reserved1;
- const void* descriptor0;
- const void* descriptor1;
- std::uint32_t reserved2[2];
- void* sharedResources;
-};
+static_assert(sizeof(Mfsr2ContextParam) == 48);
+static_assert(offsetof(Mfsr2ContextParam, sharedResources) == 8);
+static_assert(offsetof(Mfsr2ContextParam, blocks) == 16);
+static_assert(offsetof(Mfsr2ContextParam, blockCount) == 24);
+static_assert(offsetof(Mfsr2ContextParam, outputWidth) == 40);
+static_assert(offsetof(Mfsr2ContextParam, inputColorSpace) == 44);
+static_assert(sizeof(MfsrCommandBuffer) == 16);
+static_assert(offsetof(MfsrCommandBuffer, sizeInDwords) == 8);
+static_assert(sizeof(MfsrTextureDescriptor) == 32);
+static_assert(sizeof(Mfsr2DispatchParam) == 112);
+static_assert(offsetof(Mfsr2DispatchParam, preExposure) == 48);
+static_assert(offsetof(Mfsr2DispatchParam, renderX) == 52);
+static_assert(offsetof(Mfsr2DispatchParam, jitter) == 68);
+static_assert(offsetof(Mfsr2DispatchParam, depthRange) == 92);
+static_assert(offsetof(Mfsr2DispatchParam, resetHistory) == 100);
+static_assert(offsetof(Mfsr2DispatchParam, optionFlags) == 104);
+static_assert(offsetof(Mfsr2DispatchParam, sharpness) == 108);
 
 static_assert(sizeof(MfsrRequirement) == 0x18);
 static_assert(sizeof(MfsrSharedResourcesParam) == 0x20);
@@ -78,10 +75,10 @@ void RequireMfsr(bool condition, const char* function, const char* what) {
  if (!condition) throw std::runtime_error(std::string(function) + ": " + what);
 }
 
-void RequireBlocks(const MfsrBlock* blocks, std::uint64_t blockCount, const char* function) {
- RequireMfsr(blockCount >= MfsrBlockCount, function, "fewer memory blocks than the requirement");
+void RequireBlocks(const MfsrBlock* blocks, std::uint64_t blockCount, std::uint64_t requiredCount, const char* function) {
+ RequireMfsr(blockCount >= requiredCount, function, "fewer memory blocks than the requirement");
  RequireMfsr(blocks != nullptr, function, "null memory block list");
- for (std::uint64_t i = 0; i < MfsrBlockCount; ++i) {
+ for (std::uint64_t i = 0; i < requiredCount; ++i) {
   RequireMfsr(blocks[i].bytes >= MfsrBlockBytes && blocks[i].address % MfsrBlockBytes == 0, function, "memory block smaller or less aligned than the requirement");
  }
 }
@@ -162,7 +159,7 @@ std::int32_t APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement(MfsrRequirem
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(requirement != nullptr && param != nullptr, __func__, "null requirement or parameter");
  RequireMfsr(param->type == 0, __func__, ("shared resources type " + std::to_string(param->type) + " is not supported").c_str());
- *requirement = {MfsrBlockBytes, MfsrBlockBytes, MfsrBlockCount};
+ *requirement = {MfsrBlockBytes, MfsrBlockBytes, MfsrSharedBlockCount};
  return 0;
 }
 
@@ -170,7 +167,7 @@ std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, 
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(sharedResources != nullptr && param != nullptr, __func__, "null handle or parameter");
  RequireMfsr(param->type == 0, __func__, ("shared resources type " + std::to_string(param->type) + " is not supported").c_str());
- RequireBlocks(param->blocks, param->blockCount, __func__);
+ RequireBlocks(param->blocks, param->blockCount, MfsrSharedBlockCount, __func__);
  *sharedResources = CreateMfsrObject(MfsrObjectKind::SharedResources, nullptr, __func__);
  return 0;
 }
@@ -191,7 +188,7 @@ std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2(MfsrRequire
 std::int32_t APS5_VABI scePsmlMfsrCreateContext800M3_2(void** context, const MfsrContextParam* param) {
  if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
  RequireMfsr(context != nullptr && param != nullptr, __func__, "null handle or parameter");
- RequireBlocks(param->blocks, param->blockCount, __func__);
+ RequireBlocks(param->blocks, param->blockCount, MfsrBlockCount, __func__);
  const auto [inputWidth, inputHeight] = MfsrInputDimensions(param);
  *context = CreateMfsrObject(MfsrObjectKind::Context, param->sharedResources, __func__, inputWidth, inputHeight);
  return 0;
@@ -274,49 +271,57 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900(void* context, void* 
  return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsr2ReleaseSharedResources() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseSharedResources(void* sharedResources) {
+ (void)sharedResources;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement(MfsrRequirement* requirement, const Mfsr2SharedResourcesParam* param) {
+ (void)requirement;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetContextInitRequirement() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetContextInitRequirement(MfsrRequirement* requirement, const Mfsr2ContextParam* param) {
+ (void)requirement;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2ReleaseContext() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseContext(void* context) {
+ (void)context;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords(void* context, std::uint32_t* packetSizeInDwords) {
+ (void)context;
+ (void)packetSizeInDwords;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2CreateSharedResources() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2CreateSharedResources(void** sharedResources, const Mfsr2SharedResourcesParam* param) {
+ (void)sharedResources;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetDispatchPackets() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPackets(void* context, const MfsrCommandBuffer* commandBuffer, const Mfsr2DispatchParam* param) {
+ (void)context;
+ (void)commandBuffer;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2CreateContext() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2CreateContext(void** context, const Mfsr2ContextParam* param) {
+ (void)context;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2Init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2Init() {
+ if (sceKernelIsTrinityMode() == 0) return Mfsr2ErrorUnsupportedConsole;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI scePsmlMfsrEnableSpecularAA() {

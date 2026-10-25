@@ -12,17 +12,33 @@ namespace AgcDriver::DriverDetail {
 
 std::uint32_t Driver::ReserveEopFlip(const FlipInfo& info) {
     std::lock_guard lock(mutex);
+    require(nextEopToken <= EopFlipTokenLimit, "EOP flip token space exhausted");
+    return reserveEopFlip(info, nextEopToken);
+}
+
+std::uint32_t Driver::ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token) {
+    std::lock_guard lock(mutex);
+    return reserveEopFlip(info, token);
+}
+
+std::uint32_t Driver::reserveEopFlip(const FlipInfo& info, std::uint32_t token) {
     rethrowFailure();
     checkStopping();
-    require(nextEopToken <= EopFlipTokenLimit, "EOP flip token space exhausted");
+    require(token >= EopFlipTokenBase && token <= EopFlipTokenLimit && !eopFlips.contains(token), "EOP flip token is not free");
     const auto output = outputs.find(info.handle);
     require(output != outputs.end(), "EOP flip references an unregistered video output");
     auto request = output->second->TryReserve(info);
     if (!request) return 0;
-    const auto token = nextEopToken;
     eopFlips.emplace(token, EopFlip{info.handle, std::move(request)});
-    ++nextEopToken;
+    nextEopToken = std::max(nextEopToken, token + 1);
     return token;
+}
+
+std::vector<std::uint32_t> Driver::PendingEopFlipTokens() {
+    std::lock_guard lock(mutex);
+    std::vector<std::uint32_t> tokens;
+    for (const auto& [token, flip] : eopFlips) tokens.push_back(token);
+    return tokens;
 }
 
 void Driver::RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output) {
@@ -77,6 +93,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         bool submitted = false;
         bool presentable = false;
         bool trailing = false;
+        bool queueUnlocked = false;
         double waitedMs = 0;
         {
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
@@ -125,11 +142,19 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             }
             if (submitted && (syncFlip || inFlight != 0)) {
 
-                presenting->QueuePresent();
-                timing.Mark("queue_present");
+                if (presenting->PresentsOnOwnQueue()) {
+                    queueUnlocked = true;
+                } else {
+                    presenting->QueuePresent();
+                    timing.Mark("queue_present");
+                }
                 trailing = !syncFlip;
                 submitted = false;
             }
+        }
+        if (queueUnlocked) {
+            presenting->QueuePresent();
+            timing.Mark("queue_present");
         }
         if (trailing) {
             waitedMs += presenting->FinishPresent();
@@ -139,9 +164,13 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             waitedMs = presenting->FinishPresent();
             timing.Mark("render_fence_wait");
 
-            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
-            std::lock_guard lock(GuestMemory::GpuMutex());
-            presenting->QueuePresent();
+            if (presenting->PresentsOnOwnQueue()) {
+                presenting->QueuePresent();
+            } else {
+                GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
+                std::lock_guard lock(GuestMemory::GpuMutex());
+                presenting->QueuePresent();
+            }
             timing.Mark("queue_present");
         }
         gpuReady(context);

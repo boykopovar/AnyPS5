@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
@@ -105,14 +106,21 @@ extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
 #endif
 
 namespace LibcUnwind {
-_Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
 #ifdef _WIN32
-    const auto* code = reinterpret_cast<const Byte*>(personality);
+static Word ResolveImport(Word address) {
+    const auto* code = reinterpret_cast<const Byte*>(address);
     if (code[0] == 0xff && code[1] == 0x25) {
         std::int32_t displacement;
-        std::memcpy(&displacement, code + 2, 4);
-        std::memcpy(&personality, code + 6 + displacement, sizeof(personality));
+        std::memcpy(&displacement, code + 2, sizeof(displacement));
+        std::memcpy(&address, code + 6 + displacement, sizeof(address));
     }
+    return address;
+}
+#endif
+
+_Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
+#ifdef _WIN32
+    personality = ResolveImport(personality);
 #endif
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gxx_personality_v0))
         return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
@@ -257,14 +265,20 @@ const IMAGE_NT_HEADERS64* ImageHeaders(Word pc, const Byte*& base) {
     return nt->Signature == IMAGE_NT_SIGNATURE ? nt : nullptr;
 }
 
-bool VirtualUnwind(const _Unwind_Context& context, _Unwind_Context& caller) {
+bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
     const Word pc = context.registers[16];
     const Byte* base = nullptr;
     const auto* nt = ImageHeaders(pc, base);
     if (!nt) return false;
     const auto* sections = IMAGE_FIRST_SECTION(nt);
-    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i)
-        if (std::memcmp(sections[i].Name, ".ehmeta", 8) == 0 || std::memcmp(sections[i].Name, ".ehfram", 8) == 0) return false;
+    const PEXCEPTION_ROUTINE* personalities = nullptr;
+    bool dwarf = false;
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::memcmp(sections[i].Name, ".ehmeta", 8) == 0 || std::memcmp(sections[i].Name, ".ehfram", 8) == 0) dwarf = true;
+        if (std::memcmp(sections[i].Name, ".sehgcc", 8) == 0 && sections[i].Misc.VirtualSize >= 2 * sizeof(PEXCEPTION_ROUTINE))
+            personalities = reinterpret_cast<const PEXCEPTION_ROUTINE*>(base + sections[i].VirtualAddress);
+    }
+    if (dwarf && !personalities) return false;
     DWORD64 imageBase = 0;
     auto* function = RtlLookupFunctionEntry(pc, &imageBase, nullptr);
     if (!function) return false;
@@ -275,11 +289,27 @@ bool VirtualUnwind(const _Unwind_Context& context, _Unwind_Context& caller) {
     for (unsigned i = 0; i < 16; ++i) std::memcpy(&state.FltSave.XmmRegisters[i], context.vectorRegisters[i], 16);
     void* handlerData = nullptr;
     DWORD64 establisher = 0;
-    if (RtlVirtualUnwind(UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER, imageBase, pc, function, &state, &handlerData, &establisher, nullptr)) return false;
+    const auto handler = RtlVirtualUnwind(UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER, imageBase, pc, function, &state, &handlerData, &establisher, nullptr);
+    frame.start = imageBase + function->BeginAddress;
+    if (handler) {
+        if (!personalities) return false;
+        const Word resolved = ResolveImport(reinterpret_cast<Word>(handler));
+        if (resolved == ResolveImport(reinterpret_cast<Word>(personalities[0]))) frame.personality = reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix);
+        else if (resolved == ResolveImport(reinterpret_cast<Word>(personalities[1]))) frame.personality = reinterpret_cast<Word>(__gcc_personality_v0_nid_postfix);
+        else return false;
+        frame.lsda = reinterpret_cast<Word>(handlerData);
+    }
+    auto& caller = frame.caller;
     caller = context;
     for (unsigned i = 0; i < 17; ++i) caller.registers[i] = *registers[i];
     for (unsigned i = 0; i < 16; ++i) std::memcpy(caller.vectorRegisters[i], &state.FltSave.XmmRegisters[i], 16);
     caller.signalFrame = false;
+    context.cfa = caller.registers[7];
+    context.region = frame.start;
+    context.lsda = frame.lsda;
+    context.personality = frame.personality;
+    context.textBase = imageBase;
+    context.dataBase = 0;
     return true;
 }
 #endif
@@ -414,10 +444,8 @@ bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
     if (!DecodeFrame(context, frame)) {
 #ifdef _WIN32
         frame = {};
-        if (!VirtualUnwind(context, frame.caller)) return false;
+        if (!VirtualUnwind(context, frame)) return false;
         frame.foreign = true;
-        context.cfa = frame.caller.registers[7];
-        context.region = context.lsda = context.personality = context.textBase = context.dataBase = 0;
         return true;
 #else
         return false;

@@ -107,13 +107,16 @@ int main(int argc, char** argv) {
     }
     {
         Connection connection;
+#ifndef _WIN32
+        SetOption(connection.receiver, NET_SO_RCVBUF, 4096);
+#endif
         SetOption(connection.sender, 0x1105, 100000);
         auto started = std::chrono::steady_clock::now();
         const auto partial = Send(api, connection.sender, bytes);
         Require(partial > 0 && partial < static_cast<std::int64_t>(bytes.size()), "timeout must return queued bytes");
         Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(80), "partial send returned before its timeout");
         bool emptyTimeout = false;
-        for (int attempt = 0; attempt < 16; ++attempt) {
+        for (int attempt = 0; attempt < 64; ++attempt) {
             const auto result = Send(api, connection.sender, bytes);
             if (result < 0) {
                 Require(*sceNetErrnoLoc() == NET_EAGAIN, "timeout without progress must return EAGAIN");
@@ -127,6 +130,14 @@ int main(int argc, char** argv) {
     {
         Connection connection;
         auto sending = std::async(std::launch::async, [&] { return Send(api, connection.sender, bytes); });
+        const auto entered = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        char peeked = 0;
+        bool arrived = false;
+        while (!arrived && std::chrono::steady_clock::now() < entered) {
+            arrived = sceNetRecv(connection.receiver, &peeked, 1, NET_MSG_PEEK | NET_MSG_DONTWAIT) > 0;
+            if (!arrived) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        Require(arrived, "send did not reach the receiver before abort");
         Require(sending.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout, "send did not wait before abort");
         Require(sceNetSocketAbort(connection.sender, 0) == 0, "abort a blocked send");
         Require(sending.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "abort did not wake a blocked send");

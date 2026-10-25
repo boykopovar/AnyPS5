@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "DirectMemory.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -21,16 +23,6 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI sceKernelMunmap(std::uint64_t address, std::size_t length);
-extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlockall_nid_postfix();
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
-extern "C" std::int64_t APS5_VABI sceKernelPread(int descriptor, void* buffer, std::size_t length, std::int64_t offset);
-extern "C" int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept;
-extern "C" int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
-
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
 constexpr int GuestInvalid = 22;
@@ -38,6 +30,7 @@ constexpr int GuestNoMemory = 12;
 constexpr int GuestBadDescriptor = 9;
 constexpr int GuestAccess = 13;
 constexpr int GuestFault = 14;
+constexpr int GuestBusy = 16;
 constexpr int GuestIoError = 5;
 constexpr int GuestNotSupported = 45;
 constexpr int GuestShared = 0x1;
@@ -53,6 +46,7 @@ constexpr int GuestAdviceCore = 9;
 constexpr int GuestAdviceProtect = 10;
 constexpr int GuestLockCurrent = 0x1;
 constexpr int GuestLockFuture = 0x2;
+constexpr int GuestDefinedProtection = 0x3F7;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
@@ -129,6 +123,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
         const auto read = sceKernelPread(descriptor, static_cast<unsigned char*>(mapped) + done, static_cast<std::size_t>(copied - done), static_cast<std::int64_t>(start + done));
         if (read <= 0) {
             munmap_nid_postfix(mapped, rounded);
+
             return failed(read < 0 ? static_cast<int>(read & 0xffff) : GuestIoError);
         }
         done += static_cast<std::uint64_t>(read);
@@ -136,6 +131,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     if (protection != 3 && mprotect_nid_postfix(mapped, rounded, protection) != 0) {
         const int error = *__error_nid_postfix();
         munmap_nid_postfix(mapped, rounded);
+
         return failed(error);
     }
     return mapped;
@@ -155,7 +151,9 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!RoundLength(length, rounded) || (protection & ~7) != 0)
         return failed(GuestInvalid);
     if ((flags & (GuestMapExclusive | GuestMapFixed)) == GuestMapExclusive) return failed(GuestInvalid);
-    const int mappingFlags = flags & ~GuestAlignedSuper;
+    if ((flags & (GuestShared | GuestPrivate)) == (GuestShared | GuestPrivate)) return failed(GuestInvalid);
+    int mappingFlags = flags & ~GuestAlignedSuper;
+    if ((mappingFlags & (GuestShared | GuestPrivate | GuestAnonymous)) == GuestAnonymous) mappingFlags |= GuestPrivate;
     const bool fixedAnonymous = (mappingFlags & ~(GuestMapFixed | GuestMapExclusive)) == (GuestPrivate | GuestAnonymous)
                                 && (mappingFlags & GuestMapFixed) != 0;
     if (mappingFlags == (GuestPrivate | GuestAnonymous) || fixedAnonymous) {
@@ -168,7 +166,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #endif
         const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
         const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
-        void* mapped = fixedAnonymous ? address : nullptr;
+        void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
@@ -279,7 +277,7 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
-        if (DoMprotect(address, length, protection) != 0) return failed(GuestInvalid);
+        if (DoMprotect(address, length, protection & GuestDefinedProtection) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);
@@ -334,7 +332,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
     if (end < start) return failed(GuestInvalid);
     if ((flags & (GuestSyncAsync | GuestSyncInvalidate)) == (GuestSyncAsync | GuestSyncInvalidate)) return failed(GuestInvalid);
     if (start == end ? !Mapped(start) : !GuestRangeMapped(start, end)) return failed(GuestNoMemory);
-    if ((flags & GuestSyncInvalidate) != 0) throw std::runtime_error("msync: MS_INVALIDATE is not implemented");
+    if ((flags & GuestSyncInvalidate) != 0) return failed(GuestBusy);
     return 0;
 }
 
@@ -365,6 +363,7 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     for (auto cursor = first; cursor < end;) {
         VirtualQueryInfo info{};
         sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info));
+
         const auto extentEnd = std::min<std::uintptr_t>(info.end, end);
         std::fill_n(vec + (cursor - first) / PS5_PAGE_SIZE, (extentEnd - cursor) / PS5_PAGE_SIZE, static_cast<char>(info.is_committed != 0 ? 1 : 0));
         cursor = extentEnd;

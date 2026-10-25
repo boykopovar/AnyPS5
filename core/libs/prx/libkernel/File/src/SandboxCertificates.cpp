@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <array>
@@ -20,8 +21,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
 
 namespace {
 constexpr char CertificateBegin[] = "-----BEGIN CERTIFICATE-----";

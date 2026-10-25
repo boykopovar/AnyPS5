@@ -1,3 +1,4 @@
+#include "prx/libSceGameUpdate/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -6,17 +7,17 @@
 #include <initializer_list>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI sceGameUpdateInitialize(void);
-int APS5_VABI sceGameUpdateTerminate(void);
-int APS5_VABI sceGameUpdateGetAddcontLatestVersion(std::uint32_t, const void*, GameUpdateAddcontVersionInfo*);
-int APS5_VABI sceGameUpdateCreateRequest(void);
-int APS5_VABI sceGameUpdateCheck(int, const GameUpdateCheckParam*, GameUpdateCheckResult*);
-int APS5_VABI sceGameUpdateAbortRequest(int);
-int APS5_VABI sceGameUpdateDeleteRequest(int);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TFunction>
+static void RequireThrows(TFunction function) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    std::abort();
+}
 
 static void TestRequestArguments(int notInitialized, int invalidArgument, int invalidSize, int notFound) {
     GameUpdateCheckParam param{};
@@ -63,7 +64,7 @@ int main() {
     constexpr int invalidSize = static_cast<int>(0x80412804);
 
     static_assert(sizeof(GameUpdateAddcontVersionInfo) == 0x30);
-    const std::uint8_t label[16] = {};
+    const NpUnifiedEntitlementLabel label{};
     GameUpdateAddcontVersionInfo info{};
     info.size = sizeof(info);
 
@@ -73,27 +74,27 @@ int main() {
     Require(sceGameUpdateTerminate() == notInitialized);
     TestRequestArguments(notInitialized, invalidArgument, invalidSize, notFound);
 
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, &info) == notInitialized);
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, nullptr) == invalidArgument);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
     Require(sceGameUpdateInitialize() == 0);
     Require(sceGameUpdateInitialize() == alreadyInitialized);
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, nullptr) == invalidArgument);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
 
     info.size = sizeof(info) - 1;
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, &info) == invalidSize);
+    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
 
     std::memset(&info, 0xAB, sizeof(info));
     info.size = sizeof(info) + 8;
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, &info) == 0);
-    Require(info.size == sizeof(info) + 8 && !info.found);
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&info);
-    for (std::size_t i = sizeof(info.size); i < sizeof(info); ++i) Require(bytes[i] == 0);
+    const auto original = info;
+    RequireThrows([&] { sceGameUpdateGetAddcontLatestVersion(0, &label, &info); });
+    Require(std::memcmp(&info, &original, sizeof(info)) == 0);
+    RequireThrows([] { sceGameUpdateCreateRequest(); });
 
     Require(sceGameUpdateTerminate() == 0);
     Require(sceGameUpdateTerminate() == notInitialized);
     info.size = sizeof(info);
-    Require(sceGameUpdateGetAddcontLatestVersion(0, label, &info) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
 }

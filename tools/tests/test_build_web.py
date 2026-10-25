@@ -1,14 +1,18 @@
+import os
 import contextlib
 import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
+import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import warnings
 import zipfile
+import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_web
@@ -24,6 +28,60 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_unicode_path_rewrite_is_rejected_before_decompression(self):
+        original = "libs/../libc.prx"
+        rewritten = "libs/libc.prx"
+        entry = zipfile.ZipInfo(original)
+        unicode_path = b"\x01" + struct.pack("<I", zlib.crc32(original.encode())) + rewritten.encode()
+        entry.extra = struct.pack("<HH", 0x7075, len(unicode_path)) + unicode_path
+        invalid = library_zip([(entry, b"content")])
+        with zipfile.ZipFile(io.BytesIO(invalid)) as archive:
+            decoded = archive.infolist()[0]
+            self.assertEqual(decoded.orig_filename, original)
+            if decoded.filename == original:
+                self.skipTest("zipfile does not interpret Unicode Path extra fields")
+            self.assertEqual(decoded.filename, rewritten)
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+            with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+                self.publish(invalid, valid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_original_archive_paths_are_rejected_before_decompression(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for name in ("libs/libc.prx\0ignored", "libs/sub\0dir/libc.prx",
+                     "libs\\libc.prx", "libs/sub\\libc.prx"):
+            with self.subTest(name=name):
+                placeholder = name.replace("\0", "!").replace("\\", "!")
+                invalid = library_zip([(placeholder, b"content")])
+                invalid = invalid.replace(placeholder.encode(), name.encode())
+                with zipfile.ZipFile(io.BytesIO(invalid)) as archive:
+                    self.assertEqual(archive.infolist()[0].orig_filename, name)
+                with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+                    with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+                        self.publish(invalid, valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_rewritten_path_in_second_platform_preserves_previous_manifest(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        invalid = library_zip([("libs/libc.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libc.prx!ignored", b"libs/libc.prx\0ignored")
+        with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+            self.publish(valid, invalid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(self.existing.read_bytes(), b"previous archive")
+        self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+    def test_unicode_archive_paths_are_published_unchanged(self):
+        payload = library_zip([("libs/\u65e5\u672c\u8a9e/\u00e9.prx", b"content"),
+                               ("libs/licenses/Third party.txt", b"license")])
+        self.publish(payload, payload)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for asset in manifest["platforms"].values():
+            self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
+
     def test_expanded_limit_is_checked_before_decompression(self):
         payload = library_zip([("libs/libc.prx", b"a" * 4097)])
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True), \
@@ -123,6 +181,56 @@ class LibraryPublicationTests(unittest.TestCase):
             self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
         self.assertEqual(self.existing.read_bytes(), b"previous archive")
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+
+class BuildWebCliTests(unittest.TestCase):
+    def test_missing_relinker_wasm_reports_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            result = subprocess.run([sys.executable, str(Path(build_web.__file__)), "--build", str(build)],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Build relinker_wasm first: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_main_with_explicit_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            native = build / "web" / "native"
+            native.mkdir(parents=True)
+            (native / "relinker_wasm.mjs").touch()
+            (native / "relinker_wasm.wasm").touch()
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = build_web.main(["--build", str(build)])
+            self.assertEqual(code, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(build_web.sys, "stdout", out), patch.object(build_web.sys, "stderr", err):
+            try:
+                build_web.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

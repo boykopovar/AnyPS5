@@ -265,15 +265,15 @@ int Player::ChangeStream(std::uint32_t from, std::uint32_t to) {
     return SCE_OK;
 }
 
-int Player::Start() {
+int Player::Start(std::uint64_t startTime) {
     std::lock_guard lock(mutex);
-    return startLocked();
+    return startLocked(startTime);
 }
 
-int Player::startLocked() {
+int Player::startLocked(std::uint64_t startTime) {
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    const int result = source->Start();
+    const int result = source->Start(startTime);
     if (result != SCE_OK) {
         previous = state;
         state = State::Error;
@@ -334,12 +334,18 @@ int Player::SetLooping(bool enabled) {
 }
 
 int Player::SetTrickSpeed(std::int32_t trickSpeed) {
-    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::lock_guard lock(mutex);
+    if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     if (state == State::Stop || state == State::EndOfFile || state == State::Error) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     speed = trickSpeed;
-    if (source) source->SetSpeed(trickSpeed);
+    source->SetSpeed(trickSpeed);
     return SCE_OK;
+}
+
+int Player::SetAvailableBandwidth() {
+    std::lock_guard lock(mutex);
+    return source ? SCE_AVPLAYER_ERROR_OPERATION_FAILED : SCE_OK;
 }
 
 int Player::SetAvSyncMode(std::uint32_t mode) {
@@ -389,6 +395,31 @@ std::uint64_t Player::CurrentTime() {
 void Player::SetClockTimeForTest(double milliseconds) {
     std::lock_guard lock(mutex);
     if (source) source->SetClockTimeForTest(milliseconds);
+}
+
+void Player::SetHoldAudioEofForTest(bool hold) {
+    std::lock_guard lock(mutex);
+    if (source) source->SetHoldAudioEofForTest(hold);
+}
+
+bool Player::AudioEofHeldForTest() {
+    std::lock_guard lock(mutex);
+    return source && source->AudioEofHeldForTest();
+}
+
+bool Player::AudioEndedForTest() {
+    std::lock_guard lock(mutex);
+    return source && source->AudioEndedForTest();
+}
+
+int Player::QueuedAudioForTest() {
+    std::lock_guard lock(mutex);
+    return source ? source->QueuedAudioForTest() : 0;
+}
+
+bool Player::NextQueuedAudioTimestampForTest(std::uint64_t& timestamp) {
+    std::lock_guard lock(mutex);
+    return source && source->NextQueuedAudioTimestampForTest(timestamp);
 }
 
 }

@@ -1,0 +1,11 @@
+# libSceNpTrophy technical debt
+
+### Unknown function info
+
+- [sceNpTrophyRegisterContext, sceNpTrophyGetTrophyUnlockState, sceNpTrophyUnlockTrophy](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy, PS4) - the trophy definitions in `TROPCONF.ESFM` are encrypted, so the trophy count is the number of consecutive `TROPnnn.PNG` icons in the title's `/app0/sce_sys/trophy/trophyNN.trp`. Unlocks are kept per user and service label in `_trophy/trophyNN.<user id>` under the working directory, no platinum trophy is reported (`platinumId` is -1), and a locked trophy's icon fails with `TROPHY_NOT_UNLOCKED`. None of it is checked on a console.
+
+### Functional
+
+- [sceNpTrophyGetGameInfo](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy) - the trophy configuration `TROPCONF.ESFM` is encrypted and not read, so the game details report the trophy count taken from the `TROPnnn.PNG` icons and the group count taken from the `GRnnn.PNG` icons of the trophy package; the per-grade counts are 0, the title and description are empty, and the progress percentage is unlocked trophies over all trophies instead of the console's grade-weighted points
+- [sceNpTrophyGetGroupInfo](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy) - only the base game group (id -1) is answered, with the same counts as the game; an id past the `GRnnn.PNG` icons returns `INVALID_GROUP_ID`, and an existing group throws because the trophies of a group are listed only in the encrypted configuration
+- [sceNpTrophyGetTrophyInfo](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy) - the grade is reported as unknown, the trophy is never hidden, the name and description are empty and the unlock timestamp is 0; a package with groups throws, since a trophy's group is listed only in the encrypted configuration

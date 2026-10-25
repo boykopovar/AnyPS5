@@ -1,15 +1,12 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <initializer_list>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance);
-extern "C" int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, std::size_t bufSize);
-extern "C" int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char* path, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int handle);
 
 namespace {
 
@@ -37,25 +34,6 @@ bool LaunchAppThrows(const char* titleId, const char* const* arguments, const vo
 }
 
 }
-
-extern "C" int APS5_VABI sceSystemServicePowerTick(void);
-extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
-extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceDisableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, void* param);
-extern "C" int APS5_VABI sceSystemServiceShowControllerSettings(void);
-extern "C" int APS5_VABI sceSystemServiceShowDisplaySafeAreaSettings(void);
-extern "C" int APS5_VABI sceSystemServiceOpenChallengeActivity(void);
-extern "C" int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status);
-extern "C" int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info);
-extern "C" int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value);
-extern "C" int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void);
-extern "C" int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void);
-extern "C" int APS5_VABI sceSystemServiceHideSplashScreen(void);
-extern "C" int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event);
-extern "C" void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param);
 
 namespace {
 
@@ -87,6 +65,7 @@ int main() {
     Require(sceSystemServiceDisableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceIsBgmPlaying() == 0 && sceShellCoreUtilIsBgmPlaying() == 0);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);
@@ -95,13 +74,16 @@ int main() {
     Require(sceSystemServiceShowControllerSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceShowDisplaySafeAreaSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceOpenChallengeActivity() == SYSTEM_SERVICE_OK);
-    Require(sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8780/video?v=0", nullptr) == browserUnavailable);
-    unsigned char browserParam[64];
-    std::memset(browserParam, 0x5a, sizeof(browserParam));
-    Require(sceSystemServiceLaunchWebBrowser("https://example.com/", browserParam) == browserUnavailable);
-    for (unsigned char byte : browserParam) Require(byte == 0x5a);
-    Require(sceSystemServiceLaunchWebBrowser("", nullptr) == browserUnavailable);
-    Require(sceSystemServiceLaunchWebBrowser(nullptr, nullptr) == browserUnavailable);
+    Require(sceSystemServiceLaunchWebBrowser("http:") == browserUnavailable);
+    Require(sceSystemServiceLaunchWebBrowser("https:") == browserUnavailable);
+    Require(sceSystemServiceLaunchWebBrowser("psno:") == browserUnavailable);
+    Require(sceSystemServiceLaunchWebBrowser("") == static_cast<int>(0x80a10008));
+    Require(sceSystemServiceLaunchWebBrowser("HTTP:") == static_cast<int>(0x80a10008));
+    Require(sceSystemServiceLaunchWebBrowser(nullptr) == static_cast<int>(0x80a10003));
+    std::string browserUri = "http:" + std::string(6010, 'a');
+    Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == browserUnavailable);
+    browserUri += 'a';
+    Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == static_cast<int>(0x80a10007));
     Require(LaunchAppThrows("PPSA99109", nullptr, nullptr));
     Require(LaunchAppThrows(nullptr, nullptr, nullptr));
     const char* launchArguments[] = {"--backup", nullptr};

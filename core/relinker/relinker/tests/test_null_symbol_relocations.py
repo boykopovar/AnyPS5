@@ -14,6 +14,7 @@ from test_linux_load_alignment import loads
 GLOB_DAT_SLOT = 0x308
 ABSOLUTE_SLOT = 0x310
 ADDEND = 0x1234
+DEFAULT_BASE = 0x400000
 CHECK_SLOTS = bytes.fromhex(
     "488b0501010000" "4885c0" "751a"
     "488b0dfd000000" "4881f934120000" "750a"
@@ -68,8 +69,8 @@ def main():
                     registry = json.loads(output.with_suffix(".registry.json").read_text(encoding="utf-8"))
                     assert registry == [], (index, target, level, registry)
                     if target == "linux":
-                        assert linux_imports(data) == [(GLOB_DAT_SLOT, 6, 0, b"", 0x20, 0, 0, 0),
-                                                       (ABSOLUTE_SLOT, 1, ADDEND, b"", 0x20, 0, 0, 0)], (index, level)
+                        assert linux_imports(data) == [(DEFAULT_BASE + GLOB_DAT_SLOT, 6, 0, b"", 0x20, 0, 0, 0),
+                                                       (DEFAULT_BASE + ABSOLUTE_SLOT, 1, ADDEND, b"", 0x20, 0, 0, 0)], (index, level)
                     if target == "windows" and os.name == "nt":
                         run = subprocess.run([str(output)], capture_output=True, timeout=20)
                         assert run.returncode == 42, (index, level, run.returncode, run.stderr)

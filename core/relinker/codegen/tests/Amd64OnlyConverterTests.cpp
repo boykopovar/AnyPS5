@@ -21,7 +21,9 @@
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -207,6 +209,8 @@ void decoderTwoByteOpcodeLengths() {
 }
 
 void sse4aOperands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x08, 0x00}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK EXTRQ was accepted");
+    requireFailure([] { const Bytes bytes = {0xF2, 0xF0, 0x0F, 0x79, 0xC1}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK INSERTQ was accepted");
     const auto check = [](const Bytes& site, const bool insertq, const int dst, const int src, const int length, const int index) {
         const auto operands = Codegen::DecodeSse4a(site.data(), site.size());
         require(operands.Insertq == insertq && !operands.RegisterForm && operands.Destination == dst && operands.Source == src && operands.Length == length && operands.Index == index, "SSE4a operands were decoded incorrectly");
@@ -230,6 +234,8 @@ void sse4aOperands() {
 }
 
 void sha256Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x38, 0xCB, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256RNDS2 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xCC, 0x08}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha256Operation operation, const int dst, const int src) {
         const auto operands = Codegen::DecodeSha256(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src, "SHA-256 operands were decoded incorrectly");
@@ -260,6 +266,8 @@ void sha256Operands() {
 }
 
 void sha1Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x3A, 0xCC, 0xCA, 0x00}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1RNDS4 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xC9, 0x08}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha1Operation operation, const int dst, const int src, const int function) {
         const auto operands = Codegen::DecodeSha1(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src && operands.Function == function, "SHA-1 operands were decoded incorrectly");
@@ -321,6 +329,8 @@ void matcherSubstitutions() {
     const auto movntsd = match({0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10});
     require(movntsd && movntsd->Lowering == Codegen::Amd64OnlyLowering::InPlace && movntsd->ReplacementBytes == Bytes{0xF2, 0x44, 0x0F, 0x11, 0x4C, 0x24, 0x10} && movntsd->InstructionName == "MOVNTSD", "MOVNTSD was not rewritten to MOVSD");
     requireFailure([&] { (void)match({0xF3, 0x0F, 0x2B, 0xC1}); }, "MOVNTSS with a register operand was accepted");
+    const auto movntssDisplacement = match({0xF3, 0x0F, 0x2B, 0x47, 0xF0});
+    require(movntssDisplacement && movntssDisplacement->ReplacementBytes == Bytes{0xF3, 0x0F, 0x11, 0x47, 0xF0}, "MOVNTSS displacement byte was treated as a LOCK prefix");
     const auto monitorx = match({0x0F, 0x01, 0xFA});
     require(monitorx && monitorx->Lowering == Codegen::Amd64OnlyLowering::InPlace && monitorx->ReplacementBytes == Bytes{0x0F, 0x1F, 0x00} && monitorx->InstructionName == "MONITORX", "MONITORX was not replaced by a NOP");
     const auto mwaitx = match({0x0F, 0x01, 0xFB});
@@ -505,6 +515,13 @@ void converterSegment() {
     lockedRdpru[0x211] = 0x01;
     lockedRdpru[0x212] = 0xFD;
     requireFailure([&] { (void)converter->Convert(lockedRdpru, {segmentHeader(20)}); }, "LOCK RDPRU was accepted");
+    for (const Bytes& instruction : {Bytes{0xF0, 0xF3, 0x0F, 0x2B, 0x07}, Bytes{0xF3, 0xF0, 0x0F, 0x2B, 0x07},
+                                     Bytes{0xF0, 0xF2, 0x0F, 0x2B, 0x07}, Bytes{0xF2, 0xF0, 0x0F, 0x2B, 0x07}}) {
+        auto lockedMovnts = file;
+        std::copy(instruction.begin(), instruction.end(), lockedMovnts.begin() + 0x20F);
+        lockedMovnts[0x214] = 0xC3;
+        require(failureOffset([&] { (void)converter->Convert(lockedMovnts, {segmentHeader(21)}); }, "LOCK MOVNTSS/MOVNTSD was accepted") == 0x20F, "LOCK MOVNTSS/MOVNTSD failure does not carry the file offset");
+    }
     auto registerForm = file;
     const Bytes extrqRegister = {0x66, 0x0F, 0x79, 0xCA};
     std::copy(extrqRegister.begin(), extrqRegister.end(), registerForm.begin() + 0x20F);
@@ -560,6 +577,9 @@ void converterSha256() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-256 was accepted") == 0x200, "LOCK SHA-256 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 2 && result.Reports.size() == 2 && result.Bytes == file, "SHA-256 sites were not lowered through stubs");
     const auto& rounds = result.Trampolines[0];
@@ -595,6 +615,9 @@ void converterSha1() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-1 was accepted") == 0x200, "LOCK SHA-1 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 3 && result.Reports.size() == 3 && result.Bytes == file, "SHA-1 sites were not lowered through stubs");
     require(result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 5 && result.Reports[0].InstructionName == "SHA1RNDS4", "SHA1RNDS4 was not lowered as one site");
@@ -689,8 +712,8 @@ void rosettaSubstitutions() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
-    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}})
-        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB or RDTSCP was converted for an Intel host");
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}, Bytes{0x0F, 0xAE, 0x37}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB, RDTSCP or XSAVEOPT was converted for an Intel host");
     const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
     require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
     const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
@@ -700,6 +723,18 @@ void rosettaSubstitutions() {
     require(clwb && clwb->Lowering == Amd64OnlyLowering::InPlace && clwb->ReplacementBytes == Bytes{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00} && clwb->InstructionName == "CLWB", "CLWB was not replaced by a NOP");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0xF1}).has_value(), "TPAUSE (the register form of 66 0F AE /6) was taken for CLWB");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0x38}).has_value(), "CLFLUSHOPT was taken for CLWB");
+    const auto xsaveopt = match(rosetta, {0x0F, 0xAE, 0x37});
+    require(xsaveopt && xsaveopt->Lowering == Amd64OnlyLowering::InPlace && xsaveopt->ReplacementBytes == Bytes{0x0F, 0xAE, 0x27} && xsaveopt->InstructionName == "XSAVEOPT", "XSAVEOPT was not rewritten to XSAVE");
+    const auto xsaveopt64 = match(rosetta, {0x48, 0x0F, 0xAE, 0x74, 0x24, 0x40});
+    require(xsaveopt64 && xsaveopt64->ReplacementBytes == Bytes{0x48, 0x0F, 0xAE, 0x64, 0x24, 0x40}, "XSAVEOPT64 with an RSP-relative operand was not rewritten to XSAVE64");
+    const auto xsaveoptR12 = match(rosetta, {0x41, 0x0F, 0xAE, 0x34, 0x24});
+    require(xsaveoptR12 && xsaveoptR12->ReplacementBytes == Bytes{0x41, 0x0F, 0xAE, 0x24, 0x24}, "XSAVEOPT with an extended base register was not rewritten to XSAVE");
+    const auto xsaveoptRip = match(rosetta, {0x0F, 0xAE, 0x35, 0x00, 0x01, 0x00, 0x00});
+    require(xsaveoptRip && xsaveoptRip->ReplacementBytes == Bytes{0x0F, 0xAE, 0x25, 0x00, 0x01, 0x00, 0x00}, "RIP-relative XSAVEOPT was not rewritten to XSAVE with the same displacement");
+    const auto xsaveoptFs = match(rosetta, {0x64, 0x0F, 0xAE, 0x34, 0x25, 0x40, 0x00, 0x00, 0x00});
+    require(xsaveoptFs && xsaveoptFs->ReplacementBytes == Bytes{0x64, 0x0F, 0xAE, 0x24, 0x25, 0x40, 0x00, 0x00, 0x00}, "FS-relative XSAVEOPT was not rewritten to XSAVE");
+    for (const auto& other : {Bytes{0x0F, 0xAE, 0x27}, Bytes{0x0F, 0xAE, 0x2F}, Bytes{0x0F, 0xAE, 0x3F}, Bytes{0x0F, 0xAE, 0xF0}, Bytes{0xF3, 0x0F, 0xAE, 0xF0}, Bytes{0xF2, 0x0F, 0xAE, 0xF1}, Bytes{0xF3, 0x0F, 0xAE, 0x37}})
+        require(!match(rosetta, other).has_value(), "XSAVE, XRSTOR, CLFLUSH, MFENCE, UMONITOR, UMWAIT or a prefixed 0F AE /6 was taken for XSAVEOPT");
     const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
     require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
     require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
@@ -835,6 +870,21 @@ void converterWideStoreWindows() {
     expected = halves;
     expected.insert(expected.end(), {0xC5, 0xF8, 0x11, 0x0E, 0xC4, 0xE3, 0x7D, 0x19, 0x4E, 0x10, 0x01});
     require(paired.Trampolines.size() == 1 && paired.Trampolines[0].Length == 8 && body(paired.Trampolines[0]) == expected && paired.Reports.size() == 1, "A 256-bit store followed by another was not lowered with it in one stub");
+
+    const auto withRdseed = convert(withStore({}, {0x0F, 0xC7, 0xF8, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0xC7, 0xF0});
+    require(withRdseed.Trampolines.size() == 1 && withRdseed.Trampolines[0].Length == 7 && body(withRdseed.Trampolines[0]) == expected && withRdseed.Reports.size() == 1, "A 256-bit store followed by an in-place site did not move its replacement into the stub");
+
+    const auto withClwb = convert(withStore({}, {0x66, 0x0F, 0xAE, 0x37, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x1F, 0x40, 0x00});
+    require(withClwb.Trampolines.size() == 1 && withClwb.Trampolines[0].Length == 8 && body(withClwb.Trampolines[0]) == expected, "A 256-bit store followed by CLWB did not move its replacement into the stub");
+
+    const auto withRipStore = convert(withStore({}, {0xF3, 0x0F, 0x2B, 0x05, 0x40, 0x00, 0x00, 0x00, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0xF3, 0x0F, 0x11, 0x05, 0x00, 0x00, 0x00, 0x00});
+    require(withRipStore.Trampolines.size() == 1 && withRipStore.Trampolines[0].Length == 12 && body(withRipStore.Trampolines[0]) == expected && withRipStore.Trampolines[0].Relocations.size() == 1 && withRipStore.Trampolines[0].Relocations[0].SiteTarget == 0x4C && withRipStore.Trampolines[0].Relocations[0].InstructionEnd == 19, "A 256-bit store followed by a RIP-relative in-place site did not relocate its replacement");
 
     const Bytes push = {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50, 0x48, 0x8D, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x08, 0x58};
     const auto ripCalled = convert(withStore({}, {0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}));
@@ -1811,7 +1861,13 @@ void sha1Execution() {
                 else
                     require(run.Xmm[reg][0] == xmmIn[reg][0] && run.Xmm[reg][1] == xmmIn[reg][1], "SHA-1 stub clobbered an xmm register");
             }
-            require(run.Rax == rax && run.Rcx == 0x1122334455667788ull && (run.Flags & 0x8D5) == (0x8D7 & 0x8D5), "SHA-1 stub changed a general register or RFLAGS");
+            if (run.Rax != rax || run.Rcx != 0x1122334455667788ull || (run.Flags & 0x8D5) != (0x8D7 & 0x8D5)) {
+                std::cerr << "SHA-1 sample=" << sample << " site=" << std::hex;
+                for (const auto byte : site)
+                    std::cerr << static_cast<unsigned>(byte) << ' ';
+                std::cerr << "rax=" << run.Rax << " expected=" << rax << " rcx=" << run.Rcx << " flags=" << run.Flags << std::dec << '\n';
+                throw std::runtime_error("SHA-1 stub changed a general register or RFLAGS");
+            }
         }
     }
 }
@@ -1952,6 +2008,118 @@ void mcommitExecution() {
     }
     munmap(code, 4096);
 }
+
+void wideStoreExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xC5, 0xFC, 0x11, 0x00};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "256-bit store stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    alignas(32) std::uint8_t source[32];
+    for (std::size_t index = 0; index < sizeof(source); ++index) source[index] = static_cast<std::uint8_t>(index + 1);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(pages != MAP_FAILED, "cannot map the destination pages");
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{1}, std::size_t{4080}}) {
+        std::memset(pages, 0, 8192);
+        auto* destination = pages + offset;
+        asm volatile(
+            "vmovups (%[source]), %%ymm0\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            :
+            : [source] "r"(source), [code] "r"(code), "a"(destination)
+            : "memory", "ymm0");
+        require(std::memcmp(destination, source, sizeof(source)) == 0, "256-bit store stub did not write both halves");
+        require(std::all_of(pages, destination, [](const std::uint8_t value) { return value == 0; }), "256-bit store stub wrote before its operand");
+        require(std::all_of(destination + sizeof(source), pages + 8192, [](const std::uint8_t value) { return value == 0; }),
+                "256-bit store stub wrote past its operand");
+    }
+    munmap(pages, 8192);
+    munmap(code, 4096);
+}
+
+void xsaveoptExecution() {
+    const Bytes site = {0x48, 0x0F, 0xAE, 0x37};
+    const auto match = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta)->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "XSAVEOPT64 was not rewritten in place");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the XSAVEOPT replacement");
+    std::memcpy(code, body.data(), body.size());
+    alignas(64) std::uint8_t area[1024] = {};
+    alignas(32) std::uint8_t pattern[32];
+    alignas(32) std::uint8_t restored[32] = {};
+    for (std::size_t i = 0; i < sizeof(pattern); ++i)
+        pattern[i] = static_cast<std::uint8_t>(0xA0 + i);
+    asm volatile(
+        "vmovdqu (%[pattern]), %%ymm3\n\t"
+        "mov %[area], %%rdi\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "sub $128, %%rsp\n\t"
+        "call *%[code]\n\t"
+        "add $128, %%rsp\n\t"
+        "vpxor %%ymm3, %%ymm3, %%ymm3\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xrstor64 (%%rdi)\n\t"
+        "vmovdqu %%ymm3, (%[restored])\n\t"
+        "vzeroupper\n\t"
+        :
+        : [pattern] "r"(pattern), [area] "r"(area), [code] "r"(code), [restored] "r"(restored)
+        : "rax", "rdx", "rdi", "xmm3", "memory");
+    munmap(code, 4096);
+    std::uint64_t components = 0;
+    std::memcpy(&components, area + 512, sizeof(components));
+    require((components & 6) == 6, "XSAVE did not mark the SSE and AVX state as saved");
+    require(std::memcmp(area + 160 + 3 * 16, pattern, 16) == 0 && std::memcmp(area + 576 + 3 * 16, pattern + 16, 16) == 0, "XSAVE did not store YMM3 in the standard format");
+    require(std::memcmp(restored, pattern, sizeof(pattern)) == 0, "XRSTOR did not restore YMM3 from the area XSAVE wrote");
+}
+
+void scalarCompareExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC2, 0xC1, 0x05};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "scalar compare stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    struct Case {
+        float left;
+        float right;
+        std::uint32_t mask;
+        const char* name;
+    };
+    for (const auto& item : std::vector<Case>{{309.0f, 309.0f, 0xFFFFFFFFu, "309 is not less than 309"},
+                                              {309.0f, 310.0f, 0u, "309 is less than 310"}}) {
+        alignas(16) float left[4] = {item.left, 1.0f, 2.0f, 3.0f};
+        alignas(16) float right[4] = {item.right, 0.0f, 0.0f, 0.0f};
+        alignas(16) std::uint32_t result[4] = {};
+        asm volatile(
+            "movaps (%[left]), %%xmm0\n\t"
+            "movaps (%[right]), %%xmm1\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            "movaps %%xmm0, (%[result])\n\t"
+            :
+            : [left] "r"(left), [right] "r"(right), [result] "r"(result), [code] "r"(code)
+            : "memory", "xmm0", "xmm1");
+        require(result[0] == item.mask, item.name);
+        require(result[1] == std::bit_cast<std::uint32_t>(1.0f) && result[2] == std::bit_cast<std::uint32_t>(2.0f)
+                    && result[3] == std::bit_cast<std::uint32_t>(3.0f),
+                "scalar compare stub changed the upper lanes of its destination");
+    }
+    munmap(code, 4096);
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -1962,6 +2130,7 @@ void immediateFormExecution() {}
 void ripRelativeExecution() {}
 void rdpruExecution() {}
 void mcommitExecution() {}
+void xsaveoptExecution() {}
 #endif
 
 #if defined(__x86_64__) && (defined(__linux__) || defined(__APPLE__))
@@ -1996,6 +2165,8 @@ void rdtscpExecution() {
 }
 #else
 void rdtscpExecution() {}
+void wideStoreExecution() {}
+void scalarCompareExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -2049,12 +2220,15 @@ int main() {
         converterInPlaceFollower();
         converterClzero();
         rosettaSubstitutions();
+        xsaveoptExecution();
         converterRosetta();
         rosettaScalarCompares();
         converterRosettaScalarCompare();
         rosettaLegacyScalarCompares();
         converterRosettaLegacyScalarCompare();
         rdtscpExecution();
+        wideStoreExecution();
+        scalarCompareExecution();
         wideStoreSplit();
         converterWideStoreWindows();
         converterClaimedFollower();

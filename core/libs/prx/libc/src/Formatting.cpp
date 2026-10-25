@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -40,11 +41,18 @@ bool RequiresGuestFormatting(const char* format) {
         ++format;
         if (*format == '%') { ++format; continue; }
         while (*format && std::strchr("-+ #0'0123456789.*$", *format)) ++format;
-        if (*format == 'S' || *format == 'C' || *format == 'm' || *format == 'p' ||
+        if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
+        while (*format && std::strchr("hljztL", *format)) ++format;
+        if (*format && !std::strchr(LibcDetail::KnownConversions, *format)) return true;
+        if (*format && std::strchr("aAeEfFgG", *format)) return true;
         if (*format) ++format;
     }
     return false;
+}
+
+std::size_t HostFormatSize(std::size_t size) {
+    return std::min(size, static_cast<std::size_t>(INT_MAX) + 1);
 }
 
 bool HasGuestWideScan(const char* format) {
@@ -79,7 +87,6 @@ void RejectGuestWideScan(const char* format) {
 bool IsWideScan(const std::string& length, char conversion) {
     return conversion == 'S' || conversion == 'C' || (length == "l" && (conversion == 's' || conversion == 'c' || conversion == '['));
 }
-
 
 #endif
 
@@ -378,6 +385,7 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     va_end(args);
 #endif
     stream->SyncStatus();
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
@@ -440,7 +448,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
 int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, size, format, args);
+    const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, HostFormatSize(size), format, args);
     va_end(args);
     return result;
 }
@@ -546,7 +554,7 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
     if (RequiresGuestFormatting(format)) return LibcDetail::FormatWindows(str, size, format, c);
     std::va_list copy;
     va_copy(copy, *reinterpret_cast<std::va_list*>(c));
-    const int result = std::vsnprintf(str, size, format, copy);
+    const int result = std::vsnprintf(str, HostFormatSize(size), format, copy);
     va_end(copy);
     return result;
 #endif
@@ -646,6 +654,7 @@ extern FileStream* __stdinp_nid_postfix;
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToReading()) return EOF;
 #ifdef _WIN32
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
 #else
@@ -656,6 +665,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
     va_end(copy);
 #endif
     stream->SyncStatus();
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
