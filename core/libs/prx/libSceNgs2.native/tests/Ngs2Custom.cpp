@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <cstdint>
@@ -86,6 +87,7 @@ static bool CreateThrows(const Ngs2CustomSubmixerRackOption& option) {
     Ngs2ContextBufferInfo query{};
     try {
         sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &query);
+
     } catch (const TException&) {
         return true;
     }
@@ -97,6 +99,7 @@ static bool CreateSamplerThrows(const Ngs2CustomSamplerRackOption& option) {
     Ngs2ContextBufferInfo query{};
     try {
         sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &option.custom_rack_option.rack_option, &query);
+
     } catch (const TException&) {
         return true;
     }
@@ -123,6 +126,7 @@ static bool ControlThrows(uintptr_t voice, std::uint32_t id, TParam param) {
     param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
     try {
         sceNgs2VoiceControl(voice, &param.header);
+
     } catch (const TException&) {
         return true;
     }
@@ -238,6 +242,7 @@ static void TestRackOptions() {
     bool failed = false;
     try {
         sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, nullptr, &query);
+
     } catch (const std::runtime_error&) {
         failed = true;
     }
@@ -372,7 +377,6 @@ static void TestCustomFilter() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-
 struct ModuleOptionWords {
     std::uint32_t size;
     std::uint32_t words[15];
@@ -494,6 +498,7 @@ static void TestCustomRackChecks() {
     uintptr_t rack = 0;
     try {
         sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, nullptr, &rack);
+
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
@@ -532,8 +537,10 @@ static void TestCustomRackChecks() {
             try {
                 if (useAllocator) {
                     sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &allocator, &rack);
+
                 } else {
                     sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &info, &rack);
+
                 }
             } catch (const std::runtime_error&) {
                 rejected = true;
@@ -701,6 +708,7 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
         bool rejected = false;
         try {
             sceNgs2VoiceControl(custom, &param.header);
+
         } catch (const std::runtime_error& error) {
             const std::string message = error.what();
             rejected = message.find("Delay") != std::string::npos && message.find("not implemented") != std::string::npos;
@@ -791,6 +799,7 @@ static bool ModuleInfoThrows(uintptr_t rack, std::uint32_t moduleIndex, std::siz
     bool threw = false;
     try {
         sceNgs2CustomRackGetModuleInfo(rack, moduleIndex, &info, infoSize);
+
     } catch (const TException&) {
         threw = true;
     }

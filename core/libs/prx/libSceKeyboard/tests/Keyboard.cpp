@@ -1,3 +1,4 @@
+#include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libSceKeyboard/include/keyboard_structs.h"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
@@ -6,18 +7,6 @@
 
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceKeyboardInit(void);
-int APS5_VABI sceKeyboardOpen(int, std::int32_t, std::int32_t, const void*);
-int APS5_VABI sceKeyboardClose(std::int32_t);
-int APS5_VABI sceKeyboardRead(std::int32_t, KeyboardData*, std::int32_t);
-int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
-int APS5_VABI sceKeyboardGetConnection(std::int32_t, bool*);
-int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint8_t, std::uint8_t, std::uint16_t, KeyboardCharData*);
-int APS5_VABI sceKeyboardConnectPort(void);
-int APS5_VABI sceKeyboardDisconnectAll(void);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -181,7 +170,8 @@ int main() {
 
     bool threwConnect = false;
     try {
-        sceKeyboardConnectPort();
+        sceKeyboardConnectPort(0, 0);
+
     } catch (const std::runtime_error&) {
         threwConnect = true;
     }

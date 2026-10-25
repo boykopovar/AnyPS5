@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "Triangle_frag_spv.h"
@@ -78,14 +79,6 @@
 #include <vector>
 
 namespace {
-
-extern "C" {
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-}
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
@@ -1331,7 +1324,7 @@ void directCompletionLabelTests(Recorder& recorder) {
         std::int64_t physical = -1;
         ~Release() {
             recorder.Sync();
-            if (mapping != nullptr) sceKernelMunmap(mapping, size);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), size);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, size);
         }
     } release{recorder};
@@ -2518,6 +2511,297 @@ bool settleStorageImageTests(const Device& device) {
     std::cout << "a settled import under a storage image tests passed\n";
     return true;
 }
+
+bool settleInitialDccTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t tail = 0x4000;
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.Graphics() || base.hostImportAlignment == 0 || base.hostImportAlignment > tail || base.settleQueue == VK_NULL_HANDLE || !WriteWatched()) {
+        std::cout << "4x color targets, graphics, host imports within 16 KiB, a settle queue or write watching unavailable: an initial multisampled DCC import over a pending settle not tested\n";
+        return false;
+    }
+    {
+        std::lock_guard gpu(GpuMutex());
+        PrepareImportWatch(base);
+        if (!settledImportsWatchPrivate(base)) {
+            std::cout << "this device compares every Windows import: an initial multisampled DCC import over a pending settle not tested\n";
+            return false;
+        }
+    }
+    std::cout << "write watch: Windows private imports stay watched after a settle read; imports under 1 MiB wait for a deferred settle\n";
+    for (const std::size_t count : {256u, 257u, 1025u}) {
+        const auto bytes = count * unit;
+        auto* block = static_cast<std::uint8_t*>(AllocateWatched(bytes, unit));
+        Require(block != nullptr, "(m) cannot allocate adjacent pending imports");
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        struct Release {
+            const Context& context;
+            std::uint8_t* block;
+            std::size_t bytes;
+            std::size_t registered = 0;
+            ~Release() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    for (std::size_t index = 0; index < registered; ++index) mutation.Remove(block + index * unit);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), unit);
+                SetHostImportWindow(0);
+                ReleaseWatched(block, bytes);
+            }
+        } release{base, block, bytes};
+        std::memset(block, 0x11, bytes);
+        SetHostImportWindow(unit);
+        {
+            GuestAllocations::Mutation mutation;
+            for (std::size_t index = 0; index < count; ++index) {
+                mutation.Add(block + index * unit, unit, true, true, true);
+                ++release.registered;
+            }
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto at = address + index * unit;
+            const auto* import = HostImportFor(base, at, unit);
+            Require(import != nullptr && import->base == at && import->bytes == unit && import->unwatched,
+                    "(m) an adjacent 64 KiB import did not start with its settle pending");
+        }
+        {
+            std::lock_guard gpu(GpuMutex());
+            Require(!Watched(address, bytes), "(m) adjacent pending imports were already watched");
+            const auto before = HostImportSettles();
+            Require(WatchedAfterSettle(base, address, bytes),
+                    "(m) one synchronous settle left part of " + std::to_string(count) + " adjacent imports unwatched");
+            const auto after = HostImportSettles();
+            BumpCollectEpoch();
+            const auto collected = CollectWrites(address, bytes);
+            Require(collected != 0, "(m) adjacent settled imports were not collected");
+            static_cast<volatile std::uint8_t*>(block)[bytes - 1] = 0x22;
+            CollectWritesUncached(address, bytes);
+            Require(!UnchangedSince(address, bytes, collected), "(m) a CPU write after the final import settled was missed");
+            std::cout << "(m) " << count << " adjacent pending imports settled: " << after.submitted - before.submitted << " reads submitted\n";
+        }
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    Recorder recorder(context);
+    recorder.Activate();
+    enum class Case { Pending, PartialBlock, ComparedNeighbour, DeferredOff, UnwatchedKeys, PendingFmask, PendingFmaskAlone };
+    const auto run = [&](Case kind, std::uint32_t height) {
+        const bool fmaskAlone = kind == Case::PendingFmaskAlone;
+        const bool eightSamples = kind == Case::PendingFmask || fmaskAlone;
+        if (eightSamples && (!base.storageImageMultisample || (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_8_BIT) == 0)) {
+            std::cout << "(m) 8x color or multisampled storage images unavailable: an initial FMASK import over a pending settle not tested\n";
+            return;
+        }
+        const bool partial = kind == Case::PartialBlock || kind == Case::ComparedNeighbour;
+        ColorTarget target{};
+        target.extent = {128, height};
+        target.surfaceExtent = target.extent;
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.elementBytes = 4;
+        target.samples = eightSamples ? 8 : 4;
+        target.tileMode = ColorTileMode::RenderTarget;
+        target.dccPipeAligned = true;
+        const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(target));
+        const auto dccBytes = MultisampledDccBytes(target);
+        const auto importBytes = colorBytes + (partial ? tail : unit);
+        const auto reserved = (importBytes + unit - 1) & ~(unit - 1);
+        const auto fmaskBytes = static_cast<std::size_t>(target.extent.width) * target.extent.height * 4u;
+        const auto fmaskReserved = (fmaskBytes + unit - 1) & ~(unit - 1);
+        const auto regionBytes = unit + reserved + unit + (kind == Case::UnwatchedKeys ? unit : eightSamples ? fmaskReserved + unit : 0);
+        auto* region = static_cast<std::uint8_t*>(AllocateWatched(regionBytes, unit));
+        void* block = region != nullptr ? region + unit : nullptr;
+        void* keys = region != nullptr && kind == Case::UnwatchedKeys ? region + unit + reserved + unit : nullptr;
+        void* fmask = region != nullptr && eightSamples ? region + unit + reserved + unit : nullptr;
+        const auto destBytes = static_cast<std::size_t>(target.extent.width) * target.extent.height * 4u;
+        void* dest = VirtualAlloc(nullptr, destBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(block != nullptr && dest != nullptr && (kind != Case::UnwatchedKeys || keys != nullptr) && (!eightSamples || fmask != nullptr), "(m) cannot allocate the target");
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        const auto neighbour = address + importBytes + tail;
+        const auto describe = [](const HostImport* found, std::uint64_t at, std::size_t bytes) {
+            char text[256];
+            if (found == nullptr) std::snprintf(text, sizeof(text), ": no import of 0x%llx+0x%zx, watched %d", static_cast<unsigned long long>(at), bytes, Watched(at, bytes) ? 1 : 0);
+            else std::snprintf(text, sizeof(text), ": import 0x%llx+0x%llx, unwatched %d, settled on demand %d, for 0x%llx+0x%zx, watched %d", static_cast<unsigned long long>(found->base), static_cast<unsigned long long>(found->bytes), found->unwatched ? 1 : 0, found->settleOnDemand ? 1 : 0, static_cast<unsigned long long>(at), bytes, Watched(at, bytes) ? 1 : 0);
+            return std::string(text);
+        };
+        struct Release {
+            const Context& context;
+            Recorder& recorder;
+            void* region;
+            std::size_t regionBytes;
+            void* block;
+            void* keys;
+            void* fmask;
+            void* dest;
+            std::size_t reserved;
+            std::uint64_t neighbour;
+            ~Release() {
+                {
+                    std::lock_guard gpu(GpuMutex());
+                    recorder.Sync();
+                    ClearMultisampleTargets(context.device);
+                    ClearCachedTextures(context.device);
+                    recorder.FlushDeferredReleases();
+                }
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                    mutation.Remove(dest);
+                    if (keys != nullptr) mutation.Remove(keys);
+                    if (fmask != nullptr) mutation.Remove(fmask);
+                    if (neighbour < reinterpret_cast<std::uint64_t>(block) + reserved) mutation.Remove(reinterpret_cast<void*>(neighbour));
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), 16);
+                SetHostImportDeferredSettles(true);
+                ReleaseWatched(region, regionBytes);
+                VirtualFree(dest, 0, MEM_RELEASE);
+            }
+        } release{context, recorder, region, regionBytes, block, keys, fmask, dest, reserved, kind == Case::ComparedNeighbour ? neighbour : std::numeric_limits<std::uint64_t>::max()};
+        target.address = address;
+        target.surfaceAddress = address;
+        target.bytes = colorBytes;
+        target.dccAddress = kind == Case::UnwatchedKeys ? reinterpret_cast<std::uint64_t>(keys) : address + colorBytes;
+        std::memset(block, 0, importBytes);
+        std::memset(reinterpret_cast<void*>(target.dccAddress), 0xc0, dccBytes);
+        std::memset(dest, 0x5a, destBytes);
+        if (fmask != nullptr) {
+            target.cmaskAddress = target.dccAddress + ((dccBytes + 4095) & ~std::size_t{4095});
+            target.cmaskBytes = CmaskBytes(target.extent.width, target.extent.height);
+            target.cmaskFastClear = true;
+            target.fmaskAddress = reinterpret_cast<std::uint64_t>(fmask);
+            Require(target.cmaskAddress + target.cmaskBytes <= address + importBytes, "(m) the CMASK does not fit the target's import");
+            std::memset(reinterpret_cast<void*>(target.cmaskAddress), 0xcc, static_cast<std::size_t>(target.cmaskBytes));
+            std::memset(fmask, 0x11, fmaskBytes);
+        }
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, importBytes, true, true, true);
+            mutation.Add(dest, destBytes, true, true, true);
+            if (keys != nullptr) mutation.Add(keys, unit, true, true, true);
+            if (fmask != nullptr) mutation.Add(fmask, fmaskBytes, true, true, true);
+            if (kind == Case::ComparedNeighbour) mutation.Add(reinterpret_cast<void*>(neighbour), reserved - (importBytes + tail), true, true, true);
+        }
+        if (kind == Case::UnwatchedKeys) Unwatch(target.dccAddress, dccBytes);
+        if (kind == Case::DeferredOff) SetHostImportDeferredSettles(false);
+        if (kind == Case::ComparedNeighbour) {
+            const auto* other = HostImportFor(context, neighbour, reserved - (importBytes + tail));
+            Require(other != nullptr && other->unwatched && !Watched(neighbour, reserved - (importBytes + tail)), "(m) the import sharing the target's last 64 KiB block was not compared" + describe(other, neighbour, reserved - (importBytes + tail)));
+        }
+        if (fmask != nullptr && !fmaskAlone) {
+            const auto* fmaskImport = HostImportFor(context, target.fmaskAddress, fmaskBytes);
+            Require(fmaskImport != nullptr && fmaskImport->base == target.fmaskAddress && fmaskImport->bytes == fmaskBytes && fmaskImport->unwatched && !Watched(target.fmaskAddress, fmaskBytes), "(m) the FMASK's import was not compared at first" + describe(fmaskImport, target.fmaskAddress, fmaskBytes));
+        }
+        const auto* import = HostImportFor(context, address, importBytes);
+        Require(import != nullptr && import->base == address && import->bytes == importBytes && import->unwatched && !Watched(address, importBytes), "(m) the target's import of " + std::to_string(importBytes) + " bytes was not compared at first" + describe(import, address, importBytes));
+        HostImportSettleCounts quiet{};
+        if (fmaskAlone) {
+            {
+                std::lock_guard gpu(GpuMutex());
+                const auto start = HostImportSettles();
+                Require(WatchedAfterSettle(context, address, importBytes), "(m) the target's import did not settle before the FMASK's import" + describe(ExistingHostImportFor(context, address, importBytes), address, importBytes));
+                const auto settledTarget = HostImportSettles();
+                Require(settledTarget.submitted > start.submitted && settledTarget.rewatched > start.rewatched, "(m) the target's import returned to the write watch without a settle read");
+            }
+            const std::array<std::pair<std::uint64_t, std::size_t>, 3> planes{{{address, colorBytes}, {target.dccAddress, dccBytes}, {target.cmaskAddress, static_cast<std::size_t>(target.cmaskBytes)}}};
+            for (const auto& [at, bytes] : planes) {
+                const auto* covering = ExistingHostImportFor(context, at, bytes);
+                Require(Watched(at, bytes) && (covering == nullptr || !covering->unwatched), "(m) a color, DCC or CMASK plane is not watched before the FMASK's import" + describe(covering, at, bytes));
+            }
+            quiet = HostImportSettles();
+            const auto* fmaskImport = HostImportFor(context, target.fmaskAddress, fmaskBytes);
+            Require(fmaskImport != nullptr && fmaskImport->base == target.fmaskAddress && fmaskImport->bytes == fmaskBytes && fmaskImport->unwatched && !fmaskImport->settleOnDemand && !Watched(target.fmaskAddress, fmaskBytes), "(m) the FMASK's import is not compared with its deferred settle wanted" + describe(fmaskImport, target.fmaskAddress, fmaskBytes));
+        }
+        std::unique_lock gpu(GpuMutex());
+        if (partial) {
+            for (int round = 0; round < 20; ++round) {
+                gpu.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                gpu.lock();
+                HostImportFor(context, address, importBytes);
+            }
+            Require(!Watched(address, importBytes), "(m) a deferred settle returned an import that is not a whole number of 64 KiB blocks to the write watch");
+        }
+        const auto before = HostImportSettles();
+        Require(!fmaskAlone || before.submitted == quiet.submitted, "(m) a settle read was submitted between the FMASK's import and the target's first use");
+        std::string refusal;
+        try {
+            Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "(m) the multisampled DCC target has no view");
+        } catch (const std::exception& error) {
+            refusal = error.what();
+        }
+        const auto after = HostImportSettles();
+        const auto* settled = ExistingHostImportFor(context, address, importBytes);
+        const char* name = kind == Case::Pending ? "a pending settle" : kind == Case::PartialBlock ? "an import of whole and partial 64 KiB blocks" : kind == Case::ComparedNeighbour ? "a compared import in its last 64 KiB block" : kind == Case::DeferredOff ? "deferred settles off" : kind == Case::UnwatchedKeys ? "explicitly unwatched DCC keys" : kind == Case::PendingFmask ? "an eight-sample target whose color and FMASK imports both have pending settles" : "an eight-sample target whose FMASK alone has a pending settle";
+        std::cout << "(m) initial DCC over " << name << " (import " << importBytes << " bytes): " << (refusal.empty() ? "accepted" : refusal) << "; " << after.submitted - before.submitted << " settle reads submitted, " << after.rewatched - before.rewatched << " back in the write watch\n";
+        if (kind == Case::ComparedNeighbour || kind == Case::DeferredOff || kind == Case::UnwatchedKeys) {
+            Require(refusal.find("initial multisampled DCC contents require watched guest memory") != std::string::npos, std::string("(m) an initial multisampled DCC import over ") + name + " was not refused: " + refusal);
+            Require(kind == Case::UnwatchedKeys || !Watched(address, importBytes), std::string("(m) ") + name + " returned the target's import to the write watch");
+            Require(kind != Case::UnwatchedKeys || (Watched(address, importBytes) && !Watched(target.dccAddress, dccBytes)), "(m) the refusal over explicitly unwatched DCC keys did not come from the keys" + describe(settled, address, importBytes));
+            return;
+        }
+        Require(refusal.empty(), std::string("(m) an initial multisampled DCC import over ") + name + " was refused: " + refusal);
+        Require(!fmaskAlone || (after.submitted - before.submitted == 1 && after.rewatched - before.rewatched == 1), "(m) the first use over a pending FMASK settle alone submitted " + std::to_string(after.submitted - before.submitted) + " settle reads, not the FMASK's alone");
+        Require(after.submitted > before.submitted && after.rewatched > before.rewatched && Watched(address, importBytes) && settled != nullptr && !settled->unwatched, std::string("(m) the initial DCC import over ") + name + " did not settle the import and return it to the write watch");
+        if (fmask != nullptr) {
+            const auto* settledFmask = ExistingHostImportFor(context, target.fmaskAddress, fmaskBytes);
+            Require(Watched(target.fmaskAddress, fmaskBytes) && settledFmask != nullptr && !settledFmask->unwatched, "(m) the FMASK's import did not settle back into the write watch" + describe(settledFmask, target.fmaskAddress, fmaskBytes));
+        }
+        ColorTarget destination{};
+        destination.address = reinterpret_cast<std::uint64_t>(dest);
+        destination.surfaceAddress = destination.address;
+        destination.extent = target.extent;
+        destination.surfaceExtent = target.extent;
+        destination.format = VK_FORMAT_R8G8B8A8_UNORM;
+        destination.elementBytes = 4;
+        destination.bytes = destBytes;
+        destination.samples = 1;
+        destination.tileMode = ColorTileMode::RenderTarget;
+        RunColorMetadataPass(context, {ColorMetadataPass::Mode::Resolve, {destination}, target});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        std::vector<std::uint32_t> resolved(destBytes / 4);
+        AgcDriver::GuestMemory::Read(destination.address, std::as_writable_bytes(std::span(resolved)));
+        Require(std::ranges::all_of(resolved, [](std::uint32_t word) { return word == 0xffffffffu; }), std::string("(m) the target made over ") + name + " did not start from its DCC fast clear");
+        BumpCollectEpoch();
+        if (fmask != nullptr) {
+            const auto collectedFmask = CollectWrites(target.fmaskAddress, fmaskBytes);
+            Require(collectedFmask != 0, "(m) the settled FMASK import is not collected");
+            static_cast<volatile std::uint8_t*>(fmask)[0] = 0x22;
+            std::string fmaskReuse;
+            try {
+                MultisampleTargetView(context, target);
+            } catch (const std::exception& error) {
+                fmaskReuse = error.what();
+            }
+            Require(fmaskReuse.find("writes to a resident native FMASK are not implemented") != std::string::npos, "(m) the resident target missed the CPU store to its FMASK: " + fmaskReuse);
+            return;
+        }
+        const auto collected = CollectWrites(address, importBytes);
+        Require(collected != 0, "(m) the settled import is not collected");
+        static_cast<volatile std::uint8_t*>(block)[importBytes - 1] = 0x77;
+        static_cast<volatile std::uint8_t*>(block)[colorBytes] = 0x00;
+        CollectWritesUncached(address, importBytes);
+        Require(!UnchangedSince(address + importBytes - 1, 1, collected) && !UnchangedSince(address + colorBytes, 1, collected), "(m) a CPU store after the initial DCC import was missed");
+        std::string reuse;
+        try {
+            MultisampleTargetView(context, target);
+        } catch (const std::exception& error) {
+            reuse = error.what();
+        }
+        Require(reuse.find("writes to a resident multisampled DCC target or its metadata are not implemented") != std::string::npos, "(m) the resident target missed the CPU store to its DCC keys: " + reuse);
+    };
+    run(Case::Pending, 128);
+    run(Case::PartialBlock, 384);
+    run(Case::ComparedNeighbour, 384);
+    run(Case::DeferredOff, 128);
+    run(Case::UnwatchedKeys, 128);
+    run(Case::PendingFmask, 128);
+    run(Case::PendingFmaskAlone, 128);
+    std::cout << "initial multisampled DCC over a pending settle tests passed\n";
+    return true;
+}
 #endif
 
 void remappedImportTests(const Device& device) {
@@ -2694,8 +2978,8 @@ void secondMappingImportTests(const Device& device) {
         void* alias = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (alias != nullptr) sceKernelMunmap(alias, page);
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (alias != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     } release;
@@ -2766,7 +3050,7 @@ int reimportBench(const Device& device) {
         void* mapping = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2916,8 +3200,8 @@ int hostImportCutTests(const Device& device) {
         std::size_t holeBytes = 0;
         ~Backing() {
             auto* memory = static_cast<std::byte*>(mapping);
-            if (memory != nullptr && hole != 0) sceKernelMunmap(memory, hole);
-            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(memory + hole + holeBytes, bytes - hole - holeBytes);
+            if (memory != nullptr && hole != 0) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), hole);
+            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + hole + holeBytes), bytes - hole - holeBytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2946,7 +3230,7 @@ int hostImportCutTests(const Device& device) {
         auto* cut = memory + test.offset;
         gpu.unlock();
         if (test.unmap) {
-            Require(sceKernelMunmap(cut, test.length) == 0, name + ": the unmap failed");
+            Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(cut), test.length) == 0, name + ": the unmap failed");
             backing.hole = test.offset;
             backing.holeBytes = test.length;
         } else {
@@ -2996,7 +3280,7 @@ int hostImportCutTests(const Device& device) {
         Require(whole != nullptr && whole->base == address && whole->bytes == bytes && whole->alias == nullptr && !whole->unwatched, name + ": the range was not imported whole, settled and watched");
         gpu.unlock();
         Require(sceKernelMprotect(memory, run, 0x03) == 0, name + ": the protection of the head failed");
-        Require(sceKernelMunmap(memory + run, bytes - run) == 0, name + ": the unmap of the kept side failed");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + run), bytes - run) == 0, name + ": the unmap of the kept side failed");
         backing.hole = run;
         backing.holeBytes = bytes - run;
         void* again = memory + run;
@@ -6944,7 +7228,6 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-
 void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     constexpr std::uint32_t side = 256;
@@ -7094,7 +7377,7 @@ void keptUnitSettleTests(const Device& device, Recorder& recorder) {
                     return;
                 }
                 if (direct) {
-                    if (block != nullptr) sceKernelMunmap(block, surfaceBytes);
+                    if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), surfaceBytes);
                     if (physical >= 0) sceKernelReleaseDirectMemory(physical, surfaceBytes);
                     return;
                 }
@@ -10978,6 +11261,14 @@ int main(int argc, char** argv) {
             }
             importWatchTests(device);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--settle-initial-dcc-only") {
+#ifdef _WIN32
+            return settleInitialDccTests(device) ? 0 : 77;
+#else
+            std::cout << "skipped, the device has no deferred settle of host imports: imports under 1 MiB wait for one only on Windows\n";
+            return 77;
+#endif
         }
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-other-family-only") {

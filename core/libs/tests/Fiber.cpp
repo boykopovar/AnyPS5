@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -11,23 +12,6 @@
 #endif
 
 using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
-
-extern "C" {
-std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, Entry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t);
-std::int32_t APS5_VABI sceFiberFinalize(FiberObject*);
-std::int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject*, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberSwitch(FiberObject*, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberReturnToThread(std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberGetSelf(FiberObject**);
-std::int32_t APS5_VABI sceFiberGetInfo(FiberObject*, FiberInfo*);
-std::int32_t APS5_VABI sceFiberGetThreadFramePointerAddress(std::uint64_t*);
-std::int32_t APS5_VABI _sceFiberGetThreadFramePointerAddress(std::uint64_t*);
-std::int32_t APS5_VABI sceFiberStartContextSizeCheck(std::uint32_t);
-std::int32_t APS5_VABI sceFiberStopContextSizeCheck(void);
-std::int32_t APS5_VABI _sceFiberAttachContextAndRun(FiberObject*, void*, std::uint64_t, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI _sceFiberAttachContextAndSwitch(FiberObject*, void*, std::uint64_t, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject*, const char*, Entry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t, std::uint32_t);
-}
 
 static void Require(bool value, const char* what) {
     if (!value) { std::fprintf(stderr, "Fiber check failed: %s\n", what); std::abort(); }
@@ -230,6 +214,7 @@ void APS5_VABI LargeContextEntry(std::uint64_t, std::uint64_t) {
     const auto* address = const_cast<const unsigned char*>(&local);
     g_largeOnContext = address >= g_largeContext.data() && address < g_largeContext.data() + g_largeContext.size();
     sceFiberReturnToThread(0, nullptr);
+
 }
 
 void RunOnLargeContext() {

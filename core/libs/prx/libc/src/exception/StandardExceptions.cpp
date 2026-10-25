@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include <cstdio>
@@ -7,11 +8,9 @@
 #include <stdexcept>
 #include <string>
 
-extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t size);
-
 namespace LibcException {
 struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
-struct ExceptionObject { const void* vtable; const char* message; };
+
 struct ExceptionVtable {
     std::ptrdiff_t offset;
     const TypeRecord* type;
@@ -128,9 +127,6 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)), [](void* p) { DestroyPlain(static_cast<ExceptionObject*>(p)); });
 }
 
-struct CategoryObject { const void* vtable; };
-struct ErrorCode { int reserved; int value; const CategoryObject* category; };
-struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
 static_assert(sizeof(ErrorCode) == 16 && offsetof(ErrorCode, value) == 4 && offsetof(ErrorCode, category) == 8);
 static_assert(sizeof(SystemErrorObject) == 32 && offsetof(SystemErrorObject, code) == 16);
 struct CppError { int value; const char* message; };
@@ -627,7 +623,6 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure) { LibcException::SceV2::ThrowSystemCopy(failure, LibcException::SceV2::IosFailure); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError); }
 
-std::int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix() { return _Xtime_get_ticks_nid_postfix(); }
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value) {
     if (value == 0) return "success";

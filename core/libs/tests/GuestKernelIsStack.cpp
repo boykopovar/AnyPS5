@@ -1,16 +1,9 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-int APS5_VABI sceKernelMapFlexibleMemory(void** addr, std::size_t len, int prot, int flags);
-int APS5_VABI sceKernelMunmap(std::uint64_t addr, std::size_t len);
-int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, std::uint64_t infoSize);
-}
 
 static constexpr int SCE_OK = 0;
 #ifdef ANYPS5_ENABLE_ASAN
@@ -18,7 +11,6 @@ static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000010FC00000000ull;
 #else
 static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000000FC00000000ull;
 #endif
-static constexpr int SCE_KERNEL_ERROR_EACCES = static_cast<int>(0x8002000d);
 static int global = 0;
 
 static void Require(bool value) { if (!value) std::abort(); }

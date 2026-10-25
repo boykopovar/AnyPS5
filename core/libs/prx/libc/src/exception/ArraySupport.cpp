@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <limits>
 
@@ -15,6 +16,7 @@ void APS5_VABI __cxa_vec_ctor_nid_postfix(void* array, std::size_t count, std::s
         for (; complete < count; ++complete) construct(static_cast<unsigned char*>(array) + complete * size);
     } catch (...) {
         __cxa_vec_cleanup_nid_postfix(array, complete, size, destroy);
+
         throw;
     }
 }
@@ -26,6 +28,7 @@ void APS5_VABI __cxa_vec_cctor_nid_postfix(void* destination, void* source, std:
             copy(static_cast<unsigned char*>(destination) + complete * size, static_cast<unsigned char*>(source) + complete * size);
     } catch (...) {
         __cxa_vec_cleanup_nid_postfix(destination, complete, size, destroy);
+
         throw;
     }
 }
@@ -37,6 +40,7 @@ void APS5_VABI __cxa_vec_dtor_nid_postfix(void* array, std::size_t count, std::s
     } catch (...) {
         if (unwinding) LibcException::Terminate();
         __cxa_vec_cleanup_nid_postfix(array, count, size, destroy);
+
         throw;
     }
 }

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <cctype>
@@ -21,33 +23,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI kqueue_nid_postfix();
-int APS5_VABI kevent_nid_postfix(int, const KernelEvent*, int, KernelEvent*, int, const KernelTimespec*);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
-int APS5_VABI rmdir_nid_postfix(const char*);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI unlink_nid_postfix(const char*);
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI sceKernelRename(const char*, const char*);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddFileEvent(KernelEqueue eq, int fd, int watch, void* udata);
-int APS5_VABI sceKernelDeleteFileEvent(KernelEqueue eq, int fd);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
@@ -1270,7 +1245,6 @@ static void StandardInputReplacement() {
     ReplaceStandardInputWithNull();
     Require(StandardInputAtEnd());
 }
-
 
 static void StandardInput() {
     ReplaceStandardInputWithNull();

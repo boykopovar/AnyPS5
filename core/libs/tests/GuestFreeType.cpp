@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/General.hpp"
@@ -27,27 +28,6 @@
 
 using namespace FreeType;
 
-extern "C" {
-void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec*, const GuestMatrix*, const GuestVector*);
-std::int64_t APS5_VABI FT_Cos_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Sin_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t, std::int64_t);
-void APS5_VABI FT_Vector_Unit_nid_postfix(GuestVector*, std::int64_t);
-int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
-int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
-int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
-int APS5_VABI FT_New_Memory_Face_nid_postfix(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
-int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec*);
-int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t);
-int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t, std::uint32_t, GuestVector*);
-std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(GuestFaceRec*, std::uint64_t);
-int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
-int APS5_VABI FT_Load_Char_nid_postfix(GuestFaceRec*, std::uint64_t, std::int32_t);
-int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec*, std::int32_t);
-int APS5_VABI FT_Set_Char_Size_nid_postfix(GuestFaceRec*, std::int64_t, std::int64_t, std::uint32_t, std::uint32_t);
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "FreeType check failed at line %d\n", line);
@@ -56,12 +36,10 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-extern "C" int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec*, std::uint32_t);
-
 static void CheckGaspTable(const std::vector<unsigned char>* table, const std::vector<std::pair<unsigned, int>>& ranges,
                            bool versionZero, bool render) {
     const auto font = SquareGlyphFont('A', 700, false, table);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Library nativeLibrary = nullptr;
     FT_Face native = nullptr;
@@ -138,7 +116,7 @@ template <typename TCall> static bool ThrowsWith(TCall call, const std::string& 
     return false;
 }
 
-static void FaceMatches(const GuestFaceRec* face, FT_Face host, const void* library) {
+static void FaceMatches(const GuestFaceRec* face, FT_Face host, const FreeType::GuestLibrary* library) {
     Require(face->num_faces == host->num_faces && face->face_index == host->face_index && face->face_flags == host->face_flags);
     Require(face->style_flags == host->style_flags && face->num_glyphs == host->num_glyphs && face->num_glyphs == 2);
     Require((face->family_name == nullptr) == (host->family_name == nullptr) && (face->style_name == nullptr) == (host->style_name == nullptr));
@@ -152,8 +130,6 @@ static void FaceMatches(const GuestFaceRec* face, FT_Face host, const void* libr
     Require(face->underline_position == host->underline_position && face->underline_thickness == host->underline_thickness);
     Require(face->glyph != nullptr && face->glyph->face == face && face->glyph->library == library && face->size != nullptr && face->size->face == face);
 }
-
-extern "C" int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(GuestOutline*);
 
 static unsigned orientationCases = 0;
 
@@ -239,7 +215,7 @@ static void CheckOutlineOrientation() {
         CheckOrientationCase(points, contours, twiceArea == 0 ? FT_ORIENTATION_NONE : expected == FT_ORIENTATION_POSTSCRIPT ? FT_ORIENTATION_TRUETYPE : FT_ORIENTATION_POSTSCRIPT);
     }
     const auto font = SquareGlyphFont('A', 700);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Library nativeLibrary = nullptr;
     FT_Face native = nullptr;
@@ -457,7 +433,7 @@ static void Trigonometry() {
         }
     }
     const auto font = SquareGlyphFont('A', 700);
-    void* library = nullptr;
+    GuestLibrary* library = nullptr;
     FT_Library oracle = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Face native = nullptr;
@@ -490,15 +466,246 @@ static void Trigonometry() {
                 scalarCases, vectorCases, differenceCases, rendered);
 }
 
+struct DecomposeEvents {
+    std::vector<std::array<std::int64_t, 7>> calls;
+    std::size_t stopAt = static_cast<std::size_t>(-1);
+    int result = 0;
+
+    int Add(int kind, GuestVector first, GuestVector second = {}, GuestVector third = {}) {
+        calls.push_back({kind, first.x, first.y, second.x, second.y, third.x, third.y});
+        return calls.size() - 1 == stopAt ? result : 0;
+    }
+};
+
+static GuestVector GuestPoint(const FT_Vector& point) { return {point.x, point.y}; }
+
+static int NativeMove(const FT_Vector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(1, GuestPoint(*to)); }
+static int NativeLine(const FT_Vector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(2, GuestPoint(*to)); }
+static int NativeConic(const FT_Vector* control, const FT_Vector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(3, GuestPoint(*control), GuestPoint(*to));
+}
+static int NativeCubic(const FT_Vector* first, const FT_Vector* second, const FT_Vector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(4, GuestPoint(*first), GuestPoint(*second), GuestPoint(*to));
+}
+
+static int APS5_VABI GuestMove(const GuestVector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(1, *to); }
+static int APS5_VABI GuestLine(const GuestVector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(2, *to); }
+static int APS5_VABI GuestConic(const GuestVector* control, const GuestVector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(3, *control, *to);
+}
+static int APS5_VABI GuestCubic(const GuestVector* first, const GuestVector* second, const GuestVector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(4, *first, *second, *to);
+}
+
+static int APS5_VABI NullUserMove(const GuestVector*, void* user) {
+    Require(user == nullptr);
+    return -17;
+}
+
+static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::vector<unsigned char> tags,
+                                        std::vector<unsigned short> contours, int shift, std::int64_t delta,
+                                        std::size_t stopAt = static_cast<std::size_t>(-1), int stopResult = 0) {
+    std::vector<FT_Vector> nativePoints;
+    for (const auto point : points) nativePoints.push_back({static_cast<FT_Pos>(point.x), static_cast<FT_Pos>(point.y)});
+    GuestOutline outline{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(points.size()), points.data(), tags.data(), contours.data(), 0};
+    FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), 0};
+    DecomposeEvents actual;
+    DecomposeEvents expected;
+    actual.stopAt = expected.stopAt = stopAt;
+    actual.result = expected.result = stopResult;
+    const GuestOutlineFuncs functions{GuestMove, GuestLine, GuestConic, GuestCubic, shift, delta};
+    const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
+    const int result = FT_Outline_Decompose_nid_postfix(&outline, &functions, &actual);
+    Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
+    Require(actual.calls == expected.calls);
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        Require(points[index].x == nativePoints[index].x && points[index].y == nativePoints[index].y);
+    }
+    if (stopAt < expected.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
+    return actual.calls.size();
+}
+
+struct ChangingDecomposition {
+    DecomposeEvents events;
+    GuestOutlineFuncs guest{};
+    FT_Outline_Funcs native{};
+    GuestOutline* outline = nullptr;
+    FT_Outline* nativeOutline = nullptr;
+    GuestVector* replacement = nullptr;
+    FT_Vector* nativeReplacement = nullptr;
+};
+
+static int NativeChangedLine(const FT_Vector* to, void* user) {
+    return static_cast<ChangingDecomposition*>(user)->events.Add(5, GuestPoint(*to));
+}
+static int APS5_VABI GuestChangedLine(const GuestVector* to, void* user) {
+    return static_cast<ChangingDecomposition*>(user)->events.Add(5, *to);
+}
+static int NativeChangingMove(const FT_Vector* to, void* user) {
+    auto& state = *static_cast<ChangingDecomposition*>(user);
+    state.native.line_to = NativeChangedLine;
+    state.native.shift = 4;
+    state.native.delta = 999;
+    state.nativeOutline->points = state.nativeReplacement;
+    return state.events.Add(1, GuestPoint(*to));
+}
+static int APS5_VABI GuestChangingMove(const GuestVector* to, void* user) {
+    auto& state = *static_cast<ChangingDecomposition*>(user);
+    state.guest.line_to = GuestChangedLine;
+    state.guest.shift = 4;
+    state.guest.delta = 999;
+    state.outline->points = state.replacement;
+    GuestOutline empty{};
+    const GuestOutlineFuncs noCallbacks{};
+    Require(FT_Outline_Decompose_nid_postfix(&empty, &noCallbacks, nullptr) == 0);
+    return state.events.Add(1, *to);
+}
+
+static void OutlineDecomposition() {
+    GuestOutline empty{};
+    const GuestOutlineFuncs callbacks{GuestMove, GuestLine, GuestConic, GuestCubic, 0, 0};
+    const FT_Outline_Funcs nativeCallbacks{NativeMove, NativeLine, NativeConic, NativeCubic, 0, 0};
+    Require(FT_Outline_Decompose_nid_postfix(nullptr, nullptr, nullptr) == FT_Outline_Decompose(nullptr, nullptr, nullptr));
+    Require(FT_Outline_Decompose_nid_postfix(nullptr, &callbacks, nullptr) == FT_Outline_Decompose(nullptr, &nativeCallbacks, nullptr));
+    Require(FT_Outline_Decompose_nid_postfix(&empty, nullptr, nullptr) == FT_Err_Invalid_Argument);
+    const GuestOutlineFuncs unused{nullptr, nullptr, nullptr, nullptr, -1, INT64_MIN};
+    Require(FT_Outline_Decompose_nid_postfix(&empty, &unused, nullptr) == 0);
+    int scenarios = 0;
+    std::size_t calls = 0;
+    for (unsigned count = 1; count <= 6; ++count) {
+        std::vector<GuestVector> points;
+        for (unsigned point = 0; point < count; ++point) points.push_back({static_cast<std::int64_t>(point) * 13 - 37, static_cast<std::int64_t>(point) * -17 + 23});
+        const unsigned patterns = 1u << (2 * count);
+        for (unsigned pattern = 0; pattern < patterns; ++pattern) {
+            std::vector<unsigned char> tags;
+            for (unsigned point = 0; point < count; ++point) tags.push_back(static_cast<unsigned char>(((pattern >> (point * 2)) & 3) | 0xA4));
+            for (const int shift : {0, 1, 4}) {
+                for (const int delta : {-17, 0, 19}) {
+                    calls += CompareDecomposition(points, tags, {static_cast<unsigned short>(count - 1)}, shift, delta);
+                    ++scenarios;
+                }
+            }
+        }
+    }
+    const std::vector<GuestVector> curve{{-17, 3}, {7, -5}, {29, 31}, {43, -11}, {59, 37}, {73, -13}, {89, 41}, {101, -17}};
+    for (const auto& tags : std::vector<std::vector<unsigned char>>{{1, 0, 0, 1, 2, 2, 1, 0}, {1, 2, 2, 1, 0, 1, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0}}) {
+        for (const auto& contours : std::vector<std::vector<unsigned short>>{{7}, {2, 7}, {0, 3, 7}, {2, 1}}) {
+            const std::size_t events = CompareDecomposition(curve, tags, contours, 2, -3);
+            ++scenarios;
+            for (std::size_t stop = 0; stop < events; ++stop) {
+                for (const int error : {1, -17, 0x12345678, INT32_MIN}) {
+                    calls += CompareDecomposition(curve, tags, contours, 2, -3, stop, error);
+                    ++scenarios;
+                }
+            }
+        }
+    }
+    {
+        GuestVector points[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
+        FT_Vector nativePoints[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
+        GuestVector replacement[]{{107, 95}, {111, 113}, {117, 81}, {123, 129}};
+        FT_Vector nativeReplacement[]{{107, 95}, {111, 113}, {117, 81}, {123, 129}};
+        unsigned char tags[]{1, 1, 1, 1};
+        unsigned short contours[]{1, 3};
+        GuestOutline outline{2, 4, points, tags, contours, 0};
+        FT_Outline native{2, 4, nativePoints, tags, contours, 0};
+        ChangingDecomposition actual;
+        ChangingDecomposition expected;
+        actual.guest = {GuestChangingMove, nullptr, nullptr, nullptr, 1, -3};
+        expected.native = {NativeChangingMove, nullptr, nullptr, nullptr, 1, -3};
+        actual.outline = &outline;
+        actual.replacement = replacement;
+        expected.nativeOutline = &native;
+        expected.nativeReplacement = nativeReplacement;
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &actual.guest, &actual) == FT_Outline_Decompose(&native, &expected.native, &expected));
+        Require(actual.events.calls == expected.events.calls && actual.events.calls.size() == 6);
+    }
+    {
+        GuestVector point{7, -5};
+        unsigned char tag = 1;
+        unsigned short contour = 0;
+        GuestOutline outline{1, 1, &point, &tag, &contour, 0};
+        const GuestOutlineFuncs nullUser{NullUserMove, nullptr, nullptr, nullptr, 0, 0};
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &nullUser, nullptr) == -17);
+    }
+    {
+        GuestVector points[]{{0x10000000001ll, -0x10000000003ll}, {0x10000000005ll, -0x10000000007ll}, {0x10000000009ll, -0x1000000000Bll}};
+        unsigned char tags[]{1, 1, 1};
+        unsigned short contours[]{1};
+        GuestOutline outline{1, 2, points, tags, contours, 0};
+        auto functions = callbacks;
+        functions.shift = 2;
+        functions.delta = 0x100000000ll;
+        DecomposeEvents events;
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> expected{{1, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0},
+                                                            {2, 0x3FF00000014ll, -0x4010000001Cll, 0, 0, 0, 0},
+                                                            {2, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0}};
+        Require(events.calls == expected);
+        tags[0] = tags[1] = 0;
+        events.calls.clear();
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> conic{{1, 0x3FF0000000Cll, -0x40100000014ll, 0, 0, 0, 0},
+                                                         {3, 0x3FF00000004ll, -0x4010000000Cll, 0x3FF0000000Cll, -0x40100000014ll, 0, 0},
+                                                         {3, 0x3FF00000014ll, -0x4010000001Cll, 0x3FF0000000Cll, -0x40100000014ll, 0, 0}};
+        Require(events.calls == conic);
+        tags[0] = 1;
+        tags[1] = tags[2] = 2;
+        contours[0] = 2;
+        outline.n_points = 3;
+        events.calls.clear();
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> cubic{{1, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0},
+                                                         {4, 0x3FF00000014ll, -0x4010000001Cll, 0x3FF00000024ll, -0x4010000002Cll, 0x3FF00000004ll, -0x4010000000Cll}};
+        Require(events.calls == cubic);
+        contours[0] = 1;
+        outline.n_points = 2;
+        for (const int shift : {-1, 63, INT32_MAX}) {
+            functions.shift = shift;
+            Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: a shift"));
+        }
+        functions.shift = 62;
+        functions.delta = 0;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing coordinate scaling"));
+        functions.shift = 0;
+        functions.delta = INT64_MIN;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing coordinate translation"));
+        functions.delta = 0;
+        points[0] = {INT64_MAX, 0};
+        points[1] = {INT64_MAX, 0};
+        tags[0] = tags[1] = 0;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing midpoint"));
+    }
+    const auto font = SquareGlyphFont('A', 700);
+    GuestLibrary* library = nullptr;
+    FT_Library oracle = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Face native = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&oracle) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(oracle, font.data(), static_cast<FT_Long>(font.size()), 0, &native) == 0);
+    int rendered = 0;
+    for (const unsigned pixels : {8u, 16u, 31u, 100u}) {
+        Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, pixels) == FT_Set_Pixel_Sizes(native, 0, pixels));
+        for (const unsigned glyph : {0u, 1u}) {
+            Require(FT_Load_Glyph_nid_postfix(face, glyph, FT_LOAD_DEFAULT) == FT_Load_Glyph(native, glyph, FT_LOAD_DEFAULT));
+            DecomposeEvents actual;
+            DecomposeEvents expected;
+            Require(FT_Outline_Decompose_nid_postfix(&face->glyph->outline, &callbacks, &actual) == FT_Outline_Decompose(&native->glyph->outline, &nativeCallbacks, &expected));
+            Require(actual.calls == expected.calls);
+            SlotMatches(face->glyph, native->glyph);
+            Require(FT_Render_Glyph_nid_postfix(face->glyph, FT_RENDER_MODE_NORMAL) == FT_Render_Glyph(native->glyph, FT_RENDER_MODE_NORMAL));
+            SlotMatches(face->glyph, native->glyph);
+            ++rendered;
+        }
+    }
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
+    std::printf("FreeType outline decomposition: %d native comparisons, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
+}
+
 struct Finalizers {
     std::vector<int> calls;
 };
-
-extern "C" {
-int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(GuestFaceRec*, const char**, const char**, std::int32_t*);
-int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(GuestFaceRec*, std::uint8_t*);
-int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t*);
-}
 
 static std::vector<unsigned char> CidMetadataFont(bool keyed, const std::string& registry, const std::string& ordering,
                                                 int supplement, unsigned cid) {
@@ -624,7 +831,7 @@ static void CheckCidMetadata() {
         {CidMetadataFont(false, "Adobe", "Identity", 0, 41), 0, 0, 0, nullptr, nullptr, 1},
         {SquareGlyphFont('A', 700), -1, 0, 0, nullptr, nullptr, 1}}};
     for (const auto& fixture : fixtures) {
-        void* library = nullptr;
+        FreeType::GuestLibrary* library = nullptr;
         GuestFaceRec* face = nullptr;
         FT_Library nativeLibrary = nullptr;
         FT_Face native = nullptr;
@@ -696,6 +903,156 @@ static void SetFinalizers(FT_Face face, Finalizers& events) {
     face->size->generic = {&events, NativeSizeFinalizer};
 }
 
+static bool Equal(GuestVector a, GuestVector b) {
+    return a.x == b.x && a.y == b.y;
+}
+
+static bool Equal(const GuestOutline& a, const GuestOutline& b) {
+    return a.n_points == b.n_points && a.n_contours == b.n_contours && a.points == b.points &&
+           a.tags == b.tags && a.contours == b.contours && a.flags == b.flags;
+}
+
+static void CopyCase(std::uint16_t pointCount, std::uint16_t contourCount, int sourceFlags, int targetFlags, bool wide) {
+    const GuestVector guard{0x123456789ABCDEF, -0x123456789ABCDEF};
+    std::vector<GuestVector> points(pointCount + 2, guard), copied(pointCount + 2, guard);
+    std::vector<unsigned char> tags(pointCount + 2, 0xA5), copiedTags(pointCount + 2, 0x5A);
+    std::vector<std::uint16_t> contours(contourCount + 2, 0xABCD), copiedContours(contourCount + 2, 0xDCBA);
+    std::vector<FT_Vector> hostPoints(pointCount), hostCopied(pointCount);
+    std::vector<unsigned char> hostTags(pointCount), hostCopiedTags(pointCount);
+    std::vector<unsigned short> hostContours(contourCount), hostCopiedContours(contourCount);
+    for (unsigned index = 0; index < pointCount; ++index) {
+        const auto value = static_cast<std::int64_t>(index) * 65537 - 100000;
+        points[index + 1] = wide ? GuestVector{INT64_MIN + index,
+                                             INT64_MAX - index}
+                                : GuestVector{value / 4, -value / 4};
+        tags[index + 1] = static_cast<unsigned char>(index);
+        hostPoints[index] = {static_cast<FT_Pos>(points[index + 1].x), static_cast<FT_Pos>(points[index + 1].y)};
+        hostTags[index] = tags[index + 1];
+    }
+    for (unsigned index = 0; index < contourCount; ++index) {
+        contours[index + 1] = static_cast<std::uint16_t>(index);
+        hostContours[index] = contours[index + 1];
+    }
+    GuestOutline source{contourCount, pointCount, pointCount ? points.data() + 1 : nullptr,
+                        pointCount ? tags.data() + 1 : nullptr, contourCount ? contours.data() + 1 : nullptr, sourceFlags};
+    GuestOutline target{contourCount, pointCount, pointCount ? copied.data() + 1 : nullptr,
+                        pointCount ? copiedTags.data() + 1 : nullptr, contourCount ? copiedContours.data() + 1 : nullptr, targetFlags};
+    const auto originalSource = source;
+    auto expectedTarget = target;
+    const auto originalPoints = points;
+    const auto originalTags = tags;
+    const auto originalContours = contours;
+    FT_Outline hostSource{contourCount, pointCount, hostPoints.data(), hostTags.data(), hostContours.data(), sourceFlags};
+    FT_Outline hostTarget{contourCount, pointCount, hostCopied.data(), hostCopiedTags.data(), hostCopiedContours.data(), targetFlags};
+    Require(FT_Outline_Copy_nid_postfix(&source, &target) == FT_Outline_Copy(&hostSource, &hostTarget));
+    expectedTarget.flags = hostTarget.flags;
+    Require(Equal(source, originalSource) && Equal(target, expectedTarget));
+    Require(Equal(copied.front(), guard) && Equal(copied.back(), guard));
+    Require(copiedTags.front() == 0x5A && copiedTags.back() == 0x5A);
+    Require(copiedContours.front() == 0xDCBA && copiedContours.back() == 0xDCBA);
+    for (unsigned index = 0; index < pointCount; ++index) {
+        Require(Equal(copied[index + 1], originalPoints[index + 1]));
+        if (!wide) Require(copied[index + 1].x == hostCopied[index].x && copied[index + 1].y == hostCopied[index].y);
+        Require(copiedTags[index + 1] == hostCopiedTags[index]);
+    }
+    for (unsigned index = 0; index < contourCount; ++index) Require(copiedContours[index + 1] == hostCopiedContours[index]);
+    if (pointCount) {
+        target.points[0] = {321, -654};
+        target.tags[0] ^= 0xFF;
+    }
+    if (contourCount) target.contours[0] ^= 0xFFFF;
+    for (std::size_t index = 0; index < points.size(); ++index) Require(Equal(points[index], originalPoints[index]));
+    Require(tags == originalTags && contours == originalContours);
+}
+
+static void InvalidAndSelfCopies() {
+    GuestOutline source{1, 4, nullptr, nullptr, nullptr, 0x1234};
+    auto target = source;
+    Require(FT_Outline_Copy_nid_postfix(nullptr, nullptr) == FT_Outline_Copy(nullptr, nullptr));
+    Require(FT_Outline_Copy_nid_postfix(nullptr, &target) == FT_Err_Invalid_Outline);
+    Require(Equal(target, source));
+    Require(FT_Outline_Copy_nid_postfix(&source, nullptr) == FT_Err_Invalid_Outline);
+    Require(FT_Outline_Copy_nid_postfix(&source, &source) == 0);
+    for (const auto counts : std::array<std::array<std::uint16_t, 2>, 3>{{{1, 3}, {0, 4}, {0, 0}}}) {
+        target.n_contours = counts[0];
+        target.n_points = counts[1];
+        const auto before = target;
+        FT_Outline nativeSource{1, 4, nullptr, nullptr, nullptr, source.flags};
+        FT_Outline nativeTarget{target.n_contours, target.n_points, nullptr, nullptr, nullptr, target.flags};
+        Require(FT_Outline_Copy_nid_postfix(&source, &target) == FT_Outline_Copy(&nativeSource, &nativeTarget));
+        Require(Equal(target, before));
+    }
+}
+
+static void RenderCopy() {
+    const auto font = SquareGlyphFont('A', 700);
+    GuestLibrary* library = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 32) == 0 && FT_Set_Pixel_Sizes(nativeFace, 0, 32) == 0);
+    for (const int offset : {0, 37, -129}) {
+        Require(FT_Load_Char_nid_postfix(face, 'A', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) == 0);
+        Require(FT_Load_Char(nativeFace, 'A', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) == 0);
+        auto& target = face->glyph->outline;
+        std::vector<GuestVector> points(target.points, target.points + target.n_points);
+        std::vector<FT_Vector> nativePoints(nativeFace->glyph->outline.points,
+                                            nativeFace->glyph->outline.points + nativeFace->glyph->outline.n_points);
+        for (std::size_t index = 0; index < points.size(); ++index) {
+            points[index].x += offset + points[index].y / 4;
+            nativePoints[index].x += offset + nativePoints[index].y / 4;
+        }
+        auto source = target;
+        source.points = points.data();
+        source.flags ^= FT_OUTLINE_OWNER;
+        auto nativeSource = nativeFace->glyph->outline;
+        nativeSource.points = nativePoints.data();
+        nativeSource.flags ^= FT_OUTLINE_OWNER;
+        Require(FT_Outline_Copy_nid_postfix(&source, &target) == 0);
+        Require(FT_Outline_Copy(&nativeSource, &nativeFace->glyph->outline) == 0);
+        points[0] = {};
+        nativePoints[0] = {};
+        Require(FT_Render_Glyph_nid_postfix(face->glyph, FT_RENDER_MODE_NORMAL) == 0);
+        Require(FT_Render_Glyph(nativeFace->glyph, FT_RENDER_MODE_NORMAL) == 0);
+        const auto& actual = face->glyph->bitmap;
+        const auto& expected = nativeFace->glyph->bitmap;
+        Require(actual.rows > 0 && actual.width > 0);
+        Require(actual.rows == expected.rows && actual.width == expected.width && actual.pitch == expected.pitch);
+        Require(actual.pixel_mode == expected.pixel_mode && actual.num_grays == expected.num_grays);
+        Require(face->glyph->bitmap_left == nativeFace->glyph->bitmap_left && face->glyph->bitmap_top == nativeFace->glyph->bitmap_top);
+        const auto size = static_cast<std::size_t>(actual.rows) * std::abs(actual.pitch);
+        Require(std::memcmp(actual.buffer, expected.buffer, size) == 0);
+    }
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(nativeFace) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+}
+
+static void CheckOutlineCopies() {
+    InvalidAndSelfCopies();
+    for (const int sourceFlags : {0, FT_OUTLINE_OWNER, FT_OUTLINE_REVERSE_FILL, -1}) {
+        for (const int targetFlags : {0, FT_OUTLINE_OWNER, FT_OUTLINE_EVEN_ODD_FILL, -1}) {
+            CopyCase(0, 0, sourceFlags, targetFlags, false);
+            CopyCase(4, 2, sourceFlags, targetFlags, false);
+            CopyCase(4, 2, sourceFlags, targetFlags, true);
+        }
+    }
+    CopyCase(65535, 65535, FT_OUTLINE_REVERSE_FILL, FT_OUTLINE_OWNER, false);
+    CopyCase(65535, 65535, FT_OUTLINE_OWNER, 0, true);
+    std::mt19937 random(0xF7C0);
+    for (unsigned index = 0; index < 128; ++index) {
+        const auto count = static_cast<std::uint16_t>(random() % 256 + 1);
+        const auto contours = static_cast<std::uint16_t>(random() % (count + 1));
+        const auto sourceFlags = static_cast<std::int32_t>(random() & 0x7FFFFFFFu);
+        const auto targetFlags = static_cast<std::int32_t>(random() & 0x7FFFFFFFu);
+        CopyCase(count, contours, sourceFlags, targetFlags, false);
+    }
+    RenderCopy();
+    std::puts("FreeType outline copy: 178 copy cases, validation, self-copy and 3 rendered copies passed");
+}
+
 static void SetFinalizers(GuestFaceRec* face, Finalizers& events) {
     face->generic = {&events, GuestFaceFinalizer};
     face->glyph->generic = {&events, GuestSlotFinalizer};
@@ -706,7 +1063,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     FT_Library native = nullptr;
     FT_Face host = nullptr;
     FT_Face nativeOther = nullptr;
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     GuestFaceRec* other = nullptr;
     Require(FT_Init_FreeType(&native) == 0 && FT_Init_FreeType_nid_postfix(&library) == 0);
@@ -734,6 +1091,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
             std::memcpy(savedSlot.data(), face->glyph, savedSlot.size());
             std::memcpy(savedSize.data(), face->size, savedSize.size());
             FT_Set_Transform_nid_postfix(face, m < matrices.size() ? &input : nullptr, d < deltas.size() ? &delta : nullptr);
+
             FT_Set_Transform(host, m < matrices.size() ? &matrix : nullptr, d < deltas.size() ? &translation : nullptr);
             Require(std::memcmp(savedSlot.data(), face->glyph, savedSlot.size()) == 0);
             Require(std::memcmp(savedSize.data(), face->size, savedSize.size()) == 0);
@@ -785,6 +1143,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     rejectedDelta.x = std::numeric_limits<std::int64_t>::min();
     FT_Set_Transform_nid_postfix(nullptr, &rejected, &rejectedDelta);
     FT_Set_Transform_nid_postfix(nullptr, nullptr, nullptr);
+
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(native) == 0);
     std::printf("FT_Set_Transform: %zu native glyph and bitmap comparisons\n", comparisons);
 }
@@ -794,7 +1153,9 @@ int main() {
     std::filesystem::create_directories(root / "app0");
     CheckGasp();
     Trigonometry();
+    OutlineDecomposition();
     const std::vector<unsigned char> font = SquareGlyphFont('A', 700);
+    CheckOutlineCopies();
     {
         std::ofstream file(root / "app0" / "font.ttf", std::ios::binary);
         file.write(reinterpret_cast<const char*>(font.data()), static_cast<std::streamsize>(font.size()));
@@ -813,7 +1174,7 @@ int main() {
     Require(secondFace != 0);
 
     Require(FT_Init_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Argument);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&library) == 0 && library != nullptr);
     Require(FT_Done_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Library_Handle);
     Require(FT_Done_Face_nid_postfix(nullptr) == FT_Err_Invalid_Face_Handle);
@@ -1106,7 +1467,7 @@ int main() {
     SetFinalizers(memoryFace, guestSecondEvents);
     Require(FT_Done_FreeType(hostLibrary) == 0);
 
-    void* independent = nullptr;
+    FreeType::GuestLibrary* independent = nullptr;
     GuestFaceRec* independentFace = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&independent) == 0);
     Require(FT_New_Memory_Face_nid_postfix(independent, font.data(), fontSize, 0, &independentFace) == 0);
@@ -1118,7 +1479,7 @@ int main() {
     Require(FT_Get_Char_Index_nid_postfix(independentFace, 'A') == 1);
     Require(FT_Done_FreeType_nid_postfix(independent) == 0 && independentEvents.calls == nativeDone.calls);
 
-    void* empty = nullptr;
+    FreeType::GuestLibrary* empty = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&empty) == 0 && FT_Done_FreeType_nid_postfix(empty) == 0);
     CheckTransforms(font);
     std::filesystem::current_path(previous);

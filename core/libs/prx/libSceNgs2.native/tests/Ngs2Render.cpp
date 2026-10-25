@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <algorithm>
@@ -836,6 +837,7 @@ static bool SystemOptionThrows(const Ngs2SystemOption& option) {
     Ngs2ContextBufferInfo query{};
     try {
         sceNgs2SystemQueryBufferSize(&option, &query);
+
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -878,6 +880,7 @@ static void TestUserData() {
     bool threw = false;
     try {
         sceNgs2SystemGetUserData(system, nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -901,6 +904,7 @@ static void TestUserData() {
     threw = false;
     try {
         sceNgs2RackGetUserData(rack, nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1048,6 +1052,7 @@ static void TestStereoIntoSurround() {
     bool threw = false;
     try {
         sceNgs2SystemRender(system, info, 3);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

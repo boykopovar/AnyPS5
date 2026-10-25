@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -11,20 +12,7 @@
 #include <thread>
 
 extern "C" {
-using GuestRudpEventHandler = void(APS5_VABI*)(int, int, int, void*);
-struct GuestRudpPollEvent {
-    int ctxId;
-    std::uint16_t reqEvents;
-    std::uint16_t rtnEvents;
-};
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler, void*, int*);
-int APS5_VABI sceRudpTerminate(int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpPollCreate(std::size_t);
-int APS5_VABI sceRudpPollControl(int, int, int, std::uint16_t);
-int APS5_VABI sceRudpPollWait(int, GuestRudpPollEvent*, std::size_t, std::uint64_t);
-int APS5_VABI sceRudpPollDestroy(int);
+
 }
 
 static void Require(bool value) {
@@ -46,7 +34,7 @@ int main() {
     constexpr std::uint16_t write = 0x0002;
     constexpr std::uint64_t forever = std::numeric_limits<std::uint64_t>::max();
     alignas(16) static std::array<unsigned char, 0x10000> pool{};
-    std::array<GuestRudpPollEvent, 4> events{};
+    std::array<RudpPollEvent, 4> events{};
     const auto eventCount = static_cast<std::uint32_t>(events.size());
 
     Require(sceRudpPollCreate(1) == notInitialized);

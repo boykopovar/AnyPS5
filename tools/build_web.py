@@ -71,7 +71,8 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 names = {}
                 for file in files:
-                    if not file.filename.startswith("libs/") or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename:
+                    if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
+                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:

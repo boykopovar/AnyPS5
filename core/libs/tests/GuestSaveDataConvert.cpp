@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -9,14 +11,6 @@
 #include <string>
 #include <system_error>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSaveDataConvert(const SaveDataConvert*);
-int APS5_VABI sceSaveDataGetConvertProgress(float*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataGetEventResult(const void*, SaveDataEvent*);
-}
 
 namespace {
 

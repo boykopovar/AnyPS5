@@ -2513,7 +2513,7 @@ void ShaderResources::buildComplete() {
                         for (auto element = first; element < last; ++element) {
                             const auto index = binding.imageAllocations[element];
                             if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) images.push_back({samplers[index]->Handle(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
-                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         if (recorded) runs.emplace_back(write.dstArrayElement, write.descriptorCount);
@@ -4560,12 +4560,11 @@ std::uint64_t ShaderResources::DataWordsHash(const CompiledShader& shader) {
 bool ShaderResources::DataWordsDiffer(const CompiledShader& shader) const {
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
-    if (program.bindings.size() != bindings.size()) return true;
-    for (std::size_t index = 0; index < program.bindings.size(); ++index) {
-        const auto& binding = program.bindings[index];
+    for (const auto& binding : program.bindings) {
         if (!DataRole(binding.role)) continue;
-        if (bindings[index].allocations.size() != 1) return true;
-        const auto& allocation = allocations[bindings[index].allocations.front()];
+        const auto held = std::ranges::find_if(bindings, [&](const Binding& candidate) { return candidate.layout.binding == binding.binding; });
+        if (held == bindings.end() || held->allocations.size() != 1) return true;
+        const auto& allocation = allocations[held->allocations.front()];
         if (allocation.dataWords.size() != binding.guestDescriptor.size() || !std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), binding.guestDescriptor.begin())) return true;
     }
     return false;
@@ -4580,23 +4579,23 @@ bool ShaderResources::RefreshData(VkCommandBuffer commands, const CompiledShader
 bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader& shader, Recorder* recorder) {
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
-    Require(program.bindings.size() == bindings.size(), "template bindings disagree with the shader");
     bool recorded = false;
     // One [gputime] range of class TemplateDataRefresh around the updates, begun at the first one
     // (a refresh that finds every word equal records nothing and times nothing).
     auto timing = Recorder::NoTiming;
     std::uint64_t refreshedBytes = 0;
-    for (std::size_t index = 0; index < program.bindings.size(); ++index) {
-        const auto& binding = program.bindings[index];
+    for (const auto& binding : program.bindings) {
         if (!DataRole(binding.role)) continue;
-        Require(bindings[index].allocations.size() == 1, "data binding without its buffer");
-        auto& allocation = allocations[bindings[index].allocations.front()];
+        const auto held = std::ranges::find_if(bindings, [&](const Binding& candidate) { return candidate.layout.binding == binding.binding; });
+        Require(held != bindings.end(), "template bindings disagree with the shader");
+        Require(held->allocations.size() == 1, "data binding without its buffer");
+        auto& allocation = allocations[held->allocations.front()];
         const auto size = binding.guestDescriptor.size() * sizeof(std::uint32_t);
         Require(allocation.buffer != nullptr && !allocation.guest && allocation.size == size && size <= MaxRefreshBytes, "template data buffer cannot take the dispatch's words");
         if (allocation.dataWords.size() == binding.guestDescriptor.size() && std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), binding.guestDescriptor.begin())) continue;
         if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, binding.guestDescriptor);
         if (recorder != nullptr && timing == Recorder::NoTiming) timing = recorder->BeginGpuTiming(Recorder::CommandClass::TemplateDataRefresh);
-        writeDataWords(commands, bindings[index].allocations.front(), binding.guestDescriptor);
+        writeDataWords(commands, held->allocations.front(), binding.guestDescriptor);
         allocation.dataWords.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
         refreshedBytes += size;
         recorded = true;
@@ -5298,7 +5297,7 @@ void ShaderResources::resolveImageTables() {
                 storageLayers.push_back(StorageLayerWindow(storageTextures.back().get(), resource));
                 storageWritten.push_back(true);
                 storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
-                storageAtomic64.push_back(false);
+                storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
                 describedRanges.push_back({"storage", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress, true});
                 bindings[storageBinding].imageAllocations[absolute] = storageTextures.size() - 1u;
                 continue;

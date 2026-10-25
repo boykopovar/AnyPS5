@@ -105,6 +105,20 @@ class WebReleaseTests(unittest.TestCase):
         self.assertTrue((self.output / ".nojekyll").is_file())
         self.assertEqual(self.requests.count(LATEST), 1)
 
+    def test_rewritten_library_paths_preserve_the_previous_site(self):
+        invalid = zipped([("libs/libkernel.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libkernel.prx!ignored", b"libs/libkernel.prx\0ignored")
+        for platform in ("windows", "linux"):
+            with self.subTest(platform=platform):
+                self.requests.clear()
+                name = f"prx-{platform}-v1.zip"
+                original = self.responses["https://example.test/" + name]
+                self.set_asset(name, invalid)
+                try:
+                    self.assert_rejected("Invalid library archive layout")
+                finally:
+                    self.set_asset(name, original)
+
     def test_libraries_flag_also_replaces_an_incompatible_local_converter(self):
         self.seed_previous()
         source = self.root / "source/demo/web"

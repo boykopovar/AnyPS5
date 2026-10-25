@@ -277,6 +277,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
         snd = readCStr(fst);
+        if (snd.empty() || snd.find_first_of("\\:$\r\n") != std::string::npos)
+            throw RelinkerException("Invalid dependency: " + snd, dynStrTabOffset + fst);
         neededLibraries.push_back(snd);
     }
 
@@ -434,13 +436,42 @@ RelinkResult RelinkerPipeline::Relink() {
             std::memcpy(&sourceName, symbol, sizeof(sourceName));
             auto name = readCStr(sourceName);
             name.resize(name.find('#') == std::string::npos ? name.size() : name.find('#'));
+            const FileByteOffset entryOffset = dynSymTabOffset + off;
+            const auto type = symbol[4] & 15;
+            std::uint64_t value = 0;
+            std::uint64_t size = 0;
+            std::memcpy(&value, symbol + 8, sizeof(value));
+            std::memcpy(&size, symbol + 16, sizeof(size));
+            if (type == STT_TLS) {
+                if (section >= SHN_LORESERVE)
+                    throw RelinkerException("Unsupported executable TLS export section: " + name, entryOffset);
+                const auto tls = std::find_if(programHeaders.begin(), programHeaders.end(),
+                                              [](const ProgramHeader& ph) { return ph.Type == PT_TLS; });
+                if (tls == programHeaders.end())
+                    throw RelinkerException("Executable TLS export has no PT_TLS segment: " + name, entryOffset);
+                if (value > tls->MemorySize || size > tls->MemorySize - value)
+                    throw RelinkerException("Executable TLS export exceeds PT_TLS: " + name, entryOffset);
+            } else if (section != SHN_ABS) {
+                if (section >= SHN_LORESERVE)
+                    throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
+                const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
+                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
+                    return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
+                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                });
+                if (!mapped) {
+                    std::ostringstream message;
+                    message << "Executable export " << name << " at 0x" << std::hex << value
+                            << (size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : " is not inside ")
+                            << (flags != 0 ? "an executable" : "a") << " PT_LOAD segment";
+                    throw RelinkerException(message.str(), entryOffset);
+                }
+            }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && (symbol[4] & 15) == STT_FUNC) {
-                VirtualAddress address = 0;
-                std::memcpy(&address, symbol + 8, sizeof(address));
-                exportedFunctions.push_back(address);
-            }
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+                exportedFunctions.push_back(value);
         }
     }
 

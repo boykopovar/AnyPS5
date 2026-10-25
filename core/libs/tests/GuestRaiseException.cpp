@@ -1,3 +1,8 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -13,33 +18,6 @@
 #include <windows.h>
 #endif
 
-extern "C" {
-int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler);
-int APS5_VABI sceKernelRemoveExceptionHandler(int signum);
-int APS5_VABI sceKernelRaiseException(Pthread thread, int signum);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt);
-int APS5_VABI sceKernelDeleteSema(KernelSema sem);
-int APS5_VABI sceKernelSignalSema(KernelSema sem, int count);
-int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
-int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int SIGUSR1 = 30;
 static constexpr int Repeats = 50;
 static constexpr std::size_t R12Offset = 0xa0;
@@ -579,6 +557,7 @@ int main() {
     bool rejected = false;
     try {
         sceKernelRaiseException(scePthreadSelf(), SIGUSR1);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -687,6 +666,7 @@ int main() {
     bool refused = false;
     try {
         sceKernelRaiseException(loopingThread, SIGUSR1);
+
     } catch (const std::runtime_error&) {
         refused = true;
     }

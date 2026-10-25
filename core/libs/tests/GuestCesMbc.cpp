@@ -1,29 +1,8 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
-void* APS5_VABI sceCesUcsProfileInitGbkCp936(void*);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-int APS5_VABI sceCesMbcsUcsContextInitCopy(void*, const void*);
-int APS5_VABI sceCesMbcsStrToUtf8Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesMbcToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf16(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf16le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf32be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcToUtf32le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesSJisGetCode(const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesSJisPutCode(std::uint16_t, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSJisCodeToJisX0213(std::uint16_t, std::uint8_t*, std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesJisX0213ToSJisCode(std::uint8_t, std::uint8_t, std::uint8_t, std::uint16_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

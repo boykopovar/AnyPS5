@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -18,23 +19,6 @@
 #define __builtin_sysv_va_start va_start
 #define __builtin_sysv_va_end va_end
 #endif
-
-extern "C" {
-int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
-int APS5_VABI sprintf_nid_postfix(char*, const char*, ...);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI libc_printf_nid_postfix(const char*, ...);
-int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
-int APS5_VABI vsnprintf_nid_postfix(char*, size_t, const char*, VaList*);
-int APS5_VABI vsnprintf_s_nid_postfix(char*, size_t, const char*, VaList*);
-int APS5_VABI snprintf_s_nid_postfix(char*, size_t, const char*, ...);
-int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, VaList*);
-int APS5_VABI vsscanf_nid_postfix(const char*, const char*, VaList*);
-int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
-int APS5_VABI asprintf_nid_postfix(char**, const char*, ...);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition) {
     if (!condition) throw std::runtime_error("Formatting check failed");
@@ -209,19 +193,24 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, "Mount requested: 0") == 0);
     for (int index = 0; index < 10000; ++index) {
         snprintf_nid_postfix(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %d", 1, 2, 3, 4, 5, 6, 7, 8);
+
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 8") == 0);
         FormatList(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %d", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11);
         Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11") == 0);
         snprintf_nid_postfix(buffer, sizeof(buffer), "%ld %lu %lld %zu %td %jd", -4294967297LL, 4294967297ULL, -5LL, 7ULL, -8LL, 9LL);
+
         Require(std::strcmp(buffer, "-4294967297 4294967297 -5 7 -8 9") == 0);
         snprintf_nid_postfix(buffer, sizeof(buffer), "%s:%*.*f:%d", "test", -8, 2, 1.25, 7);
+
         Require(std::strcmp(buffer, "test:1.25    :7") == 0);
         FormatList(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %.3Lf %.1f", 1, 2, 3, 4, 5, 6, 7, 1.125L, 2.5);
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 1.125 2.5") == 0);
     }
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10.);
+
     Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.3Lf %d %.1f", 1.125L, 7, 2.5);
+
     Require(std::strcmp(buffer, "1.125 7 2.5") == 0);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%'d|%'u|%'.2f|%'-8ld|%'+05d|%'g", 1234567, 4000000000u, 1234567.891, 1234567LL, 42, 1e6) == 50);
     Require(std::strcmp(buffer, "1234567|4000000000|1234567.89|1234567 |+0042|1e+06") == 0);
@@ -245,6 +234,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     std::snprintf(expected, sizeof(expected), "%#08x %.3e %a %g %llx", 42u, 1.25, 1.25, 1.25,
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(buffer)));
     snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
+
     Require(std::strcmp(buffer, expected) == 0);
     char pointers[128];
     const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
@@ -265,6 +255,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p", address(0xffffffffffffffffull)) == 16 &&
         std::strcmp(pointers, "ffffffffffffffff") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
+
     Require(std::strcmp(buffer, "unlimited") == 0);
     buffer[5] = '!';
     Require(snprintf_nid_postfix(buffer, 5, "%s", "abcdef") == 6);
@@ -411,6 +402,7 @@ static void CheckAllocatingFormat() {
     char* allocated = nullptr;
     Require(asprintf_nid_postfix(&allocated, "%ls:%S:%lc:%d", u"\u00e9", u"ab", 0x20ac, 7) == 11 && std::strcmp(allocated, "\xc3\xa9:ab:\xe2\x82\xac:7") == 0);
     free_nid_postfix(allocated);
+
 }
 
 int main() { CheckSizeLimits(); RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

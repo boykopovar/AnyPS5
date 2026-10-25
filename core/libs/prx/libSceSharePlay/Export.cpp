@@ -1,3 +1,4 @@
+#include "prx/libSceSharePlay/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <mutex>

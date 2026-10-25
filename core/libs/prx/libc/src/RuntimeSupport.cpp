@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -165,10 +166,12 @@ void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
 
 void APS5_VABI flockfile_nid_postfix(FileStream* stream) {
     _Lockfilelock_nid_postfix(stream);
+
 }
 
 void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
     _Unlockfilelock_nid_postfix(stream);
+
 }
 
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {

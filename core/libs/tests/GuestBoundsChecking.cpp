@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -8,19 +9,8 @@
 #include <fstream>
 #include <string>
 
-using GuestContextCompare = int (APS5_VABI*)(const void*, const void*, void*);
-
 extern "C" {
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
-void* APS5_VABI bsearch_s_nid_postfix(const void*, const void*, std::size_t, std::size_t, GuestContextCompare, void*);
-std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t*, std::size_t*, const std::uint16_t*, std::uint16_t**);
-int APS5_VABI wctomb_s_nid_postfix(int*, char*, std::size_t, std::uint16_t);
-int APS5_VABI wcrtomb_s_nid_postfix(std::size_t*, char*, std::size_t, std::uint16_t, void*);
-int APS5_VABI mbstowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char*, std::size_t);
-int APS5_VABI mbsrtowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char**, std::size_t, void*);
-char* APS5_VABI gets_s_nid_postfix(char*, std::size_t);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
+
 extern FileStream* __stdinp_nid_postfix;
 }
 
@@ -238,6 +228,7 @@ void CheckGets(const char* path) {
     RequireViolation(before, "gets_s: bad argument", 22);
     __stdinp_nid_postfix = saved;
     fclose_nid_postfix(stream);
+
     std::remove(path);
 }
 
@@ -246,6 +237,7 @@ void CheckGets(const char* path) {
 int main(int argc, char** argv) {
     Require(argc > 1, "usage: guest_bounds_checking_tests <scratch file>");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordConstraint));
+
     CheckBsearch();
     CheckWcstok();
     CheckWideToMultibyte();

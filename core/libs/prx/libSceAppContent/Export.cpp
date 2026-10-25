@@ -1,3 +1,4 @@
+#include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -25,11 +26,6 @@ static constexpr int32_t SKU_FLAG_FULL = 3;
 static constexpr char TEMPORARY_MOUNT_POINT[] = "/temp0";
 static constexpr char DOWNLOAD_MOUNT_POINT[] = "/download0";
 static constexpr uint32_t TEMPORARY_DATA_OPTION_FORMAT = 1;
-
-struct AppContentAddcontInfo {
-    NpUnifiedEntitlementLabel entitlement_label;
-    uint32_t status;
-};
 
 namespace {
 
@@ -208,7 +204,6 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
     state.mounted = false;
     return 0;
 }
-
 
 int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
