@@ -104,7 +104,7 @@ extern "C" {
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
-int APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* expression, const char* function);
 void APS5_VABI libc___cxa_finalize(void* dsoHandle);
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit);
 char* APS5_VABI strdup_nid_postfix(const char* source);

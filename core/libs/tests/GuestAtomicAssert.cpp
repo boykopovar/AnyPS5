@@ -1,4 +1,4 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/libc.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <string>
@@ -7,10 +7,6 @@
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
-
-extern "C" {
-[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char*, const char*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
