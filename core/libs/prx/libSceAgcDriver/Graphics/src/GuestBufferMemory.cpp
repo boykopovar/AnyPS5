@@ -4573,10 +4573,11 @@ VkBufferUsageFlags gpuCopyUsage(const Context& context, bool addressable) {
 // (resolveOverlays), and AddressRanges cuts the import's range around it so that its pointers reach
 // the shadow as its descriptor does. The
 // shadow is per use, not resident: a reused build records its copy-in anew (RecordStagingCopies).
-// Accepted trade-off, as for the misaligned copies above: a CPU write into a staged range between
-// the copy-in and the copy-back is rolled back by the copy-back (the whole written element range,
-// since store extents are not known), for the batch's latency; the staging window keeps the
-// exposure to the elements named on the [buffers] staging line and APS5_TRACE_STAGING.
+// Accepted trade-off, as for the misaligned copies above: the copy-back stores only the bytes the
+// shader changed where the import still holds the copy-in (RecordChangedCopy), but a CPU write
+// between the copy-in and the copy-back is rolled back at the unaligned ends of a range, in a region
+// that is not 4-byte aligned and without a shadow copy; the staging window keeps the exposure to
+// the elements named on the [buffers] staging line and APS5_TRACE_STAGING.
 // APS5_NO_WRITTEN_SHADOW=1 and APS5_NO_ATOMIC_STAGING=1 bind those elements in place as before;
 // APS5_WRITTEN_SHADOW_MIN_KIB / APS5_WRITTEN_SHADOW_MAX_KIB (16 / 2048, 8192 on a discrete GPU) bound
 // the written window: on an integrated GPU a kernel streaming once through a large buffer (the
@@ -5489,7 +5490,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
                         recorder.OnComplete([counter, alignedFrom, alignedTo, regionBegin = region.begin, regionEnd = region.end] {
                             std::uint32_t diverged = 0;
                             std::memcpy(&diverged, counter->Bytes().data(), sizeof(diverged));
-                            if (diverged != 0) std::fprintf(stderr, "[copy-back] 0x%llx+0x%llx (region 0x%llx+0x%llx): %u dwords the shader left at the copy-in value while the import changed\n", static_cast<unsigned long long>(alignedFrom), static_cast<unsigned long long>(alignedTo - alignedFrom), static_cast<unsigned long long>(regionBegin), static_cast<unsigned long long>(regionEnd - regionBegin), diverged);
+                            if (diverged != 0) std::fprintf(stderr, "[copy-back] 0x%llx+0x%llx (region 0x%llx+0x%llx): %u dwords where the shader and the CPU changed the same bytes; the CPU's bytes were kept\n", static_cast<unsigned long long>(alignedFrom), static_cast<unsigned long long>(alignedTo - alignedFrom), static_cast<unsigned long long>(regionBegin), static_cast<unsigned long long>(regionEnd - regionBegin), diverged);
                         });
                     }
                     if (from < alignedFrom) CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, region.copySource, from - region.copySourceBase, alignedFrom - from);
