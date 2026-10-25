@@ -1,3 +1,4 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -55,4 +56,7 @@ int APS5_VABI sceVideodec2GetHevcPictureInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceVideodec2InitLibrary() {
+    NotImplemented_nid_no_patch(__func__);
+}
 }

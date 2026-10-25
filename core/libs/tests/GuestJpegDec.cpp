@@ -1,3 +1,4 @@
+#include "prx/libSceJpegDec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
@@ -24,14 +25,6 @@ static_assert(offsetof(JpegDecImageInfo, color_space) == 0x8 && offsetof(JpegDec
 static_assert(offsetof(JpegDecImageInfo, component_id) == 0xC && offsetof(JpegDecImageInfo, sampling_factor) == 0x10);
 static_assert(offsetof(JpegDecImageInfo, coefficient_mem_size) == 0x14 && offsetof(JpegDecImageInfo, suitable_csc_attribute) == 0x18);
 static_assert(offsetof(JpegDecImageInfo, output_image_width) == 0x1C && offsetof(JpegDecImageInfo, output_image_height) == 0x20);
-
-extern "C" {
-std::int32_t APS5_VABI sceJpegDecQueryMemorySize(const JpegDecCreateParam*);
-std::int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI sceJpegDecDelete(void*);
-std::int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam*, JpegDecImageInfo*);
-std::int32_t APS5_VABI sceJpegDecDecode(void*, const JpegDecDecodeParam*, JpegDecImageInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

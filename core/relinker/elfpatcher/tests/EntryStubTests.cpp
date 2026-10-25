@@ -118,6 +118,23 @@ void windowsStubRejectsAnOverlongAllocatorPath() {
     throw std::runtime_error("an allocator path past the startup buffer was accepted");
 }
 
+void windowsLibSceAmprObjectImportsFallBackToTheLibcProvider() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const std::vector<std::string> libraries{"libSceAmpr.prx", "libc.prx"};
+    const std::vector<PeImport> amprImport{{.Name = "-mLzBSk-VGs", .TargetRva = 0x2000, .Addend = 0, .Library = "libSceAmpr.prx"}};
+    const auto amprStub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, libraries, amprImport, "$ORIGIN/libs", false, false);
+    const std::vector<std::uint8_t> fallbackOrder{0, 0, 0, 0, 1, 0, 0, 0};
+    require(std::search(amprStub.Data.Data.begin(), amprStub.Data.Data.end(), fallbackOrder.begin(), fallbackOrder.end()) != amprStub.Data.Data.end(),
+            "a libSceAmpr-qualified locale object import does not fall back to libc");
+
+    const std::vector<PeImport> libcImport{{.Name = "-mLzBSk-VGs", .TargetRva = 0x2000, .Addend = 0, .Library = "libc.prx"}};
+    const auto libcStub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, libraries, libcImport, "$ORIGIN/libs", false, false);
+    const std::vector<std::uint8_t> libcOrder{1, 0, 0, 0};
+    require(std::search(libcStub.Data.Data.begin(), libcStub.Data.Data.end(), libcOrder.begin(), libcOrder.end()) != libcStub.Data.Data.end(),
+            "a libc-qualified locale object import does not resolve through libc");
+}
+
 void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() {
     using namespace Elfpatcher::Windows;
     const auto nativeImports = WindowsImportBuilder().Build(0x1000);
@@ -153,6 +170,7 @@ int main() {
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorOnRequest("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubRejectsAnOverlongAllocatorPath();
+        windowsLibSceAmprObjectImportsFallBackToTheLibcProvider();
         windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
         windowsKernelVariantDependenciesLoadCanonicalKernel();
     } catch (const std::exception& error) {

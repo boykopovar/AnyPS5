@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstddef>

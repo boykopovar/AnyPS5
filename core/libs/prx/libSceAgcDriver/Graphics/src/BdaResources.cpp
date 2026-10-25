@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -43,7 +44,7 @@ struct TableEntry {
 };
 
 struct TableCache {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     std::list<TableEntry> entries;
     std::uint64_t hits = 0;
@@ -282,6 +283,10 @@ void BdaResources::CheckFault() const {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
         throw std::runtime_error(message.str());
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::WindowLaneSpill) {
+        message << "shader stage " << report.stage << ": a relative write stored " << report.bytes << " in lane " << (report.address >> 32u) << " of vector window slot " << (report.address & 0xffffffffu) << ", which holds a scalar spilled with v_writelane_b32 that a later v_readlane_b32 was replaced with";
+        throw std::runtime_error(message.str());
+    }
     message << "BDA access failed: address=0x" << std::hex << report.address << " instruction=0x" << report.instruction << std::dec << " bytes=" << report.bytes << " stage=" << report.stage << " reason=" << static_cast<std::uint32_t>(report.reason);
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Permission && table != nullptr) {
         const auto bytes = table->Bytes();
@@ -347,7 +352,7 @@ void BdaResources::markWrittenPages() const {
                 Require(false, message.str());
             }
         }
-        GuestMemory::MarkWritten(begin, bytes);
+        GuestMemory::MarkPossiblyWritten(begin, bytes);
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];

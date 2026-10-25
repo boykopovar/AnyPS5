@@ -1,24 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -104,6 +92,8 @@ static void BadDescriptors() {
 #ifdef _WIN32
     const auto previous = _set_invalid_parameter_handler(RecordInvalidParameter);
 #endif
+    Require(dup2_nid_postfix(pipe[0], closed) == closed);
+    Require(close_nid_postfix(closed) == 0);
     RequireFailure(close_nid_postfix(closed), GuestEbadf);
     RequireFailure(close_nid_postfix(-1), GuestEbadf);
 #ifdef _WIN32
@@ -190,6 +180,7 @@ static void DuplicatesShareStatusFlags() {
     constexpr int SetDescriptorFlags = 2;
     constexpr int GetFlags = 3;
     constexpr int SetFlags = 4;
+    constexpr int ReadWrite = 2;
     constexpr int NonBlocking = 4;
     constexpr int GuestEagain = 35;
     int pipe[2];
@@ -197,18 +188,20 @@ static void DuplicatesShareStatusFlags() {
     Require(pipe_nid_postfix(pipe) == 0);
     Require(pipe_nid_postfix(other) == 0);
     Require(fcntl_nid_postfix(pipe[0], SetDescriptorFlags, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fcntl_nid_postfix(pipe[0], 0, INT_MAX) == -1 && *__error_nid_postfix() == 22);
     const int duplicate = dup_nid_postfix(pipe[0]);
     Require(duplicate >= 0);
     Require(fcntl_nid_postfix(duplicate, GetDescriptorFlags) == 0);
     Require(fcntl_nid_postfix(duplicate, SetFlags, NonBlocking) == 0);
-    Require(fcntl_nid_postfix(pipe[0], GetFlags) == NonBlocking);
+    Require(fcntl_nid_postfix(pipe[0], GetFlags) == (ReadWrite | NonBlocking));
     Require(dup2_nid_postfix(pipe[0], other[0]) == other[0]);
     Require(fcntl_nid_postfix(other[0], GetDescriptorFlags) == 0);
-    Require(fcntl_nid_postfix(other[0], GetFlags) == NonBlocking);
+    Require(fcntl_nid_postfix(other[0], GetFlags) == (ReadWrite | NonBlocking));
     char buffer[4] = {};
     RequireFailure(static_cast<int>(read_nid_postfix(other[0], buffer, sizeof(buffer))), GuestEagain);
     Require(fcntl_nid_postfix(pipe[0], SetFlags, 0) == 0);
-    Require(fcntl_nid_postfix(duplicate, GetFlags) == 0);
+    Require(fcntl_nid_postfix(duplicate, GetFlags) == ReadWrite);
     Require(fcntl_nid_postfix(pipe[0], GetDescriptorFlags) == 1);
     for (const int descriptor : {pipe[0], pipe[1], other[0], other[1], duplicate}) Require(close_nid_postfix(descriptor) == 0);
 }

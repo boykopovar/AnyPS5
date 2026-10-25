@@ -166,7 +166,7 @@ def markdown(report):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Compare two aps5-summary.jsonl captures. "
                                      "Reports numerical differences, not statistical significance or an automatic pass/fail verdict.")
     parser.add_argument("baseline", type=Path, help="Baseline summary JSONL file")

@@ -26,7 +26,7 @@ private:
     static std::shared_ptr<const SrtTape> Compile(const IrResourcePlan& plan);
     enum class Op : std::uint8_t {
         Fail, Const, UserData, ShaderBase, Read, ReadConstBuffer, ExtractHalf, AddCarry, ConstructU64,
-        ConvertF32U32, ConvertU32F32, FPMul32, FPTrunc32, FPIsNan32, FPOrdLessThanEqual32, FPOrdGreaterThanEqual32,
+        ConvertF32U32, ConvertU32F32, FPMul32, FPTrunc32, FPIsNan32, FPOrdLessThanEqual32, FPOrdGreaterThanEqual32, FPUnordLessThanEqual32, FPUnordGreaterThanEqual32,
         IAdd32, IAdd64, ISub32, ISub64, IMul32, IMul64, SMin32, UMin32, BitwiseAnd32, BitwiseAnd64, BitwiseOr32, BitwiseXor32, BitwiseNot32,
         ShiftLeftLogical32, ShiftLeftLogical64, ShiftRightLogical32, ShiftRightLogical64, ShiftRightArithmetic32, ShiftRightArithmetic64,
         BitFieldUExtract, BitFieldSExtract, BitFieldInsert, Select, IEqual32, INotEqual32, SLessThan32, ULessThan32, UGreaterThan32,

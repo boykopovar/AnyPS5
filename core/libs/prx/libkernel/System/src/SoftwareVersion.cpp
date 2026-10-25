@@ -1,14 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
-struct SceKernelProsperoSystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
 
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, size) == 0x00);
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, versionString) == 0x08);

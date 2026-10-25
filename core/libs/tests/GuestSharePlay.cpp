@@ -1,3 +1,4 @@
+#include "prx/libSceSharePlay/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -5,13 +6,6 @@
 #include <cstring>
 #include <exception>
 #include <span>
-
-extern "C" {
-int APS5_VABI sceSharePlayInitialize(void*, std::size_t);
-int APS5_VABI sceSharePlayTerminate(void);
-int APS5_VABI sceSharePlayGetCurrentConnectionInfoA(SharePlayConnectionInfoA*);
-int APS5_VABI sceSharePlayProhibitController(std::uint8_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -50,8 +44,8 @@ int main() {
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(0) == 0);
-    Require(Throws([] { sceSharePlayProhibitController(2); }));
-    Require(Throws([] { sceSharePlayProhibitController(255); }));
+    Require(sceSharePlayProhibitController(2) == invalidArgument);
+    Require(sceSharePlayProhibitController(255) == invalidArgument);
     Require(sceSharePlayTerminate() == 0);
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == notInitialized);

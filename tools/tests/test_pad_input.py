@@ -85,6 +85,22 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(1000, "touch-left"), [1000, 0x200000, 300])
         self.assertEqual(self.queue(1000, "touch-right"), [1001, 0x400000, 300])
 
+    def test_joined_buttons_are_pressed_together(self):
+        self.assertEqual(self.queue(1000, "l1+r1"), [1000, 0x400 | 0x800, 300])
+        self.assertEqual(self.queue(1000, "cross+square+up", "--hold-ms", "40"), [1001, 0x4000 | 0x8000 | 0x10, 40])
+
+    def test_invalid_joined_buttons_report_error_and_preserve_command(self):
+        original = "2000 16384 300\n"
+        for button in ["l1+nothing", "l1+release", "l1+l1", "l1+", "+r1"]:
+            with self.subTest(button=button):
+                self.path.write_text(original, encoding="utf-8")
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    self.queue(1000, button)
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("invalid button", errors.getvalue())
+                self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+
     def test_valid_stick_command_and_unsigned_tokens_preserve_sequence(self):
         self.path.write_text("+2000 +16384 +300 +0 +255 +128 +128\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "release"), [2001, 0, 300])

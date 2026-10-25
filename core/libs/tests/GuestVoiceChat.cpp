@@ -1,3 +1,4 @@
+#include "prx/libSceVoiceChat/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -5,22 +6,9 @@
 #include <cstdlib>
 
 extern "C" {
-int APS5_VABI sceVoiceChatInitialize(void* param);
-int APS5_VABI sceVoiceChatTerminate(void);
-int APS5_VABI sceVoiceChatRegisterHandlers(void* a);
-int APS5_VABI sceVoiceChatRegisterMicEventHandler(void* a, void* b);
-int APS5_VABI sceVoiceChatRegisterChannelEventHandler(void* a, void* b);
-int APS5_VABI sceVoiceChatUnregisterMicEventHandler(void* a);
-int APS5_VABI sceVoiceChatProcessEvent(void);
-int APS5_VABI sceVoiceChatStartChannelEvent(void* a);
-int APS5_VABI sceVoiceChatStopChannelEvent(void* a);
-int APS5_VABI sceVoiceChatGetMicState(int32_t* state);
-int APS5_VABI sceVoiceChatGetUserVoiceVolumeGain(void* a, int32_t* gain);
-int APS5_VABI sceVoiceChatSetUserVoiceVolumeGain(void* a, int32_t gain);
-int APS5_VABI sceVoiceChatGetActiveChannel(void* channel);
-int APS5_VABI sceVoiceChatCreateRequest(void* a, void* b);
+
 int APS5_VABI sceVoiceChatRequestAcsTts(int requestId, void* a, void* b);
-int APS5_VABI sceVoiceChatAbortRequest(int requestId);
+
 }
 
 static void Require(bool value, const char* what) {

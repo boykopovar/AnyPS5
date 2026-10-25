@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -32,10 +33,14 @@ alignas(256) constexpr std::array<std::uint32_t, 64> HoistedCaller{
     0x7e020280u, 0xf4080400u, 0xfa000000u, 0xbf8cc07fu, 0xbf068203u, 0xbf850001u, 0x7e020280u, 0x8f148402u,
     0xf4280208u, 0x28000000u, 0xbf8cc07fu, 0xbe8e0308u, 0xbe8f0309u, 0xbf068103u, 0xbe8e210eu, 0x34040082u,
     0xe0701000u, 0x80010102u, 0xbf810000u, 0xbf9f0000u, 0x30306c73u, 0x00000040u, 0x00000008u};
+alignas(256) constexpr std::array<std::uint32_t, 64> SliceCaller{
+    0x7e020280u, 0xf40c0600u, 0xfa000010u, 0x8f148402u, 0xbf8cc07fu, 0xf428020eu, 0x28000000u, 0xbf8cc07fu,
+    0xbe8e0308u, 0xbe8f0309u, 0xbf068103u, 0xbe8e210eu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u,
+    0xbf9f0000u, 0x30306c73u, 0x00000040u, 0x00000008u};
 alignas(256) constexpr std::array<std::uint32_t, 3> SelectSixteen{0x85159091u, 0x7e020215u, 0xbe80200eu};
 alignas(256) constexpr std::array<std::uint32_t, 3> SelectThirtyTwo{0x8515a0a1u, 0x7e020215u, 0xbe80200eu};
 alignas(16) std::array<std::uint32_t, 8> Table{};
-alignas(16) std::array<std::uint32_t, 4> Descriptors{};
+alignas(16) std::array<std::uint32_t, 12> Descriptors{};
 alignas(256) std::array<std::uint32_t, Threads> Output{};
 
 void Fill() {
@@ -43,7 +48,10 @@ void Fill() {
     const auto second = reinterpret_cast<std::uintptr_t>(SelectThirtyTwo.data());
     Table = {static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), 0u, 0u, static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u), 0u, 0u};
     const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
-    Descriptors = {static_cast<std::uint32_t>(table), static_cast<std::uint32_t>((table >> 32u) & 0xffffu) | (16u << 16u), 2u, 0x31016facu};
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>((table >> 32u) & 0xffffu) | (16u << 16u), 2u, 0x31016facu};
+    Descriptors = {};
+    std::copy(descriptor.begin(), descriptor.end(), Descriptors.begin());
+    std::copy(descriptor.begin(), descriptor.end(), Descriptors.begin() + 8);
 }
 
 std::array<std::uint32_t, 8> UserData(std::uint32_t index, bool scc) {
@@ -149,6 +157,8 @@ int main() {
             Check(1u, true, wave32, 33u, "the second record's callee with SCC 1");
             Check(0u, false, wave32, 16u, "the first record's callee through a descriptor loaded before a branch", HoistedCaller.data());
             Check(1u, true, wave32, 33u, "the second record's callee through a descriptor loaded before a branch", HoistedCaller.data());
+            Check(0u, false, wave32, 16u, "the first record's callee through the second half of an s_load_dwordx8", SliceCaller.data());
+            Check(1u, true, wave32, 33u, "the second record's callee through the second half of an s_load_dwordx8", SliceCaller.data());
             const auto log = Dispatch(2u, false, wave32);
             Require(log.find("called address 0x0 at program counter") != std::string::npos && log.find("which no linked callee of that call matches") != std::string::npos,
                 std::string("a record past the table did not report an unlinked call") + (wave32 ? " (wave32)" : " (wave64)") + ": " + log);

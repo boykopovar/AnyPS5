@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import re
 import shutil
 import tempfile
@@ -70,7 +71,8 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 names = {}
                 for file in files:
-                    if not file.filename.startswith("libs/") or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename:
+                    if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
+                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
@@ -89,6 +91,8 @@ def publish_libraries(output, release=None):
             path = f"libraries/{platform}-{checksum}.zip"
             temporary.replace(output / path)
             manifest["platforms"][platform] = {"path": path, "size": size, "expandedBytes": expanded, "sha256": checksum}
+        except zipfile.BadZipFile as error:
+            raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
         finally:
             temporary.unlink(missing_ok=True)
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -141,7 +145,7 @@ def publish_release(output):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(archive.read(file))
         publish_libraries(staging, release)
-        manifest = json.loads((staging / "release.json").read_text(encoding="utf-8"))
+        manifest = json.loads((staging / "release.json").read_text(encoding="utf-8-sig"))
         manifest["revision"] = metadata["revision"]
         (staging / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         (staging / ".nojekyll").touch()
@@ -157,29 +161,38 @@ def publish_release(output):
                     raise RuntimeError(f"Could not restore release output. Previous site is preserved at {previous}") from error
             raise
         published = True
+    except zipfile.BadZipFile as error:
+        raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
     finally:
         if published or not previous.exists():
             shutil.rmtree(temporary)
     print(f"Published web converter and libraries from {tag} ({metadata['revision']})")
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",
                         help="Download the matching converter and libraries from the latest release")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     output = args.build.resolve() / "web"
-    if args.release:
-        publish_release(output)
+    try:
+        if args.release:
+            publish_release(output)
+            print(output)
+            return 0
+        for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
+            if not (output / "native" / name).is_file():
+                parser.error(f"Build relinker_wasm first: missing {name}")
+        copy_sources(output)
         print(output)
-        return
-    for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
-        if not (output / "native" / name).is_file():
-            raise ValueError(f"Build relinker_wasm first: missing {name}")
-    copy_sources(output)
-    print(output)
+        return 0
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

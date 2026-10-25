@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -15,8 +17,6 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -56,7 +56,7 @@ struct UserSemaphore {
 };
 
 struct AddressWaiter {
-    TimedWait::Condition condition;
+    TimedWait::SingleWaiterCondition condition;
     bool woken = false;
 };
 
@@ -81,15 +81,11 @@ bool IsAlignedAddress(std::uintptr_t address) {
 
 template <class TFunction>
 void DeferringDelivery(TFunction function) {
-#ifdef _WIN32
     {
         TimedWait::DeliveryDeferral deferral;
         function();
     }
     TimedWait::DeliverDeferred();
-#else
-    function();
-#endif
 }
 
 template <class TReady>
@@ -205,6 +201,7 @@ int UmtxDeadline(const void* sizeArgument, const void* timeArgument, std::option
     } else {
         KernelTimespec now{};
         clock_gettime_nid_postfix(static_cast<int>(time.clockId), &now);
+
         remaining = SaturatingNanos(time.timeout.tv_sec - now.tv_sec, time.timeout.tv_nsec - now.tv_nsec);
     }
     if (remaining < UNBOUNDED_WAIT_NANOS) {
