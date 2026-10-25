@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -73,6 +74,8 @@ char16_t* APS5_VABI u_strtok_r_nid_postfix(char16_t* source, const char16_t* del
     auto* text = source ? source : *state;
     if (!text) return nullptr;
     if (!delimiters) NotImplemented_nid_no_patch(__func__);
+    GuestArena::HostWrite stateAccess(state, sizeof(*state));
+    if (!stateAccess.Open()) NotImplemented_nid_no_patch(__func__);
     if (source) *state = source;
     const auto skipped = FindSet(text, delimiters, false);
     if (skipped > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) NotImplemented_nid_no_patch(__func__);
@@ -85,6 +88,8 @@ char16_t* APS5_VABI u_strtok_r_nid_postfix(char16_t* source, const char16_t* del
     if (length > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) NotImplemented_nid_no_patch(__func__);
     auto* next = text + length;
     if (*next != 0) {
+        GuestArena::HostWrite textAccess(next, sizeof(*next));
+        if (!textAccess.Open()) NotImplemented_nid_no_patch(__func__);
         *next++ = 0;
         *state = next;
     } else *state = nullptr;
