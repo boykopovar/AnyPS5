@@ -553,11 +553,13 @@ public:
     static bool FlipReadCheck();
 
 private:
+    struct Batch;
     struct WideLabel {
         std::uint64_t end;
         std::vector<std::byte> bytes;
         std::uint64_t sequence;
         bool overwritten = false;
+        const Batch* batch = nullptr;
     };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
@@ -587,6 +589,7 @@ private:
         std::uint64_t serial = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        std::atomic<bool> submitStarted{false};
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
         // (the [syncwait] line reports what a wait's target and the batches ahead of it were).
         std::uint32_t queue = 0xffffffffu;

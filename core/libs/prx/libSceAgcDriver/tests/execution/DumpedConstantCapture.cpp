@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +25,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -38,6 +40,7 @@ constexpr std::uint64_t ColorOffset = 0x8000;
 constexpr std::size_t ColorBytes = 1024;
 constexpr std::uint64_t FillOffset = 0x20000;
 constexpr std::uint32_t FillBytes = 0x20000;
+constexpr std::uint64_t LabelOffset = 0x3000;
 
 alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -186,6 +189,47 @@ int DumpedConstantIsServedFromTheStore() {
     return 0;
 }
 
+int CpuWriteAfterTheDumpIsRead() {
+    const GuestBlock block;
+    std::vector<std::uint32_t> table(TableWords);
+    for (std::uint32_t word = 0; word < TableWords; ++word) table[word] = 0x20000u + word;
+    table[0] = std::bit_cast<std::uint32_t>(1.0f);
+    const auto destination = block.Address() + TableOffset;
+    const auto label = block.Address() + LabelOffset;
+    const auto fill = block.Address() + FillOffset;
+    const auto storesBefore = AgcDriver::Graphics::Recorder::StoreCounts().stores;
+    std::vector<std::uint32_t> dump;
+    Append(dump, 0x50, {0x40000000u, 0x5a5a5a5au, 0, static_cast<std::uint32_t>(fill), static_cast<std::uint32_t>(fill >> 32u), FillBytes});
+    AppendConstantRamDump(dump, table, destination);
+    Append(dump, 0x37, {0x00100200u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), 1});
+    Packet dumpPacket{dump.data(), static_cast<std::uint32_t>(dump.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&dumpPacket) == 0, "cpu write after the dump: the dump submission failed");
+    volatile const std::uint32_t* landed = reinterpret_cast<volatile const std::uint32_t*>(block.Data() + LabelOffset);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (*landed != 1) {
+        Require(std::chrono::steady_clock::now() < deadline, "cpu write after the dump: the label after the dump never landed");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    const auto stored = AgcDriver::Graphics::Recorder::StoreCounts().stores - storesBefore;
+    const auto rewritten = std::bit_cast<std::uint32_t>(0.5f);
+    std::memcpy(block.Data() + TableOffset, &rewritten, sizeof(rewritten));
+    std::vector<std::uint32_t> commands;
+    AppendState(commands, block.Address() + ColorOffset);
+    AppendConstantDraw(commands, destination);
+    Packet drawPacket{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&drawPacket) == 0, "cpu write after the dump: the draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(block.Address() + ColorOffset, ColorBytes);
+    const auto brightest = *std::max_element(block.Data() + ColorOffset, block.Data() + ColorOffset + ColorBytes);
+    if (stored == 0) {
+        std::puts("skipped, the constant RAM dump was not recorded on the GPU (the guest block is not host-imported)");
+        return VulkanTestSkipped;
+    }
+    Require(brightest == 127 || brightest == 128, "cpu write after the dump: the draw after the guest rewrote a dumped constant to 0.5 once the label behind the dump had landed wrote " + std::to_string(brightest) + ", expected 127 or 128 (255 is the dumped 1.0)");
+    std::cout << "a capture after a CPU write over a dumped constant read the CPU's value\n";
+    return 0;
+}
+
 }
 
 int main() {
@@ -199,7 +243,8 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        const auto result = DumpedConstantIsServedFromTheStore();
+        auto result = DumpedConstantIsServedFromTheStore();
+        if (result == 0) result = CpuWriteAfterTheDumpIsRead();
         AgcDriverShutdown_nid_postfix();
         return result;
     } catch (const std::exception& error) {

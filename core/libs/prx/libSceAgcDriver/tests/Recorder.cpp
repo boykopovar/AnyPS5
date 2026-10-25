@@ -1616,6 +1616,13 @@ void storedBytesTests(Recorder& recorder) {
     recorder.NotePendingWrite(ring + 0x14c, 4);
     Require(!served(ring + 0x148, out), "a write inside a wide store did not refuse it");
     recorder.Sync();
+    recorder.NoteLabel(ring + 0x200, table, 205, 0);
+    recorder.NoteLabel(ring + 0x300, one, 206, 0);
+    Require(served(ring + 0x240, out) && served(ring + 0x300, std::span(out).first(4)), "stores of the open batch are not served");
+    recorder.Submit();
+    Require(!served(ring + 0x240, out), "a wide store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    Require(!served(ring + 0x300, std::span(out).first(4)), "a label-table store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    recorder.Sync();
     Require(!served(ring + 0x100, out) && !Recorder::WideLabelIn(ring, 0x400), "stored bytes outlived their batch");
 }
 

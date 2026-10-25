@@ -1342,12 +1342,12 @@ bool Recorder::storedBytesLocked(std::uint64_t address, std::span<std::byte> byt
         const auto at = address + dword * 4;
         if (const auto found = labels.find(at); found != labels.end()) {
             const auto& entry = found->second;
-            if (entry.batch == nullptr || entry.overwritten || entry.behindCompletion) return false;
+            if (entry.batch == nullptr || entry.batch->submitStarted.load(std::memory_order_acquire) || entry.overwritten || entry.behindCompletion) return false;
             std::memcpy(composed.data() + dword * 4, &entry.value, 4);
             continue;
         }
         const auto* wide = newest[dword];
-        if (wide == nullptr || at < wide->first || wide->second.end - at < 4 || wide->second.overwritten) return false;
+        if (wide == nullptr || at < wide->first || wide->second.end - at < 4 || wide->second.overwritten || wide->second.batch == nullptr || wide->second.batch->submitStarted.load(std::memory_order_acquire)) return false;
         std::memcpy(composed.data() + dword * 4, wide->second.bytes.data() + (at - wide->first), 4);
     }
     std::copy(composed.begin(), composed.end(), bytes.begin());
@@ -3440,7 +3440,7 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
         std::lock_guard tableLock(labelTableMutex);
         labels.erase(labels.lower_bound(address), labels.lower_bound(address + bytes.size()));
         recordedLabels.store(labels.size(), std::memory_order_relaxed);
-        open->wideLabels.push_back(wideLabels.emplace(address, WideLabel{address + bytes.size(), {bytes.begin(), bytes.end()}, ++wideLabelSequence}));
+        open->wideLabels.push_back(wideLabels.emplace(address, WideLabel{address + bytes.size(), {bytes.begin(), bytes.end()}, ++wideLabelSequence, false, open.get()}));
         wideLabelBytes = std::max<std::uint64_t>(wideLabelBytes, bytes.size());
         recordedWideLabels.store(wideLabels.size(), std::memory_order_relaxed);
     }
@@ -3720,6 +3720,7 @@ void Recorder::Submit() {
     }
     if (hold != VK_NULL_HANDLE || timeline != VK_NULL_HANDLE) submission.pNext = &timelineInfo;
     const auto submitStart = std::chrono::steady_clock::now();
+    batch->submitStarted.store(true, std::memory_order_release);
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
     if (result == VK_ERROR_DEVICE_LOST) {
         const auto idle = context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device);
