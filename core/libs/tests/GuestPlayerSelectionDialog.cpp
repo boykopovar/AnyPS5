@@ -32,15 +32,17 @@ int main() {
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
-    bool threw = false;
-    try {
-        scePlayerSelectionDialogParamInitialize(&param);
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-    Require(param.size == sizeof(param));
+    PlayerSelectionDialogParam initParam{};
+    Require(scePlayerSelectionDialogParamInitialize(&initParam) == 0);
+    Require(initParam.base.size == sizeof(CommonDialogBaseParam));
+    Require(initParam.base.magic == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&initParam.base)) - 1060003575u);
+    Require(ValidateCommonDialogBaseParam(initParam.base));
+    Require(initParam.size == sizeof(PlayerSelectionDialogParam));
+    Require(initParam.userId == -1);
+    Require(initParam.maxPlayers == 256);
+    Require(initParam.mode == 0);
+    Require(initParam.playerCount == 0);
+    Require(initParam.players == nullptr);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetStatus() == 0);
     Require(scePlayerSelectionDialogUpdateStatus() == 0);
