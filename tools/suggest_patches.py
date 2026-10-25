@@ -69,6 +69,9 @@ def validate_entry(directory, entry):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Recommend a local patch only after metadata, hashes and relinker verification match")
     parser.add_argument("--catalog", required=True, type=Path, help="directory containing index.json and patch files")
     parser.add_argument("--param-json", required=True, type=Path, help="title metadata file")
@@ -135,7 +138,8 @@ def main(argv=None):
                 command.extend(("--executable", executable))
             command.append(str(args.input))
             try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout_seconds)
+                result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                        timeout=args.timeout_seconds)
             except subprocess.TimeoutExpired:
                 print(f"{label}: rejected: relinker verification exceeded {args.timeout_seconds} seconds")
                 continue

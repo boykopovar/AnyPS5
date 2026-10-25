@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -27,11 +28,6 @@ constexpr std::uint32_t eopSelfSignalFlipLimit = 4;
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
     return ordered;
-}
-
-bool pipelineDma() {
-    static const bool enabled = std::getenv("APS5_PIPELINE_DMA") != nullptr;
-    return enabled;
 }
 
 bool keepsDrawFinisher(std::uint32_t header, std::uint32_t opcode) {
@@ -65,7 +61,6 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
             if (packet.size() < 7) return false;
             const auto destination = Pm4::DmaDestination(packet);
             if (destination == Pm4::DmaDestinationNowhere) return true;
-            if (!pipelineDma()) return false;
             if (destination == Pm4::DmaSelectGds) return true;
             const auto bytes = Pm4::DmaBytes(packet);
             if (bytes == 0) return true;
@@ -400,6 +395,7 @@ void Driver::execute(const Submission& submission) {
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
                 std::lock_guard gpuLock(GuestMemory::GpuMutex());
                 const auto localDevice = device.Load();
+                if (localDevice != nullptr) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("flip"));
 
                 if (!recordLabelsForPacket(localDevice.get(), submission.queue) && localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
                 if (localDevice != nullptr) {

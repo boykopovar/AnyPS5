@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [libSceSdma pending exports](../../../core/libs/prx/libSceSdma/Export.cpp) - sceSdmaCopyTiled, sceSdmaCopyTiledNonBlocking, sceSdmaCopyWindowT2T, sceSdmaCopyWindowT2TNonBlocking, sceSdmaCopyWindowTiled, sceSdmaCopyWindowTiledNonBlocking, sceSdmaFinalize, sceSdmaFlushAllWithEvent, sceSdmaInitialize, sceSdmaQueryWorkingBufferSize and sceSdmaWaitForEvent are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSdma.c). Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceSdma pending exports](../../../core/libs/prx/libSceSdma/Export.cpp) - sceSdmaCopyTiled, sceSdmaCopyTiledNonBlocking, sceSdmaCopyWindowT2T, sceSdmaCopyWindowT2TNonBlocking, sceSdmaCopyWindowTiled and sceSdmaCopyWindowTiledNonBlocking are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSdma.c). Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 

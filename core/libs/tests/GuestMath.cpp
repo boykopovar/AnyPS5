@@ -542,6 +542,35 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckLog1pConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3c8fffffffffffffull, 0}, {0x3c90000000000000ull, 0x3c90000000000000ull, 0},
+        {0x3e1fffffffffffffull, 0x3e1fffffff7fffffull, 0}, {0x3e20000000000000ull, 0x3e1fffffff800000ull, 0},
+        {0xbe20000000000000ull, 0xbe20000000400000ull, 0}, {0x3fda8279ffffffffull, 0x3fd62e43471c5d9dull, 0},
+        {0x3fda827a00000000ull, 0x3fd62e43471c5d9eull, 0}, {0xbfd2bec400000000ull, 0xbfd62e4420e1ff10ull, 0},
+        {0xbfd2bec3ffffffffull, 0xbfd62e4420e1ff0full, 0}, {0x3ff0000000000000ull, 0x3fe62e42fefa39efull, 0},
+        {0xbfe0000000000000ull, 0xbfe62e42fefa39efull, 0}, {0xbfefffffffffffffull, 0xc0425e4f7b2737faull, 0},
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0}, {0xbff0000000000001ull, 0xfff8000000000000ull, EDOM},
+        {0xc000000000000000ull, 0xfff8000000000000ull, EDOM}, {0x433fffffffffffffull, 0x40425e4f7b2737faull, 0},
+        {0x4340000000000000ull, 0x40425e4f7b2737faull, 0}, {0x7fefffffffffffffull, 0x40862e42fefa39efull, 0},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3f0f5ab6d3865ccaull, 0x3f0f5a7962a0216cull, 0}, {0x3fe8683f0ace287cull, 0x3fe223b9ede79242ull, 0},
+        {0x3f5f8cd247124706ull, 0x3f5f850e039f6187ull, 0}, {0x40298faede87074bull, 0x4004fc71ddb00cc0ull, 0},
+        {0x404b621796f08648ull, 0x401015adbb851c70ull, 0}, {0x3f21ecf9339d7420ull, 0x3f21eca8e0601790ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(log1p_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -843,6 +872,26 @@ static void CheckExtendedMath() {
     Require(remainder_nid_postfix(5.0, 3.0) == -1.0 && remainder_nid_postfix(7.0, 2.0) == -1.0 && remainder_nid_postfix(5.0, 2.0) == 1.0);
     Require(std::signbit(remainder_nid_postfix(-4.0, 2.0)) && remainder_nid_postfix(1.0, INFINITY) == 1.0);
     Require(std::isnan(remainder_nid_postfix(1.0, 0.0)) && std::isnan(remainder_nid_postfix(INFINITY, 1.0)));
+}
+
+static void CheckExp2fConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x3d00010bu, 0x3f82cd8du, 0}, {0x3f000303u, 0x3fb5066du, 0}, {0x40a0051bu, 0x42000e29u, 0}, {0x42f0070cu, 0x7b813a1bu, 0},
+        {0xbf400909u, 0x3f183437u, 0}, {0xc2f00b14u, 0x037c3073u, 0}, {0x00000000u, 0x3f800000u, 0}, {0x80000000u, 0x3f800000u, 0},
+        {0x33000000u, 0x3f800000u, 0}, {0x3f800000u, 0x40000000u, 0}, {0x42fe0000u, 0x7f000000u, 0}, {0x42ffffffu, 0x7f7fffa7u, 0},
+        {0x43000000u, 0x7f800000u, ERANGE}, {0x7f7fffffu, 0x7f800000u, ERANGE}, {0x7f800000u, 0x7f800000u, 0}, {0xff800000u, 0x00000000u, 0},
+        {0xc2fc0000u, 0x00800000u, 0}, {0xc3150000u, 0x00000001u, 0}, {0xc315ffffu, 0x00000001u, 0}, {0xc3160000u, 0x00000000u, ERANGE},
+        {0xc3160001u, 0x00000000u, ERANGE}, {0xff7fffffu, 0x00000000u, ERANGE}, {0x7fc00001u, 0x7fc00001u, 0}, {0xffc00002u, 0xffc00002u, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(exp2f_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
 }
 
 static void CheckHyperbolic() {
@@ -1556,6 +1605,7 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckLog1pConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
@@ -1680,6 +1730,7 @@ int main() {
     CheckHyperbolic();
     CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
+    CheckExp2fConsoleBits();
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();

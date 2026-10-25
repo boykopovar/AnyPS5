@@ -2,6 +2,13 @@
 
 #include "SceTypes.hpp"
 
+struct Asn1String {
+    std::int32_t length;
+    std::int32_t type;
+    unsigned char* data;
+    std::int64_t flags;
+};
+
 inline constexpr int MaxRounds = 14;
 
 struct AesKey {
@@ -46,12 +53,12 @@ struct Sha512Context {
 
 extern "C" {
 
-int APS5_VABI ASN1_INTEGER_get_nid_postfix(void);
-int APS5_VABI ASN1_STRING_data_nid_postfix(void);
-int APS5_VABI ASN1_STRING_length_nid_postfix(void);
+std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
+unsigned char* APS5_VABI ASN1_STRING_data_nid_postfix(Asn1String* value);
+int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value);
 int APS5_VABI ASN1_STRING_print_nid_postfix(void);
-int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(void);
-int APS5_VABI ASN1_STRING_type_nid_postfix(void);
+int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value);
+int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value);
 int APS5_VABI ASN1_TIME_print_nid_postfix(void);
 int APS5_VABI BIO_ctrl_nid_postfix(void);
 int APS5_VABI BIO_f_ssl_nid_postfix(void);
@@ -135,13 +142,13 @@ int APS5_VABI ENGINE_init_nid_postfix(void);
 int APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 int APS5_VABI ENGINE_load_private_key_nid_postfix(void);
 int APS5_VABI ENGINE_set_default_nid_postfix(void);
-int APS5_VABI ERR_clear_error_nid_postfix(void);
+void APS5_VABI ERR_clear_error_nid_postfix(void);
 int APS5_VABI ERR_error_string_nid_postfix(void);
 int APS5_VABI ERR_error_string_n_nid_postfix(void);
 int APS5_VABI ERR_free_strings_nid_postfix(void);
-int APS5_VABI ERR_get_error_nid_postfix(void);
-int APS5_VABI ERR_peek_error_nid_postfix(void);
-int APS5_VABI ERR_remove_thread_state_nid_postfix(void);
+std::uint64_t APS5_VABI ERR_get_error_nid_postfix(void);
+std::uint64_t APS5_VABI ERR_peek_error_nid_postfix(void);
+void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
 int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
@@ -246,9 +253,9 @@ int APS5_VABI RSA_sign_nid_postfix(void);
 int APS5_VABI RSA_size_nid_postfix(void);
 int APS5_VABI RSA_verify_nid_postfix(void);
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void);
-int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(void);
-int APS5_VABI SSL_CIPHER_get_name_nid_postfix(void);
-int APS5_VABI SSL_CIPHER_get_version_nid_postfix(void);
+int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(const void* cipher, std::int32_t* algorithmBits);
+const char* APS5_VABI SSL_CIPHER_get_name_nid_postfix(const void* cipher);
+char* APS5_VABI SSL_CIPHER_get_version_nid_postfix(const void* cipher);
 int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void);
 int APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(void);
 int APS5_VABI SSL_CTX_check_private_key_nid_postfix(void);

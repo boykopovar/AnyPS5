@@ -220,6 +220,10 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
     const auto deadline = TimedWait::DeadlineNanos(usec);
     auto* current = resolveMutex(mutex, true);
+    if (current && current->_type != MutexType::Recursive && current->_owner.load(std::memory_order_acquire) == std::this_thread::get_id()) {
+        TimedWait::SleepUntil(deadline);
+        return sceTimedOut;
+    }
     return acquireMutex(current, [=](auto& native) {
         return TimedWait::AcquireUntil(current, deadline, [&] { return native.try_lock(); }, [&](std::uint64_t micros) { return native.try_lock_for(std::chrono::microseconds(micros)); });
     }, sceTimedOut, false);

@@ -185,12 +185,41 @@ int main() {
         Require(read.Has(reader) && write.Has(writer));
     }
 
+    Require(reader < 63);
+
+    {
+        GuestDescriptorSet read{};
+        GuestDescriptorSet except{};
+        read.Add(reader);
+        read.Add(63);
+        read.Add(64);
+        except.Add(63);
+        GuestTimeval limit{0, 100000};
+        Require(select_nid_postfix(reader, read.words.data(), nullptr, except.words.data(), &limit) == 0);
+        Require(!read.Has(reader) && !read.Has(63) && read.Has(64) && !except.Has(63));
+    }
+
     {
         GuestDescriptorSet read{};
         read.Add(reader);
-        GuestTimeval limit{0, 100000};
-        Require(select_nid_postfix(reader, read.words.data(), nullptr, nullptr, &limit) == 0);
+        const GuestTimeval zero{0, 0};
+        Require(select_nid_postfix(0, read.words.data(), nullptr, nullptr, &zero) == 0);
         Require(read.Has(reader));
+    }
+
+    {
+        const char byte = 'n';
+        Require(write_nid_postfix(writer, &byte, 1) == 1);
+        GuestDescriptorSet read{};
+        read.Add(reader);
+        read.Add(63);
+        read.Add(64);
+        GuestTimeval limit{0, 200000};
+        Require(select_nid_postfix(reader + 1, read.words.data(), nullptr, nullptr, &limit) == 1);
+        Require(read.Has(reader) && !read.Has(63) && read.Has(64));
+        char buffer[8]{};
+        const auto count = read_nid_postfix(reader, buffer, sizeof(buffer));
+        Require(count >= 1 && buffer[count - 1] == byte);
     }
 
     {

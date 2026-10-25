@@ -30,9 +30,17 @@ int UserIndex(int userId) {
     return -1;
 }
 
-int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
- const int index = UserIndex(user_id);
+bool IsUserLoggedIn(int userId) {
+ const int index = UserIndex(userId);
  if (index < 0) {
+  return false;
+ }
+ std::lock_guard lock(userMutex);
+ return userConnected[index];
+}
+
+int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
+ if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (setting == nullptr) {
@@ -151,8 +159,7 @@ int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, int32_t
 }
 
 int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
- const int index = UserIndex(user_id);
- if (index < 0) {
+ if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (age_level == nullptr) {

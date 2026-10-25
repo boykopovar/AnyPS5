@@ -279,7 +279,6 @@ int APS5_VABI sceSdmaFenceNonBlocking(void* handle) {
 }
 
 int APS5_VABI sceSdmaFinalize(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -290,12 +289,10 @@ int APS5_VABI sceSdmaFlushAll(void* handle) {
 }
 
 int APS5_VABI sceSdmaFlushAllWithEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809900c9);
 }
 
 int APS5_VABI sceSdmaInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -319,8 +316,7 @@ int APS5_VABI sceSdmaOpen(void** handle, void* buffer, std::uint32_t size, const
 }
 
 int APS5_VABI sceSdmaQueryWorkingBufferSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 0x8000;
 }
 
 int APS5_VABI sceSdmaTryFlush(void* handle) {
@@ -334,8 +330,7 @@ int APS5_VABI sceSdmaTryFlush(void* handle) {
 }
 
 int APS5_VABI sceSdmaWaitForEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809900c9);
 }
 
 }

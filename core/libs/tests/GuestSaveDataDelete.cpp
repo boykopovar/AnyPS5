@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -27,6 +28,15 @@ void Check(bool condition, const std::string& what) {
     if (condition) return;
     std::fprintf(stderr, "savedata delete check failed: %s\n", what.c_str());
     ++failures;
+}
+
+bool Throws(const SaveDataDelete* del) {
+    try {
+        sceSaveDataDelete(del);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 int Delete(const char* data, std::size_t size) {
@@ -122,6 +132,9 @@ int main() {
         Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
     }
 
+    Check(Throws(nullptr), "null delete struct throws");
+    SaveDataDelete nullDir{};
+    Check(Throws(&nullDir), "null dir_name pointer throws");
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
