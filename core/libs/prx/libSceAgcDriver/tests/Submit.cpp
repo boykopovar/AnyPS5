@@ -85,7 +85,7 @@ void testValidation() {
     Packet packet{commands.data(), 3, 0, {}};
     expectFailure([] { sceAgcDriverSubmitDcb(nullptr); });
     expectFailure([] { sceAgcDriverAgrSubmitDcb(nullptr); });
-    expectFailure([] { sceAgcDriverSubmitAcb(0x20, nullptr); });
+    check(sceAgcDriverSubmitAcb(0x20, nullptr) == 22, "null packet ACB submit must return EINVAL");
     expectFailure([&] { sceAgcDriverSubmitAcb(0, &packet); });
     expectFailure([&] { sceAgcDriverSubmitAcb(0x58, &packet); });
     packet.dw_num = 2;
@@ -443,8 +443,8 @@ void testMultiAcbs() {
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x58, addresses.data(), sizes.data(), 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0, addresses.data(), sizes.data(), 1); });
     check(sceAgcDriverSubmitMultiAcbs(0, nullptr, nullptr, 0) == 0, "empty multi-ACB submit checked its queue");
-    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1); });
-    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1); });
+    check(sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1) == 22, "null acbs submit must return EINVAL");
+    check(sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1) == 22, "null sizes submit must return EINVAL");
     std::array<std::uint32_t*, 1> nullAcbs{nullptr};
     std::array<std::uint32_t, 1> nonZeroAcbSizes{4};
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullAcbs.data(), nonZeroAcbSizes.data(), 1); });

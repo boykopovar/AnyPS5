@@ -91,6 +91,35 @@ void CheckCommandBufferSubmission() {
     Require(multiRejected, "unsupported queue context for multi submit was not rejected");
 }
 
+void CheckAcbSubmission() {
+    Require(sceAgcDriverSubmitAcb(0x20, nullptr) == 22, "null packet ACB submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiAcbs(0x20, nullptr, nullptr, 0) == 0, "count 0 multi-ACB submit must return 0");
+
+    std::uint32_t* acbs[] = {nullptr};
+    const std::uint32_t acbSizes[] = {0};
+    Require(sceAgcDriverSubmitMultiAcbs(0x20, nullptr, acbSizes, 1) == 22, "null acbs multi-ACB submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiAcbs(0x20, acbs, nullptr, 1) == 22, "null acbSizes multi-ACB submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiAcbs(0x20, acbs, acbSizes, 0) == 0, "empty multi-ACB submission failed");
+    Require(sceAgcDriverSubmitMultiAcbs(0x20, acbs, acbSizes, 1) == 0, "compute ACB multi submit failed");
+
+    bool submitRejected = false;
+    try {
+        Packet emptyPacket{nullptr, 0, 0, {}};
+        sceAgcDriverSubmitAcb(1, &emptyPacket);
+    } catch (const std::runtime_error&) {
+        submitRejected = true;
+    }
+    Require(submitRejected, "unsupported queue for ACB submit was not rejected");
+
+    bool multiRejected = false;
+    try {
+        sceAgcDriverSubmitMultiAcbs(1, acbs, acbSizes, 1);
+    } catch (const std::runtime_error&) {
+        multiRejected = true;
+    }
+    Require(multiRejected, "unsupported queue for multi-ACB submit was not rejected");
+}
+
 void CheckShutdownCancellation() {
     static std::array<LabelState, 3> states{};
     constexpr std::array<std::uint32_t, 3> queues{0, 0x20, 0x28};
@@ -134,6 +163,7 @@ int main(int argc, char** argv) {
     }
     try {
         CheckCommandBufferSubmission();
+        CheckAcbSubmission();
         CheckShutdownCancellation();
         std::puts("unsatisfied label waits cancelled cleanly at shutdown");
         return 0;
