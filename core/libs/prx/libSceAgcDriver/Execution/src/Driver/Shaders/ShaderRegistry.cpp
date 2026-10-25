@@ -759,6 +759,13 @@ std::size_t ShaderRegistry::erase(std::uint64_t address) {
     return 1;
 }
 
+static std::string HeaderLocation(const Shader* shader) {
+    char text[64];
+    std::snprintf(text, sizeof(text), "0x%llx (code 0x%llx)", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(shader)),
+                  static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code))));
+    return text;
+}
+
 std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader) {
     const auto found = registry.find(reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code)));
     if (found == registry.end()) return {};
@@ -2097,7 +2104,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
             const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
             require(registry != nullptr && registry->contains(address), "graphics ABI refers to an unregistered shader");
             const auto selected = RegisteredHeader(*registry, shader);
-            require(selected != nullptr, "graphics ABI refers to a replaced shader header");
+            if (selected == nullptr) throw std::runtime_error("AGC driver: graphics ABI refers to a replaced shader header " + HeaderLocation(shader));
             selectedStages.push_back(selected);
             const auto& snapshot = *selected;
             require(snapshot.registeredState != nullptr, "registered shader state is missing");
@@ -2247,7 +2254,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(fields.code));
         require(shaders != nullptr && shaders->contains(address), "static ABI refers to an unregistered shader");
         snapshot = RegisteredHeader(*shaders, shader);
-        require(snapshot != nullptr, "static ABI refers to a replaced shader header");
+        if (snapshot == nullptr) throw std::runtime_error("AGC driver: static ABI refers to a replaced shader header " + HeaderLocation(shader));
     }
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
     QueueState state{};
@@ -2391,7 +2398,7 @@ void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::
             const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(GuestShaderFields(shader).code));
             require(shaders != nullptr && shaders->contains(address), "rectangle ABI refers to an unregistered shader");
             const auto snapshot = RegisteredHeader(*shaders, shader);
-            require(snapshot != nullptr, "rectangle ABI refers to a replaced shader header");
+            if (snapshot == nullptr) throw std::runtime_error("AGC driver: rectangle ABI refers to a replaced shader header " + HeaderLocation(shader));
             return snapshot;
         };
         front = lookup(vertex);
