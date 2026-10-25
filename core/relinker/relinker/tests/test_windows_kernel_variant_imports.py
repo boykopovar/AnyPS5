@@ -18,7 +18,6 @@ def main():
         modules = work / 'helpers' / 'prx'
         modules.mkdir(parents=True)
         for name, value in (('variant', 11), ('canonical', 22), ('runtime', 33), ('guest', 44)):
-            # the runtime image is installed as the host libc.prx, which the Windows entry stub now requires to export the guest main-stack entry
             (modules / (name + '.prx')).write_bytes(provider(value, main_stack_entry=name == 'runtime'))
         empty = provider(0, main_stack_entry=True)
         empty[0x800:0x80c] = b'\0other#A#B\0\0'
