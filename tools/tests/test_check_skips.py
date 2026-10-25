@@ -59,6 +59,8 @@ class CheckSkipsTests(unittest.TestCase):
                 (names[0], "SKIP: unrelated failure", "windows", ""),
                 (names[0], reason + "\nSKIP: flaky", "windows", ""),
                 (names[0], reason + "\nskipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: skipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: SKIP: flaky", "windows", ""),
                 (names[0], reason, "windows", "flaky"),
             )
             for name, output, job, skipped_text in invalid:

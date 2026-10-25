@@ -24,7 +24,7 @@ def device_limitations(output, patterns):
 def symlink_privilege_limitation(name, output):
     if name not in ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched"):
         return False
-    reasons = [line.strip() for line in output.splitlines() if re.match(r"(?:skipped,|SKIP:)", line.strip(), re.IGNORECASE)]
+    reasons = [match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))]
     return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
 
 
