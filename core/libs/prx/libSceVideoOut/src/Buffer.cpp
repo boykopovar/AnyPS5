@@ -39,6 +39,12 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
     if (cfg.closing) {
         throw std::runtime_error(function + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
+    for (int i = 0; i < bufferNum; i++) {
+        if (cfg.buffers[bufferIndexStart + i].Occupied()) {
+            if (!group.ps4) return VIDEO_OUT_ERROR_SLOT_OCCUPIED;
+            throw std::runtime_error(function + ": VIDEO_OUT_ERROR_SLOT_OCCUPIED");
+        }
+    }
     if (setIndex < 0) {
         for (int index = 0; index < VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX && setIndex < 0; ++index)
             if (!cfg.groups[index].occupied) setIndex = index;
@@ -47,11 +53,6 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
         }
     } else if (cfg.groups[setIndex].occupied) {
         throw std::runtime_error(function + ": VIDEO_OUT_ERROR_INVALID_INDEX");
-    }
-    for (int i = 0; i < bufferNum; i++) {
-        if (cfg.buffers[bufferIndexStart + i].Occupied()) {
-            throw std::runtime_error(function + ": VIDEO_OUT_ERROR_SLOT_OCCUPIED");
-        }
     }
     std::array<VideoOutBuffer, VIDEO_OUT_BUFFER_NUM_MAX> registered{};
     for (int i = 0; i < bufferNum; ++i) {
@@ -154,8 +155,8 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     group.attribute = *attribute;
     group.category = category;
     group.occupied = true;
-    CommitBufferGroup(__func__, *cfg, setIndex, bufferIndexStart, buffers, bufferNum, group);
-    return 0;
+    const int committed = CommitBufferGroup(__func__, *cfg, setIndex, bufferIndexStart, buffers, bufferNum, group);
+    return committed < 0 ? committed : 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
