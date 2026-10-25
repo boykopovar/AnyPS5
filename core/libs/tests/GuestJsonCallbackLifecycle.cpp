@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -8,22 +9,10 @@
 #include <map>
 #include <stdexcept>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using FloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatHandler, void*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
-void APS5_VABI _ZN3sce4Json4FreeEPv(void*);
-}
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -118,7 +107,7 @@ static void CheckRecovery(bool terminateOwner) {
     LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize recovery lifecycle contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize recovery lifecycle contracts");
     Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
     RecoveryContext context{&trace, terminateOwner};
     Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, RecoverLifecycle, &context) == 0, "Register lifecycle recovery");
@@ -136,7 +125,7 @@ static void CheckNotice(bool activeOperation) {
     LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize notifier lifecycle contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize notifier lifecycle contracts");
     const auto baseline = trace.live;
     trace.noticeAction = activeOperation ? NoticeAction::RejectTermination : NoticeAction::Terminate;
     trace.failNext = true;
@@ -156,7 +145,7 @@ static void CheckNotice(bool activeOperation) {
     Require(initializer == 0 && trace.live.empty(), "Notifier lifecycle cases must fully release the original module generation");
     const auto generation = trace.generation;
     trace.noticeAction = NoticeAction::None;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12, "The same initializer must admit a fresh module generation after notifier-driven termination or refusal");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && trace.live.size() == 12, "The same initializer must admit a fresh module generation after notifier-driven termination or refusal");
     for (const auto& [memory, identity] : trace.live) Require(memory && identity > generation, "Lifecycle retry must never retain stale allocation identities");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release retried notifier lifecycle generation");
 }
@@ -164,7 +153,7 @@ static void CheckAllocator(bool allocate) {
     LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize direct allocator lifecycle contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize direct allocator lifecycle contracts");
     const auto baseline = trace.live;
     Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
     trace.allocatorAction = allocate ? AllocatorAction::RejectAllocate : AllocatorAction::RejectFree;
@@ -183,7 +172,7 @@ static void CheckStandaloneFree() {
     LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize standalone free lifecycle contract");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize standalone free lifecycle contract");
     void* memory = _ZN3sce4Json6MallocEm(8);
     Require(memory != nullptr, "Standalone lifecycle preservation requires a real allocated buffer");
     trace.allocatorAction = AllocatorAction::TerminateFree;
@@ -191,7 +180,7 @@ static void CheckStandaloneFree() {
     Require(initializer == 0 && trace.live.empty() && trace.allocatorAction == AllocatorAction::None && !trace.refused,
             "Standalone free must complete callback-driven termination and release the original buffer");
     const auto generation = trace.generation;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && trace.live.size() == 12,
             "Initialization must remain usable after standalone free-callback termination");
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Reinitialization must own fresh resource generations after free-callback termination");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release standalone free lifecycle retry");
@@ -200,13 +189,13 @@ static void CheckTeardownReentry(unsigned target) {
     LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && trace.live.size() == 12,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && trace.live.size() == 12,
             "Teardown reentry requires the actual twelve independently allocated module resources");
     trace.freeCalls = 0; trace.teardownTarget = target;
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty() && trace.freeCalls == 12 && trace.refused == 1 && !trace.teardownTarget,
             "Each teardown callback must reject nested owner termination while allowing the outer call to release every resource exactly once");
     const auto generation = trace.generation;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && trace.live.size() == 12,
             "Initialization must admit a fresh module after rejected teardown reentry at every release position");
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Teardown reentry retry must retain no old allocation generations");
     try {

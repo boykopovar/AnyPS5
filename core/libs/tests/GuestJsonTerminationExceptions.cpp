@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include <array>
 #include <cstddef>
@@ -10,12 +11,9 @@
 #include <string>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 #if defined(JSON2_TERMINATION_LEGACY_SDK)
 static constexpr bool Legacy = true;
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
@@ -64,7 +62,7 @@ int main(int argc, char** argv) {
     Require(trace.target <= 12 && (trace.after || std::strcmp(argv[2], "before") == 0), "The schedule must identify a release boundary");
     Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0 && owner && trace.live.size() == (Legacy ? 11u : 12u), "Initialize complete module ownership before release failure");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && owner && trace.live.size() == (Legacy ? 11u : 12u), "Initialize complete module ownership before release failure");
     const auto baseline = trace.live;
     bool caught = false;
     try { Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0, "Uninterrupted teardown must complete"); }
@@ -81,8 +79,8 @@ int main(int argc, char** argv) {
     const auto releases = trace.releases;
     std::uint8_t other = 0; _ZN3sce4Json11InitializerC1Ev(&other);
     if (caught) {
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == static_cast<int>(0x80848111) &&
-                _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == static_cast<int>(0x80848111) &&
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == static_cast<int>(0x80848111) &&
+                _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(&parameter)) == static_cast<int>(0x80848111) &&
                 !other && trace.live == expected && trace.releases == releases,
                 "Both owners must reject initialization after incomplete teardown without further allocator effects");
         if (argc == 4 && (std::strcmp(argv[3], "refuse-mutex") == 0 || std::strcmp(argv[3], "refuse-header") == 0)) {
@@ -120,18 +118,18 @@ int main(int argc, char** argv) {
                     "Returning teardown retry must reclaim the retained resources in exact reference order including null frees");
             Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == static_cast<int>(0x80848110) && trace.releases == expectedRetry,
                     "Completed retry must not repeat any release");
-            Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == 0 && other,
+            Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && other,
                     "Completed retry must permit a fresh owner generation");
             Require(_ZN3sce4Json11Initializer9terminateEv(&other) == 0 && !other && trace.live.empty(), "Fresh ownership must retain complete cleanup after interrupted retry");
             return 0;
         }
-        if (!Legacy && trace.target < 2) Require(scePthreadMutexDestroy(static_cast<PthreadMutex*>(trace.allocations[11])) == 0, "The fixture must separately reclaim the untouched recovery mutex");
-        if (trace.target < 3) Require(scePthreadMutexDestroy(static_cast<PthreadMutex*>(trace.allocations[10])) == 0, "The fixture must separately reclaim the untouched internal mutex");
+        if (!Legacy && trace.target < 2) Require(scePthreadMutexDestroy(reinterpret_cast<PthreadMutex*>(trace.allocations[11])) == 0, "The fixture must separately reclaim the untouched recovery mutex");
+        if (trace.target < 3) Require(scePthreadMutexDestroy(reinterpret_cast<PthreadMutex*>(trace.allocations[10])) == 0, "The fixture must separately reclaim the untouched internal mutex");
         for (const auto& [pointer, generation] : trace.live) std::free(pointer);
         trace.live.clear();
     } else {
         Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == static_cast<int>(0x80848110) && trace.releases == releases, "Completed teardown must remain inactive without repeated frees");
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == 0 && other, "Completed teardown must permit a new module generation");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && other, "Completed teardown must permit a new module generation");
         Require(_ZN3sce4Json11Initializer9terminateEv(&other) == 0 && !other && trace.live.empty(), "A fresh generation must retain complete cleanup");
     }
     return 0;

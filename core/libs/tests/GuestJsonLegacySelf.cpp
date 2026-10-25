@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -8,20 +9,10 @@
 #include <vector>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uintptr_t payload; unsigned reserved; int type; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; int mode; unsigned reserved[3]; };
-using NullHandler = const Value& (APS5_VABI*)(int, const Value*, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
-Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
-}
+using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
     return words;
@@ -77,7 +68,7 @@ static void SelfTreeState(const SelfTreeLink* node, const Value* owner, std::str
     Require(depth < 8, "Replacement tree traversal must remain bounded");
     if (node->nil) return;
     SelfTreeState(node->left, owner, output, depth + 1);
-    output += std::string(node->key) + "/" + (node->publicKey ? *static_cast<const char* const*>(node->publicKey) : "?") + "=" + SelfItemState(node->value, owner) + ";";
+    output += std::string(node->key) + "/" + (node->publicKey ? *reinterpret_cast<const char* const*>(node->publicKey) : "?") + "=" + SelfItemState(node->value, owner) + ";";
     SelfTreeState(node->right, owner, output, depth + 1);
 }
 static std::string SelfState(const Value& value, bool object) {
@@ -140,7 +131,7 @@ static void CheckNonemptySelfUse() {
     for (const auto& expected : NonemptySelfCases) for (bool setter : {false, true}) {
         LegacySelfTrace trace; LegacySelfAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 2, {}};
         std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0, "Initialize nonempty legacy self-use");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize nonempty legacy self-use");
         const auto module = trace.generations;
         Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
         const char* text = expected.object ? "{\"a\":11,\"b\":22}" : "[11,22]";
@@ -148,10 +139,10 @@ static void CheckNonemptySelfUse() {
                 _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&value, nullptr, &trace) == 0, "Prepare nonempty collection and callback context");
         const Value original = value; void* header = *reinterpret_cast<void**>(value.payload);
         auto protectedGenerations = module;
-        for (void* pointer : {reinterpret_cast<void*>(value.payload), value.auxiliary, static_cast<void**>(value.auxiliary)[2]}) protectedGenerations.emplace(pointer, trace.generations.at(pointer));
+        for (void* pointer : {reinterpret_cast<void*>(value.payload), static_cast<void*>(value.auxiliary), reinterpret_cast<void**>(value.auxiliary)[2]}) protectedGenerations.emplace(pointer, trace.generations.at(pointer));
         std::map<void*, std::vector<unsigned char>> snapshots;
         for (const auto& [pointer, generation] : protectedGenerations) {
-            const auto* bytes = static_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + trace.live.at(pointer)});
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + trace.live.at(pointer)});
         }
         const auto requests = trace.requests.size(); const auto releases = trace.releaseIds.size(); const auto notices = trace.notices; const auto nullFrees = trace.nullFrees;
         trace.budget = static_cast<int>(expected.budget); trace.once = expected.once;
@@ -180,24 +171,24 @@ int main() {
     for (bool object : {false, true}) for (bool setter : {false, true}) for (unsigned budget = 0; budget <= 2; ++budget) {
         LegacySelfTrace trace; LegacySelfAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 2, {}};
         std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0 && trace.live.size() == 11, "Initialize the eleven-resource legacy module");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && trace.live.size() == 11, "Initialize the eleven-resource legacy module");
         Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, object ? "{}" : "[]", 2) == 0 &&
                 _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&value, nullptr, &trace) == 0, "Prepare legacy collection ownership and auxiliary callback context");
         const Value before = value; const auto generations = trace.generations;
-        void* header = *reinterpret_cast<void**>(value.payload); void* sentinel = *static_cast<void**>(header);
+        void* header = *reinterpret_cast<void**>(value.payload); void* sentinel = *reinterpret_cast<void**>(header);
         Require(trace.live.at(header) == 24 && trace.live.at(sentinel) == (object ? 104u : 48u), "Legacy collections must retain their 24-byte header and actual sentinel");
         std::map<void*, std::vector<unsigned char>> snapshots;
         for (const auto& [pointer, size] : trace.live) {
             if (pointer == header || pointer == sentinel) continue;
-            const auto* bytes = static_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + size});
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + size});
         }
         const auto requests = trace.requests.size(); const auto releases = trace.releases.size(); const auto notices = trace.notices; const auto nullFrees = trace.nullFrees;
         trace.budget = static_cast<int>(budget);
         if (setter) _ZN3sce4Json5Value3setERKS1_(&value, &value);
         else Require(_ZN3sce4Json5ValueaSERKS1_(&value, &value) == &value, "Legacy self-assignment must return its receiver");
         trace.budget = -1;
-        auto* words = static_cast<std::uintptr_t*>(header);
+        auto* words = reinterpret_cast<std::uintptr_t*>(header);
         Require(std::memcmp(&value, &before, sizeof(value)) == 0 && *reinterpret_cast<void**>(value.payload) == header && words[1] == 0 &&
                 trace.requests.size() == requests + 1 && trace.requests.back() == (object ? 104u : 48u) && trace.notices == notices + unsigned(!budget) &&
                 trace.releases.size() == releases + 1 && trace.releases.back() == sentinel && trace.nullFrees == nullFrees,
@@ -216,7 +207,7 @@ int main() {
                 "Same-Value retry must repair a missing sentinel without fabricating a null free or replacing its header and metadata");
         _ZN3sce4Json5ValueD1Ev(&value);
         Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.live.empty() && trace.generations.empty(), "Partial legacy collections and module resources must remain destructible");
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0 && _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && trace.live.empty(), "A completed legacy self-use case must permit a fresh module generation");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && trace.live.empty(), "A completed legacy self-use case must permit a fresh module generation");
     }
     return 0;
 }

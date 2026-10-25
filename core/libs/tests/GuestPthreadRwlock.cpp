@@ -1,3 +1,7 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -6,37 +10,9 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared);
-int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr, int pshared);
-int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
-int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
-int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
-int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
-}
-
 using TimedLock = int (APS5_VABI *)(PthreadRwlock*, const KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EBUSY = 16;
@@ -397,8 +373,49 @@ static void CheckAttrProcessSharing() {
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
 }
 
+static void CheckAttrSettype() {
+    PthreadRwlockattr attr = nullptr;
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    for (const int type : {1, 2}) {
+        Require(scePthreadRwlockattrSettype(&attr, type) == SCE_OK);
+        PthreadRwlock rwlock = nullptr;
+        Require(pthread_rwlock_init_nid_postfix(&rwlock, &attr) == 0);
+        Require(pthread_rwlock_wrlock_nid_postfix(&rwlock) == 0 && pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+        Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
+    }
+    for (const int type : {0, 3, -1, static_cast<int>(0x80000000u)}) Require(scePthreadRwlockattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(scePthreadRwlockattrSettype(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
+}
+
+static void CheckAttrType() {
+    PthreadRwlockattr attr = nullptr;
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    int type = -1;
+    Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type) == 0 && type == 0);
+    Require(scePthreadRwlockattrGettype(&attr, &type) == SCE_OK && type == 0);
+    for (const int set : {1, 2}) {
+        Require(scePthreadRwlockattrSettype(&attr, set) == SCE_OK);
+        Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type) == 0 && type == set);
+        Require(scePthreadRwlockattrGettype(&attr, &type) == SCE_OK && type == set);
+    }
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&attr, nullptr); }));
+    int pshared = -1;
+    Require(scePthreadRwlockattrGetpshared(&attr, &pshared) == SCE_OK && pshared == PROCESS_PRIVATE);
+    Require(scePthreadRwlockattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockattrSetpshared(&attr, PROCESS_PRIVATE) == SCE_OK);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    PthreadRwlockattr unset = nullptr;
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(nullptr, &type); }));
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&unset, &type); }));
+    Require(Throws([&] { scePthreadRwlockattrGettype(&unset, &type); }));
+}
+
 int main() {
+    CheckAttrSettype();
     CheckAttrProcessSharing();
+    CheckAttrType();
     CheckWaitingWriterHoldsBackNewReaders();
     CheckConcurrentFirstWrlockExcludes();
     CheckDeadlinesBeyondTheClockRange();

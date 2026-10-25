@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -11,57 +12,14 @@
 #include <string>
 #include <vector>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
-struct Object { void* storage; };
-struct Array { void* storage; };
-struct Iterator { void* state; };
-struct Pair { String key; std::uint64_t reserved; Value value; };
+using namespace SceJson2;
+
 struct StoredText { const char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
 struct TreeNode { TreeNode* parent; TreeNode* left; TreeNode* right; StoredText key; Pair pair; std::uint8_t color; std::uint8_t nil; std::uint8_t reserved[6]; };
 struct TreeHeader { TreeNode* head; std::size_t count; std::uint64_t reserved; Value* owner; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static_assert(sizeof(TreeNode) == 104 && offsetof(TreeNode, pair) == 48 && offsetof(TreeNode, color) == 96);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value*, const String*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value*, const Object*);
-std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
-Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, ReadCallback, void*);
-void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object*);
-void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object*, const Object*);
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
-Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object*, const Object*);
-void APS5_VABI _ZN3sce4Json6Object5clearEv(Object*);
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object*);
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object*, const String*);
-void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object*, const String*);
-Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
-Iterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(Iterator*, Object*, const Pair*);
-void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(Iterator*, const Iterator*);
-Iterator* APS5_VABI _ZNK3sce4Json6Object3endEv(Iterator*, const Object*);
-Iterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(Iterator*, const Object*, const String*);
-const Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(Iterator*);
-void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(Iterator*, const Iterator*);
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(Iterator*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringC1Ev(String*);
-String* APS5_VABI _ZN3sce4Json6String6appendEPKcm(String*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -85,7 +43,7 @@ static void APS5_VABI FreeObject(void*, void* memory, void* context) {
     if (!memory) return;
     auto& trace = *static_cast<ObjectAllocationTrace*>(context);
     if (trace.headers.erase(memory)) {
-        const auto* words = static_cast<const std::uint64_t*>(memory);
+        const auto* words = reinterpret_cast<const std::uint64_t*>(memory);
         Require(words[0] == 0xffffffff && words[1] == UINT64_MAX, "Object teardown must poison the header before freeing it");
     }
     Require(trace.live.erase(memory) == 1, "Object resources must return through their owning allocator"); std::free(memory);
@@ -105,9 +63,9 @@ static Value* Entry(Object& object, const char* key) {
     _ZN3sce4Json6StringD1Ev(&text); return result;
 }
 static void CheckTree(const Object& object, ObjectAllocationTrace& trace, const std::map<std::string, Value*>& entries) {
-    const auto* header = static_cast<const TreeHeader*>(object.storage);
+    const auto* header = reinterpret_cast<const TreeHeader*>(object.items);
     Require(Owned(trace, header, 32) && Owned(trace, header->head, 104) && !header->owner && header->count == entries.size(), "Object header and sentinel must be actual allocator-owned resources");
-    trace.headers.insert(object.storage);
+    trace.headers.insert(object.items);
     auto* head = header->head;
     Require(head->nil == 1 && head->color == 0, "Sentinel flags must mark a black nil node");
     std::vector<TreeNode*> nodes;
@@ -117,7 +75,7 @@ static void CheckTree(const Object& object, ObjectAllocationTrace& trace, const 
         Require(node->color == 0 || (node->left->color == 0 && node->right->color == 0), "Red nodes must have black children");
         const auto left = visit(node->left, node); nodes.push_back(node); const auto right = visit(node->right, node);
         Require(left == right, "Every path must retain the same black height");
-        Require(Owned(trace, node->pair.key.storage, 24) && !node->pair.value.parent && !node->pair.value.auxiliary, "Node pairs must expose native string and value ownership");
+        Require(Owned(trace, node->pair.key.text, 24) && !node->pair.value.parent && !node->pair.value.auxiliary, "Node pairs must expose native string and value ownership");
         const auto found = entries.find(node->key.characters);
         Require(found != entries.end() && found->second == &node->pair.value && std::strcmp(node->key.characters, _ZNK3sce4Json6String5c_strEv(&node->pair.key)) == 0, "Rotations must preserve entry identity and both key representations");
         return left + (node->color == 0);
@@ -128,9 +86,9 @@ static void CheckTree(const Object& object, ObjectAllocationTrace& trace, const 
     for (const auto* node : nodes) { Require(expected->first == node->key.characters, "Tree iteration must preserve key order"); ++expected; }
 }
 static std::vector<std::string> Keys(const Object& object) {
-    Iterator current{}, end{}; _ZNK3sce4Json6Object5beginEv(&current, &object); _ZNK3sce4Json6Object3endEv(&end, &object);
+    ObjectIterator current{}, end{}; _ZNK3sce4Json6Object5beginEv(&current, &object); _ZNK3sce4Json6Object3endEv(&end, &object);
     std::vector<std::string> keys;
-    while (*static_cast<void**>(current.state) != *static_cast<void**>(end.state)) {
+    while (*reinterpret_cast<void**>(current.state) != *reinterpret_cast<void**>(end.state)) {
         keys.emplace_back(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&current)->key));
         _ZN3sce4Json6Object8iteratorppEv(&current);
     }
@@ -164,7 +122,7 @@ static void CheckFailures(ObjectAllocationTrace& trace, const Value* moduleFallb
     const auto baseline = trace.live.size();
     for (bool once : {false, true}) for (int budget = 0; budget <= 8; ++budget) {
         Object object{}; _ZN3sce4Json6ObjectC1Ev(&object); Entry(object, "a"); Entry(object, "c");
-        trace.headers.insert(object.storage);
+        trace.headers.insert(object.items);
         String text{}; _ZN3sce4Json6StringC1EPKc(&text, "b");
         trace.budget = budget; trace.failOnce = once;
         const auto notifications = trace.notifications;
@@ -190,10 +148,10 @@ static void CheckFailures(ObjectAllocationTrace& trace, const Value* moduleFallb
 }
 static std::string AssignmentContents(const Object& object) {
     std::string result;
-    auto* head = static_cast<const TreeHeader*>(object.storage)->head;
+    auto* head = reinterpret_cast<const TreeHeader*>(object.items)->head;
     auto* node = head->left;
     while (node != head) {
-        result += node->pair.key.storage ? static_cast<const StoredText*>(node->pair.key.storage)->characters : "~";
+        result += node->pair.key.text ? reinterpret_cast<const StoredText*>(node->pair.key.text)->characters : "~";
         result += ":" + std::to_string(node->pair.value.type) + ":" + std::to_string(node->pair.value.payload) + ";";
         if (!node->right->nil) { node = node->right; while (!node->left->nil) node = node->left; }
         else { auto* parent = node->parent; while (!parent->nil && node == parent->right) { node = parent; parent = parent->parent; } node = parent; }
@@ -269,12 +227,12 @@ static void CheckInsertions(ObjectAllocationTrace& trace) {
         _ZN3sce4Json5ValueC1Ev(&pair.value); _ZN3sce4Json5Value3setEl(&pair.value, 22);
         const auto notifications = trace.notifications;
         trace.budget = test.budget; trace.failOnce = test.once;
-        Iterator result{};
+        ObjectIterator result{};
         Require(_ZN3sce4Json6Object6insertERKNS1_4PairE(&result, &object, &pair) == &result, "Insertion must return its result iterator");
         trace.budget = -1; trace.failOnce = false;
         Require((result.state != nullptr) == test.state, "Insertion must preserve independent iterator allocation failure");
-        auto* node = result.state ? *static_cast<TreeNode**>(result.state) : nullptr;
-        const char* key = !node ? "NONE" : node->nil ? "END" : node->pair.key.storage ? static_cast<const StoredText*>(node->pair.key.storage)->characters : "NULL";
+        auto* node = result.state ? *reinterpret_cast<TreeNode**>(result.state) : nullptr;
+        const char* key = !node ? "NONE" : node->nil ? "END" : node->pair.key.text ? reinterpret_cast<const StoredText*>(node->pair.key.text)->characters : "NULL";
         Require(std::strcmp(key, test.result) == 0, "Insertion must return the reference entry or end node on failure");
         Require(_ZNK3sce4Json6Object4sizeEv(&object) == test.count && AssignmentContents(object) == test.contents, "Insertion must preserve partial keys, inactive payloads and duplicate values");
         Require(trace.notifications - notifications == test.notifications, "Insertion must notify every failed owned allocation");
@@ -288,12 +246,12 @@ static void CheckIteratorFailures(ObjectAllocationTrace& trace) {
     Object object{}; _ZN3sce4Json6ObjectC1Ev(&object);
     Entry(object, "a");
     String key{}; _ZN3sce4Json6StringC1EPKc(&key, "a");
-    Iterator source{}; _ZNK3sce4Json6Object5beginEv(&source, &object);
+    ObjectIterator source{}; _ZNK3sce4Json6Object5beginEv(&source, &object);
     const auto retained = trace.live.size();
     for (unsigned operation = 0; operation < 5; ++operation) {
         const auto requests = trace.requests.size();
         const auto notifications = trace.notifications;
-        Iterator failed{}; trace.budget = 0;
+        ObjectIterator failed{}; trace.budget = 0;
         switch (operation) {
             case 0: _ZN3sce4Json6Object8iteratorC1Ev(&failed); break;
             case 1: _ZN3sce4Json6Object8iteratorC1ERKS2_(&failed, &source); break;
@@ -303,10 +261,10 @@ static void CheckIteratorFailures(ObjectAllocationTrace& trace) {
         }
         trace.budget = -1;
         Require(!failed.state && trace.live.size() == retained, "Failed iterator allocation must retain no state or borrowed resources");
-        Require(trace.requests.size() == requests + 1 && trace.requests.back() == 8 && trace.notifications == notifications + 1, "Iterator failure must report its actual eight-byte allocation");
+        Require(trace.requests.size() == requests + 1 && trace.requests.back() == 8 && trace.notifications == notifications + 1, "ObjectIterator failure must report its actual eight-byte allocation");
         _ZN3sce4Json6Object8iteratorD1Ev(&failed);
     }
-    Iterator absent{}, copy{}, target{}, end{};
+    ObjectIterator absent{}, copy{}, target{}, end{};
     const auto requests = trace.requests.size();
     trace.budget = 0;
     _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &absent);
@@ -317,17 +275,17 @@ static void CheckIteratorFailures(ObjectAllocationTrace& trace) {
     auto* storage = target.state;
     trace.budget = 0;
     _ZN3sce4Json6Object8iteratoraSERKS2_(&target, &end);
-    Require(target.state == storage && *static_cast<void**>(target.state) == static_cast<TreeHeader*>(object.storage)->head, "Assignment from end must preserve owned iterator state and copy the sentinel");
+    Require(target.state == storage && *reinterpret_cast<void**>(target.state) == reinterpret_cast<TreeHeader*>(object.items)->head, "Assignment from end must preserve owned iterator state and copy the sentinel");
     _ZN3sce4Json6Object8iteratoraSERKS2_(&target, &absent);
     Require(!target.state && trace.live.size() == retained + 1, "Assignment from absent state must release the destination iterator state");
     trace.budget = -1;
     _ZN3sce4Json6Object8iteratorD1Ev(&end); _ZN3sce4Json6Object8iteratorD1Ev(&target);
     Object missing{};
     _ZNK3sce4Json6Object5beginEv(&target, &missing);
-    Require(Owned(trace, target.state, 8) && !*static_cast<void**>(target.state), "A missing object must produce an allocated iterator with no position");
+    Require(Owned(trace, target.state, 8) && !*reinterpret_cast<void**>(target.state), "A missing object must produce an allocated iterator with no position");
     _ZN3sce4Json6Object8iteratorD1Ev(&target);
     _ZN3sce4Json6Object8iteratorD1Ev(&source); _ZN3sce4Json6StringD1Ev(&key); _ZN3sce4Json6ObjectD1Ev(&object);
-    Require(trace.live.size() == baseline, "Iterator failure and assignment paths must release all owned state");
+    Require(trace.live.size() == baseline, "ObjectIterator failure and assignment paths must release all owned state");
 }
 static void CheckNestedAssignment(ObjectAllocationTrace& trace) {
     const auto baseline = trace.live.size();
@@ -343,15 +301,15 @@ static void CheckNestedAssignment(ObjectAllocationTrace& trace) {
     _ZN3sce4Json6StringC1Ev(&expected); _ZN3sce4Json6StringC1Ev(&actual);
     Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&source, &expected) == 0 && _ZN3sce4Json5Value9serializeERNS0_6StringE(&destination, &actual) == 0, "Serialize nested assignment results");
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&expected), _ZNK3sce4Json6String5c_strEv(&actual)) == 0, "Assignment must preserve nested collections, strings and scalar types");
-    auto* header = static_cast<TreeHeader*>(target->storage);
+    auto* header = reinterpret_cast<TreeHeader*>(target->items);
     Require(header->owner == &destination, "Assigned root object must retain its owner");
-    Iterator iterator{}; _ZNK3sce4Json6Object5beginEv(&iterator, target);
+    ObjectIterator iterator{}; _ZNK3sce4Json6Object5beginEv(&iterator, target);
     for (std::size_t index = 0; index < header->count; ++index) {
         const auto* pair = _ZNK3sce4Json6Object8iteratordeEv(&iterator);
         Require(pair->value.parent == &destination, "Assigned entries must bind to the destination value");
         if (pair->value.type == 6 || pair->value.type == 7) {
             auto* nestedStorage = *reinterpret_cast<void* const*>(pair->value.payload);
-            Value* owner = nullptr; std::memcpy(&owner, static_cast<const char*>(nestedStorage) + 24, sizeof(owner));
+            Value* owner = nullptr; std::memcpy(&owner, reinterpret_cast<const char*>(nestedStorage) + 24, sizeof(owner));
             Require(owner == &pair->value, "Nested collection ownership must bind to the assigned entry");
         }
         _ZN3sce4Json6Object8iteratorppEv(&iterator);
@@ -369,10 +327,10 @@ static std::string NestedObjectFailureState(const Value& value, const Value* par
     const auto* header = *reinterpret_cast<void* const*>(value.payload);
     if (!header) return state + "?";
     if (value.type == 5) {
-        const auto* text = static_cast<const StoredText*>(header);
+        const auto* text = reinterpret_cast<const StoredText*>(header);
         return state + ":" + std::string(text->characters, text->length);
     }
-    const auto* words = static_cast<const std::uintptr_t*>(header);
+    const auto* words = reinterpret_cast<const std::uintptr_t*>(header);
     state += words[3] == reinterpret_cast<std::uintptr_t>(&value) ? "o" : "!";
     state += std::to_string(words[1]) + "[";
     if (!words[0]) return state + "?]";
@@ -393,7 +351,7 @@ static std::string NestedObjectFailureState(const Value& value, const Value* par
             if (node == head) return;
             Require(node && ++steps < 32, "Nested test tree links must reach their sentinel");
             visit(node->left);
-            state += node->pair.key.storage ? _ZNK3sce4Json6String5c_strEv(&node->pair.key) : "~";
+            state += node->pair.key.text ? _ZNK3sce4Json6String5c_strEv(&node->pair.key) : "~";
             state += "=" + NestedObjectFailureState(node->pair.value, &value) + ";";
             visit(node->right);
         };
@@ -406,7 +364,7 @@ struct NestedReader {
     Value* source;
     Value* destination;
     Pair* pair;
-    Iterator* iterator;
+    ObjectIterator* iterator;
     std::size_t offset = 0;
     unsigned calls = 0;
 };
@@ -435,7 +393,7 @@ static void CheckInheritedCollectionErrors(ObjectAllocationTrace& trace) {
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&source, input, std::strlen(input)) == 0 && _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&destination, previous, std::strlen(previous)) == 0, "Prepare nested operation source and destination");
         const auto sourceState = NestedObjectFailureState(source);
         Pair pair{}; _ZN3sce4Json6StringC1EPKc(&pair.key, "a"); _ZN3sce4Json5Value3setEl(&pair.value, 11);
-        Iterator iterator{};
+        ObjectIterator iterator{};
         NestedReader reader{operation, &source, &destination, &pair, &iterator};
         const auto notifications = trace.notifications;
         trace.budget = fail ? 4 : -1; trace.failOnce = fail;
@@ -1001,7 +959,7 @@ static void CheckNestedFailureCases(ObjectAllocationTrace& trace) {
         trace.budget = -1; trace.failOnce = false;
         std::string actual;
         if (test.constructor) {
-            Value proxy{}; proxy.type = 7; proxy.payload = reinterpret_cast<std::uintptr_t>(&copy);
+            Value proxy{}; proxy.type = static_cast<ValueType>(7); proxy.payload = reinterpret_cast<std::uintptr_t>(&copy);
             actual = NestedObjectFailureState(proxy);
         } else actual = NestedObjectFailureState(destination);
         const bool matches = actual == states[test.state] && trace.notifications - notifications == test.notifications && trace.requests.size() - requests == test.requests;
@@ -1081,29 +1039,29 @@ static void CheckAssignments(ObjectAllocationTrace& trace) {
         _ZN3sce4Json5Value3setEl(Entry(source, "c"), 33);
         _ZN3sce4Json5Value3setEl(Entry(destination, "z"), 99);
         Value owner{};
-        static_cast<TreeHeader*>(destination.storage)->owner = &owner;
-        auto* previous = destination.storage;
+        reinterpret_cast<TreeHeader*>(destination.items)->owner = &owner;
+        auto* previous = destination.items;
         trace.headers.insert(previous);
         const auto notifications = trace.notifications;
         trace.budget = test.budget; trace.failOnce = test.once;
         Require(_ZN3sce4Json6ObjectaSERKS1_(&destination, &source) == &destination, "Object assignment must return its destination");
         trace.budget = -1; trace.failOnce = false;
-        Require((destination.storage == previous) == (test.budget == 0 || test.budget == 1), "Only initial replacement allocation failures preserve the old object header");
-        Require(static_cast<TreeHeader*>(destination.storage)->owner == &owner, "Replacement trees must retain their destination owner");
+        Require((destination.items == previous) == (test.budget == 0 || test.budget == 1), "Only initial replacement allocation failures preserve the old object header");
+        Require(reinterpret_cast<TreeHeader*>(destination.items)->owner == &owner, "Replacement trees must retain their destination owner");
         Require(_ZNK3sce4Json6Object4sizeEv(&destination) == test.count && AssignmentContents(destination) == test.contents, "Assignment failure must retain the reference partial entries and values");
         Require(trace.notifications - notifications == test.notifications, "Assignment must report each failed owned allocation");
         Require(AssignmentContents(source) == "a:2:11;c:2:33;", "Assignment must preserve the source");
-        trace.headers.insert(destination.storage);
+        trace.headers.insert(destination.items);
         _ZN3sce4Json6ObjectD1Ev(&destination); _ZN3sce4Json6ObjectD1Ev(&source);
         Require(trace.live.size() == baseline, "Assignment failure must reclaim temporary and replaced resources");
     }
     Object object{}; _ZN3sce4Json6ObjectC1Ev(&object);
     _ZN3sce4Json5Value3setEl(Entry(object, "a"), 11);
-    auto* previous = object.storage;
+    auto* previous = object.items;
     trace.headers.insert(previous);
     _ZN3sce4Json6ObjectaSERKS1_(&object, &object);
-    Require(object.storage != previous && AssignmentContents(object) == "a:2:11;", "Modern self-assignment must rebuild while preserving values");
-    trace.headers.insert(object.storage);
+    Require(object.items != previous && AssignmentContents(object) == "a:2:11;", "Modern self-assignment must rebuild while preserving values");
+    trace.headers.insert(object.items);
     _ZN3sce4Json6ObjectD1Ev(&object);
     Require(trace.live.size() == baseline, "Self-assignment must release its previous tree");
 }
@@ -1111,11 +1069,11 @@ int main() {
     ObjectAllocationTrace trace; ObjectAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize object allocation contract");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize object allocation contract");
     const auto baseline = trace.live.size();
     for (int budget : {0, 1}) {
         Object partial{}; trace.budget = budget; _ZN3sce4Json6ObjectC1Ev(&partial); trace.budget = -1;
-        Require(!partial.storage && _ZNK3sce4Json6Object4sizeEv(&partial) == 0 && trace.live.size() == baseline, "Failed object construction must reclaim partial header ownership");
+        Require(!partial.items && _ZNK3sce4Json6Object4sizeEv(&partial) == 0 && trace.live.size() == baseline, "Failed object construction must reclaim partial header ownership");
         _ZN3sce4Json6ObjectD1Ev(&partial);
     }
     Object object{}; _ZN3sce4Json6ObjectC1Ev(&object);
@@ -1126,14 +1084,14 @@ int main() {
         auto* value = Entry(object, key); _ZN3sce4Json5Value3setEl(value, index);
         entries.emplace(key, value); CheckTree(object, trace, entries);
     }
-    Iterator current{}, copy{}; _ZNK3sce4Json6Object5beginEv(&current, &object); _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &current);
-    Require(Owned(trace, current.state, 8) && Owned(trace, copy.state, 8) && current.state != copy.state && *static_cast<void**>(current.state) == *static_cast<void**>(copy.state), "Object iterator copies must own one independent node pointer");
+    ObjectIterator current{}, copy{}; _ZNK3sce4Json6Object5beginEv(&current, &object); _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &current);
+    Require(Owned(trace, current.state, 8) && Owned(trace, copy.state, 8) && current.state != copy.state && *reinterpret_cast<void**>(current.state) == *reinterpret_cast<void**>(copy.state), "Object iterator copies must own one independent node pointer");
     _ZN3sce4Json6Object8iteratorD1Ev(&copy); _ZN3sce4Json6Object8iteratorD1Ev(&current);
     const auto beforeCopies = trace.live.size();
     for (int budget = 0; budget <= 10; ++budget) {
         Object duplicate{}; trace.budget = budget; _ZN3sce4Json6ObjectC1ERKS1_(&duplicate, &object); trace.budget = -1;
         Require(_ZNK3sce4Json6Object4sizeEv(&duplicate) == (budget >= 4 ? 32 : 0), "Partial tree copies retain the source count once the root allocation succeeds");
-        if (duplicate.storage) trace.headers.insert(duplicate.storage);
+        if (duplicate.items) trace.headers.insert(duplicate.items);
         _ZN3sce4Json6ObjectD1Ev(&duplicate); Require(trace.live.size() == beforeCopies, "Partial tree copies must release their actual nodes");
     }
     for (unsigned index = 0; index < 32; ++index) {

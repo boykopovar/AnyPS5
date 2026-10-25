@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -10,66 +11,9 @@
 #include <vector>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct Array { void* storage; };
-struct Iterator { void* state; };
-struct Object { void* storage; };
-struct String { void* storage; };
-struct Pair { String key; std::uint64_t reserved; Value value; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-using SerializationCallback = int (APS5_VABI*)(String&, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array*, const Value*);
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-int APS5_VABI _ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(Value*, SerializationCallback, void*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value*, String*, SerializationCallback, void*);
-String* APS5_VABI _ZN3sce4Json6String6appendEPKc(String*, const char*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE(const Value*, const String*);
-const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value*, const String*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array*);
-Iterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(Iterator*, Array*, const Iterator*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
-const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
-const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
-void APS5_VABI _ZN3sce4Json5Array5clearEv(Array*);
-void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array*);
-Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
-Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(Iterator*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(Iterator*, int);
-void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
-const Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const Iterator*);
-bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const Iterator*, const Iterator*);
-void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object*);
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object*, const String*);
-Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(Iterator*, int);
-const Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const Iterator*);
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(Iterator*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -93,7 +37,7 @@ static void APS5_VABI FreeArray(void*, void* memory, void* context) {
     if (!memory) return;
     auto& trace = *static_cast<ArrayTrace*>(context);
     if (trace.headers.erase(memory)) {
-        const auto* words = static_cast<const std::uint64_t*>(memory);
+        const auto* words = reinterpret_cast<const std::uint64_t*>(memory);
         Require(words[0] == 0xffffffff && words[1] == UINT64_MAX, "Array teardown must expose the native header poison before allocator release");
     }
     Require(trace.live.erase(memory) == 1, "Array must release through its owning allocator"); std::free(memory);
@@ -143,9 +87,9 @@ int main() {
     SerializationTrace before;
     Require(static_cast<unsigned>(_ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(&root, Observe, &before)) == 0x80848110 && before.chunks.empty(), "Callback serialization before initialization must refuse without invoking the callback");
     String beforeOutput{};
-    Require(static_cast<unsigned>(_ZN3sce4Json5Value9serializeERNS0_6StringE(&root, &beforeOutput)) == 0x80848110 && !beforeOutput.storage, "Ordinary serialization before initialization must refuse without constructing output storage");
+    Require(static_cast<unsigned>(_ZN3sce4Json5Value9serializeERNS0_6StringE(&root, &beforeOutput)) == 0x80848110 && !beforeOutput.text, "Ordinary serialization before initialization must refuse without constructing output storage");
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize serialization callbacks");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize serialization callbacks");
     const char json[] = R"({"a":[1,true,"x\n/\u007f"],"b":{}})";
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, json, sizeof(json) - 1) == 0, "Parse nested callback serialization input");
     const std::vector<std::string> chunks{"{", "\"a\":[", "1", ",true", ",\"x\\n\\/\\u007f\"", "]", ",\"b\":{", "}", "}"};

@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <array>
@@ -9,8 +10,8 @@
 #include <limits>
 #include <new>
 
-struct Value { alignas(8) std::array<std::byte, 32> bytes{}; };
-struct String { void* text; };
+using namespace SceJson2;
+
 using Handler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 struct Parameter {
     void* allocator;
@@ -19,21 +20,6 @@ struct Parameter {
     std::int32_t mode;
     std::uint32_t reserved[3];
 };
-
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
-const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value*);
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, Handler, void*);
-}
 
 #ifndef _WIN32
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
@@ -147,7 +133,7 @@ int main() {
     Parameter parameter{&allocator, nullptr, 0, 0, {}};
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0,
             "Initialize string-format conversion");
     const auto baseline = liveAllocations;
     Value value;
@@ -176,8 +162,9 @@ int main() {
     unsigned constructorFailures = 0;
     for (int budget = 0; budget < 64 && !constructed; ++budget) {
         Value destination;
-        destination.bytes.fill(std::byte{0xa5});
-        const auto original = destination.bytes;
+        std::memset(&destination, 0xa5, sizeof(destination));
+        std::array<std::byte, sizeof(Value)> original;
+        std::memcpy(original.data(), &destination, sizeof(destination));
         allocationBudget = budget;
         failed = false;
         try {
@@ -188,7 +175,7 @@ int main() {
         allocationBudget = -1;
         if (failed) {
             ++constructorFailures;
-            Require(destination.bytes == original && liveAllocations == baseline,
+            Require(std::memcmp(&destination, original.data(), sizeof(destination)) == 0 && liveAllocations == baseline,
                     "Failed construction must leave destination storage unchanged and reclaim partial state");
         } else {
             constructed = true;

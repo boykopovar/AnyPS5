@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"

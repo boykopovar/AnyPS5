@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,30 +8,9 @@
 #include <map>
 #include <vector>
 
-struct String { void* storage; };
-struct Value { alignas(8) std::uint64_t words[4]{}; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringC1ERKS1_(String*, const String*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String*);
-std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String*);
-void APS5_VABI _ZN3sce4Json6String7reserveEm(String*, std::size_t);
-void APS5_VABI _ZN3sce4Json6String6resizeEm(String*, std::size_t);
-void APS5_VABI _ZN3sce4Json6String5clearEv(String*);
-String* APS5_VABI _ZN3sce4Json6StringaSERKS1_(String*, const String*);
-String* APS5_VABI _ZN3sce4Json6String6appendEPKcm(String*, const char*, std::size_t);
-String* APS5_VABI _ZN3sce4Json6String6appendERKS1_(String*, const String*);
-String* APS5_VABI _ZN3sce4Json6StringpLEh(String*, unsigned char);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -72,20 +52,20 @@ int main() {
     StringAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize string allocation contract");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize string allocation contract");
     const auto baseline = trace.live.size();
     for (int budget : {0, 1}) {
         trace.budget = budget;
         String failed{}; _ZN3sce4Json6StringC1EPKc(&failed, "abc");
-        Require(budget ? trace.live.count(failed.storage) == 1 : failed.storage == nullptr, "A header failure and a character failure retain distinct partial ownership");
+        Require(budget ? trace.live.count(failed.text) == 1 : failed.text == nullptr, "A header failure and a character failure retain distinct partial ownership");
         CheckText(failed, "", 0, 0);
         trace.budget = -1;
         _ZN3sce4Json6StringD1Ev(&failed);
-        Require(!failed.storage && trace.live.size() == baseline, "Failed string construction must be destructible without leaking");
+        Require(!failed.text && trace.live.size() == baseline, "Failed string construction must be destructible without leaking");
     }
     String text{}; _ZN3sce4Json6StringC1EPKc(&text, "abc");
-    Require(trace.live.at(text.storage) == 24 && trace.live.at(*static_cast<void**>(text.storage)) == 4, "Actual string storage must use native allocator-backed header and characters");
-    for (unsigned i = 16; i < 24; ++i) Require(static_cast<const unsigned char*>(text.storage)[i] == 0xa5, "String construction must preserve reserved header bytes");
+    Require(trace.live.at(text.text) == 24 && trace.live.at(*reinterpret_cast<void**>(text.text)) == 4, "Actual string storage must use native allocator-backed header and characters");
+    for (unsigned i = 16; i < 24; ++i) Require(reinterpret_cast<const unsigned char*>(text.text)[i] == 0xa5, "String construction must preserve reserved header bytes");
     CheckText(text, "abc", 3, 4);
     trace.budget = 0;
     _ZN3sce4Json6String7reserveEm(&text, 17); CheckText(text, "abc", 3, 4);
@@ -111,13 +91,13 @@ int main() {
     Require(trace.live.size() == baseline, "String operations must release all owned resources");
     Value null{}; _ZN3sce4Json5ValueC1Ev(&null);
     const auto* defaultString = _ZNK3sce4Json5Value9getStringEv(&null);
-    Require(defaultString && defaultString->storage && trace.live.at(defaultString->storage) == 24, "The default string header must belong to the active allocator");
+    Require(defaultString && defaultString->text && trace.live.at(defaultString->text) == 24, "The default string header must belong to the active allocator");
     _ZN3sce4Json5ValueD1Ev(&null);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate string allocation contract");
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Reinitialize default string ownership");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Reinitialize default string ownership");
     _ZN3sce4Json5ValueC1Ev(&null);
     defaultString = _ZNK3sce4Json5Value9getStringEv(&null);
-    Require(defaultString && defaultString->storage && trace.live.at(defaultString->storage) == 24, "A new initialization must own its own default string header");
+    Require(defaultString && defaultString->text && trace.live.at(defaultString->text) == 24, "A new initialization must own its own default string header");
     _ZN3sce4Json5ValueD1Ev(&null);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Release defaults from repeated initialization");
     return 0;

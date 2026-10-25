@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -14,8 +15,7 @@
 #include <windows.h>
 #include "prx/libc/include/exceptions/Unwind.hpp"
 extern "C" {
-_Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*);
-_Unwind_Ptr APS5_VABI _Unwind_GetIP_nid_postfix(_Unwind_Context*);
+
 std::string BacktraceModulePath_nid_no_patch(HMODULE handle, std::size_t initialCapacity) {
     std::string module;
     std::size_t capacity = initialCapacity == 0 ? 1 : initialCapacity;
@@ -74,6 +74,7 @@ static_assert(sizeof(FrameRecord) == NameOffset);
     };
     TraceState state{addresses, MaxFrames, 0};
     _Unwind_Backtrace_nid_postfix(traceCallback, &state);
+
     const int captured = state.count;
 #endif
     std::vector<Frame> frames;

@@ -1,0 +1,86 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI sceCompositorAllocateIndex();
+int APS5_VABI sceCompositorCheckCrash();
+int APS5_VABI sceCompositorCommandGpuPerfBegin();
+int APS5_VABI sceCompositorCommandGpuPerfEnd();
+int APS5_VABI sceCompositorCreateIndirectRenderTarget();
+int APS5_VABI sceCompositorDeleteIndirectRenderTarget();
+int APS5_VABI sceCompositorFlush();
+int APS5_VABI sceCompositorFlushWithRepeat();
+int APS5_VABI sceCompositorGetAnotherProcessSystemAddress();
+int APS5_VABI sceCompositorGetAnotherProcessSystemSize();
+int APS5_VABI sceCompositorGetAnotherProcessVideoAddress();
+int APS5_VABI sceCompositorGetAnotherProcessVideoSize();
+int APS5_VABI sceCompositorGetCanvasHandle();
+int APS5_VABI sceCompositorGetClientList();
+int APS5_VABI sceCompositorGetDmemOffset();
+int APS5_VABI sceCompositorGetDummyAddress();
+int APS5_VABI sceCompositorGetDummySize();
+int APS5_VABI sceCompositorGetRemainedCommandNum();
+int APS5_VABI sceCompositorGetRenderTargetResolution();
+int APS5_VABI sceCompositorGetSystemAddress();
+int APS5_VABI sceCompositorGetSystemSize();
+int APS5_VABI sceCompositorGetVideoAddress();
+int APS5_VABI sceCompositorGetVideoSize();
+int APS5_VABI sceCompositorHandleProcessEvents();
+int APS5_VABI sceCompositorInit();
+int APS5_VABI sceCompositorInitWithProcessOrder();
+int APS5_VABI sceCompositorInsertThreadTraceMarker();
+int APS5_VABI sceCompositorIsDebugCaptureEnabled();
+int APS5_VABI sceCompositorIsReady4K();
+int APS5_VABI sceCompositorLockCommandBuffer();
+int APS5_VABI sceCompositorMakeCanvasHandle();
+int APS5_VABI sceCompositorMapAnotherProcess();
+int APS5_VABI sceCompositorMemoryPoolDecommit();
+int APS5_VABI sceCompositorPrivacyMaskPushArea();
+int APS5_VABI sceCompositorQuit();
+int APS5_VABI sceCompositorReleaseCommandBuffer();
+int APS5_VABI sceCompositorReleaseIndex();
+int APS5_VABI sceCompositorReleaseLocalStall();
+int APS5_VABI sceCompositorReserveCommandBuffer();
+int APS5_VABI sceCompositorResetZoomCommand();
+int APS5_VABI sceCompositorSetAgcCompositeCanvasCommand();
+int APS5_VABI sceCompositorSetAgcContextCommand();
+int APS5_VABI sceCompositorSetCompositeCanvasCommandInC();
+int APS5_VABI sceCompositorSetCursorImageAddress();
+int APS5_VABI sceCompositorSetDebugPositionCommand();
+int APS5_VABI sceCompositorSetEndOfFrameCommand();
+int APS5_VABI sceCompositorSetEventCommand();
+int APS5_VABI sceCompositorSetFilterType();
+int APS5_VABI sceCompositorSetFlipCommand2();
+int APS5_VABI sceCompositorSetGameSufaceControlCommand();
+int APS5_VABI sceCompositorSetGnmContextCommand();
+int APS5_VABI sceCompositorSetIndirectCanvasCommand();
+int APS5_VABI sceCompositorSetIndirectCompositionCommand();
+int APS5_VABI sceCompositorSetIndirectRenderTargetConfigCommand();
+int APS5_VABI sceCompositorSetInvisibleCanvasCommand();
+int APS5_VABI sceCompositorSetKeepDisplayBufferCommand();
+int APS5_VABI sceCompositorSetLocalStallCommand();
+int APS5_VABI sceCompositorSetMemoryCommand();
+int APS5_VABI sceCompositorSetPatchCommand();
+int APS5_VABI sceCompositorSetPostEventCommand();
+int APS5_VABI sceCompositorSetRepeatCommand();
+int APS5_VABI sceCompositorSetResolutionCommand();
+int APS5_VABI sceCompositorSetScalingLayoutInfo();
+int APS5_VABI sceCompositorSetSeparateContextCommand();
+int APS5_VABI sceCompositorSetSystemConfigWithMask();
+int APS5_VABI sceCompositorSetVideoOutMode();
+int APS5_VABI sceCompositorSetVirtualCanvasAgcContextCommand();
+int APS5_VABI sceCompositorSetVirtualCanvasCommandFooter();
+int APS5_VABI sceCompositorSetVirtualCanvasPatchCommand();
+int APS5_VABI sceCompositorSetVrMode();
+int APS5_VABI sceCompositorSetZoomCommand();
+int APS5_VABI sceCompositorSystemConfig();
+int APS5_VABI sceCompositorWaitEndOfRendering();
+int APS5_VABI sceCompositorWaitEvent();
+int APS5_VABI sceCompositorWaitPostEvent();
+int APS5_VABI sceCompsoitorGetGpuClock();
+int APS5_VABI sceCompsoitorGetProcessRenderingTime();
+int APS5_VABI sceCompsoitorGetRenderingTime();
+
+}

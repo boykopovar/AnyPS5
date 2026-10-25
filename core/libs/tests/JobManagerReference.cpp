@@ -1,11 +1,10 @@
+#include "prx/libSceJobManager/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <windows.h>
 
-struct MemorySizeQueryParams;
-struct ConfigParams;
 struct SequenceFactory;
 
 int RunJobManagerCase(const char* name);

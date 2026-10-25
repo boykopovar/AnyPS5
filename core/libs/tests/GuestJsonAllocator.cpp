@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -8,32 +9,9 @@
 #include <map>
 #include <vector>
 
-struct Value { alignas(8) std::uint64_t words[4]{}; };
-struct String { void* storage; };
-struct Array { void* storage; };
-struct Object { void* storage; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
-const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String*);
-std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String*);
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object*);
-void APS5_VABI _ZN3sce4Json6String7reserveEm(String*, std::size_t);
-void APS5_VABI _ZN3sce4Json6String6resizeEm(String*, std::size_t);
-void APS5_VABI _ZN3sce4Json6String5clearEv(String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -99,20 +77,20 @@ static void CheckResources(AllocationTrace& trace) {
     const auto* string = _ZNK3sce4Json5Value9getStringEv(&null);
     const auto* array = _ZNK3sce4Json5Value8getArrayEv(&null);
     const auto* object = _ZNK3sce4Json5Value9getObjectEv(&null);
-    Require(Owned(trace, string, 8) && Owned(trace, string->storage, 24), "The default string must use the configured allocator");
-    Require(Owned(trace, array, 8) && Owned(trace, array->storage, 32) && Owned(trace, *static_cast<void**>(array->storage), 48),
+    Require(Owned(trace, string, 8) && Owned(trace, string->text, 24), "The default string must use the configured allocator");
+    Require(Owned(trace, array, 8) && Owned(trace, array->items, 32) && Owned(trace, *reinterpret_cast<void**>(array->items), 48),
             "The default array must own its allocator-backed header and sentinel");
-    Require(Owned(trace, object, 8) && Owned(trace, object->storage, 32) && Owned(trace, *static_cast<void**>(object->storage), 104),
+    Require(Owned(trace, object, 8) && Owned(trace, object->items, 32) && Owned(trace, *reinterpret_cast<void**>(object->items), 104),
             "The default object must own its allocator-backed header and tree sentinel");
     Require(Owned(trace, _ZNK3sce4Json5ValueixEPKc(&null, "missing"), 32), "Missing access must return the allocated module fallback");
     _ZN3sce4Json5ValueD1Ev(&null);
     String text{};
     _ZN3sce4Json6StringC1EPKc(&text, "abc");
-    Require(Owned(trace, text.storage, 24) && Owned(trace, *static_cast<void**>(text.storage), 4) &&
+    Require(Owned(trace, text.text, 24) && Owned(trace, *reinterpret_cast<void**>(text.text), 4) &&
                 _ZNK3sce4Json6String4sizeEv(&text) == 3 && _ZNK3sce4Json6String8capacityEv(&text) == 4,
             "String construction must allocate the native header and exact initial character capacity");
     _ZN3sce4Json6String7reserveEm(&text, 17);
-    Require(Owned(trace, *static_cast<void**>(text.storage), 17) && _ZNK3sce4Json6String8capacityEv(&text) == 17,
+    Require(Owned(trace, *reinterpret_cast<void**>(text.text), 17) && _ZNK3sce4Json6String8capacityEv(&text) == 17,
             "Reserve must apply the SDK-dependent buffer growth rule");
     _ZN3sce4Json6String6resizeEm(&text, 18);
     const char* data = _ZNK3sce4Json6String5c_strEv(&text);
@@ -121,7 +99,7 @@ static void CheckResources(AllocationTrace& trace) {
     for (unsigned index = 3; index <= 18; ++index)
         Require(data[index] == 0, "Growing a string must zero the added bytes and terminator");
     _ZN3sce4Json6String5clearEv(&text);
-    Require(Owned(trace, text.storage, 24) && _ZNK3sce4Json6String4sizeEv(&text) == 0 && _ZNK3sce4Json6String8capacityEv(&text) == 0,
+    Require(Owned(trace, text.text, 24) && _ZNK3sce4Json6String4sizeEv(&text) == 0 && _ZNK3sce4Json6String8capacityEv(&text) == 0,
             "Clear must release characters while retaining the string header");
     _ZN3sce4Json6StringD1Ev(&text);
     Require(trace.live.size() == 12, "Temporary string operations must leave only initialization resources alive");
@@ -135,7 +113,7 @@ static void CheckSingleFailures() {
         Parameter parameter{&allocator, &trace, 16384, 2, {}};
         std::uint8_t initializer = 0;
         _ZN3sce4Json11InitializerC1Ev(&initializer);
-        const int result = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter);
+        const int result = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter));
         const bool optional = point == 2 || point == 4 || point == 5 || point == 7 || point == 8;
         Require(result == (optional ? 0 : static_cast<int>(0x80848102)) && initializer == (optional ? 1 : 0),
                 "Single inner-default allocation failures must retain the observed admission result");
@@ -145,18 +123,18 @@ static void CheckSingleFailures() {
             _ZN3sce4Json5ValueC1Ev(&null);
             if (point == 2) {
                 const auto* string = _ZNK3sce4Json5Value9getStringEv(&null);
-                Require(Owned(trace, string, 8) && !string->storage && _ZNK3sce4Json6String4sizeEv(string) == 0 &&
+                Require(Owned(trace, string, 8) && !string->text && _ZNK3sce4Json6String4sizeEv(string) == 0 &&
                             _ZNK3sce4Json6String8capacityEv(string) == 0 && _ZNK3sce4Json6String5c_strEv(string)[0] == 0,
                         "A failed default string header must retain its usable empty outer handle");
             } else if (point == 4 || point == 5) {
                 const auto* array = _ZNK3sce4Json5Value8getArrayEv(&null);
                 Require(Owned(trace, array, 8) && _ZNK3sce4Json5Array4sizeEv(array) == 0,
                         "A failed default array resource must retain an empty outer handle");
-                Require(point == 4 ? !array->storage : Owned(trace, array->storage, 32),
+                Require(point == 4 ? !array->items : Owned(trace, array->items, 32),
                         "Array admission must preserve the observed partial header ownership");
             } else {
                 const auto* object = _ZNK3sce4Json5Value9getObjectEv(&null);
-                Require(Owned(trace, object, 8) && !object->storage && _ZNK3sce4Json6Object4sizeEv(object) == 0,
+                Require(Owned(trace, object, 8) && !object->items && _ZNK3sce4Json6Object4sizeEv(object) == 0,
                         "A failed default object resource must retain its empty outer handle and reclaim partial tree storage");
             }
             _ZN3sce4Json5ValueD1Ev(&null);
@@ -164,7 +142,7 @@ static void CheckSingleFailures() {
         }
         Require(trace.live.empty(), "Both admitted partial defaults and refused initialization must release all allocated resources");
         trace.budget = -1;
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0,
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0,
                 "A subsequent full initialization must work after every single failure schedule");
         CheckResources(trace);
         Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Release resources after retry");
@@ -179,7 +157,7 @@ static void CheckContextSnapshot() {
     trace.replacementContext = &replacement;
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize with a reconfigured input during context allocation");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize with a reconfigured input during context allocation");
     bool found = false;
     for (const auto& [memory, bytes] : trace.live) {
         if (bytes != 24) continue;
@@ -197,13 +175,13 @@ int main() {
         Parameter parameter{&allocator, &trace, 16384, 2, {}};
         std::uint8_t initializer = 0;
         _ZN3sce4Json11InitializerC1Ev(&initializer);
-        const int result = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter);
+        const int result = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter));
         if (budget < 12) {
             Require(static_cast<unsigned>(result) == 0x80848102 && initializer == 0 && trace.live.empty(),
                     "Every initialization allocation failure must report OOM, roll back ownership and leave retry legal");
             Require((budget == 0) == trace.notifications.empty(), "Only the first context-allocation failure omits notification");
             trace.budget = -1;
-            Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0,
+            Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0,
                     "Initialization must succeed after failure rollback without reconstructing the initializer");
         } else {
             Require(result == 0 && initializer == 1, "Initialization must succeed after its final resource allocation");

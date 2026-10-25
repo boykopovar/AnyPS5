@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,28 +8,9 @@
 #include <map>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
-struct Pair { String key; std::uint64_t reserved; Value value; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair*);
-void APS5_VABI _ZN3sce4Json6Object4PairC2Ev(Pair*);
-void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
-void APS5_VABI _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
-void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair*);
-void APS5_VABI _ZN3sce4Json6Object4PairD2Ev(Pair*);
-}
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -63,7 +45,7 @@ static void CheckMetadata(const Pair& pair, std::uint64_t pattern) {
 int main() {
     PairTrace trace; PairAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize pair layout contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize pair layout contracts");
     const auto baseline = trace.live;
     for (unsigned char poison : {0x5a, 0xa5}) for (bool base : {false, true}) {
         const auto pattern = UINT64_C(0x0101010101010101) * poison;
@@ -71,7 +53,7 @@ int main() {
         if (base) _ZN3sce4Json6Object4PairC2Ev(&empty);
         else _ZN3sce4Json6Object4PairC1Ev(&empty);
         CheckMetadata(empty, pattern);
-        Require(empty.key.storage && !_ZNK3sce4Json6String5c_strEv(&empty.key)[0] && empty.value.type == 0 && empty.value.payload == pattern, "Default pairs must construct an empty key and null value while preserving inactive payload bytes");
+        Require(empty.key.text && !_ZNK3sce4Json6String5c_strEv(&empty.key)[0] && empty.value.type == 0 && empty.value.payload == pattern, "Default pairs must construct an empty key and null value while preserving inactive payload bytes");
         if (base) _ZN3sce4Json6Object4PairD2Ev(&empty);
         else _ZN3sce4Json6Object4PairD1Ev(&empty);
         Require(trace.live == baseline, "Default pair destruction must preserve module allocation identities");
@@ -83,7 +65,7 @@ int main() {
             if (base) _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(&copy, &key, &source);
             else _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&copy, &key, &source);
             CheckMetadata(copy, pattern);
-            Require(copy.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&copy.key), "key") == 0 && copy.value.type == source.type, "Pair construction must independently own its key and copy the exact source type");
+            Require(copy.key.text != key.text && std::strcmp(_ZNK3sce4Json6String5c_strEv(&copy.key), "key") == 0 && copy.value.type == source.type, "Pair construction must independently own its key and copy the exact source type");
             if (source.type == 0) Require(copy.value.payload == pattern, "Null pair values must preserve inactive payload bytes");
             else if (source.type == 1) Require(copy.value.payload == ((pattern & ~UINT64_C(0xff)) | (source.payload & 0xff)), "Boolean pair values must write only their active payload byte");
             else if (source.type <= 4) Require(copy.value.payload == source.payload, "Numeric pair values must retain exact source payload bits");

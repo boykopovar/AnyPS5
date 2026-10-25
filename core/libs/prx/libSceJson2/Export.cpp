@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceJson2/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -25,16 +27,7 @@
 
 namespace {
 
-enum ValueType : std::int32_t {
-    TypeNull = 0,
-    TypeBoolean = 1,
-    TypeInteger = 2,
-    TypeUInteger = 3,
-    TypeReal = 4,
-    TypeString = 5,
-    TypeArray = 6,
-    TypeObject = 7,
-};
+using namespace SceJson2;
 
 constexpr int JsonErrorParse = static_cast<int>(0x80848101);
 constexpr int JsonErrorOutOfMemory = static_cast<int>(0x80848102);
@@ -43,31 +36,26 @@ constexpr int JsonErrorAlreadyInitialized = static_cast<int>(0x80848111);
 constexpr int JsonErrorSpecialFloat = static_cast<int>(0x80848114);
 constexpr int JsonErrorInvalidArgument = static_cast<int>(0x80848120);
 
-struct Value;
 struct Handlers;
-struct Auxiliary;
 struct LegacyHandlerMap;
-struct Text { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
+
 static_assert(sizeof(Text) == 24);
-struct String { Text* text; };
-struct ArrayStorage;
+
 struct ArrayLink;
-struct Array { ArrayStorage* items; };
-struct Pair;
-struct ObjectStorage;
+
 struct ObjectLink;
-struct Object { ObjectStorage* items; };
-struct ArrayIteratorState {
+
+}
+
+struct SceJson2::ArrayIteratorState {
     ArrayLink* position;
 };
-struct ArrayIterator { ArrayIteratorState* state; };
-struct ObjectIteratorState {
+
+struct SceJson2::ObjectIteratorState {
     ObjectLink* position;
 };
-struct ObjectIterator { ObjectIteratorState* state; };
-using TypeMismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
-using SpecialFloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-using ElementAccessFailureHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
+
+namespace {
 
 struct Handlers {
     TypeMismatchHandler typeMismatch = nullptr;
@@ -78,40 +66,20 @@ struct Handlers {
     void* elementAccessFailureContext = nullptr;
 };
 
-struct Value {
-    Value* parent = nullptr;
-    Auxiliary* auxiliary = nullptr;
-    union {
-        std::uint64_t payload = 0;
-        bool boolean;
-        std::int64_t integer;
-        std::uint64_t uinteger;
-        double real;
-        String* string;
-        Array* array;
-        Object* object;
-    };
-    std::uint32_t reserved = 0;
-    ValueType type = TypeNull;
-};
 using Node = Value;
 static_assert(offsetof(Value, parent) == 0 && offsetof(Value, auxiliary) == 8);
 static_assert(offsetof(Value, payload) == 16 && offsetof(Value, type) == 28);
 
-struct Pair {
-    String key;
-    std::uint64_t reserved;
-    Value value;
-};
 static_assert(sizeof(Value) == 32 && sizeof(String) == 8 && sizeof(Array) == 8 && sizeof(Object) == 8);
 static_assert(sizeof(ArrayIterator) == 8 && sizeof(ObjectIterator) == 8);
 static_assert(offsetof(Pair, value) == 0x10);
 
-using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 template<typename TCallback>
 struct HandlerRecord { TCallback callback = nullptr; void* context = nullptr; };
 
-struct Auxiliary {
+}
+
+struct SceJson2::Auxiliary {
     NullAccessCallback nullAccess = nullptr;
     void* nullAccessContext = nullptr;
     Value* fallback = nullptr;
@@ -120,6 +88,9 @@ struct Auxiliary {
     HandlerRecord<ElementAccessFailureHandler>* elementAccessFailure = nullptr;
     std::uint64_t reserved[3]{};
 };
+
+namespace {
+
 static_assert(sizeof(Auxiliary) == 72 && offsetof(Auxiliary, fallback) == 16);
 static_assert(offsetof(Auxiliary, typeMismatch) == 24 && offsetof(Auxiliary, specialFloat) == 32);
 static_assert(offsetof(Auxiliary, elementAccessFailure) == 40);
@@ -508,7 +479,9 @@ struct ArrayLink {
 };
 static_assert(sizeof(ArrayLink) == 48 && offsetof(ArrayLink, value) == 16);
 
-struct ArrayStorage {
+}
+
+struct SceJson2::ArrayStorage {
     ArrayLink* head;
     std::size_t count;
     std::uint64_t reserved;
@@ -582,6 +555,9 @@ struct ArrayStorage {
         --count;
     }
 };
+
+namespace {
+
 static_assert(sizeof(ArrayStorage) == 24 && sizeof(ArrayIteratorState) == 8);
 
 ArrayLink* NewArrayHead() {
@@ -799,7 +775,9 @@ ObjectLink* NewObjectHead() {
     return head;
 }
 
-struct ObjectStorage {
+}
+
+struct SceJson2::ObjectStorage {
     ObjectLink* head;
     std::size_t count;
     std::uint64_t reserved;
@@ -895,10 +873,10 @@ struct ObjectStorage {
         count = 0;
     }
 };
-static_assert(sizeof(ObjectStorage) == 24 && sizeof(ObjectIteratorState) == 8);
 
-extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t bytes);
-extern "C" void APS5_VABI _ZdlPv_nid_postfix(void* memory);
+namespace {
+
+static_assert(sizeof(ObjectStorage) == 24 && sizeof(ObjectIteratorState) == 8);
 
 struct LegacyHandlerNode {
     LegacyHandlerNode* parent;
@@ -2049,8 +2027,6 @@ void PrependArray(Array* self, const Value* value) {
     }
 }
 
-using SerializationCallback = int (APS5_VABI*)(String&, void*);
-
 template<typename TLink>
 struct SerializationIterator {
     TLink** state;
@@ -2238,8 +2214,6 @@ int SerializeCallbackValue(Value* value, String* destination, SerializationCallb
     CallbackSerializer serializer(buffer.string, destination, callback, context, collect);
     return serializer.SerializeValue(*value);
 }
-
-using ParserReadCallback = int (APS5_VABI*)(char&, void*);
 
 double ParseDecimal(std::string_view text) {
     std::size_t cursor = 0;
@@ -2539,8 +2513,6 @@ void* const JsonMemAllocatorVtable[] = {
 }
 
 extern "C" {
-
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self);
 
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self) {
     *static_cast<std::uint8_t*>(self) = 0;
@@ -3140,12 +3112,6 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
     return ParseValue(out, parser);
 }
 
-struct InitParameterRtti {
-    void* allocParam;
-    void* userData;
-    std::size_t fileBufferSize;
-};
-
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
     *self = {};
     auto& state = State();
@@ -3159,13 +3125,6 @@ void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitP
     self->fileBufferSize = fileBufferSize;
 }
 
-struct InitParameter2 {
-    void* allocator;
-    void* userData;
-    std::size_t fileBufferSize;
-    std::int32_t specialFloatFormatType;
-    std::uint32_t reserved[3];
-};
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
@@ -3175,6 +3134,7 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
     _ZN3sce4Json14InitParameter2C1Ev(self);
+
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {

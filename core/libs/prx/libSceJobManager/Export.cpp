@@ -1,3 +1,15 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceJobManager/include/Api.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgc/Cb/include/Sync.hpp"
+#include "prx/libSceAgc/Cb/include/Registers.hpp"
+#include "prx/libSceAgc/Cb/include/Dispatch.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Dispatch.hpp"
+#include "prx/libSceAgc/Acb/include/Control.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -16,39 +28,6 @@
 #include "ComputeProgress.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
-
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stackSize);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** result);
-std::uint64_t APS5_VABI sceKernelGetTscFrequency();
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
-int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceKernelGetEventFilter(const KernelEvent* ev);
-std::uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
-int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id);
-int APS5_VABI sceAgcDriverSubmitAcb(std::uint32_t queue, const Packet* packet);
-std::uint32_t* APS5_VABI sceAgcAcbAcquireMem(CommandBuffer* buf, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles);
-std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs);
-std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
-std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
-std::uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, std::uint32_t threadGroupX, std::uint32_t threadGroupY, std::uint32_t threadGroupZ, std::uint32_t modifier);
-std::uint32_t* APS5_VABI sceAgcAcbDispatchIndirect(CommandBuffer* buf, const volatile void* indirectArguments, std::uint32_t modifier);
-std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t action, std::uint16_t gcrControl, std::uint8_t dst, std::uint8_t cachePolicy, const volatile Label* address, std::uint8_t dataSelect, std::uint64_t data, std::uint16_t gdsOffset, std::uint16_t gdsSize, std::uint8_t interrupt, std::uint32_t interruptContextId);
-std::uint32_t* APS5_VABI sceAgcAcbWaitRegMem(CommandBuffer* buf, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles);
-std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState);
-std::uint32_t* APS5_VABI sceAgcAcbWriteData(CommandBuffer* buf, std::uint8_t dst, std::uint8_t cachePolicy, std::uint64_t address, const void* data, std::uint32_t numDwords, std::uint8_t increment, std::uint8_t writeConfirm);
-}
 
 namespace {
 
@@ -81,30 +60,6 @@ constexpr std::uint32_t FirstComputeQueue = 0x20;
 constexpr std::uint32_t UserDataRegister = 0x240;
 constexpr int UserEventFilter = -11;
 
-struct MemorySizeQueryParams {
-    std::uint32_t version;
-    std::uint32_t workers;
-    std::uint32_t sequences;
-    std::uint32_t invocations;
-    std::uint32_t dispatches;
-    std::uint32_t syncPoints;
-    std::uint32_t waits;
-    std::uint32_t computeSequences;
-    std::uint64_t computeQueueMask;
-};
-
-struct ConfigParams {
-    std::uint32_t version;
-    std::uint32_t threadFlags;
-    std::uint32_t stackSize;
-    std::uint32_t priority;
-    const char* threadName;
-    std::uint32_t spinMicroseconds;
-    std::uint32_t computeAffinity;
-    std::uint32_t computePriority;
-    std::uint32_t reserved;
-};
-
 constexpr ConfigParams DefaultConfig{0, 0x00021fff, 0x00010000, 0x2bc, nullptr, 0, 0x1fff, 0x100, 0};
 
 struct BlockHeader {
@@ -114,8 +69,6 @@ struct BlockHeader {
     std::uint32_t size;
     std::uint32_t reserved;
 };
-
-using JobEntry = void (APS5_VABI*)(void* argument, std::uint32_t index);
 
 std::uint64_t AlignUp(std::uint64_t value, std::uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
@@ -173,27 +126,6 @@ struct Counters {
     std::uint32_t dispatches = 0;
     std::uint32_t syncPoints = 0;
     std::uint32_t waits = 0;
-};
-
-class ISequence {
-public:
-    APS5_VABI virtual int Dispatch(JobEntry entry, void* argument, std::uint32_t count, const char* name) = 0;
-    APS5_VABI virtual int SyncPoint() = 0;
-    APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual void CompleteDestructor() {}
-    APS5_VABI virtual void DeletingDestructor() { throw std::runtime_error("libSceJobManager: a sequence was deleted by its caller"); }
-    APS5_VABI virtual int DispatchCompute(const void* shader, void* userData, std::int32_t x, std::int32_t y, std::int32_t z, const char* name) = 0;
-    APS5_VABI virtual int DispatchComputeIndirect(const void* shader, void* userData, const void* indirectArguments, const char* name) = 0;
-};
-
-class ISequenceFactory {
-public:
-    APS5_VABI virtual int Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
-    APS5_VABI virtual int Destroy(ISequence* sequence) = 0;
-    APS5_VABI virtual void CompleteDestructor() {}
-    APS5_VABI virtual void DeletingDestructor() { throw std::runtime_error("libSceJobManager: a sequence factory was deleted by its caller"); }
-    APS5_VABI virtual int CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
-    APS5_VABI virtual int DestroyCompute(ISequence* sequence) = 0;
 };
 
 class Sequence final : public ISequence {
@@ -711,6 +643,7 @@ void StartWorkers(Manager& manager, const ConfigParams& config, std::uint32_t wo
         Pthread thread = nullptr;
         const int created = scePthreadCreate(&thread, &attributes, WorkerEntry, &manager, name.c_str());
         scePthreadAttrDestroy(&attributes);
+
         if (created != 0) throw std::runtime_error("libSceJobManager: scePthreadCreate failed for a worker");
         manager.workers.push_back(thread);
     }
@@ -739,6 +672,7 @@ void StartCompute(Manager& manager, const WorkLayout& layout, std::uint32_t comp
     }
     const int created = scePthreadCreate(&manager.computeHandler, &attributes, ComputeHandlerEntry, &manager, "SceJobManagerComputeEventHdlr");
     scePthreadAttrDestroy(&attributes);
+
     if (created != 0) throw std::runtime_error("libSceJobManager: scePthreadCreate failed for the compute handler");
 }
 
@@ -810,8 +744,6 @@ void APS5_VABI _ZN3sce3Job10JobManagerC2Ev(void* self) {
     Implementation(self) = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void* self);
-
 void APS5_VABI _ZN3sce3Job10JobManagerD1Ev(void* self) {
     if (Implementation(self) != nullptr) {
         static_cast<void>(_ZN3sce3Job10JobManager8shutdownEv(self));
@@ -820,6 +752,7 @@ void APS5_VABI _ZN3sce3Job10JobManagerD1Ev(void* self) {
 
 void APS5_VABI _ZN3sce3Job10JobManagerD2Ev(void* self) {
     _ZN3sce3Job10JobManagerD1Ev(self);
+
 }
 
 std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams* params) {

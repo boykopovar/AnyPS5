@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <cstddef>
@@ -8,33 +9,10 @@
 #include <limits>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uintptr_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* text; };
-struct Array { void* items; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using Handler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, Handler, void*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value*, String*);
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -80,7 +58,7 @@ static void CheckMode(int mode) {
     Parameter parameter{&allocator, nullptr, 0, mode, {}};
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize special-float recovery");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize special-float recovery");
     Context trace;
     Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, Recover, &trace) == 0,
             "Register a special-float handler");
@@ -119,7 +97,7 @@ static void CheckParentsAndReentry() {
     Parameter parameter{&allocator, nullptr, 0, 2, {}};
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize parent recovery");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize parent recovery");
     Array array{};
     _ZN3sce4Json5ArrayC1Ev(&array);
     Value leaf{}, root{}, other{};

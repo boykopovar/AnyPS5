@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -9,12 +10,9 @@
 #include <new>
 #include <stdexcept>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -114,7 +112,7 @@ static void Check(Failure failure, unsigned target) {
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     bool failed = false;
     try {
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && failure == Failure::None, "A failed kernel setup must not report successful initialization");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && failure == Failure::None, "A failed kernel setup must not report successful initialization");
     } catch (const std::bad_alloc&) {
         Require(failure == Failure::AttributeException || failure == Failure::MutexException, "Host allocation exceptions must retain their actual type");
         failed = true;
@@ -133,7 +131,7 @@ static void Check(Failure failure, unsigned target) {
     Require(Kernel.attributesCreated == Kernel.attributesDestroyed && Kernel.mutexesCreated == Kernel.mutexesDestroyed, "Rollback must balance each kernel resource exactly once");
     const auto generation = guest.generation;
     Kernel.failure = Failure::None;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && guest.generation > generation && Kernel.mutexes.size() == mutexCount, "Retry must admit a fresh resource generation using the same initializer");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && guest.generation > generation && Kernel.mutexes.size() == mutexCount, "Retry must admit a fresh resource generation using the same initializer");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && guest.live.empty() && Kernel.attributes.empty() && Kernel.mutexes.empty(), "Retry teardown must reclaim complete guest and kernel ownership");
     Require(Kernel.attributesCreated == Kernel.attributesDestroyed && Kernel.mutexesCreated == Kernel.mutexesDestroyed, "Retry must preserve balanced kernel ownership");
 }

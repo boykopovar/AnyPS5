@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -10,29 +11,11 @@
 #include <bit>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static_assert(sizeof(Value) == 32 && sizeof(Parameter) == 40);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-extern "C" {
-Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value*, const String*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatCallback, void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -929,7 +912,7 @@ static const Expected Cases[]{
 int main() {
     RecoveryAllocationTrace trace; RecoveryAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize callback-return allocation contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize callback-return allocation contracts");
     Value replacement{}; _ZN3sce4Json5ValueC1Ev(&replacement);
     const char document[] = "{\"k\":\"recovery\"}";
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&replacement, document, sizeof(document) - 1) == 0 && Contents(replacement) == document, "Construct the independently owned callback-return template");
@@ -944,8 +927,8 @@ int main() {
         RecoveryContext callback{expected.object == 2 ? &nestedReplacement : &replacement, expected.object != 0};
         Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, RecoverAllocated, &callback) == 0, "Register allocation-backed recovery");
         void* auxiliary = value.auxiliary;
-        void* fallback = static_cast<void**>(auxiliary)[2];
-        void* record = static_cast<void**>(auxiliary)[4];
+        void* fallback = reinterpret_cast<void**>(auxiliary)[2];
+        void* record = reinterpret_cast<void**>(auxiliary)[4];
         const auto auxiliaryId = trace.ids.at(auxiliary), fallbackId = trace.ids.at(fallback), recordId = trace.ids.at(record);
         String output{}; _ZN3sce4Json6StringC1EPKc(&output, "p");
         const auto requests = trace.requests.size(); const auto notifications = trace.notifications;
@@ -968,9 +951,9 @@ int main() {
         Require(end - requests == expected.requests && order == expected.order && errors == expected.notifications, "Callback construction, cloning and final assignment must preserve exact request order and failure notifications");
         if (expected.format) Require(status == 0, "Serialization must preserve the reference callback-recovery status");
         Require(callback.calls == 1 && callback.function == (expected.format ? 0 : 1) && callback.errorPointer == expected.format, "Recovery dispatch must retain callback function, invocation count, error-pointer shape and observed serialization status");
-        Require(!value.parent && value.auxiliary == auxiliary && static_cast<void**>(auxiliary)[2] == fallback && static_cast<void**>(auxiliary)[4] == record, "Partial callback cloning must preserve destination callback metadata and fallback identity");
+        Require(!value.parent && value.auxiliary == auxiliary && reinterpret_cast<void**>(auxiliary)[2] == fallback && reinterpret_cast<void**>(auxiliary)[4] == record, "Partial callback cloning must preserve destination callback metadata and fallback identity");
         Require(trace.ids.count(auxiliary) && trace.ids.count(fallback) && trace.ids.count(record), "Destination recovery metadata must retain live allocator ownership");
-        Require(trace.ids.at(auxiliary) == auxiliaryId && trace.ids.at(fallback) == fallbackId && trace.ids.at(record) == recordId && static_cast<void**>(record)[0] == reinterpret_cast<void*>(&RecoverAllocated) && static_cast<void**>(record)[1] == &callback && static_cast<Value*>(fallback)->parent == &value, "Recovery metadata must retain its allocation generation, handler, context and fallback owner");
+        Require(trace.ids.at(auxiliary) == auxiliaryId && trace.ids.at(fallback) == fallbackId && trace.ids.at(record) == recordId && reinterpret_cast<void**>(record)[0] == reinterpret_cast<void*>(&RecoverAllocated) && reinterpret_cast<void**>(record)[1] == &callback && reinterpret_cast<Value*>(fallback)->parent == &value, "Recovery metadata must retain its allocation generation, handler, context and fallback owner");
         Require(Contents(replacement) == document && Contents(nestedReplacement) == nestedDocument, "Failure recovery must preserve the independently owned source template");
         _ZN3sce4Json6StringD1Ev(&output); _ZN3sce4Json5ValueD1Ev(&value);
         Require(trace.live == baseline && trace.ids == baselineIds, "Every callback-return failure state must reclaim temporary ownership and remain destructible");

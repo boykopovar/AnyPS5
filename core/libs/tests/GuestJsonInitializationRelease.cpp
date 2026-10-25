@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,12 +8,9 @@
 #include <map>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 #if defined(JSON2_LEGACY_TEST)
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
@@ -115,14 +113,14 @@ int main() {
         InitializationTrace trace; trace.budget = expected.budget; trace.once = expected.once;
         InitializationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 2, {}};
         std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-        const int status = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter);
+        const int status = _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter));
         Require(status == (expected.admitted ? 0 : static_cast<int>(0x80848102)) && initializer == expected.admitted, "Failure admission must preserve the reference status and initializer active byte");
         if (expected.admitted) Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Terminate admitted partial resources");
         Require(trace.ids.empty() && initializer == 0, "Rollback and termination must reclaim every admitted resource");
         Require(trace.releases == expected.releases, "Cleanup must preserve exact allocation-identity order including observable null frees");
         Require(static_cast<unsigned>(_ZN3sce4Json11Initializer9terminateEv(&initializer)) == 0x80848110 && trace.releases == expected.releases, "Repeated termination must report inactive state without allocator effects");
         trace.budget = -1; trace.once = false; trace.requests = 0; trace.releases.clear();
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1, "Retry must work on the same initializer after every failure schedule");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1, "Retry must work on the same initializer after every failure schedule");
         Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.ids.empty(), "Retry termination must reclaim complete resource ownership");
         Require(trace.releases == Cases[12].releases, "Retry must restore the full healthy teardown protocol");
     }

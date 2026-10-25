@@ -58,6 +58,40 @@ struct CollateVtable {
     std::int64_t (APS5_VABI *hash)(const CollateFacet* self, const char* first, const char* last);
 };
 
+struct CodecvtVtable {
+    FacetVtable facet;
+    bool (APS5_VABI *alwaysNoconv)(const Facet* self);
+    int (APS5_VABI *maxLength)(const Facet* self);
+    int (APS5_VABI *encoding)(const Facet* self);
+    int (APS5_VABI *in)(Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+    int (APS5_VABI *out)(Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+    int (APS5_VABI *unshift)(Facet* self, std::uint64_t* state, char* first3, char* last3, char** next3);
+    std::size_t (APS5_VABI *length)(Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
+};
+
+struct NumpunctFacet {
+    Facet base;
+    const char* grouping;
+    char decimalPoint;
+    char thousandsSep;
+    const char* falsename;
+    const char* truename;
+};
+
+struct NumpunctVtable {
+    FacetVtable facet;
+    char (APS5_VABI *decimalPoint)(const NumpunctFacet* self);
+    char (APS5_VABI *thousandsSep)(const NumpunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const NumpunctFacet* self);
+    String* (APS5_VABI *falsename)(String* result, const NumpunctFacet* self);
+    String* (APS5_VABI *truename)(String* result, const NumpunctFacet* self);
+};
+
+struct UnsupportedMethodsVtable {
+    FacetVtable facet;
+    void (APS5_VABI *methods[8])();
+};
+
 struct IosBase {
     const void* vtable;
     std::int64_t standardStream;
@@ -89,6 +123,16 @@ static_assert(offsetof(CollateFacet, collation) == 0x10);
 static_assert(sizeof(CollateFacet) == 0x20);
 static_assert(offsetof(CollateVtable, compare) == 0x20);
 static_assert(offsetof(CollateVtable, hash) == 0x30);
+static_assert(offsetof(CodecvtVtable, alwaysNoconv) == 0x20);
+static_assert(offsetof(CodecvtVtable, in) == 0x38);
+static_assert(offsetof(CodecvtVtable, length) == 0x50);
+static_assert(sizeof(NumpunctFacet) == 0x30);
+static_assert(offsetof(NumpunctFacet, grouping) == 0x10);
+static_assert(offsetof(NumpunctFacet, decimalPoint) == 0x18);
+static_assert(offsetof(NumpunctFacet, falsename) == 0x20);
+static_assert(offsetof(NumpunctFacet, truename) == 0x28);
+static_assert(offsetof(NumpunctVtable, decimalPoint) == 0x20);
+static_assert(offsetof(NumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
 
 }

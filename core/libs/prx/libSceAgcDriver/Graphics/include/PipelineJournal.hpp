@@ -61,6 +61,7 @@ struct PipelineJournalCounters {
     std::uint64_t replayFailed = 0;
     double replayMs = 0;
     std::uint32_t replayThreads = 0;
+    std::uint64_t replayHeldPeakBytes = 0;
     std::uint64_t recordedGraphics = 0;
     std::uint64_t recordedCompute = 0;
     std::uint64_t recordedModules = 0;

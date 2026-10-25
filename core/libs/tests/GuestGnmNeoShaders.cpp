@@ -1,22 +1,8 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceGnmUpdateVsShader(std::uint32_t*, std::uint32_t, const std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmUpdatePsShader(std::uint32_t*, std::uint32_t, const std::uint32_t*);
-int APS5_VABI sceGnmUpdatePsShader350(std::uint32_t*, std::uint32_t, const std::uint32_t*);
-int APS5_VABI sceGnmSetPsShader350(std::uint32_t*, std::uint32_t, const std::uint32_t*);
-int APS5_VABI sceGnmUpdateGsShader(std::uint32_t*, std::uint32_t, const std::uint32_t*);
-int APS5_VABI sceGnmUpdateHsShader(std::uint32_t*, std::uint32_t, const std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t*, std::uint32_t, const std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmCreateWorkloadStream(std::uint64_t, std::uint32_t*);
-int APS5_VABI sceGnmBeginWorkload(std::uint32_t, std::uint64_t*);
-int APS5_VABI sceGnmEndWorkload(std::uint64_t);
-int APS5_VABI sceGnmGetGpuCoreClockFrequency(void);
-int APS5_VABI sceGnmGetOffChipTessellationBufferSize(void);
-}
 
 namespace {
 

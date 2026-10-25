@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -12,72 +13,10 @@
 #include <bit>
 #include <limits>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct Array { void* storage; };
-struct Iterator { void* state; };
-struct Object { void* storage; };
-struct String { void* storage; };
-struct Pair { String key; std::uint64_t reserved; Value value; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-using LegacyNullCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
-using SerializationCallback = int (APS5_VABI*)(String&, void*);
-extern "C" {
-int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, LegacyNullCallback, void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
-void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value*, String*);
-void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array*, const Value*);
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-int APS5_VABI _ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(Value*, SerializationCallback, void*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value*, String*, SerializationCallback, void*);
-String* APS5_VABI _ZN3sce4Json6String6appendEPKc(String*, const char*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE(const Value*, const String*);
-const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value*, const String*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array*);
-Iterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(Iterator*, Array*, const Iterator*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
-const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
-const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
-void APS5_VABI _ZN3sce4Json5Array5clearEv(Array*);
-void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array*);
-Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
-Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(Iterator*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
-void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(Iterator*, int);
-void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
-const Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const Iterator*);
-bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const Iterator*, const Iterator*);
-void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object*);
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object*, const String*);
-Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(Iterator*, int);
-const Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const Iterator*);
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(Iterator*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
+using LegacyNullCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -101,7 +40,7 @@ static void APS5_VABI FreeArray(void*, void* memory, void* context) {
     if (!memory) return;
     auto& trace = *static_cast<ArrayTrace*>(context);
     if (trace.headers.erase(memory)) {
-        const auto* words = static_cast<const std::uint64_t*>(memory);
+        const auto* words = reinterpret_cast<const std::uint64_t*>(memory);
         Require(words[0] == 0xffffffff && words[1] == UINT64_MAX, "Array teardown must expose the native header poison before allocator release");
     }
     Require(trace.live.erase(memory) == 1, "Array must release through its owning allocator"); std::free(memory);
@@ -121,7 +60,7 @@ static int APS5_VABI ObserveLegacy(String& output, void* context) {
     static_cast<LegacySerializationTrace*>(context)->chunks.emplace_back(_ZNK3sce4Json6String5c_strEv(&output));
     return 23;
 }
-static const Value& APS5_VABI LegacyNull(std::int32_t, const Value*, void* context) {
+static const Value& APS5_VABI LegacyNull(ValueType, const Value*, void* context) {
     Require(false, "Legacy serialization must clear the root null-access callback before later recovery");
     return *static_cast<const Value*>(context);
 }
@@ -160,8 +99,8 @@ int main() {
         if (mode != 3) {
             allocations = {24, 24, 32, (length + 1) | 16};
             Require(!value.parent && value.auxiliary && trace.live.at(value.auxiliary) == 24, "Legacy serialization must admit the root's allocator-backed auxiliary record");
-            auto* fallback = static_cast<void**>(value.auxiliary)[2];
-            Require(fallback && trace.live.at(fallback) == 32 && static_cast<Value*>(fallback)->parent == &value, "The legacy root fallback must be allocator-backed and bound to its owning root");
+            auto* fallback = reinterpret_cast<void**>(value.auxiliary)[2];
+            Require(fallback && trace.live.at(fallback) == 32 && reinterpret_cast<Value*>(fallback)->parent == &value, "The legacy root fallback must be allocator-backed and bound to its owning root");
         } else Require(!value.auxiliary, "Direct toString formatting must not perform serialization's metadata admission");
         if (mode != 1) allocations.push_back((length + 2) | 16);
         Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == allocations, "Legacy formatting and metadata admission must preserve the observed allocation order and request sizes");
@@ -179,7 +118,7 @@ int main() {
         Require(status == 0 && std::string(_ZNK3sce4Json6String5c_strEv(&output)) == (complete ? "p1.250000" : "p"), "Legacy serialization must retain its observed partial output rather than inventing an out-of-memory return");
         const bool hasAuxiliary = budget >= 2 || (once && budget == 0);
         Require((value.auxiliary != nullptr) == hasAuxiliary, "Rejected metadata admission must preserve the native partial auxiliary ownership");
-        if (value.auxiliary) Require((static_cast<void**>(value.auxiliary)[2] != nullptr) == (budget >= 3 || (once && budget == 0)), "Fallback rejection must retain the admitted auxiliary record without fabricating a fallback");
+        if (value.auxiliary) Require((reinterpret_cast<void**>(value.auxiliary)[2] != nullptr) == (budget >= 3 || (once && budget == 0)), "Fallback rejection must retain the admitted auxiliary record without fabricating a fallback");
         std::vector<std::size_t> expected{24, 24};
         if (hasAuxiliary) expected.push_back(32);
         if (budget != 0) expected.push_back(25);
@@ -194,8 +133,8 @@ int main() {
     Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&registered, &registeredOutput) == 0, "Admit metadata before registering a legacy root callback");
     Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&registered, LegacyNull, &registered) == 0, "Register an existing legacy root null callback");
     void* registeredAuxiliary = registered.auxiliary;
-    void* registeredFallback = static_cast<void**>(registeredAuxiliary)[2];
-    Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&registered, &registeredOutput) == 0 && registered.auxiliary == registeredAuxiliary && static_cast<void**>(registeredAuxiliary)[2] == registeredFallback && !static_cast<void**>(registeredAuxiliary)[0] && !static_cast<void**>(registeredAuxiliary)[1], "Legacy serialization must reset existing root callback fields while preserving auxiliary and fallback identity");
+    void* registeredFallback = reinterpret_cast<void**>(registeredAuxiliary)[2];
+    Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&registered, &registeredOutput) == 0 && registered.auxiliary == registeredAuxiliary && reinterpret_cast<void**>(registeredAuxiliary)[2] == registeredFallback && !reinterpret_cast<void**>(registeredAuxiliary)[0] && !reinterpret_cast<void**>(registeredAuxiliary)[1], "Legacy serialization must reset existing root callback fields while preserving auxiliary and fallback identity");
     _ZN3sce4Json6StringD1Ev(&registeredOutput); _ZN3sce4Json5ValueD1Ev(&registered);
     Require(trace.live.size() == baseline, "Reset legacy root handlers must retain normal cleanup ownership");
     Value root{}; _ZN3sce4Json5ValueC1Ev(&root);
@@ -205,7 +144,7 @@ int main() {
     String first{}; _ZN3sce4Json6StringC1EPKc(&first, "");
     Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(child, &first) == 0 && !child->parent && child->auxiliary, "Serializing a legacy child as a root must detach its parent and admit root metadata");
     void* childAuxiliary = child->auxiliary;
-    void* childFallback = static_cast<void**>(childAuxiliary)[2];
+    void* childFallback = reinterpret_cast<void**>(childAuxiliary)[2];
     String whole{}; _ZN3sce4Json6StringC1EPKc(&whole, "");
     Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&root, &whole) == 0 && std::strcmp(_ZNK3sce4Json6String5c_strEv(&whole), "[1,2]") == 0, "Legacy collection serialization must preserve its actual contents");
     Require(child->parent == &root && !child->auxiliary && !trace.live.count(childAuxiliary) && !trace.live.count(childFallback), "Serializing the parent must rebind the child and release its former root auxiliary record and fallback");

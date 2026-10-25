@@ -85,7 +85,7 @@ def main():
             pe = output.read_bytes()
             assert pe_bytes_at(pe, 0x10210, 1) == b"\xe9", name
             if name == "access-start":
-                assert struct.unpack("<Q", pe_bytes_at(pe, 0x10308, 8))[0] == 0x140010210, name
+                assert struct.unpack("<Q", pe_bytes_at(pe, 0x10308, 8))[0] == 0x400210, name
             if name == "after-patch":
                 assert pe_bytes_at(pe, 0x1021a, 6) == SEPARATE_FUNCTION, name
 

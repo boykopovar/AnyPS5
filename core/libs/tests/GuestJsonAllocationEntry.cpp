@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,18 +8,10 @@
 #include <map>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t fileBuffer; };
 using InfoCallback = void (APS5_VABI*)(int, std::int32_t, void*);
-extern "C" {
-void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
-void APS5_VABI _ZN3sce4Json4FreeEPv(void*);
-int APS5_VABI _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(void*, InfoCallback, void*);
-void APS5_VABI _ZN3sce4Json12MemAllocatorD1Ev(void*);
-void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -34,8 +27,8 @@ struct EntryTrace {
     int firstRequestState = 0;
     int laterRequestState = 0;
 };
-static void APS5_VABI Info(int, std::int32_t, void*) { Require(false, "The reference allocator-info setter must not install or invoke the supplied callback"); }
-static int InfoState() { return _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(nullptr, Info, nullptr); }
+static void APS5_VABI SdkInfo(int, ValueType, void*) { Require(false, "The reference allocator-info setter must not install or invoke the supplied callback"); }
+static int InfoState() { return _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(nullptr, SdkInfo, nullptr); }
 static void* APS5_VABI EntryAllocate(void* self, std::size_t size, void* context) {
     auto& trace = *static_cast<EntryTrace*>(context);
     Require(self == trace.expectedAllocator, "Allocation dispatch must preserve the allocator receiver and user context");

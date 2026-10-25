@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <cstddef>
@@ -6,32 +7,17 @@
 #include <cstdlib>
 #include <cstring>
 
-struct Value { Value* parent; void* auxiliary; std::uintptr_t payload; std::uint32_t reserved; std::int32_t type; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-using Handler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
-using MismatchHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void*, Handler, void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, Handler, void*);
-int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchHandler, void*);
-bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value*);
-}
+using Handler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
+using MismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 struct Context { int calls = 0; int requested = -1; const Value* parent = nullptr; const Value* replacement; const Value* reenter = nullptr; };
 static const Value* mismatchSource = nullptr;
-static const Value& APS5_VABI Mismatch(std::int32_t requested, const Value* self, const Value* parent, void* context) {
+static const Value& APS5_VABI Mismatch(ValueType requested, const Value* self, const Value* parent, void* context) {
     mismatchSource = self;
     auto& trace = *static_cast<Context*>(context);
     ++trace.calls;
@@ -41,7 +27,7 @@ static const Value& APS5_VABI Mismatch(std::int32_t requested, const Value* self
         Require(*_ZNK3sce4Json5Value10getIntegerEv(trace.reenter) == 0, "Reentrant mismatch recovery must return its typed default");
     return *trace.replacement;
 }
-static const Value& APS5_VABI Recover(std::int32_t requested, const Value* parent, void* context) {
+static const Value& APS5_VABI Recover(ValueType requested, const Value* parent, void* context) {
     auto& trace = *static_cast<Context*>(context);
     ++trace.calls;
     trace.requested = requested;
@@ -62,7 +48,7 @@ int main() {
             "Global callback registration must require an active initializer");
     JsonTest::Allocator allocator;
     Parameter parameter{&allocator, nullptr, 0, 2, {}};
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize null recovery");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize null recovery");
     Require(static_cast<unsigned>(_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(&inactive, Recover, &global)) == 0x80848110,
             "An inactive object cannot register a module-global callback");
     Require(static_cast<unsigned>(_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(&initializer, nullptr, nullptr)) == 0x80848120,

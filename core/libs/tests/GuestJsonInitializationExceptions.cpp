@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include <array>
 #include <cstddef>
@@ -8,12 +9,9 @@
 #include <map>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -78,7 +76,7 @@ int main(int argc, char** argv) {
     std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
     bool caught = false;
     try {
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == (trace.notifier && !target ? static_cast<int>(0x80848102) : 0), "Only an unpublished null context may return OOM without notifying");
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == (trace.notifier && !target ? static_cast<int>(0x80848102) : 0), "Only an unpublished null context may return OOM without notifying");
     } catch (const Marker& marker) {
         Require(marker.identity == &trace, "Allocator exceptions must propagate with their original identity");
         caught = true;
@@ -95,16 +93,16 @@ int main(int argc, char** argv) {
     trace.target = 1000;
     if (target && caught) {
         std::uint8_t other = 0; _ZN3sce4Json11InitializerC1Ev(&other);
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == alreadyInitialized &&
-                _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == alreadyInitialized &&
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == alreadyInitialized &&
+                _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(&parameter)) == alreadyInitialized &&
                 _ZN3sce4Json11Initializer9terminateEv(&other) == notInitialized && !owner && !other && trace.live == live && trace.requests == requests && !trace.releases,
                 "A published partial context must reject retries from both owners without changing allocations");
-        if (target > 10) Require(scePthreadMutexDestroy(static_cast<PthreadMutex*>(trace.admitted[10])) == 0, "The fixture must reclaim its orphaned host mutex separately");
+        if (target > 10) Require(scePthreadMutexDestroy(reinterpret_cast<PthreadMutex*>(trace.admitted[10])) == 0, "The fixture must reclaim its orphaned host mutex separately");
         for (const auto& [pointer, generation] : trace.live) std::free(pointer);
         trace.live.clear();
     } else {
         Require(trace.live.empty() && trace.releases == (target == ResourceCount ? 12u : 0u), "Normal termination must reclaim all twelve resources");
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0 && owner && trace.live.size() == ResourceCount,
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && owner && trace.live.size() == ResourceCount,
                 "Unpublished exceptions and completed lifecycles must allow a fresh initialization");
         Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.live.empty(), "Fresh initialization must retain complete teardown");
     }

@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <cstddef>
@@ -6,32 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 
-struct Value { Value* parent; void* auxiliary; std::uintptr_t payload; std::uint32_t reserved; std::int32_t type; };
-struct Array { void* items; };
-struct String { void* text; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
-void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
-const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -51,13 +29,13 @@ int main() {
     Parameter parameter{&allocator, nullptr, 0, 2, {}};
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize ownership tests");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize ownership tests");
     Value text{};
     _ZN3sce4Json5ValueC1EPKc(&text, "keep");
     const auto payload = text.payload;
     const auto* string = _ZNK3sce4Json5Value9getStringEv(&text);
     Require(reinterpret_cast<std::uintptr_t>(string) == payload, "A string payload must hold its String object address");
-    _ZN3sce4Json5Value3setENS0_9ValueTypeE(&text, 5);
+    _ZN3sce4Json5Value3setENS0_9ValueTypeE(&text, static_cast<ValueType>(5));
     Require(text.payload == payload && std::strcmp(_ZNK3sce4Json6String5c_strEv(string), "keep") == 0,
             "Setting an existing type must preserve its contents and identity");
     Value leaf{};
@@ -82,7 +60,7 @@ int main() {
     Require(copy.payload != root.payload && Front(copy).payload != Front(root).payload,
             "Copies must not share owned containers");
     const auto rootPayload = root.payload;
-    _ZN3sce4Json5Value3setENS0_9ValueTypeE(&root, 6);
+    _ZN3sce4Json5Value3setENS0_9ValueTypeE(&root, static_cast<ValueType>(6));
     Require(root.payload == rootPayload && _ZNK3sce4Json5Array4sizeEv(_ZNK3sce4Json5Value8getArrayEv(&root)) == 1,
             "Setting the existing array type must retain elements and storage");
     auto* ownedArray = const_cast<Array*>(_ZNK3sce4Json5Value8getArrayEv(&copy));

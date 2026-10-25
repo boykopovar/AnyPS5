@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,29 +8,10 @@
 #include <map>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t fileBuffer; };
 using InfoCallback = void (APS5_VABI*)(int, std::int32_t, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json19InternalInitializerC1Ev(void*);
-void APS5_VABI _ZN3sce4Json19InternalInitializerC2Ev(void*);
-void APS5_VABI _ZN3sce4Json19InternalInitializerD1Ev(void*);
-void APS5_VABI _ZN3sce4Json19InternalInitializerD2Ev(void*);
-int APS5_VABI _ZN3sce4Json19InternalInitializer19terminate_staticlibEv(void*);
-int APS5_VABI _ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13InitParameterENS1_10InitOptionE(void*, const Parameter*, std::int32_t);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(void*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(void*);
-void APS5_VABI _ZN3sce4Json6String7reserveEm(void*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const void*);
-void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
-void APS5_VABI _ZN3sce4Json4FreeEPv(void*);
-int APS5_VABI _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(void*, InfoCallback, void*);
-void APS5_VABI _ZN3sce4Json12MemAllocatorD1Ev(void*);
-void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -52,7 +34,7 @@ struct EntryTrace {
 };
 static void CheckReentry(EntryTrace& trace) {
     std::uint8_t other[]{0, 0x19, 0x28, 0x37};
-    const auto active = *static_cast<const std::uint8_t*>(trace.owner);
+    const auto active = *reinterpret_cast<const std::uint8_t*>(trace.owner);
     constexpr auto already = static_cast<int>(0x80848111);
     constexpr auto missing = static_cast<int>(0x80848110);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(trace.owner, nullptr) == already &&
@@ -63,10 +45,10 @@ static void CheckReentry(EntryTrace& trace) {
             "An allocator callback must not publish a competing initializer while the module context is owned");
     Require(_ZN3sce4Json11Initializer9terminateEv(other) == missing && other[0] == 0 && other[1] == 0x19 && other[2] == 0x28 && other[3] == 0x37,
             "An inactive callback-local initializer must not terminate another initializer's resources");
-    Require(*static_cast<const std::uint8_t*>(trace.owner) == active, "Rejected callback lifecycle operations must preserve the owning initializer active byte");
+    Require(*reinterpret_cast<const std::uint8_t*>(trace.owner) == active, "Rejected callback lifecycle operations must preserve the owning initializer active byte");
 }
-static void APS5_VABI Info(int, std::int32_t, void*) { Require(false, "The reference allocator-info setter must not install or invoke the supplied callback"); }
-static int InfoState() { return _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(nullptr, Info, nullptr); }
+static void APS5_VABI SdkInfo(int, ValueType, void*) { Require(false, "The reference allocator-info setter must not install or invoke the supplied callback"); }
+static int InfoState() { return _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(nullptr, SdkInfo, nullptr); }
 static void* APS5_VABI EntryAllocate(void* self, std::size_t size, void* context) {
     auto& trace = *static_cast<EntryTrace*>(context);
     Require(self == trace.expectedAllocator, "Allocation dispatch must preserve the allocator receiver and user context");
@@ -124,7 +106,7 @@ int main() {
             } else Require(result == 0, "Internal initialization must admit every option value after allocating all resources");
             trace.budget = -1;
             Require(object[0] == 1 && trace.live.size() == 12, "Internal initialization must own the same twelve required resources as legacy public initialization");
-            void* text = nullptr;
+            String text{};
             _ZN3sce4Json6StringC1EPKc(&text, "abc");
             _ZN3sce4Json6String7reserveEm(&text, 5);
             Require(_ZNK3sce4Json6String8capacityEv(&text) == 21, "Successful initialization must replace the requested growth option with the compiled SDK policy");

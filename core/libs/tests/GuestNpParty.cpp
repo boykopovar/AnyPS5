@@ -1,23 +1,9 @@
+#include "prx/libSceNpParty/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceNpPartyGetState(std::uint16_t* state);
-int APS5_VABI sceNpPartyInitialize(const void* param);
-int APS5_VABI sceNpPartyTerminate(void);
-int APS5_VABI sceNpPartyCheckCallback(void);
-int APS5_VABI sceNpPartyRegisterHandlerA(const void* handlers, void* userdata);
-int APS5_VABI sceNpPartyGetStateAsUserA(std::int32_t asUserId, std::uint16_t* state);
-int APS5_VABI sceNpPartyGetId(void* id);
-int APS5_VABI sceNpPartyGetMembersA(void* memberList);
-int APS5_VABI sceNpPartyGetMemberInfoA(std::uint16_t memberId, void* memberInfo);
-int APS5_VABI sceNpPartyGetMemberSessionInfo(std::uint16_t memberId, void* memberGameSessionInfo);
-int APS5_VABI sceNpPartyGetMemberVoiceInfo(std::uint16_t asMemberId, std::uint16_t memberId, std::uint8_t* memberVoiceState);
-int APS5_VABI sceNpPartySendBinaryMessage(const void* sendParams);
-}
 
 namespace {
 

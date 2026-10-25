@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,29 +8,19 @@
 #include <limits>
 #include <initializer_list>
 
-struct SearchText { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
-struct String { SearchText* text; };
-extern "C" {
-char APS5_VABI _ZNK3sce4Json6String2atEm(const String*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String*, const char*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String*, const char*, std::size_t, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String*, const String*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String*, const char*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String*, const char*, std::size_t, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String*, const String*, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String*, char, std::size_t);
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String*, char, std::size_t);
-}
+using namespace SceJson2;
+
+
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 int main() {
     constexpr auto none = std::numeric_limits<std::size_t>::max();
     char bytes[]{'a', 'b', 'X', '\0', 'X', static_cast<char>(0xff), '\0'};
-    SearchText header{bytes, 6, 7, UINT64_C(0x123456789abcdef0)};
+    Text header{bytes, 6, 7, UINT64_C(0x123456789abcdef0)};
     String text{&header}, missing{};
     char needleBytes[]{'X', '\0', 'q', '\0'};
-    SearchText needleHeader{needleBytes, 3, 4, 0};
+    Text needleHeader{needleBytes, 3, 4, 0};
     String needle{&needleHeader};
     const auto before = header;
     char snapshot[sizeof(bytes)]; std::memcpy(snapshot, bytes, sizeof(bytes));
@@ -52,7 +43,7 @@ int main() {
     Require(_ZNK3sce4Json6String4findEcm(&text, '\0', 0) == 3 && _ZNK3sce4Json6String4findEcm(&text, 'X', 3) == none && _ZNK3sce4Json6String5rfindEcm(&text, '\0', none) == 3, "Character search must preserve forward C-string and reverse byte semantics");
     Require(_ZNK3sce4Json6String4findEcm(&text, static_cast<char>(0xff), 4) == 5 && _ZNK3sce4Json6String5rfindEcm(&text, static_cast<char>(0xff), none) == 5, "Character search must preserve high-bit byte values");
     char tailBytes[]{'a', 'b', 'X', '\0'};
-    SearchText tailHeader{tailBytes, 3, 4, 0}; String tail{&tailHeader};
+    Text tailHeader{tailBytes, 3, 4, 0}; String tail{&tailHeader};
     Require(_ZNK3sce4Json6String4findEPKcmm(&tail, "X", 0, 2) == 2, "Forward candidates must retain native zero-terminated comparison beyond the initial length check");
     Require(_ZNK3sce4Json6String4findEcm(&tail, '\0', 0) == 3 && _ZNK3sce4Json6String4findEcm(&tail, '\0', 3) == none && _ZNK3sce4Json6String5rfindEcm(&tail, '\0', none) == none, "Only forward character search may include the trailing terminator after an admitted start");
     Require(std::memcmp(&header, &before, sizeof(header)) == 0 && std::memcmp(bytes, snapshot, sizeof(bytes)) == 0 && text.text == &header, "Read-only string operations must preserve all storage and metadata");

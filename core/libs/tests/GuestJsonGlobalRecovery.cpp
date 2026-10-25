@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <cstddef>
@@ -6,45 +7,25 @@
 #include <cstdlib>
 #include <limits>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-using Mismatch = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
-using Null = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
+using Mismatch = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
+using Null = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 using Special = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 using Element = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-int APS5_VABI _ZN3sce4Json11Initializer28setGlobalTypeMismatchHandlerEPFRKNS0_5ValueENS0_9ValueTypeEPS3_S6_PvES7_(void*, Mismatch, void*);
-int APS5_VABI _ZN3sce4Json11Initializer28setGlobalSpecialFloatHandlerEPFKNS0_5ValueENS0_12FunctionTypeEdPS3_PvPbES6_(void*, Special, void*);
-int APS5_VABI _ZN3sce4Json11Initializer36setGlobalElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKNS0_5ValueES9_PvESA_(void*, Element, void*);
-int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void*, Null, void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
-int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, Mismatch, void*);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, Special, void*);
-int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, Element, void*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 struct CallbackTrace { int calls = 0; const Value* source = nullptr; const Value* parent = nullptr; const Value* replacement = nullptr; bool reenter = false; int function = -1; };
-static const Value& APS5_VABI RecoverMismatch(std::int32_t requested, const Value* source, const Value* parent, void* context) {
+static const Value& APS5_VABI RecoverMismatch(ValueType requested, const Value* source, const Value* parent, void* context) {
     auto& trace = *static_cast<CallbackTrace*>(context);
     ++trace.calls; trace.source = source; trace.parent = parent;
     if (trace.reenter) Require(*_ZNK3sce4Json5Value10getIntegerEv(source) == 0, "Global mismatch reentry must use the typed default");
     Require(requested == 1 || requested == 2, "Preserve requested type");
     return *trace.replacement;
 }
-static const Value& APS5_VABI RecoverNull(std::int32_t, const Value*, void* context) {
+static const Value& APS5_VABI RecoverNull(ValueType, const Value*, void* context) {
     auto& trace = *static_cast<CallbackTrace*>(context); ++trace.calls; return *trace.replacement;
 }
 static Value* APS5_VABI RecoverFloat(Value* result, std::int32_t function, double, const Value* parent, void* context, bool* error) {
@@ -79,7 +60,7 @@ int main() {
     Require(static_cast<unsigned>(registerMismatch(&initializer, RecoverMismatch, &mismatch)) == 0x80848110 &&
             static_cast<unsigned>(registerSpecial(&initializer, RecoverFloat, &special)) == 0x80848110 &&
             static_cast<unsigned>(registerElement(&initializer, RecoverElement, &element)) == 0x80848110, "Global handlers require initialization");
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize global recovery");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize global recovery");
     Require(static_cast<unsigned>(registerMismatch(&inactive, RecoverMismatch, &mismatch)) == 0x80848110 &&
             static_cast<unsigned>(registerSpecial(&inactive, RecoverFloat, &special)) == 0x80848110 &&
             static_cast<unsigned>(registerElement(&inactive, RecoverElement, &element)) == 0x80848110, "Inactive initializer cannot register handlers");
@@ -110,7 +91,7 @@ int main() {
     Require(element.calls == 1 && local.calls == 3, "Local element handler overrides global recovery");
     _ZN3sce4Json5ValueD1Ev(&root);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Terminate global recovery");
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Reinitialize after global recovery");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Reinitialize after global recovery");
     Require(registerMismatch(&initializer, RecoverMismatch, &mismatch) == 0 && registerSpecial(&initializer, RecoverFloat, &special) == 0 && registerElement(&initializer, RecoverElement, &element) == 0, "Termination clears all global registration slots");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Terminate second initialization");
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&initializer, &parameter) == 0, "Legacy initialization");

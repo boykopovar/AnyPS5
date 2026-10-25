@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -7,18 +8,9 @@
 #include <cstring>
 #include <string_view>
 
-struct Value { alignas(8) std::uint64_t words[4]{}; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value*, const char*);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -46,7 +38,7 @@ extern "C" int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_
     ++trace.opens;
     return trace.descriptor;
 }
-extern "C" std::int64_t APS5_VABI sceKernelRead(int descriptor, void* output, std::size_t bytes) {
+extern "C" std::int64_t APS5_VABI sceKernelRead(ValueType descriptor, void* output, std::size_t bytes) {
     auto& trace = *activeFile;
     Require(descriptor == trace.descriptor && output == trace.buffer && bytes == trace.bufferSize, "Read must use the configured buffer and descriptor");
     ++trace.reads;
@@ -56,7 +48,7 @@ extern "C" std::int64_t APS5_VABI sceKernelRead(int descriptor, void* output, st
     trace.position += count;
     return static_cast<std::int64_t>(count);
 }
-extern "C" int APS5_VABI sceKernelClose(int descriptor) {
+extern "C" int APS5_VABI sceKernelClose(ValueType descriptor) {
     auto& trace = *activeFile;
     Require(descriptor == trace.descriptor && trace.buffer != nullptr, "Close must precede release of the file buffer");
     ++trace.closes;
@@ -104,7 +96,7 @@ int main() {
     _ZN3sce4Json11InitializerC1Ev(&initializer);
     Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
     Require(static_cast<unsigned>(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(&value, "input.json")) == 0x80848110 && !trace.opens && !trace.bufferAllocations, "Inactive file parser must refuse before allocation or open");
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize file parser");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize file parser");
     parameter.bufferSize = 3;
     for (std::size_t chunk : {std::size_t{1}, std::size_t{7}, trace.bufferSize}) {
         trace.chunk = chunk;
@@ -125,7 +117,7 @@ int main() {
     _ZN3sce4Json5ValueD1Ev(&value);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Terminate file parser");
     parameter.bufferSize = 0;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize without a file buffer");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize without a file buffer");
     _ZN3sce4Json5ValueC1Ev(&value);
     Require(static_cast<unsigned>(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(&value, "input.json")) == 0x80848105 && trace.opens == opens + 1, "Zero configured file-buffer size must refuse before open");
     _ZN3sce4Json5ValueD1Ev(&value);

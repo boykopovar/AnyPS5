@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -9,27 +10,13 @@
 #include <stdexcept>
 #include <vector>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-using NullHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
-using MismatchHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
+using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
+using MismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 using FloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 using ElementHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueD2Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
-int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchHandler, void*);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatHandler, void*);
-int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, ElementHandler, void*);
-}
 #if defined(JSON2_DESTRUCTION_LEGACY_SDK)
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
@@ -109,7 +96,7 @@ static void APS5_VABI FreeDestruction(void* receiver, void* memory, void* contex
                 if (trace.reinitialize) {
                     const auto generation = trace.generation;
                     trace.observing = false; trace.allocatingReplacement = true;
-                    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(trace.owner, trace.parameter) == 0 && *trace.owner == 1,
+                    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(trace.owner, reinterpret_cast<const InitParameter2*>(trace.parameter)) == 0 && *trace.owner == 1,
                             "The allocator callback may initialize a fresh module before returning its original payload release");
                     trace.observing = true; trace.allocatingReplacement = false;
                     for (const auto& [pointer, identity] : trace.live) if (!expected.contains(pointer) || expected.at(pointer) != identity) {
@@ -142,7 +129,7 @@ static void Check(unsigned shape, unsigned target, unsigned alias, bool reinitia
     DestructionDomain first{&trace, &allocator, 0}, second{&trace, domain == 2 ? &replacementAllocator : &allocator, 1};
     Parameter parameter{&allocator, &first, 8192, 2, {}}, replacement{second.receiver, &second, 4096, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialize the actual composite-destruction resource epoch");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialize the actual composite-destruction resource epoch");
     trace.module = trace.live; trace.sourceBase = trace.generation;
     Value value; std::memset(&value, 0xa5, sizeof(value));
     if (shape == 0 || shape == 3) {
@@ -200,7 +187,7 @@ static void Check(unsigned shape, unsigned target, unsigned alias, bool reinitia
         for (const auto& [pointer, generation] : remaining) { Require(trace.live.at(pointer) == generation, "Caller-owned fixture cleanup must retain each orphan allocation generation"); ReleaseStorage(trace, pointer); }
     }
     const auto generation = trace.generation;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialization must admit a fresh module after every measured composite-destruction outcome");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialization must admit a fresh module after every measured composite-destruction outcome");
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Composite lifecycle retry must retain no stale module or source resource generations");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release the fresh composite lifecycle generation");
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,19 +8,13 @@
 #include <map>
 #include <vector>
 
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using RttiAllocate = void* (APS5_VABI*)(std::size_t, void*);
 using RttiFree = void (APS5_VABI*)(void*, void*);
 using RttiNotify = void (APS5_VABI*)(int, std::size_t, void*);
 struct RttiCallbacks { RttiAllocate allocate; RttiFree free; RttiNotify notify; };
-extern "C" {
-void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(Parameter*, const RttiCallbacks*, void*, std::size_t);
-void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(Parameter*, const RttiCallbacks*, void*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-}
 #if defined(JSON2_PUBLICATION_LEGACY_SDK)
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
@@ -38,7 +33,7 @@ static void Require(bool condition, const char* message) {
 }
 static int Initialize(bool legacy, void* self, const Parameter* parameter) {
     return legacy ? _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(self, parameter) :
-                    _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(self, parameter);
+                    _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(self, reinterpret_cast<const InitParameter2*>(parameter));
 }
 enum class Publication { Handoff, CompleteNested, Overwrite };
 struct AllocationIdentity {
@@ -136,8 +131,8 @@ static void APS5_VABI FreeRttiSecond(void* memory, void* context) {
 }
 static void APS5_VABI NotifyRtti(int, std::size_t, void*) { Require(false, "Failure of the unpublished RTTI context allocation must omit notification"); }
 static void ConfigureRtti(bool legacy, Parameter& parameter, const RttiCallbacks& callbacks, void* context) {
-    if (legacy) _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(&parameter, &callbacks, context, parameter.bufferSize);
-    else _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(&parameter, &callbacks, context);
+    if (legacy) _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(reinterpret_cast<InitParameterRtti*>(&parameter), const_cast<RttiCallbacks*>(&callbacks), context, parameter.bufferSize);
+    else _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&parameter), const_cast<RttiCallbacks*>(&callbacks), context);
 }
 static void APS5_VABI NotifyPublication(void*, int, std::size_t, void*) { Require(false, "Failure of the unpublished context allocation must omit allocator notification"); }
 static void* const PublicationVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocatePublication), reinterpret_cast<void*>(FreePublication), reinterpret_cast<void*>(NotifyPublication)};
@@ -147,7 +142,7 @@ static void ReclaimOrphanedFixtureEpoch(PublicationTrace& trace, const std::map<
     unsigned mutexes = 0;
     for (const auto& [pointer, identity] : nested) {
         if (identity.generation + KernelResources > generation) {
-            Require(identity.size == sizeof(PthreadMutex) && scePthreadMutexDestroy(static_cast<PthreadMutex*>(pointer)) == 0,
+            Require(identity.size == sizeof(PthreadMutex) && scePthreadMutexDestroy(reinterpret_cast<PthreadMutex*>(pointer)) == 0,
                     "Fixture cleanup must destroy the actual orphaned kernel mutex resources before reclaiming their handle storage");
             ++mutexes;
         }

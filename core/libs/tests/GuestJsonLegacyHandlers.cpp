@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -11,57 +12,12 @@
 #include <vector>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct Array { void* storage; };
-struct Object { void* storage; };
-struct String { void* storage; };
-struct Pair { String key; std::uint64_t reserved; Value value; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; };
-using Handler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
+using Handler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
-using NullHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
-extern "C" {
-void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object*, const Object*);
-void APS5_VABI _ZN3sce4Json6ObjectC2ERKS1_(Object*, const Object*);
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
-Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object*, const Object*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value*, const Object*);
-void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_6ObjectE(Value*, const Object*);
-void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, ReadCallback, void*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
-void APS5_VABI _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
-void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair*);
-void APS5_VABI _ZN3sce4Json6Object4PairD2Ev(Pair*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value*, bool);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
-Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
-const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value*);
-bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value*);
-int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, Handler, void*);
-int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
-void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_5ArrayE(Value*, const Array*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5ArrayC2ERKS1_(Array*, const Array*);
-Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
-}
+using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -126,7 +82,7 @@ struct LegacyNode { LegacyNode* parent; LegacyNode* left; LegacyNode* right; con
 struct LegacyHeader { LegacyNode* head; std::size_t count; std::uint64_t reserved; };
 static_assert(sizeof(LegacyNode) == 56 && sizeof(LegacyHeader) == 24);
 struct Context { Value replacement{}; unsigned calls = 0; const Value* source = nullptr; const Value* parent = nullptr; };
-static const Value& APS5_VABI RecoverLegacy(std::int32_t type, const Value* source, const Value* parent, void* context) {
+static const Value& APS5_VABI RecoverLegacy(ValueType type, const Value* source, const Value* parent, void* context) {
     auto& result = *static_cast<Context*>(context);
     Require(type == 1, "Legacy mismatch dispatch must identify the requested type");
     ++result.calls; result.source = source; result.parent = parent; return result.replacement;
@@ -140,7 +96,7 @@ static void CheckMap(const LegacyTrace& trace, const std::map<const Value*, Cont
     for (const auto& [memory, size] : trace.guest) {
         if (size != 24) continue;
         void* head = nullptr; std::memcpy(&head, memory, sizeof(head));
-        if (trace.heap.contains(head)) { Require(!header, "Legacy registration must use one shared map header"); header = static_cast<const LegacyHeader*>(memory); }
+        if (trace.heap.contains(head)) { Require(!header, "Legacy registration must use one shared map header"); header = reinterpret_cast<const LegacyHeader*>(memory); }
     }
     Require(header && header->count == entries.size() && header->reserved == UINT64_C(0xa5a5a5a5a5a5a5a5), "Legacy map header must preserve count and reserved bytes");
     auto* head = header->head;
@@ -161,7 +117,7 @@ static void CheckMap(const LegacyTrace& trace, const std::map<const Value*, Cont
     Require(expected == entries.end() && trace.heap.size() == entries.size() + 1, "Legacy map must retain only its actual sentinel and entry nodes");
 }
 struct NullContext { const Value* other; Context* replacement; };
-static const Value& APS5_VABI RecoverLegacyNull(std::int32_t requested, const Value* parent, void* context) {
+static const Value& APS5_VABI RecoverLegacyNull(ValueType requested, const Value* parent, void* context) {
     auto& value = *static_cast<NullContext*>(context);
     Require(requested == 1 && !parent && *_ZNK3sce4Json5Value10getBooleanEv(value.other), "Legacy null recovery must allow independent mismatch recovery before the reentry guard");
     return value.replacement->replacement;
@@ -175,12 +131,12 @@ static void CheckPairCopies(LegacyTrace& trace, Context& context) {
         std::vector<LegacySnapshot> sourceAllocations;
         for (const auto& [pointer, generation] : trace.guestGenerations) {
             if (guestBaseline.contains(pointer)) continue;
-            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
             sourceAllocations.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
         }
         const LegacyNode* sourceNode = nullptr;
         for (const auto& [pointer, size] : trace.heap) {
-            const auto* node = static_cast<const LegacyNode*>(pointer);
+            const auto* node = reinterpret_cast<const LegacyNode*>(pointer);
             if (!node->nil && node->key == &source) sourceNode = node;
         }
         Require(sourceNode && sourceNode->callback == RecoverLegacy && sourceNode->context == &context, "Pair copying requires an independently owned source callback record");
@@ -357,12 +313,12 @@ static void CheckCollectionCopies(LegacyTrace& trace, Context& context) {
         std::vector<LegacySnapshot> sourceAllocations;
         for (const auto& [pointer, generation] : trace.guestGenerations) {
             if (guestBaseline.contains(pointer)) continue;
-            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
             sourceAllocations.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
         }
         const LegacyNode* sourceNode = nullptr;
         for (const auto& [pointer, size] : trace.heap) {
-            const auto* node = static_cast<const LegacyNode*>(pointer);
+            const auto* node = reinterpret_cast<const LegacyNode*>(pointer);
             if (!node->nil && node->key == &source) sourceNode = node;
         }
         Require(sourceNode != nullptr, "Nested Pair copies require the actual source callback record");
@@ -453,7 +409,7 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
         std::vector<LegacySnapshot> targetAllocations;
         for (const auto& [pointer, generation] : trace.guestGenerations) {
             if (guestBaseline.contains(pointer)) continue;
-            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
             targetAllocations.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
         }
         const Value targetValue = target;
@@ -473,7 +429,7 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
             expected.insert(expected.end(), payload.begin(), payload.end());
         }
         expected.push_back(24); expected.push_back(32);
-        if (alias) Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0,
+        if (alias) Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.key.text != key.text && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0,
                 "Inherited failure must preserve independent Pair key ownership, complete key contents and inactive padding");
         Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected && trace.notifications == notices + unsigned(mode != 0) && !trace.onNotify,
                 "Inherited map registration must preserve actual failure, root-admission and notifier ordering");
@@ -533,7 +489,7 @@ static int CheckHeapExceptions(unsigned budget) {
     const auto baseline = trace.guestGenerations;
     std::vector<LegacySnapshot> snapshots;
     for (const auto& [pointer, generation] : baseline) {
-        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
         snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
     }
     trace.heapBudget = static_cast<int>(budget);
@@ -591,8 +547,8 @@ static int CheckCopyHeapExceptions(unsigned shape, unsigned alias) {
     const auto baseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
     std::vector<LegacySnapshot> snapshots;
     for (const auto& [pointer, generation] : baseline) {
-        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
-        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*reinterpret_cast<void**>(pointer))) continue;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
         snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
     }
     const auto requests = trace.requests.size(); trace.heapBudget = 0;
@@ -617,7 +573,7 @@ static int CheckCopyHeapExceptions(unsigned shape, unsigned alias) {
         std::string actual; std::vector<const Value*> values; CollectionShape(copy, nullptr, actual, values);
         const char* expectedShape = shape == 0 ? "3:0=9;" : shape == 1 ? "5:0s=text;" : shape == 2 ? "6:0a1[7:0o1{k=s/q=s/5:0s=text;};];" : "7:0o1{k=a/q=a/6:0a1[5:0s=text;];};";
         Require(actual == expectedShape && !copy.auxiliary, "Heap exceptions must preserve complete payloads and independent callback metadata");
-        if (alias) Require(pair.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0 && pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5),
+        if (alias) Require(pair.key.text != key.text && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0 && pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5),
                 "Failed Pair constructors must retain their independent key and inactive padding");
     };
     verifyPayload();
@@ -655,7 +611,7 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias, bool wrappe
     Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Prepare copied child callbacks");
     Array array{}; _ZN3sce4Json5ArrayC1Ev(&array);
     _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &source); _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &source);
-    auto* sourceHeader = static_cast<LegacyArrayHeader*>(array.storage);
+    auto* sourceHeader = reinterpret_cast<LegacyArrayHeader*>(array.items);
     std::map<const Value*, Context*> entries{{&source, &context}};
     for (auto* node = sourceHeader->head->next; node != sourceHeader->head; node = node->next) entries.emplace(&node->value, &context);
     CheckMap(trace, entries);
@@ -663,8 +619,8 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias, bool wrappe
     const Value sourceValue = source;
     std::vector<LegacySnapshot> snapshots;
     for (const auto& [pointer, generation] : baseline) {
-        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
-        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*reinterpret_cast<void**>(pointer))) continue;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
         snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
     }
     Array directCopy; std::memset(&directCopy, 0xa5, sizeof(directCopy)); Value wrappedCopy; std::memset(&wrappedCopy, 0xa5, sizeof(wrappedCopy));
@@ -681,21 +637,21 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias, bool wrappe
             "Value wrappers must publish their independent Array handle and type before callback entry failure");
     Array& copy = wrapped ? *reinterpret_cast<Array*>(wrappedCopy.payload) : directCopy;
     std::vector<std::size_t> expected{24, 48, 48, 48}; if (wrapped) expected.insert(expected.begin(), 8); if (budget) expected.push_back(48);
-    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 1 ? 5u : 4u) + unsigned(wrapped) &&
+    Require(caught == (budget < 2) && trace.guest.contains(copy.items) && trace.guest.size() == baseline.size() + (budget == 1 ? 5u : 4u) + unsigned(wrapped) &&
             trace.heap.size() == heapBaseline.size() + budget && !trace.notifications && std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
             "Interrupted Array construction must publish empty destination storage and retain the temporary list without rollback");
-    auto* copyHeader = static_cast<LegacyArrayHeader*>(copy.storage);
+    auto* copyHeader = reinterpret_cast<LegacyArrayHeader*>(copy.items);
     Require(copyHeader->count == (caught ? 0u : 2u) && copyHeader->head && (caught ? copyHeader->head->next == copyHeader->head && copyHeader->head->previous == copyHeader->head : true),
             "Only completed list copying may replace the initial empty destination");
     std::map<void*, std::size_t> orphans;
     if (caught) for (const auto& [pointer, generation] : trace.guestGenerations) {
-        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != copyHeader->head && (!wrapped || pointer != reinterpret_cast<void*>(wrappedCopy.payload))) {
+        if (!baseline.contains(pointer) && pointer != copy.items && pointer != copyHeader->head && (!wrapped || pointer != reinterpret_cast<void*>(wrappedCopy.payload))) {
             Require(trace.guest.at(pointer) == 48, "Only temporary list links become orphaned"); orphans.emplace(pointer, generation);
         }
     }
     Require(orphans.size() == (caught ? budget + 2 : 0), "Failed copies retain the temporary sentinel and admitted child nodes");
     for (const auto& [pointer, generation] : trace.heapGenerations) if (!heapBaseline.contains(pointer)) {
-        const auto* node = static_cast<const LegacyNode*>(pointer);
+        const auto* node = reinterpret_cast<const LegacyNode*>(pointer);
         Require(!node->nil && node->callback == RecoverLegacy && node->context == &context && node->key->type == 3 && node->key->payload == 9,
                 "Completed child callback records must remain independently published even in the orphaned temporary list");
         entries.emplace(node->key, &context);
@@ -730,7 +686,7 @@ static int CheckObjectHeapExceptions(unsigned budget, unsigned alias, bool wrapp
     ParseLegacy(source); ParseLegacy(root, "{\"a\":9,\"b\":9}");
     Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Prepare source callback records");
     auto* object = reinterpret_cast<Object*>(root.payload);
-    auto* sourceHeader = static_cast<LegacyTreeHeader*>(object->storage);
+    auto* sourceHeader = reinterpret_cast<LegacyTreeHeader*>(object->items);
     std::string ignored; std::vector<const Value*> values; CollectionTreeShape(sourceHeader->head->parent, &root, ignored, values);
     std::map<const Value*, Context*> entries{{&source, &context}};
     for (const auto* value : values) {
@@ -741,8 +697,8 @@ static int CheckObjectHeapExceptions(unsigned budget, unsigned alias, bool wrapp
     const Value sourceValue = source, rootValue = root;
     std::vector<LegacySnapshot> snapshots;
     for (const auto& [pointer, generation] : baseline) {
-        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
-        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*reinterpret_cast<void**>(pointer))) continue;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(pointer);
         snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
     }
     Object direct; std::memset(&direct, 0xa5, sizeof(direct)); Value value; std::memset(&value, 0xa5, sizeof(value));
@@ -759,28 +715,28 @@ static int CheckObjectHeapExceptions(unsigned budget, unsigned alias, bool wrapp
     std::vector<std::size_t> expected{24, 104, 104, 104, 2, 24, 2};
     if (budget) expected.insert(expected.end(), {104, 2, 24, 2});
     if (wrapped) expected.insert(expected.begin(), 8);
-    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 0 ? 7u : budget == 1 ? 11u : 10u) + unsigned(wrapped) &&
+    Require(caught == (budget < 2) && trace.guest.contains(copy.items) && trace.guest.size() == baseline.size() + (budget == 0 ? 7u : budget == 1 ? 11u : 10u) + unsigned(wrapped) &&
             trace.heap.size() == heapBaseline.size() + budget && !trace.notifications && std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
             "Interrupted tree construction must retain the published empty destination and unfinished replacement tree without rollback");
-    auto* header = static_cast<LegacyTreeHeader*>(copy.storage);
+    auto* header = reinterpret_cast<LegacyTreeHeader*>(copy.items);
     Require(header->count == (caught ? 0u : 2u) && header->head && (!caught || header->head->parent == header->head), "Only complete tree copying may publish the replacement root");
     std::map<void*, std::size_t> orphans;
     if (caught) for (const auto& [pointer, generation] : trace.guestGenerations) {
-        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != header->head && (!wrapped || pointer != reinterpret_cast<void*>(value.payload))) orphans.emplace(pointer, generation);
+        if (!baseline.contains(pointer) && pointer != copy.items && pointer != header->head && (!wrapped || pointer != reinterpret_cast<void*>(value.payload))) orphans.emplace(pointer, generation);
     }
     Require(orphans.size() == (caught ? budget == 0 ? 5u : 9u : 0u), "Unfinished trees retain their sentinel, nodes and independently allocated internal/public keys");
     for (const auto& [pointer, generation] : trace.heapGenerations) if (!heapBaseline.contains(pointer)) {
-        const auto* node = static_cast<const LegacyNode*>(pointer);
+        const auto* node = reinterpret_cast<const LegacyNode*>(pointer);
         Require(!node->nil && node->callback == RecoverLegacy && node->context == &context && node->key->type == 3 && node->key->payload == 9,
                 "Completed replacement-tree child records remain published after the next entry allocation fails");
         entries.emplace(node->key, &context);
     }
     CheckMap(trace, entries); trace.heapBudget = -1;
     Require(_ZN3sce4Json6ObjectaSERKS1_(&copy, object) == &copy, "Independent assignment retry must publish a complete tree");
-    Value view{nullptr, nullptr, reinterpret_cast<std::uintptr_t>(&copy), 0, 7}; std::string actual; std::vector<const Value*> copiedValues;
+    Value view{nullptr, nullptr, reinterpret_cast<std::uintptr_t>(&copy), 0, TypeObject}; std::string actual; std::vector<const Value*> copiedValues;
     CollectionShape(view, nullptr, actual, copiedValues);
     Require(actual == "7:0o2{k=a/q=a/3:0=9;k=b/q=b/3:0=9;};", "Retried trees must preserve both keys, scalar contents and parent links");
-    const auto* child = &static_cast<LegacyTreeHeader*>(copy.storage)->head->left->pair.value;
+    const auto* child = &reinterpret_cast<LegacyTreeHeader*>(copy.items)->head->left->pair.value;
     Require(_ZNK3sce4Json5Value10getBooleanEv(child) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == child && !context.parent,
             "Retried tree entries must dispatch through their own callback records");
     for (const auto& [pointer, generation] : orphans) Require(trace.guestGenerations.at(pointer) == generation, "Retry must not reclaim the orphaned replacement tree");

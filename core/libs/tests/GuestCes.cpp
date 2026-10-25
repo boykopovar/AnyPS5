@@ -1,56 +1,10 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1250(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_1(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_2(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_4(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_5(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_9(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_10(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_13(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_14(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_15(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_16(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp437(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp737(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp775(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp850(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp852(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp855(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp860(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp861(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp862(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp863(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp865(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp866(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileKoi8R(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileKoi8U(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1254(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1256(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
-int APS5_VABI sceCesUtf8StrToMbcsStr(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8StrGetMbcsLen(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf8Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUtf8Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUcs2StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2StrGetMbcsLen(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUcs2Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesEucJpToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesSbcToUtf8(const std::uint8_t*, std::uint8_t, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToSbc(const std::uint8_t*, std::uint32_t, std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -93,12 +47,12 @@ static void RequireSbcCode(const std::uint8_t* profile, std::uint8_t sbc, std::u
 static void CheckSingleByteProfiles() {
     constexpr int unassignedCode = static_cast<int>(0x805C0020);
     const auto getters = {sceCesRefersUcsProfileIso8859_1, sceCesRefersUcsProfileIso8859_2, sceCesRefersUcsProfileIso8859_4, sceCesRefersUcsProfileIso8859_5, sceCesRefersUcsProfileIso8859_9, sceCesRefersUcsProfileIso8859_10, sceCesRefersUcsProfileIso8859_13, sceCesRefersUcsProfileIso8859_14, sceCesRefersUcsProfileIso8859_15, sceCesRefersUcsProfileIso8859_16, sceCesRefersUcsProfileCp437, sceCesRefersUcsProfileCp737, sceCesRefersUcsProfileCp775, sceCesRefersUcsProfileCp850, sceCesRefersUcsProfileCp852, sceCesRefersUcsProfileCp855, sceCesRefersUcsProfileCp860, sceCesRefersUcsProfileCp861, sceCesRefersUcsProfileCp862, sceCesRefersUcsProfileCp863, sceCesRefersUcsProfileCp865, sceCesRefersUcsProfileCp866, sceCesRefersUcsProfileKoi8R, sceCesRefersUcsProfileKoi8U, sceCesRefersUcsProfileCp1254, sceCesRefersUcsProfileCp1256, sceCesRefersUcsProfileCp1258};
-    const std::uint8_t* existing[] = {sceCesRefersUcsProfileCp1252(), sceCesRefersUcsProfileCp1251(), sceCesRefersUcsProfileCp1250()};
+    const void* existing[] = {sceCesRefersUcsProfileCp1252(), sceCesRefersUcsProfileCp1251(), sceCesRefersUcsProfileCp1250()};
     std::size_t index = 0;
     for (const auto getter : getters) {
         const std::uint8_t* profile = getter();
         Require(profile != nullptr && profile == getter());
-        for (const std::uint8_t* other : existing) Require(profile != other);
+        for (const void* other : existing) Require(profile != other);
         std::size_t inner = 0;
         for (const auto earlier : getters) {
             if (inner++ == index) break;
@@ -314,28 +268,28 @@ int main() {
     Require(Utf8ToSbc(cyrillic, "\xC3\xA9", 2) == unassignedCode);
     Require(Utf8ToSbc(profile, "\xD0\x90", 2) == unassignedCode);
 
-    const std::uint8_t* latin2 = sceCesRefersUcsProfileCp1250();
+    const void* latin2 = sceCesRefersUcsProfileCp1250();
     Require(latin2 != nullptr && latin2 == sceCesRefersUcsProfileCp1250() && latin2 != profile && latin2 != cyrillic);
-    RequireSbcToUtf8(latin2, 'A', "A");
-    RequireSbcToUtf8(latin2, 0x80, "\xE2\x82\xAC");
-    RequireSbcToUtf8(latin2, 0x81, "\xC2\x81");
-    RequireSbcToUtf8(latin2, 0x8A, "\xC5\xA0");
-    RequireSbcToUtf8(latin2, 0xA3, "\xC5\x81");
-    RequireSbcToUtf8(latin2, 0xA5, "\xC4\x84");
-    RequireSbcToUtf8(latin2, 0xAF, "\xC5\xBB");
-    RequireSbcToUtf8(latin2, 0xE9, "\xC3\xA9");
-    RequireSbcToUtf8(latin2, 0xFF, "\xCB\x99");
-    RequireUtf8ToSbc(latin2, "\xC5\xA0", 0x8A);
-    RequireUtf8ToSbc(latin2, "\xC5\x81", 0xA3);
-    RequireUtf8ToSbc(latin2, "\xC3\xA9", 0xE9);
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 'A', "A");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0x80, "\xE2\x82\xAC");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0x81, "\xC2\x81");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0x8A, "\xC5\xA0");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0xA3, "\xC5\x81");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0xA5, "\xC4\x84");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0xAF, "\xC5\xBB");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0xE9, "\xC3\xA9");
+    RequireSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), 0xFF, "\xCB\x99");
+    RequireUtf8ToSbc(reinterpret_cast<const uint8_t*>(latin2), "\xC5\xA0", 0x8A);
+    RequireUtf8ToSbc(reinterpret_cast<const uint8_t*>(latin2), "\xC5\x81", 0xA3);
+    RequireUtf8ToSbc(reinterpret_cast<const uint8_t*>(latin2), "\xC3\xA9", 0xE9);
     for (int sbc = 1; sbc < 256; ++sbc) {
         std::uint8_t cp[4] = {};
         std::uint32_t cpLength = 0;
         std::uint8_t back = 0;
-        Require(sceCesSbcToUtf8(latin2, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
-        Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, latin2, &back) == 0 && back == sbc);
+        Require(sceCesSbcToUtf8(reinterpret_cast<const uint8_t*>(latin2), static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
+        Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, reinterpret_cast<const uint8_t*>(latin2), &back) == 0 && back == sbc);
     }
-    Require(Utf8ToSbc(latin2, "\xD0\x90", 2) == unassignedCode);
+    Require(Utf8ToSbc(reinterpret_cast<const uint8_t*>(latin2), "\xD0\x90", 2) == unassignedCode);
     char latin2Context[256] = {};
     Require(sceCesMbcsUcsContextInit(latin2Context, latin2) == 0);
     std::uint8_t latin2Back[16] = {};

@@ -1,3 +1,5 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -8,26 +10,6 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <utility>
-
-extern "C" {
-int APS5_VABI sceAudioOut2Initialize();
-int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t);
-int APS5_VABI sceAudioOut2LoInit();
-int APS5_VABI sceAudioOut2LoTerminate();
-int APS5_VABI sceAudioOut2Set3DLatency(int, std::uint32_t);
-int APS5_VABI sceAudioOut2MasteringInit(std::uint32_t);
-int APS5_VABI sceAudioOut2MasteringInitEx(std::uint32_t);
-int APS5_VABI sceAudioOut2MasteringTerm();
-int APS5_VABI sceAudioOut2MasteringSetParam(const void*, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOut2MasteringGetState(void*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAudioOut2SetSystemDebugState(const void*);
-int APS5_VABI sceAudioOutMasteringInit(std::uint32_t);
-int APS5_VABI sceAudioOutMasteringTerm();
-int APS5_VABI sceAudioOutMasteringSetParam(const void*, std::uint32_t);
-int APS5_VABI sceAudioOutMasteringGetState(void*);
-int APS5_VABI sceAudioOut2EnableChat();
-int APS5_VABI sceAudioOut2DisableChat();
-}
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -86,12 +68,12 @@ void TestSet3DLatency() {
 }
 
 void TestMasteringInit() {
-    const std::uint32_t params[4] = {1u, 0u, 0u, 0u};
-    alignas(16) std::uint8_t storage[512] {};
+    const AudioOut2MasteringParamsHeader params{1u};
+    AudioOut2MasteringStates storage{};
     Require(sceAudioOut2MasteringTerm() == errorMasteringNotInitialized, "termination before initialization is refused");
-    Require(sceAudioOut2MasteringSetParam(params, 0, 0) == errorMasteringNotInitialized, "parameters before initialization are refused");
+    Require(sceAudioOut2MasteringSetParam(&params, 0, 0) == errorMasteringNotInitialized, "parameters before initialization are refused");
     Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorMasteringNotInitialized, "the initialization check comes before the null check");
-    Require(sceAudioOut2MasteringGetState(storage, 0, 0) == errorMasteringNotInitialized, "states before initialization are refused");
+    Require(sceAudioOut2MasteringGetState(&storage.states_header, 0, 0) == errorMasteringNotInitialized, "states before initialization are refused");
     Require(sceAudioOut2MasteringInit(1) == errorMasteringInvalidApiParam, "flags 1 are refused");
     Require(sceAudioOut2MasteringInit(0x80000000u) == errorMasteringInvalidApiParam, "sceAudioOut2MasteringInit accepts no flag");
     Require(sceAudioOut2MasteringInit(0) == 0, "flags 0 must be accepted");
@@ -110,37 +92,37 @@ void TestMasteringTerm() {
 }
 
 void TestMasteringSetParam() {
-    const std::uint32_t params[4] = {1u, 0u, 0u, 0u};
-    Require(sceAudioOut2MasteringSetParam(params, 0, 0) == 0, "mastering parameters must be accepted");
-    Require(sceAudioOut2MasteringSetParam(params, 2, 0) == 0, "mastering parameters for output 2 must be accepted");
+    const AudioOut2MasteringParamsHeader params{1u};
+    Require(sceAudioOut2MasteringSetParam(&params, 0, 0) == 0, "mastering parameters must be accepted");
+    Require(sceAudioOut2MasteringSetParam(&params, 2, 0) == 0, "mastering parameters for output 2 must be accepted");
     Require(sceAudioOut2MasteringSetParam(nullptr, 0, 0) == errorMasteringInvalidApiParam, "null mastering parameters return the invalid API parameter error");
     Require(sceAudioOut2MasteringSetParam(nullptr, 0, 2) == errorMasteringInvalidApiParam, "the null check comes before the flag check");
-    Require(sceAudioOut2MasteringSetParam(params, 0, 1) == 0, "flags 1 must be accepted");
-    Require(sceAudioOut2MasteringSetParam(params, 0, 2) == errorMasteringInvalidFlag, "flags above 1 are refused");
+    Require(sceAudioOut2MasteringSetParam(&params, 0, 1) == 0, "flags 1 must be accepted");
+    Require(sceAudioOut2MasteringSetParam(&params, 0, 2) == errorMasteringInvalidFlag, "flags above 1 are refused");
 }
 
 void TestMasteringGetState() {
     alignas(16) std::uint8_t storage[512];
     Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorInvalidPointer, "a null state returns the invalid pointer error");
-    auto* header = reinterpret_cast<std::uint32_t*>(storage);
+    auto* header = reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage);
     auto* words = reinterpret_cast<std::uint32_t*>(storage);
-    *header = 1u;
-    Require(sceAudioOut2MasteringGetState(storage, 0, 0) == 0, "states id 1 must be accepted");
-    Require(*header == 1u, "states id 1 is kept");
+    header->states_id = 1u;
+    Require(sceAudioOut2MasteringGetState(header, 0, 0) == 0, "states id 1 must be accepted");
+    Require(header->states_id == 1u, "states id 1 is kept");
     Require(words[4] == 0x01010001u && words[5] == 8u + 8u + 3u * 8u * 4u * 2u, "the compressor states descriptor is filled");
     Require(words[56] == 0x01010003u && words[57] == 8u + 8u + 8u * 4u * 3u, "the limiter states descriptor is filled");
     std::fill(storage, storage + sizeof(storage), 0xA5);
-    *header = 2u;
-    Require(sceAudioOut2MasteringGetState(storage, 2, 1) == 0, "states id 2 must be accepted");
-    Require(*header == 2u, "states id 2 is kept");
+    header->states_id = 2u;
+    Require(sceAudioOut2MasteringGetState(header, 2, 1) == 0, "states id 2 must be accepted");
+    Require(header->states_id == 2u, "states id 2 is kept");
     Require(words[4] == 0x01020001u && words[5] == 8u + 8u + 4u * 8u * 4u * 2u, "the V2 compressor states descriptor is filled");
     Require(words[72] == 0x01010003u && words[73] == 8u + 8u + 8u * 4u * 3u, "the V2 limiter states descriptor is filled");
     Require(std::all_of(storage + 8, storage + 16, [](std::uint8_t byte) { return byte == 0; }), "the reserved words are zeroed");
     Require(std::all_of(storage + 24, storage + 288, [](std::uint8_t byte) { return byte == 0; }), "the V2 compressor states are zeroed");
-    *header = 3u;
-    Require(sceAudioOut2MasteringGetState(storage, 0, 0) == errorMasteringInvalidStatesId, "an unknown states id is refused");
-    *header = 0u;
-    Require(sceAudioOut2MasteringGetState(storage, 0, 0) == errorMasteringInvalidStatesId, "states id 0 is refused");
+    header->states_id = 3u;
+    Require(sceAudioOut2MasteringGetState(header, 0, 0) == errorMasteringInvalidStatesId, "an unknown states id is refused");
+    header->states_id = 0u;
+    Require(sceAudioOut2MasteringGetState(header, 0, 0) == errorMasteringInvalidStatesId, "states id 0 is refused");
 }
 
 void TestLegacyMasteringInit() {
@@ -162,19 +144,19 @@ void TestLegacyMasteringSetParam() {
     alignas(16) std::uint32_t params[16];
     std::fill(params, params + 16, 0xA5A5A5A5u);
     params[0] = 1u;
-    Require(sceAudioOutMasteringSetParam(params, 0) == 0, "legacy mastering parameters must be accepted");
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 1); }), "legacy parameters with SwapEqCompressor must throw");
+    Require(sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0) == 0, "legacy mastering parameters must be accepted");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 1); }), "legacy parameters with SwapEqCompressor must throw");
     Require(params[0] == 1u && params[1] == 0xA5A5A5A5u && params[15] == 0xA5A5A5A5u, "legacy mastering parameters are not modified");
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 2); }), "legacy parameters with flags bit 1 must throw");
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 0xFFFFFFFFu); }), "legacy parameters with unknown flags must throw");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 2); }), "legacy parameters with flags bit 1 must throw");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0xFFFFFFFFu); }), "legacy parameters with unknown flags must throw");
     Require(ThrowsException([] { sceAudioOutMasteringSetParam(nullptr, 0); }), "null legacy parameters must throw");
     Require(ThrowsException([] { sceAudioOutMasteringSetParam(nullptr, 2); }), "null legacy parameters with unknown flags must throw");
     params[0] = 0u;
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 0); }), "legacy params id 0 must throw");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0); }), "legacy params id 0 must throw");
     params[0] = 2u;
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 0); }), "legacy params id 2 must throw");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0); }), "legacy params id 2 must throw");
     params[0] = 0x01010001u;
-    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(params, 0); }), "an unknown legacy params id must throw");
+    Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0); }), "an unknown legacy params id must throw");
 }
 
 void TestLegacyMasteringGetState() {
@@ -184,7 +166,7 @@ void TestLegacyMasteringGetState() {
     auto* header = reinterpret_cast<std::uint32_t*>(storage);
     std::fill(storage, storage + size, 0xA5);
     *header = 1u;
-    Require(sceAudioOutMasteringGetState(storage) == 0, "legacy states id 1 must be accepted");
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == 0, "legacy states id 1 must be accepted");
     Require(*header == 1u, "legacy states id 1 is kept");
     const std::pair<std::size_t, std::size_t> meters[] = {{32, 128}, {128, 224}, {240, 272}, {272, 304}, {304, 336}};
     for (const auto& meter : meters) {
@@ -193,12 +175,12 @@ void TestLegacyMasteringGetState() {
     Require(std::all_of(storage + 4, storage + 32, [](std::uint8_t byte) { return byte == 0xA5; }), "the bytes before the compressor meters are not modified");
     Require(std::all_of(storage + 224, storage + 240, [](std::uint8_t byte) { return byte == 0xA5; }), "the limiter descriptor bytes are not modified");
     Require(std::all_of(storage + statesSize, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "the bytes after the states are not modified");
-    Require(sceAudioOutMasteringGetState(storage) == 0, "legacy states id 1 must be accepted again");
+    Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == 0, "legacy states id 1 must be accepted again");
 
     for (std::uint32_t id : {0u, 2u, 3u, 0x01010001u, 0xFFFFFFFFu}) {
         std::fill(storage, storage + size, 0xA5);
         *header = id;
-        Require(ThrowsException([&] { sceAudioOutMasteringGetState(storage); }), "an unknown legacy states id must throw");
+        Require(ThrowsException([&] { sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)); }), "an unknown legacy states id must throw");
         Require(*header == id && std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy states id leaves the buffer unmodified");
     }
     Require(ThrowsException([] { sceAudioOutMasteringGetState(nullptr); }), "a null legacy state must throw");

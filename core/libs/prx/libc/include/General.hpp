@@ -90,6 +90,9 @@ struct PthreadSyncForwards_nid_no_patch {
 };
 extern "C" void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards);
 
+using SigactionFn_nid_no_patch = int (APS5_VABI*)(int, const void*, void*);
+extern "C" void RegisterSigaction_nid_no_patch(SigactionFn_nid_no_patch fn, std::uint32_t* interruptSet);
+
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 
 #define APS5_DUMMY_FUN \

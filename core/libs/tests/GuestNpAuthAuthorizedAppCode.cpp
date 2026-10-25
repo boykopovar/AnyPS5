@@ -1,13 +1,8 @@
+#include "prx/libSceNpAuth/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpAuthCreateRequest();
-int APS5_VABI sceNpAuthDeleteRequest(int);
-int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t, const NpAuthAuthorizedAppCodeParameter*, char*, std::int32_t*, bool*);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -41,6 +36,7 @@ int main() {
     bool threw = false;
     try {
         sceNpAuthGetAuthorizedAppCode(requestId, &parameter, code.data(), nullptr, &authorizationRequired);
+
     } catch (const std::logic_error&) {
         threw = true;
     }

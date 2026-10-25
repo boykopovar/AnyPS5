@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
 #include <array>
@@ -11,9 +12,8 @@
 #include <limits>
 #include <string>
 
-struct Value { alignas(8) std::array<std::byte, 32> bytes{}; };
-struct String { void* text = nullptr; };
-struct Array { void* items = nullptr; };
+using namespace SceJson2;
+
 struct Parameter {
     void* allocator;
     void* userData;
@@ -22,28 +22,6 @@ struct Parameter {
     std::uint32_t reserved[3];
 };
 static_assert(sizeof(Parameter) == 40);
-
-extern "C" {
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
-const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value*);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value*, String*);
-void APS5_VABI _ZN3sce4Json6StringC1Ev(String*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
-}
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
@@ -69,7 +47,7 @@ static void CheckMode(int mode) {
     Parameter parameter{&allocator, &userData, 16384, mode, {}};
     std::uint8_t initializer = 0;
     _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0,
             "Initialize a valid float configuration");
     parameter.mode = (mode + 1) % 3;
     const std::array<double, 5> numbers{std::numeric_limits<double>::infinity(),
@@ -139,21 +117,21 @@ static void CheckLifecycle() {
     Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(storage.data(), nullptr)) == 0x80848120,
             "Null legacy parameters must report invalid argument");
     Parameter noAllocator{};
-    Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), &noAllocator)) == 0x80848120,
+    Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), reinterpret_cast<const InitParameter2*>(&noAllocator))) == 0x80848120,
             "InitParameter2 must reject a null allocator");
     Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(storage.data(), &noAllocator)) == 0x80848102,
             "Legacy initialization must report its observed null-allocator error");
     for (int mode : {-1, 3, std::numeric_limits<int>::max()}) {
         parameter.mode = mode;
-        Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), &parameter)) == 0x80848120,
+        Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), reinterpret_cast<const InitParameter2*>(&parameter))) == 0x80848120,
                 "Invalid float modes must be rejected");
         Require(storage[0] == 0, "Rejected initialization must preserve the inactive byte");
     }
     parameter.mode = 0;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), &parameter) == 0,
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(storage.data(), reinterpret_cast<const InitParameter2*>(&parameter)) == 0,
             "A valid initialization must work after invalid modes");
     std::uint8_t other = 0;
-    Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<Parameter*>(std::uintptr_t{1}))) == 0x80848111,
+    Require(static_cast<unsigned>(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(std::uintptr_t{1}))) == 0x80848111,
             "Already initialized must precede parameter access");
     Require(static_cast<unsigned>(_ZN3sce4Json11Initializer9terminateEv(&other)) == 0x80848110,
             "An inactive initializer must not terminate active configuration");

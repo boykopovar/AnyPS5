@@ -68,7 +68,7 @@ def main():
             assert result.returncode == 0, (name, result.returncode, result.stdout, result.stderr)
             data = output.read_bytes()
             pe, optional = pe_headers(data)
-            assert struct.unpack_from("<Q", data, optional + 24)[0] == (0x140000000 if base is None else base - 0x10000)
+            assert struct.unpack_from("<Q", data, optional + 24)[0] == (0x400000 if base is None else base) - 0x10000
             assert bool(struct.unpack_from("<H", data, pe + 22)[0] & 1) == (base is not None)
             characteristics = struct.unpack_from("<H", data, optional + 70)[0]
             assert characteristics & 0x100
@@ -85,6 +85,7 @@ def main():
         image[0x200:0x200 + len(code)] = code
         image[0x240:0x246] = bytes.fromhex("b8 2a 00 00 00 c3")
         struct.pack_into("<q", image, 0x710, 0x240)
+        run(convert("sce-dynexec-imports-offset-default", image))
         run(convert("sce-dynexec-imports-offset", image, 0x400000))
         for base in (0x400000, 0x800000, 0x400000000):
             image = fixture()

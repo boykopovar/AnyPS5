@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <bit>
@@ -7,29 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 
-struct Value {
-    void* parent;
-    void* auxiliary;
-    std::uint64_t payload;
-    std::uint32_t reserved;
-    std::int32_t type;
-};
+using namespace SceJson2;
+
 static_assert(sizeof(Value) == 32 && offsetof(Value, payload) == 16 && offsetof(Value, type) == 28);
-extern "C" {
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value*, bool);
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
-void APS5_VABI _ZN3sce4Json5ValueC1Em(Value*, std::uint64_t);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json5Value5clearEv(Value*);
-void APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
-const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
-const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value*);
-const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value*);
-std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
-}
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }

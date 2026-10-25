@@ -1,3 +1,4 @@
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Rwlock.hpp"
 #include "prx/libc/include/General.hpp"
@@ -14,6 +15,8 @@ static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
+static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
+static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -174,7 +177,7 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
 }
 
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
-    if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrSettype: null attr");
+    if (!attr || !*attr || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return SCE_KERNEL_ERROR_EINVAL;
     (*attr)->type = type;
     return SCE_OK;
 }

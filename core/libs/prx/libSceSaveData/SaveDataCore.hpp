@@ -21,19 +21,12 @@
 #include <vector>
 
 #include "SceTypes.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 
 namespace savedata {
-
-extern "C" {
-int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, std::uint32_t attr,
-                                       std::uint64_t init_pattern, const void* param);
-int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
-int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern);
-int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
-}
 
 namespace {
 

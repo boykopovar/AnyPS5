@@ -1,16 +1,11 @@
+#include "prx/libSceAgc/Misc/include/Debug.hpp"
+#include "prx/libSceAgc/DcbDraw/include/Stats.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceAgcSetShaderInstrumentation(std::uint32_t);
-std::uint32_t APS5_VABI sceAgcGetShaderInstrumentation();
-std::uint32_t APS5_VABI sceAgcDcbBeginOcclusionQueryGetSize(std::int32_t);
-std::uint32_t APS5_VABI sceAgcDcbEndOcclusionQueryGetSize();
-}
 
 namespace {
 

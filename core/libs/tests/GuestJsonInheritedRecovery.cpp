@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -10,30 +11,12 @@
 #include <bit>
 #include <string>
 
-struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
-struct String { void* storage; };
+using namespace SceJson2;
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static_assert(sizeof(Value) == 32 && sizeof(Parameter) == 40);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-extern "C" {
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, ReadCallback, void*);
-void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
-void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
-int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
-int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatCallback, void*);
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
-void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
-void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
-int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
-void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
-}
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -133,7 +116,7 @@ static int APS5_VABI ReadNested(char& character, void* data) {
     return 0;
 }
 static void RunNotification(RecoveryAllocationTrace& allocations) {
-    auto& context = *static_cast<ReadContext*>(allocations.notificationContext);
+    auto& context = *reinterpret_cast<ReadContext*>(allocations.notificationContext);
     ++context.hooks;
     if (context.fail) { allocations.budget = 0; allocations.once = true; }
     context.nestedStatus = _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(context.nested, ReadTrue, &context.nestedReads);
@@ -169,7 +152,7 @@ int main() {
     RecoveryAllocationTrace allocations; RecoveryAllocator allocator;
     Parameter parameter{&allocator, &allocations, 8192, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize inherited callback recovery contracts");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize inherited callback recovery contracts");
     const auto baseline = allocations.live;
     const auto baselineIds = allocations.ids;
     for (const auto& expected : Cases) {
