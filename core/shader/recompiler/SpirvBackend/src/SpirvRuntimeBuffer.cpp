@@ -277,7 +277,9 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto load = [&](std::uint32_t word) {
         const auto value = state.module.AllocateId();
         const auto pointer = EmitMemoryElementPointer(state, access, word);
-        if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
+        static const bool atomicLoads = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        if (access.memoryAccess != 0u && atomicLoads) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+        else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
         else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return value;
     };
