@@ -722,7 +722,7 @@ if(BUILD_TESTING)
                 set(msvcrtImportLibrary "${CMAKE_CURRENT_BINARY_DIR}/windows_stdio_msvcrt_import.a")
                 add_custom_command(OUTPUT "${msvcrtImportLibrary}"
                     COMMAND "${mingwDlltoolExecutable}" -d "${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsMsvcrt.def"
-                        -l "${msvcrtImportLibrary}" -D msvcrt.dll
+                        -l "${msvcrtImportLibrary}" -D msvcrt.dll --temp-prefix windows_stdio_msvcrt_import
                     DEPENDS elfpatcher/tests/WindowsMsvcrt.def
                     VERBATIM)
                 add_custom_target(windows_stdio_msvcrt_import DEPENDS "${msvcrtImportLibrary}")

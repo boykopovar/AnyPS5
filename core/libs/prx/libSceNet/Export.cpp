@@ -146,6 +146,7 @@ constexpr int NET_SO_ERROR = 0x1007;
 constexpr int NET_SO_PROTOCOL = 0x1016;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
+constexpr int NET_SO_KEEPALIVE = 0x8;
 constexpr int NET_SO_BROADCAST = 0x20;
 constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_SNDBUF = 0x1001;
@@ -273,6 +274,7 @@ struct Sock {
     int snd_buffer = 0;
     int rcv_buffer = 0;
     int onesbcast = 0;
+    int keepalive = 0;
 };
 
 #ifdef _WIN32
@@ -355,6 +357,15 @@ int* errno_slot() {
 }
 
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
+
+std::mutex g_dnsLock;
+bool g_dnsOverridden = false;
+NetDnsInfo g_dnsOverride{};
+NetDns6Info g_dns6Override{};
+
+bool IsZeroAddress(const NetIpv6Address& address) {
+    return std::all_of(std::begin(address.bytes), std::end(address.bytes), [](std::uint8_t byte) { return byte == 0; });
+}
 
 void set_errno(int err) {
     *errno_slot() = err;
@@ -1428,6 +1439,11 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
+    } else if (optname == NET_SO_KEEPALIVE) {
+        const int enabled = value != 0;
+        if (socket.type == NET_SOCK_STREAM &&
+            ::setsockopt(socket.native->value, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&enabled), sizeof(enabled)) != 0)
+            return fail(native_error());
     } else if (optname == NET_SO_ONESBCAST) {
     } else {
         return fail(NET_EOPNOTSUPP);
@@ -1441,6 +1457,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_SNDBUF) it->second.snd_buffer = value;
         if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
         if (optname == NET_SO_ONESBCAST) it->second.onesbcast = value;
+        if (optname == NET_SO_KEEPALIVE) it->second.keepalive = value != 0 ? NET_SO_KEEPALIVE : 0;
     }
     return 0;
 }
@@ -1465,6 +1482,18 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         const KernelTimeval timeout{microseconds / 1000000, microseconds % 1000000};
         *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(timeout)));
         std::memcpy(optval, &timeout, *optlen);
+        return 0;
+    }
+    if (level == NET_SOL_SOCKET && optname == NET_SO_KEEPALIVE) {
+        int enabled = socket.keepalive;
+        if (socket.type == NET_SOCK_STREAM) {
+            NativeLength size = sizeof(enabled);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char*>(&enabled), &size) != 0)
+                return fail(native_error());
+        }
+        const int value = enabled != 0 ? NET_SO_KEEPALIVE : 0;
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
+        std::memcpy(optval, &value, *optlen);
         return 0;
     }
     if (level == NET_IPPROTO_TCP && socket.type != NET_SOCK_STREAM) return fail(NET_EINVAL);
@@ -2262,7 +2291,14 @@ int APS5_VABI sceNetGetInterfaceStats(NetInterfaceStats* stats, std::uint32_t fl
 }
 
 int APS5_VABI sceNetSetDnsInfo(const NetDnsInfo* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (flags != 0) return fail(NET_EINVAL);
+    NetDnsInfo servers{};
+    if (info && !GuestSocketReadGuest_nid_no_patch(&servers, info, sizeof(servers))) return fail(NET_EFAULT);
+    if (info && servers.primaryAddress == 0) return fail(NET_EINVAL);
+    std::lock_guard lock(g_dnsLock);
+    g_dnsOverridden = info != nullptr;
+    g_dnsOverride = servers;
     return 0;
 }
 
@@ -2311,7 +2347,13 @@ int APS5_VABI sceNetResolverConnectDestroy(NetResolverConnection* connection) {
 }
 
 int APS5_VABI sceNetSetDns6Info(const NetDns6Info* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (flags != 0) return fail(NET_EINVAL);
+    NetDns6Info servers{};
+    if (info && !GuestSocketReadGuest_nid_no_patch(&servers, info, sizeof(servers))) return fail(NET_EFAULT);
+    if (info && IsZeroAddress(servers.primaryAddress)) return fail(NET_EINVAL);
+    std::lock_guard lock(g_dnsLock);
+    g_dns6Override = servers;
     return 0;
 }
 
@@ -2380,8 +2422,15 @@ int APS5_VABI sceNetGetAppMemInfo(NetAppMemoryInfo* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetGetDnsInfo(NetDnsInfo* info, std::uint32_t flags) {
-    if (flags != 0) throw std::runtime_error("sceNetGetDnsInfo: flags " + std::to_string(flags) + " are not supported");
-    if (!info) throw std::runtime_error("sceNetGetDnsInfo: a null info is not supported");
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (flags != 0 || !info) return fail(NET_EINVAL);
+    {
+        std::lock_guard lock(g_dnsLock);
+        if (g_dnsOverridden) {
+            *info = g_dnsOverride;
+            return info->secondaryAddress == 0 ? 1 : 2;
+        }
+    }
     std::array<std::uint32_t, 2> servers{};
     const std::size_t count = std::min(NetCtlHostDnsServers_nid_no_patch(servers.data(), servers.size()), servers.size());
     std::memcpy(info, servers.data(), sizeof(servers));
@@ -2637,8 +2686,12 @@ int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, v
 }
 
 int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (flags != 0 || !info) return fail(NET_EINVAL);
+    std::lock_guard lock(g_dnsLock);
+    *info = g_dns6Override;
+    if (IsZeroAddress(info->primaryAddress)) return 0;
+    return IsZeroAddress(info->secondaryAddress) ? 1 : 2;
 }
 
 int APS5_VABI sceNetSetDns6InfoToKernel(const NetDns6Info* info, std::uint32_t flags) {

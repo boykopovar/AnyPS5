@@ -7,6 +7,10 @@ struct AppContentAddcontInfo {
     uint32_t status;
 };
 
+struct AppContentEntitlementKey {
+    char data[16];
+};
+
 extern "C" {
 
 int APS5_VABI sceAppContentAddcontMount(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentMountPoint* mountPoint);
@@ -36,7 +40,7 @@ int APS5_VABI sceAppContentDownload1Shrink(void);
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(void);
 int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(void);
 int APS5_VABI sceAppContentGetDownloadedStoreCountry(void);
-int APS5_VABI sceAppContentGetEntitlementKey(void);
+int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key);
 int APS5_VABI sceAppContentGetPftFlag(void);
 int APS5_VABI sceAppContentGetRegion(void);
 int APS5_VABI sceAppContentRequestPatchInstall(void);

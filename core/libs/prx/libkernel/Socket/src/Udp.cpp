@@ -1377,11 +1377,30 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
     return ::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(NativeError()) : 0;
 }
+namespace {
+bool AlreadyShut(NativeSocket socket, int how) {
+#ifdef __APPLE__
+    if (errno != ENOTCONN) return false;
+    sockaddr_storage peer{};
+    socklen_t size = sizeof(peer);
+    if (::getpeername(socket, reinterpret_cast<sockaddr*>(&peer), &size)) {
+        errno = ENOTCONN;
+        return false;
+    }
+    return how != SHUT_RDWR || ::shutdown(socket, SHUT_WR) == 0 || errno == ENOTCONN;
+#else
+    (void)socket;
+    (void)how;
+    return false;
+#endif
+}
+}
+
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (how < 0 || how > 2) return Fail(22);
-    if (::shutdown(socket->value, how)) return Fail(NativeError());
+    if (::shutdown(socket->value, how) && !AlreadyShut(socket->value, how)) return Fail(NativeError());
     std::lock_guard lock(socket->modeMutex);
     if (how != 1) socket->receiveShut = true;
     if (how != 0) socket->sendShut = true;
@@ -1834,6 +1853,9 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if (pipe && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
+#ifndef _WIN32
+        if (entry.revents & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
+#endif
         if (entry.revents) ++ready;
     };
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
@@ -1897,6 +1919,10 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         }
     }
 }
+}
+
+extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    return ::ReadGuest(destination, source, bytes);
 }
 
 std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {

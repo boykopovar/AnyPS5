@@ -334,12 +334,18 @@ int Player::SetLooping(bool enabled) {
 }
 
 int Player::SetTrickSpeed(std::int32_t trickSpeed) {
-    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::lock_guard lock(mutex);
+    if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     if (state == State::Stop || state == State::EndOfFile || state == State::Error) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     speed = trickSpeed;
-    if (source) source->SetSpeed(trickSpeed);
+    source->SetSpeed(trickSpeed);
     return SCE_OK;
+}
+
+int Player::SetAvailableBandwidth() {
+    std::lock_guard lock(mutex);
+    return source ? SCE_AVPLAYER_ERROR_OPERATION_FAILED : SCE_OK;
 }
 
 int Player::SetAvSyncMode(std::uint32_t mode) {

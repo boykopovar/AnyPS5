@@ -2,7 +2,7 @@ enable_language(C)
 
 set(LIBATRAC9_DIR ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
 set(LIBATRAC9_PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/atrac9)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBATRAC9_DIR}/unpack.c ${LIBATRAC9_DIR}/bit_reader.c ${LIBATRAC9_DIR}/decinit.c)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBATRAC9_DIR}/unpack.c ${LIBATRAC9_DIR}/bit_reader.c ${LIBATRAC9_DIR}/decinit.c ${LIBATRAC9_DIR}/utility.c)
 include(${CMAKE_CURRENT_SOURCE_DIR}/PatchLibAtrac9.cmake)
 add_library(atrac9 STATIC EXCLUDE_FROM_ALL
         ${LIBATRAC9_DIR}/band_extension.c
@@ -17,7 +17,7 @@ add_library(atrac9 STATIC EXCLUDE_FROM_ALL
         ${LIBATRAC9_DIR}/scale_factors.c
         ${LIBATRAC9_DIR}/tables.c
         ${LIBATRAC9_PATCHED_DIR}/unpack.c
-        ${LIBATRAC9_DIR}/utility.c
+        ${LIBATRAC9_PATCHED_DIR}/utility.c
 )
 target_include_directories(atrac9 PRIVATE ${LIBATRAC9_DIR})
 set_target_properties(atrac9 PROPERTIES POSITION_INDEPENDENT_CODE ON)

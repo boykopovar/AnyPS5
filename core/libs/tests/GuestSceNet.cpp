@@ -2329,13 +2329,11 @@ int main() {
             Require(std::strcmp(text, reinterpret_cast<const char*>(info.opaque)) == 0);
         }
         for (const int flags : {0x1, -1}) {
-            bool threw = false;
-            try { sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(dns.data()), flags); } catch (const std::runtime_error&) { threw = true; }
-            Require(threw);
+            const auto before = dns;
+            Require(Failed(sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(dns.data()), flags), 22));
+            Require(dns == before);
         }
-        bool threw = false;
-        try { sceNetGetDnsInfo(nullptr, 0); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw);
+        Require(Failed(sceNetGetDnsInfo(nullptr, 0), 22));
     }
     NetCtlIfStat first{};
     first.device = 7;

@@ -12,6 +12,12 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
+#include <sys/qos.h>
 #else
 #include <dlfcn.h>
 #include <sched.h>
@@ -42,7 +48,30 @@ void LogOnce(const char* role, const std::string& text) {
     std::fprintf(stderr, "[thread-priority] %s: %s\n", role, text.c_str());
 }
 
-#ifndef _WIN32
+#if defined(__APPLE__)
+
+void Raise(const char* role) {
+    if (RequestedMode() == ThreadPriorityMode::Realtime) {
+        mach_timebase_info_data_t timebase{};
+        mach_timebase_info(&timebase);
+        const auto ticks = [&](std::uint64_t nanos) {
+            return static_cast<std::uint32_t>(nanos * timebase.denom / timebase.numer);
+        };
+        thread_time_constraint_policy_data_t policy{ticks(1000000), ticks(500000), ticks(1000000), TRUE};
+        const auto status = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+                                              reinterpret_cast<thread_policy_t>(&policy), THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error(std::string("APS5_THREAD_PRIORITY=rt: ") + role + " time-constraint policy refused (kern_return " + std::to_string(status) + ")");
+        LogOnce(role, "Mach time-constraint policy");
+        return;
+    }
+    const int error = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    if (error != 0)
+        throw std::runtime_error(std::string("APS5_THREAD_PRIORITY=high: ") + role + " user-interactive QoS refused: " + std::strerror(error));
+    LogOnce(role, "user-interactive QoS");
+}
+
+#elif !defined(_WIN32)
 
 struct DBusConnection;
 struct DBusMessage;
