@@ -250,6 +250,23 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct LibreSslUi {
+    const void* meth;
+    void* strings;
+    void* userData;
+    void* exData;
+    int flags;
+};
+
+struct LibreSslUiString {
+    int type;
+    const char* outString;
+    int inputFlags;
+    char* resultBuf;
+    unsigned char data[24];
+    int flags;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -545,9 +562,9 @@ int APS5_VABI TLS_client_method_nid_postfix(void);
 int APS5_VABI UI_OpenSSL_nid_postfix(void);
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name);
 void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method);
-int APS5_VABI UI_get0_user_data_nid_postfix(void);
-int APS5_VABI UI_get_input_flags_nid_postfix(void);
-int APS5_VABI UI_get_string_type_nid_postfix(void);
+void* APS5_VABI UI_get0_user_data_nid_postfix(const LibreSslUi* ui);
+int APS5_VABI UI_get_input_flags_nid_postfix(const LibreSslUiString* string);
+int APS5_VABI UI_get_string_type_nid_postfix(const LibreSslUiString* string);
 UiSessionFunction APS5_VABI UI_method_get_closer_nid_postfix(const LibreSslUiMethod* method);
 UiSessionFunction APS5_VABI UI_method_get_opener_nid_postfix(const LibreSslUiMethod* method);
 UiStringFunction APS5_VABI UI_method_get_reader_nid_postfix(const LibreSslUiMethod* method);
