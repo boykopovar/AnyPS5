@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -15,9 +17,6 @@
 #include <pwd.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI getlogin_r_nid_postfix(char*, int);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static void Check(bool condition, int line) {
     if (!condition) {

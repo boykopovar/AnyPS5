@@ -13,6 +13,7 @@ GuestFace* FaceOf(const GuestGlyphSlotRec* slot) {
 }
 
 void SyncFace(GuestFace& face) {
+    RegisterBitmap_nid_no_patch(face);
     const FT_Face host = face.host;
     auto& rec = face.rec;
     rec.num_faces = host->num_faces;

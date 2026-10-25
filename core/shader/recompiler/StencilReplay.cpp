@@ -270,6 +270,7 @@ private:
             if (lowBallot && highBallot) {
                 const auto low = onHelper(lowBallot->Argument(0), depth + 1u), high = onHelper(highBallot->Argument(0), depth + 1u);
                 if (low && high && *low == 0u && *high == 0u) result = HelperMask::RealOnly;
+                else if (Boolean(lowBallot->Argument(0), true) && Boolean(highBallot->Argument(0), true)) result = HelperMask::QuadStable;
             } else if (mask.low->Opcode() == IrOpcode::BitwiseAnd32 && (waveSize == 32u || mask.high->Opcode() == IrOpcode::BitwiseAnd32)) {
                 const auto pair = [&](unsigned low, unsigned high) { return ReplayMask{mask.low->Argument(low)->Resolve(), waveSize == 32u ? mask.low->Argument(low)->Resolve() : mask.high->Argument(high)->Resolve()}; };
                 const auto combine = [&](unsigned firstHigh, unsigned secondHigh) {
@@ -692,7 +693,7 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
 }
 
 bool StencilReplaySafe(const IrProgram& program) {
-    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || program.Info().usesDma || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
     bool masks = false;

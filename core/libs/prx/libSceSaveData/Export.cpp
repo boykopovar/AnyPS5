@@ -1,3 +1,4 @@
+#include "prx/libSceSaveData/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>

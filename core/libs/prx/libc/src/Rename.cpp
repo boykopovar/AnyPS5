@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/General.hpp"
@@ -71,6 +72,9 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         sameFile = fs::equivalent(source, destination, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
+#ifdef __APPLE__
+        if (error == std::errc::not_supported) error.clear();
+#endif
         if (error) return FilesystemError(error);
         if (!sameFile && sourceIsDirectory && !destinationIsDirectory) return GuestEnotdir;
         if (!sameFile && !sourceIsDirectory && destinationIsDirectory) return GuestEisdir;
@@ -103,10 +107,17 @@ static int SourceLookupError_nid_no_patch(const std::filesystem::path& source) {
 }
 
 extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
-    if (!from) { errno = 14; return -1; }
-    if (!*from) { errno = 2; return -1; }
+    std::string fromCopy;
+    if (const int error = CopyGuestPath_nid_no_patch(from, fromCopy)) { errno = error; return -1; }
+    from = fromCopy.c_str();
+    if (fromCopy.empty()) { errno = 2; return -1; }
     if (const int dot = RenameDotError_nid_no_patch(from)) { errno = dot; return -1; }
-    const int destinationError = !to ? 14 : !*to ? 2 : RenameDotError_nid_no_patch(to);
+    std::string toCopy;
+    int destinationError = CopyGuestPath_nid_no_patch(to, toCopy);
+    if (destinationError == 0) {
+        to = toCopy.c_str();
+        destinationError = toCopy.empty() ? 2 : RenameDotError_nid_no_patch(to);
+    }
     try {
         const auto source = ResolvePath_nid_no_patch(from);
         if (destinationError) {

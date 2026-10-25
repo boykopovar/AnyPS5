@@ -1,10 +1,8 @@
+#include "prx/libSceDiscId/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct DiscId;
-struct DiscId2;
 
 extern "C" {
 

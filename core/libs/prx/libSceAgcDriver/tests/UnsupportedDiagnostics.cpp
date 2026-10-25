@@ -1,7 +1,5 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
-
-extern "C" void* APS5_VABI sceAgcDriverGetCoredumpAddress();
-extern "C" int APS5_VABI sceAgcDriverSetTargetRingForDiag();
 
 int main() {
     if (sceAgcDriverGetCoredumpAddress() != nullptr) return 1;

@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -24,16 +26,6 @@
 #include <csignal>
 #include <sys/resource.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataCreateTransactionResource(std::uint32_t);
-int APS5_VABI sceSaveDataDeleteTransactionResource(std::int32_t);
-int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2*);
-int APS5_VABI sceSaveDataSyncSaveDataMemory(const void*);
-int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
-}
 
 namespace {
 constexpr int kSaveDataNotInitialized = -2137063423;

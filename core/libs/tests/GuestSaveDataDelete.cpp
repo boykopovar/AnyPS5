@@ -1,3 +1,6 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
@@ -9,20 +12,10 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSaveDataDelete(const SaveDataDelete*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataMount3(const SaveDataMount3*, SaveDataMountResult*);
-int APS5_VABI sceSaveDataUmount2(std::uint32_t, const SaveDataMountPoint*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-}
 
 namespace {
 
@@ -35,6 +28,15 @@ void Check(bool condition, const std::string& what) {
     if (condition) return;
     std::fprintf(stderr, "savedata delete check failed: %s\n", what.c_str());
     ++failures;
+}
+
+bool Throws(const SaveDataDelete* del) {
+    try {
+        sceSaveDataDelete(del);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 int Delete(const char* data, std::size_t size) {
@@ -130,6 +132,9 @@ int main() {
         Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
     }
 
+    Check(Throws(nullptr), "null delete struct throws");
+    SaveDataDelete nullDir{};
+    Check(Throws(&nullDir), "null dir_name pointer throws");
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
