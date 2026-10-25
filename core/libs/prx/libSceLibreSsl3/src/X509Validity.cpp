@@ -41,7 +41,7 @@ const void* APS5_VABI X509_get0_notAfter_nid_postfix(const LibreSsl3ValidityX509
 }
 
 void APS5_VABI X509_get0_signature_nid_postfix(const void** signature, const void** algorithm, const LibreSsl3ValidityX509* certificate) {
-    if (!certificate) throw std::invalid_argument(std::string(__func__) + ": null certificate");
+    if (!certificate && (signature || algorithm)) throw std::invalid_argument(std::string(__func__) + ": null certificate");
     if (signature) *signature = certificate->signature;
     if (algorithm) *algorithm = certificate->sigAlg;
 }
