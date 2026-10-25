@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -21,12 +22,16 @@ static TestKey Filled() {
 
 static const void* const Unset = &Number[0];
 
-extern "C" {
-void APS5_VABI RSA_get0_key_nid_postfix(const TestKey*, const void**, const void**, const void**);
-void APS5_VABI DH_get0_pqg_nid_postfix(const TestKey*, const void**, const void**, const void**);
-void APS5_VABI DH_get0_key_nid_postfix(const TestKey*, const void**, const void**);
-void APS5_VABI DSA_get0_pqg_nid_postfix(const TestKey*, const void**, const void**, const void**);
-void APS5_VABI DSA_get0_key_nid_postfix(const TestKey*, const void**, const void**);
+static const LibreSsl3Rsa* Rsa(const TestKey* key) {
+    return reinterpret_cast<const LibreSsl3Rsa*>(key);
+}
+
+static const LibreSsl3Dh* Dh(const TestKey* key) {
+    return reinterpret_cast<const LibreSsl3Dh*>(key);
+}
+
+static const LibreSsl3Dsa* Dsa(const TestKey* key) {
+    return reinterpret_cast<const LibreSsl3Dsa*>(key);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -45,15 +50,15 @@ static void TestRsaKey() {
     const void* first = Unset;
     const void* second = Unset;
     const void* third = Unset;
-    RSA_get0_key_nid_postfix(&key, &first, &second, &third);
+    RSA_get0_key_nid_postfix(Rsa(&key), &first, &second, &third);
     Require(first == &Number[3] && second == &Number[4] && third == &Number[5]);
     first = second = third = Unset;
-    RSA_get0_key_nid_postfix(&key, nullptr, &second, nullptr);
+    RSA_get0_key_nid_postfix(Rsa(&key), nullptr, &second, nullptr);
     Require(first == Unset && second == &Number[4] && third == Unset);
-    RSA_get0_key_nid_postfix(&key, nullptr, nullptr, nullptr);
+    RSA_get0_key_nid_postfix(Rsa(&key), nullptr, nullptr, nullptr);
     key.slots[3] = nullptr;
     key.slots[5] = nullptr;
-    RSA_get0_key_nid_postfix(&key, &first, nullptr, &third);
+    RSA_get0_key_nid_postfix(Rsa(&key), &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     RequireThrows([&] { RSA_get0_key_nid_postfix(nullptr, &first, &second, &third); });
     RequireThrows([] { RSA_get0_key_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
@@ -64,15 +69,15 @@ static void TestDhPqg() {
     const void* first = Unset;
     const void* second = Unset;
     const void* third = Unset;
-    DH_get0_pqg_nid_postfix(&key, &first, &second, &third);
+    DH_get0_pqg_nid_postfix(Dh(&key), &first, &second, &third);
     Require(first == &Number[1] && second == &Number[8] && third == &Number[2]);
     first = second = third = Unset;
-    DH_get0_pqg_nid_postfix(&key, nullptr, &second, nullptr);
+    DH_get0_pqg_nid_postfix(Dh(&key), nullptr, &second, nullptr);
     Require(first == Unset && second == &Number[8] && third == Unset);
-    DH_get0_pqg_nid_postfix(&key, nullptr, nullptr, nullptr);
+    DH_get0_pqg_nid_postfix(Dh(&key), nullptr, nullptr, nullptr);
     key.slots[1] = nullptr;
     key.slots[2] = nullptr;
-    DH_get0_pqg_nid_postfix(&key, &first, nullptr, &third);
+    DH_get0_pqg_nid_postfix(Dh(&key), &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     RequireThrows([&] { DH_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
     RequireThrows([] { DH_get0_pqg_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
@@ -82,16 +87,16 @@ static void TestDhKey() {
     TestKey key = Filled();
     const void* first = Unset;
     const void* second = Unset;
-    DH_get0_key_nid_postfix(&key, &first, &second);
+    DH_get0_key_nid_postfix(Dh(&key), &first, &second);
     Require(first == &Number[4] && second == &Number[5]);
     first = second = Unset;
-    DH_get0_key_nid_postfix(&key, nullptr, &second);
+    DH_get0_key_nid_postfix(Dh(&key), nullptr, &second);
     Require(first == Unset && second == &Number[5]);
     second = Unset;
-    DH_get0_key_nid_postfix(&key, &first, nullptr);
+    DH_get0_key_nid_postfix(Dh(&key), &first, nullptr);
     Require(first == &Number[4] && second == Unset);
     key.slots[5] = nullptr;
-    DH_get0_key_nid_postfix(&key, &first, &second);
+    DH_get0_key_nid_postfix(Dh(&key), &first, &second);
     Require(first == &Number[4] && second == nullptr);
     RequireThrows([&] { DH_get0_key_nid_postfix(nullptr, &first, &second); });
     RequireThrows([] { DH_get0_key_nid_postfix(nullptr, nullptr, nullptr); });
@@ -102,15 +107,15 @@ static void TestDsaPqg() {
     const void* first = Unset;
     const void* second = Unset;
     const void* third = Unset;
-    DSA_get0_pqg_nid_postfix(&key, &first, &second, &third);
+    DSA_get0_pqg_nid_postfix(Dsa(&key), &first, &second, &third);
     Require(first == &Number[2] && second == &Number[3] && third == &Number[4]);
     first = second = third = Unset;
-    DSA_get0_pqg_nid_postfix(&key, nullptr, &second, nullptr);
+    DSA_get0_pqg_nid_postfix(Dsa(&key), nullptr, &second, nullptr);
     Require(first == Unset && second == &Number[3] && third == Unset);
-    DSA_get0_pqg_nid_postfix(&key, nullptr, nullptr, nullptr);
+    DSA_get0_pqg_nid_postfix(Dsa(&key), nullptr, nullptr, nullptr);
     key.slots[2] = nullptr;
     key.slots[4] = nullptr;
-    DSA_get0_pqg_nid_postfix(&key, &first, nullptr, &third);
+    DSA_get0_pqg_nid_postfix(Dsa(&key), &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     RequireThrows([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
     RequireThrows([] { DSA_get0_pqg_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
@@ -120,16 +125,16 @@ static void TestDsaKey() {
     TestKey key = Filled();
     const void* first = Unset;
     const void* second = Unset;
-    DSA_get0_key_nid_postfix(&key, &first, &second);
+    DSA_get0_key_nid_postfix(Dsa(&key), &first, &second);
     Require(first == &Number[5] && second == &Number[6]);
     first = second = Unset;
-    DSA_get0_key_nid_postfix(&key, nullptr, &second);
+    DSA_get0_key_nid_postfix(Dsa(&key), nullptr, &second);
     Require(first == Unset && second == &Number[6]);
     second = Unset;
-    DSA_get0_key_nid_postfix(&key, &first, nullptr);
+    DSA_get0_key_nid_postfix(Dsa(&key), &first, nullptr);
     Require(first == &Number[5] && second == Unset);
     key.slots[6] = nullptr;
-    DSA_get0_key_nid_postfix(&key, &first, &second);
+    DSA_get0_key_nid_postfix(Dsa(&key), &first, &second);
     Require(first == &Number[5] && second == nullptr);
     RequireThrows([&] { DSA_get0_key_nid_postfix(nullptr, &first, &second); });
     RequireThrows([] { DSA_get0_key_nid_postfix(nullptr, nullptr, nullptr); });

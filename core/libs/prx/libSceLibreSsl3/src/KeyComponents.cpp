@@ -1,48 +1,9 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSsl3Rsa {
-    int pad;
-    std::int64_t version;
-    const void* meth;
-    const void* n;
-    const void* e;
-    const void* d;
-    const void* p;
-    const void* q;
-    const void* dmp1;
-    const void* dmq1;
-    const void* iqmp;
-    unsigned char rest[64];
-};
-
-struct LibreSsl3Dh {
-    int pad;
-    int version;
-    const void* p;
-    const void* g;
-    std::int64_t length;
-    const void* pubKey;
-    const void* privKey;
-    int flags;
-    void* methodMontP;
-    const void* q;
-    unsigned char rest[56];
-};
-
-struct LibreSsl3Dsa {
-    int pad;
-    std::int64_t version;
-    const void* p;
-    const void* q;
-    const void* g;
-    const void* pubKey;
-    const void* privKey;
-    unsigned char rest[56];
-};
 
 static_assert(sizeof(LibreSsl3Rsa) == 152);
 static_assert(offsetof(LibreSsl3Rsa, n) == 24);
