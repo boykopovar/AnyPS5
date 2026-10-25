@@ -36,6 +36,12 @@ bool systemMemoryHeap(const VkPhysicalDeviceMemoryProperties& memory, std::uint3
 
 constexpr VkBufferUsageFlags deviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
+VkDeviceSize releasedBytes(const std::vector<BufferAllocation>& allocations) {
+    VkDeviceSize bytes = 0;
+    for (const auto& allocation : allocations) bytes += allocation.slab ? 0 : allocation.allocationBytes;
+    return bytes;
+}
+
 }
 
 BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))), cacheReclaim(context.cacheReclaim), device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), allocateMemory(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")), mapMemory(context.Function<PFN_vkMapMemory>("vkMapMemory")), physical(context.physical), memoryProperties(context.memory), memoryProperties2(context.memoryProperties2), vram(context) {
@@ -91,9 +97,8 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         ++attempts;
         if (result == VK_SUCCESS) {
             if (allocatedType != nullptr) *allocatedType = *hostType;
-            static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
-            const auto count = placements.fetch_add(1, std::memory_order_relaxed) + 1;
-            const auto total = placedBytes.fetch_add(allocation.allocationSize, std::memory_order_relaxed) + allocation.allocationSize;
+            const auto count = HostPlacements().count.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto total = HostPlacements().bytes.fetch_add(allocation.allocationSize, std::memory_order_relaxed) + allocation.allocationSize;
             if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[bufferpool] %s: memory type %u is out of device memory for %llu bytes after reclaiming %llu and releasing %llu; placed in host memory type %u until it is released; %llu such allocations, %llu MiB\n", operation, allocation.memoryTypeIndex, static_cast<unsigned long long>(allocation.allocationSize), static_cast<unsigned long long>(reclaimed), static_cast<unsigned long long>(released), *hostType, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
             return memory;
         }
@@ -143,7 +148,14 @@ bool BufferPool::heapOverBudget() {
     for (std::uint32_t heap = 0; heap < memoryProperties.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
         if ((memoryProperties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 && reported.heapBudget[heap] != 0 && reported.heapUsage[heap] > reported.heapBudget[heap]) heapOver = true;
     }
+    vram.Read(reported);
     return heapOver;
+}
+
+void BufferPool::ReadHeapBudget() {
+    std::lock_guard lock(mutex);
+    heapRead = {};
+    heapOverBudget();
 }
 
 VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage) {
@@ -205,6 +217,7 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
             ++imageSlots;
             imageBytes += bytes;
         }
+        vram.Released(releasedBytes(evicted));
     } catch (...) {
         destroy(allocation);
     }
@@ -504,6 +517,7 @@ VkDeviceSize BufferPool::ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::stea
             --deviceTier.slots;
             ++deviceTier.evictions;
         }
+        vram.Released(selected);
     }
     VkDeviceSize released = 0;
     for (const auto& allocation : evicted) released += destroy(allocation);
@@ -539,6 +553,11 @@ VkDeviceSize BufferPool::trim() {
         imageBytes = 0;
         imageSlots = 0;
         imageOrder.clear();
+        VkDeviceSize retiredBytes = 0;
+        for (const auto& [key, slots] : retiredDevice.free) {
+            for (const auto& slot : slots) retiredBytes += slot.allocation.slab ? 0 : slot.allocation.allocationBytes;
+        }
+        vram.Released(retiredBytes);
     }
     VkDeviceSize bytes = 0;
     for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice}) {
@@ -569,23 +588,33 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
     // Evicted allocations are destroyed after the mutex is released (see evictOldest). The vector
     // may throw on growth; a Put that cannot retain simply destroys, as noexcept requires.
     std::vector<BufferAllocation> evicted;
-    VkDeviceSize excess = 0;
     try {
-        if (DeviceTiered(allocation.properties)) excess = vram.Excess();
         std::lock_guard lock(mutex);
         auto& tier = tierFor(allocation.bytes, allocation.properties);
-        if (&tier != &deviceTier) excess = 0;
-        const auto floor = &tier == &deviceTier ? std::min(demandFloor(), vram.Report().heapBytes / 16u) : 0;
+        const bool device = &tier == &deviceTier;
+        VkDeviceSize excess = 0;
+        if (device && vram.Enabled()) {
+            heapOverBudget();
+            excess = vram.Excess();
+        }
+        while (excess != 0 && imageSlots != 0 && evictOldestImage(evicted)) {
+            const auto bytes = evicted.back().allocationBytes;
+            excess -= std::min(excess, bytes);
+            ++vramDropped;
+            vramDroppedBytes += bytes;
+        }
+        const auto floor = device ? std::min(demandFloor(), vram.Report().heapBytes / 16u) : 0;
         if (excess != 0 && tier.retainedBytes + allocation.allocationBytes <= floor) excess = 0;
-        if (&tier == &deviceTier) vramDropping = excess != 0;
-        if (excess != 0 && &tier == &deviceTier) {
+        if (device) vramDropping = excess != 0;
+        if (excess != 0) {
+            const auto images = evicted.size();
             auto dropped = allocation.allocationBytes;
             while (tier.slots != 0 && dropped < excess && tier.retainedBytes > floor) {
                 evictOldest(tier, evicted);
                 dropped += evicted.back().allocationBytes;
             }
             evicted.push_back(allocation);
-            vramDropped += evicted.size();
+            vramDropped += evicted.size() - images;
             vramDroppedBytes += dropped;
         } else if (allocation.allocationBytes > tier.budget) {
             evicted.push_back(allocation);
@@ -595,12 +624,11 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
             ++tier.slots;
             tier.retainedBytes += allocation.allocationBytes;
         }
+        if (device) vram.Released(releasedBytes(evicted));
     } catch (...) {
         destroy(allocation);
     }
-    VkDeviceSize freed = 0;
-    for (const auto& gone : evicted) freed += destroy(gone);
-    if (excess != 0) vram.Released(freed);
+    for (const auto& gone : evicted) destroy(gone);
 }
 
 void BufferPool::noteDemand(VkDeviceSize bytes) {

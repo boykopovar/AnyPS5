@@ -341,7 +341,7 @@ std::vector<std::unique_ptr<DeviceBuffer>> takeFourUnderTarget(const Context& co
     std::vector<std::unique_ptr<DeviceBuffer>> live;
     for (int i = 0; i < 4; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage));
     mock.otherUsage = HeapTarget;
-    GetBufferPool(context)->Vram().Refresh();
+    GetBufferPool(context)->ReadHeapBudget();
     return live;
 }
 
@@ -365,7 +365,7 @@ void VramOverTargetReleases() {
     auto context = vramContext();
     auto live = takeFourUnderTarget(context);
     waitOutDemand();
-    GetBufferPool(context)->Vram().Refresh();
+    GetBufferPool(context)->ReadHeapBudget();
     live.clear();
     Expect(mock.frees == 4 && mock.liveBytes == 0, "released device buffers nobody asked for in the last second were pooled over the budget target (" + std::to_string(mock.liveBytes / MiB) + " MiB retained)");
     const auto made = mock.allocations;
@@ -382,8 +382,8 @@ void VramSmallTierPutKeepsExcess() {
     std::vector<std::unique_ptr<DeviceBuffer>> live;
     for (int i = 0; i < 160; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 512 * 1024, BudgetUsage));
     mock.otherUsage = HeapTarget + 256 * MiB;
+    GetBufferPool(context)->ReadHeapBudget();
     auto& vram = GetBufferPool(context)->Vram();
-    vram.Refresh();
     const auto before = vram.Excess();
     const auto frees = mock.frees;
     live.clear();
@@ -399,7 +399,7 @@ void VramTrimsPool() {
     releaseFour(context);
     Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "released device buffers under the budget target were not pooled");
     mock.otherUsage = HeapTarget - 64 * MiB;
-    GetBufferPool(context)->Vram().Refresh();
+    GetBufferPool(context)->ReadHeapBudget();
     waitOutDemand();
     const auto made = mock.allocations;
     {
@@ -418,6 +418,77 @@ void VramIntegratedKeepsPool() {
     waitOutDemand();
     releaseFour(context);
     Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "an integrated GPU's pool did not keep its released device buffers");
+}
+
+VkMemoryAllocateInfo vramImage() {
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = 64 * MiB;
+    allocation.memoryTypeIndex = 0;
+    return allocation;
+}
+
+void VramSharesHeapRead() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    auto context = vramContext();
+    std::uint32_t type = 0;
+    const auto image = AllocateImageMemory(context, vramImage(), 1u, "test image", &type);
+    auto buffer = std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage);
+    const auto queries = mock.budgetQueries;
+    buffer.reset();
+    ReleaseImageMemory(context, image, 64 * MiB, 0);
+    Expect(mock.budgetQueries == queries + 1, "a device buffer and an image released together did not share one heap budget read (" + std::to_string(mock.budgetQueries - queries) + " reads)");
+    Expect(mock.frees == 0 && GetBufferPool(context)->RetainedImages() == 1, "a device buffer and an image released under the budget target were not pooled");
+}
+
+void VramImageReleaseCounted() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    auto context = vramContext();
+    auto& pool = *GetBufferPool(context);
+    std::uint32_t type = 0;
+    const auto image = AllocateImageMemory(context, vramImage(), 1u, "test image", &type);
+    mock.otherUsage = HeapTarget + 32 * MiB;
+    pool.ReadHeapBudget();
+    const auto before = pool.Vram().Excess();
+    ReleaseImageMemory(context, image, 64 * MiB, 0);
+    Expect(mock.frees == 1 && pool.RetainedImages() == 0, "image memory released over the budget was retained");
+    Expect(before == 96 * MiB && pool.Vram().Excess() == 32 * MiB, "image memory freed over the budget target was not counted as released device memory (" + std::to_string(before / MiB) + " -> " + std::to_string(pool.Vram().Excess() / MiB) + " MiB over)");
+}
+
+void VramIdleReclaimCounted() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    auto context = vramContext();
+    auto& pool = *GetBufferPool(context);
+    { DeviceBuffer idle(context, 64 * MiB, BudgetUsage); }
+    mock.otherUsage = HeapTarget;
+    pool.ReadHeapBudget();
+    const auto before = pool.Vram().Excess();
+    const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+    pool.ReclaimIdleDevice(MiB, start);
+    const auto released = pool.ReclaimIdleDevice(MiB, start + std::chrono::seconds(1));
+    Expect(released == 64 * MiB && before == 64 * MiB && pool.Vram().Excess() == 0, "device memory the idle reclaim freed was not counted as released (" + std::to_string(released / MiB) + " MiB freed, " + std::to_string(before / MiB) + " -> " + std::to_string(pool.Vram().Excess() / MiB) + " MiB over)");
+}
+
+void VramDropsImagesFirst() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    auto context = vramContext();
+    auto& pool = *GetBufferPool(context);
+    std::uint32_t type = 0;
+    ReleaseImageMemory(context, AllocateImageMemory(context, vramImage(), 1u, "test image", &type), 64 * MiB, 0);
+    Expect(pool.RetainedImages() == 1, "image memory released under the budget target was not retained");
+    std::vector<std::unique_ptr<DeviceBuffer>> live;
+    for (int i = 0; i < 4; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage));
+    mock.otherUsage = HeapTarget;
+    pool.ReadHeapBudget();
+    live.clear();
+    Expect(pool.RetainedImages() == 0 && mock.frees == 1 && mock.liveBytes == 256 * MiB, "over the budget target the device pool did not give back retained image memory before the buffers its demand floor keeps (" + std::to_string(mock.frees) + " freed, " + std::to_string(mock.liveBytes / MiB) + " MiB left)");
 }
 
 void SizeClassesAndDirections() {
@@ -1348,6 +1419,10 @@ int main(int argc, char** argv) {
         VramSmallTierPutKeepsExcess();
         VramTrimsPool();
         VramIntegratedKeepsPool();
+        VramSharesHeapRead();
+        VramImageReleaseCounted();
+        VramIdleReclaimCounted();
+        VramDropsImagesFirst();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

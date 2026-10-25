@@ -6,7 +6,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VramBudget.hpp"
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <list>
@@ -83,6 +82,7 @@ public:
     VkDeviceSize PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept;
     std::size_t SlabBlocks();
     VramBudget& Vram() { return vram; }
+    void ReadHeapBudget();
     static constexpr std::chrono::milliseconds DemandWindow{1000};
 
 private:
