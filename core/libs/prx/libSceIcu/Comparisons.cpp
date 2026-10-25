@@ -1,3 +1,4 @@
+#include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
