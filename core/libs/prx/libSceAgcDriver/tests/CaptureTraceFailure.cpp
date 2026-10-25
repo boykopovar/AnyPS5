@@ -12,25 +12,10 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <sys/resource.h>
-#endif
-#ifdef __linux__
-#include <sys/prctl.h>
-#endif
-
 namespace AgcDriver {
 
 struct CaptureTraceTestAccess {
-    [[noreturn]] static void WriterFailure(bool flush);
+    static void WriterFailure(bool flush);
 };
 
 }
@@ -38,13 +23,6 @@ struct CaptureTraceTestAccess {
 namespace {
 
 using namespace std::chrono_literals;
-
-std::atomic<bool> armed{false};
-std::atomic<bool> queueFull{false};
-std::atomic<bool> sinkFailed{false};
-std::atomic<unsigned> attempted{0};
-std::atomic<unsigned> finished{0};
-std::terminate_handler originalTerminate = nullptr;
 
 [[noreturn]] void SetupFailure(const char* message) {
     std::fprintf(stderr, "capture-trace-failure setup-failed: %s\n", message);
@@ -54,20 +32,6 @@ std::terminate_handler originalTerminate = nullptr;
 
 void Check(bool condition, const char* message) {
     if (!condition) SetupFailure(message);
-}
-
-[[noreturn]] void SavedTerminate() {
-    std::fprintf(stderr, "capture-trace-failure terminate armed=%d queueFull=%d attempted=%u finished=%u sinkFailed=%d\n",
-                 armed.load() ? 1 : 0, queueFull.load() ? 1 : 0, attempted.load(), finished.load(), sinkFailed.load() ? 1 : 0);
-    std::fflush(stderr);
-    try {
-        originalTerminate();
-        std::fputs("capture-trace-failure handler-returned\n", stderr);
-    } catch (...) {
-        std::fputs("capture-trace-failure handler-threw\n", stderr);
-    }
-    std::fflush(stderr);
-    std::abort();
 }
 
 class FailingBuffer final : public std::streambuf {
@@ -87,20 +51,34 @@ public:
         changed.notify_all();
     }
 
+    unsigned WriteCalls() const {
+        return writeCalls.load();
+    }
+
+    unsigned FlushCalls() const {
+        return flushCalls.load();
+    }
+
+    bool Failed() const {
+        return failed.load();
+    }
+
 protected:
     std::streamsize xsputn(const char*, std::streamsize size) override {
+        writeCalls.fetch_add(1);
         if (failFlush) return size;
         wait();
-        sinkFailed.store(true);
+        failed.store(true);
         std::fputs("capture-trace-failure sink-short-write\n", stderr);
         std::fflush(stderr);
         return 0;
     }
 
     int sync() override {
+        flushCalls.fetch_add(1);
         if (!failFlush) return 0;
         wait();
-        sinkFailed.store(true);
+        failed.store(true);
         std::fputs("capture-trace-failure sink-flush-failed\n", stderr);
         std::fflush(stderr);
         return -1;
@@ -117,6 +95,9 @@ private:
     std::mutex mutex;
     std::condition_variable changed;
     const bool failFlush;
+    std::atomic<unsigned> writeCalls{0};
+    std::atomic<unsigned> flushCalls{0};
+    std::atomic<bool> failed{false};
     bool entered = false;
     bool released = false;
 };
@@ -129,83 +110,114 @@ std::string Record(unsigned producer, unsigned item) {
 
 }
 
-[[noreturn]] void AgcDriver::CaptureTraceTestAccess::WriterFailure(bool flush) {
+void AgcDriver::CaptureTraceTestAccess::WriterFailure(bool flush) {
     constexpr std::size_t Capacity = 16u * 1024u * 1024u;
     FailingBuffer sink(flush);
-    CaptureTrace trace;
-    Check(trace.output.is_open(), "the trace output did not open");
-    static_cast<std::ostream&>(trace.output).rdbuf(&sink);
-    unsigned item = 0;
-    for (; item < 64; ++item) trace.append(Record(0, item));
-    Check(sink.WaitForWriter(), "the writer did not reach the failing sink");
-    const auto line = Record(1, 0);
-    for (;;) {
+    {
+        CaptureTrace trace;
+        Check(trace.output.is_open(), "the trace output did not open");
+        auto& output = static_cast<std::ostream&>(trace.output);
+        auto* original = output.rdbuf(&sink);
+        unsigned item = 0;
+        for (; item < 64; ++item) trace.append(Record(0, item));
+        Check(sink.WaitForWriter(), "the writer did not reach the failing sink");
+        const auto line = Record(1, 0);
+        for (;;) {
+            {
+                std::lock_guard lock(trace.mutex);
+                if (trace.pending.size() + line.size() + 64 > Capacity) break;
+            }
+            trace.append(Record(0, item++));
+        }
+        std::size_t queuedBytes = 0;
         {
             std::lock_guard lock(trace.mutex);
-            if (trace.pending.size() + line.size() + 64 > Capacity) break;
+            Check(trace.pending.size() <= Capacity, "the queue exceeded its bound");
+            Check(trace.droppedTotal == 0, "filling the queue unexpectedly dropped a record");
+            queuedBytes = trace.pending.size();
         }
-        trace.append(Record(0, item++));
+        std::atomic<unsigned> attempted{0};
+        std::mutex stateMutex;
+        std::condition_variable stateChanged;
+        unsigned finished = 0;
+        std::vector<std::thread> producers;
+        for (unsigned producer = 1; producer <= 4; ++producer) {
+            producers.emplace_back([&, producer] {
+                attempted.fetch_add(1);
+                try {
+                    trace.append(Record(producer, 0));
+                } catch (...) {
+                    SetupFailure("a producer threw before the writer failed");
+                }
+                {
+                    std::lock_guard lock(stateMutex);
+                    ++finished;
+                }
+                stateChanged.notify_all();
+            });
+        }
+        {
+            std::unique_lock lock(stateMutex);
+            Check(stateChanged.wait_for(lock, 2s, [&] { return finished == 4; }),
+                  "full-queue producers did not return while the sink was paused");
+        }
+        for (auto& producer : producers) producer.join();
+        {
+            std::lock_guard lock(trace.mutex);
+            Check(trace.pending.size() == queuedBytes, "a full-queue producer added data to the pending queue");
+            Check(trace.droppedTotal == 4, "the four rejected records were not counted exactly once");
+        }
+        Check(attempted.load() == 4, "the four producers did not run");
+        Check(!sink.Failed(), "the sink failed before the full-queue producers returned");
+        std::fprintf(stderr, "capture-trace-failure armed mode=%s queueFull=1 attempted=4 finished=4\n", flush ? "flush" : "write");
+        std::fflush(stderr);
+        sink.Fail();
+        trace.worker.join();
+        Check(sink.Failed(), "the writer did not reach the requested stream failure");
+        {
+            std::lock_guard lock(trace.mutex);
+            Check(!trace.active, "tracing remained active after the stream failure");
+            Check(trace.pending.empty(), "failed tracing retained queued records");
+        }
+        const auto writes = sink.WriteCalls();
+        const auto flushes = sink.FlushCalls();
+        Check(writes == 1, "the failed sink received another write");
+        Check(flushes == (flush ? 1u : 0u), "the failed sink received an unexpected flush");
+        for (unsigned producer = 1; producer <= 4; ++producer) trace.append(Record(producer, 1));
+        {
+            std::lock_guard lock(trace.mutex);
+            Check(!trace.active && trace.pending.empty(), "logging after failure reactivated or queued tracing");
+            Check(trace.droppedTotal == 4, "logging after failure changed the queue-loss count");
+        }
+        Check(sink.WriteCalls() == writes && sink.FlushCalls() == flushes,
+              "logging after failure attempted more stream I/O");
+        output.exceptions(std::ios::goodbit);
+        output.clear();
+        output.rdbuf(original);
     }
-    std::vector<std::thread> producers;
-    for (unsigned producer = 1; producer <= 4; ++producer) {
-        producers.emplace_back([&, producer] {
-            attempted.fetch_add(1);
-            try {
-                trace.append(Record(producer, 0));
-            } catch (...) {
-                SetupFailure("a producer threw before the writer failed");
-            }
-            finished.fetch_add(1);
-        });
-    }
-    const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (attempted.load() != 4 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(1ms);
-    Check(attempted.load() == 4, "the four producers did not start");
-    std::this_thread::sleep_for(200ms);
-    Check(finished.load() == 0, "a producer passed the full queue before the sink was released");
-    {
-        std::lock_guard lock(trace.mutex);
-        Check(trace.pending.size() + line.size() + 64 > Capacity, "the producers were not held behind a full queue");
-        Check(trace.pending.size() <= Capacity, "the queue exceeded its bound");
-        queueFull.store(true);
-    }
-    armed.store(true);
-    std::fprintf(stderr, "capture-trace-failure armed mode=%s queueFull=1 attempted=4 finished=0\n", flush ? "flush" : "write");
+    std::fprintf(stderr, "capture-trace-failure survived mode=%s queueFull=1 attempted=4 finished=4 inactive=1 empty=1 sinkFailed=1\n",
+                 flush ? "flush" : "write");
     std::fflush(stderr);
-    sink.Fail();
-    for (auto& producer : producers) producer.join();
-    SetupFailure("all producers returned after a fatal writer error");
 }
 
 int main(int argc, char** argv) {
-#ifdef _WIN32
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-#else
-    const rlimit noCore{0, 0};
-    setrlimit(RLIMIT_CORE, &noCore);
-#endif
-#ifdef __linux__
-    prctl(PR_SET_DUMPABLE, 0);
-#endif
+    std::set_terminate([] {
+        std::fputs("capture-trace-failure unexpected-terminate\n", stderr);
+        std::fflush(stderr);
+        std::_Exit(86);
+    });
     std::thread([] {
         std::this_thread::sleep_for(6s);
         std::fputs("capture-trace-failure watchdog\n", stderr);
         std::fflush(stderr);
         std::_Exit(99);
     }).detach();
-    Check(argc == 2, "expected write, flush or control-abort mode");
+    Check(argc == 2, "expected write or flush mode");
     const std::string mode = argv[1];
-    Check(mode == "write" || mode == "flush" || mode == "control-abort", "unknown failure mode");
-    if (mode == "control-abort") {
-        std::fputs("capture-trace-failure control-abort\n", stderr);
-        std::fflush(stderr);
-        std::abort();
-    }
+    Check(mode == "write" || mode == "flush", "unknown failure mode");
     Check(AgcDriver::CaptureTrace::Enabled(), "capture tracing must be enabled");
     const char* path = std::getenv("APS5_CAPTURE_TRACE_PATH");
     Check(path != nullptr && path[0] != '\0', "the test requires an explicit trace path");
-    originalTerminate = std::set_terminate(&SavedTerminate);
-    Check(originalTerminate != nullptr, "the runtime did not return its original terminate handler");
     AgcDriver::CaptureTraceTestAccess::WriterFailure(mode == "flush");
+    return 0;
 }
