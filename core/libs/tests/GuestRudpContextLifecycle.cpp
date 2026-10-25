@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <array>
@@ -10,21 +11,7 @@
 #include <utility>
 
 extern "C" {
-using GuestRudpEventHandler = void(APS5_VABI*)(int, int, int, void*);
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpActivate(std::int32_t, const void*, std::uint32_t);
-int APS5_VABI sceRudpEnableInternalIOThread(std::uint32_t, std::uint32_t);
-int APS5_VABI sceRudpSetEventHandler(GuestRudpEventHandler, void*);
-int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler, void*, int*);
-int APS5_VABI sceRudpBind(int, std::uint16_t, int, std::uint16_t);
-int APS5_VABI sceRudpSetOption(int, int, const void*, std::uint32_t);
-int APS5_VABI sceRudpGetOption(int, int, void*, std::uint32_t);
-int APS5_VABI sceRudpInitiate(int, const void*, std::uint32_t, std::uint16_t);
-int APS5_VABI sceRudpGetContextStatus(int, void*, std::uint32_t);
-int APS5_VABI sceRudpWrite(int, const void*, std::uint32_t, int);
-int APS5_VABI sceRudpRead(int, void*, std::uint32_t, int, void*);
-int APS5_VABI sceRudpTerminate(int);
+
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -78,6 +65,7 @@ static void CheckOptions(int context) {
         bool threw = false;
         try {
             sceRudpGetOption(context, option, &value, sizeof(value));
+
         } catch (const std::runtime_error&) {
             threw = true;
         }
@@ -91,6 +79,7 @@ static void CheckOptions(int context) {
                 threw = false;
                 try {
                     sceRudpGetOption(current, option, &value, sizeof(value));
+
                 } catch (const std::runtime_error&) {
                     threw = true;
                 }
@@ -176,6 +165,7 @@ int main() {
     bool activationUnsupported = false;
     try {
         sceRudpActivate(ctx, address, sizeof(address));
+
     } catch (const std::runtime_error&) {
         activationUnsupported = true;
     }

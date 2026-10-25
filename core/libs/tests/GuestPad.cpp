@@ -14,38 +14,6 @@
 #include <thread>
 #include <utility>
 
-extern "C" {
-int APS5_VABI scePadOpen_nid_postfix(int, int, int, const void*);
-int APS5_VABI scePadOpenExt(int, int, int, const void*);
-int APS5_VABI scePadClose_nid_postfix(int);
-int APS5_VABI scePadGetHandle(int, int, int);
-int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool);
-int APS5_VABI scePadSetVibrationMode(int, int);
-int APS5_VABI scePadInit_nid_postfix(void);
-int APS5_VABI scePadUnknown_n3kSX62fgNo();
-int APS5_VABI scePadRead_nid_postfix(int, PadData*, int);
-int APS5_VABI scePadReadState(int, PadData*);
-int APS5_VABI scePadSetTiltCorrectionState(int, bool);
-int APS5_VABI scePadResetOrientation(int);
-int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
-int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int, bool);
-int APS5_VABI scePadIsRemoteController(int, bool*);
-int APS5_VABI scePadGetAccessibilityControllerState(int, std::uint32_t*);
-bool APS5_VABI scePadIsDS4Connected(std::int32_t);
-bool APS5_VABI scePadIsBlasterConnected(std::int32_t);
-bool APS5_VABI scePadIsMoveConnected(std::int32_t);
-int APS5_VABI scePadGetControllerInformation(int, PadControllerInformation*);
-int APS5_VABI scePadDeviceClassParseData(int, const PadData*, PadDeviceClassData*);
-int APS5_VABI scePadDeviceClassGetExtendedInformation(int, PadDeviceClassExtendedInformation*);
-int APS5_VABI scePadSetVibration(int, const PadVibrationParam*);
-int APS5_VABI scePadGetExtControllerInformation(int, void*);
-int APS5_VABI scePadResetLightBar(int);
-int APS5_VABI scePadSetLightBar(int, const PadLightBarParam*);
-int APS5_VABI scePadSetMotionSensorState(int, bool);
-int APS5_VABI scePadGetControllerType(int, std::int32_t*);
-int APS5_VABI scePadGetInfo_nid_postfix(PadInfo*);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckInputCommands() {
@@ -354,6 +322,9 @@ static void CheckSpecialPort(int user, int handle) {
     Require(extended.deviceClass == -1 && extended.reserved[0] == 0);
     Require(scePadDeviceClassGetExtendedInformation(handle, &extended) == PAD_OK);
     Require(extended.deviceClass == 0);
+    std::int32_t specialType = -1;
+    Require(scePadGetControllerType(special, &specialType) == PAD_OK);
+    Require(specialType == PAD_CONTROLLER_TYPE_UNKNOWN);
     const PadVibrationParam vibration{0, 0};
     const PadLightBarParam lightBar{0, 0, 255};
     Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -621,7 +592,11 @@ int main() {
 
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     Require(scePadOpen_nid_postfix(user, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
-    Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == static_cast<int>(0x809b0003));
+    for (const int type : {0, 2, 3, 4}) Require(scePadOpen_nid_postfix(-1, type, 0, nullptr) == static_cast<int>(0x809b0001));
+    Require(scePadOpen_nid_postfix(-1, 0, 1, nullptr) == static_cast<int>(0x809b0001));
+    Require(scePadOpen_nid_postfix(-1, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int type : {5, 6, 16, 0xff, -1}) Require(scePadOpen_nid_postfix(user, type, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     const unsigned char wheel[16]{0xb7, 0x0e, 0x04, 0x0e, 0x08, 0x6e, 0x01};
     Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 0, wheel) == static_cast<int>(0x80920007));
@@ -716,6 +691,9 @@ int main() {
     std::uint32_t p2AccessState = 7;
     Require(scePadGetAccessibilityControllerState(handle2, &p2AccessState) == PAD_OK);
     Require(p2AccessState == 0);
+    std::int32_t p2Type = -1;
+    Require(scePadGetControllerType(handle2, &p2Type) == PAD_OK);
+    Require(p2Type == PAD_CONTROLLER_TYPE_DUAL_SENSE);
 
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);

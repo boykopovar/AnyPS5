@@ -353,11 +353,22 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 // A materialized result of one variant over one snapshot (Recompile(request, capture)): the
 // shared immutable object every later capture that reproduces the snapshot receives, so Populate
 // and the per-request copy run once per distinct snapshot.
+struct MemoPatch {
+    static constexpr std::uint32_t NoBinding = ~0u;
+    std::vector<std::pair<std::uint32_t, std::vector<std::uint32_t>>> buffers;
+    std::vector<std::uint32_t> userWords;
+    std::uint32_t shaderData = NoBinding;
+    std::uint32_t flattenedSrt = NoBinding;
+    bool pushData = false;
+    bool valid = false;
+};
+
 struct ResultMemoEntry {
     std::uint64_t variantId = 0;
     std::uint64_t hash = 0;
     std::shared_ptr<const RecompileResult> result;
     std::uint64_t used = 0;
+    std::shared_ptr<const MemoPatch> patch;
 };
 
 struct EmissionFailure {
@@ -387,6 +398,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<std::shared_ptr<const CompiledVariant>> variants;
     std::vector<EmissionFailure> emissionFailures;
     std::unique_ptr<ResultMemoTable> memo;
+    std::unique_ptr<ResultMemoTable> maskedMemo;
     std::uint64_t memoClock = 0;
 };
 
@@ -743,12 +755,19 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
 struct SpecializedModule {
     std::uint64_t specializationId = 0;
-    SharedSpirv spirv;
     std::vector<std::uint32_t> bindings;
     bool pushData = false;
+    SpirvContentHash hash;
+    mutable std::mutex mutex;
+    mutable SharedSpirv::Weak spirv;
 };
 
-std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+struct SpecializedSpirv {
+    std::shared_ptr<const SpecializedModule> module;
+    SharedSpirv spirv;
+};
+
+std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto source = SpecializeVertexInputTypes(artifact, classes);
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) {
@@ -842,6 +861,11 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     materialized = ValidateAndOptimizeSpirv(materialized, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false);
 #endif
+    return materialized;
+}
+
+SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    auto materialized = specializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> bindingNumbers;
     std::unordered_set<std::uint32_t> functionLdsBuffer;
@@ -856,9 +880,20 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         }
         cursor += count;
     }
-    module->spirv = InternSpirv(std::move(materialized));
+    auto spirv = InternSpirv(std::move(materialized));
+    module->hash = spirv.ContentHash();
+    module->spirv = spirv.Weaken();
     module->specializationId = constants.empty() ? 0u : nextVariantId();
-    return module;
+    return {std::move(module), std::move(spirv)};
+}
+
+SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    std::lock_guard lock(module.mutex);
+    if (auto spirv = module.spirv.Lock(); !spirv.empty()) return spirv;
+    auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
+    if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
+    module.spirv = spirv.Weaken();
+    return spirv;
 }
 
 struct SpecializedModuleEntry {
@@ -888,7 +923,12 @@ struct RegistrationModuleEntry {
     std::shared_ptr<const SpecializedModule> module;
 };
 
-std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t variantId, std::span<const std::uint32_t> moduleKey, const std::function<std::shared_ptr<const SpecializedModule>()>& specialize) {
+SharedSpirv lockedWords(const SpecializedModule& module) {
+    std::lock_guard lock(module.mutex);
+    return module.spirv.Lock();
+}
+
+SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std::uint32_t> moduleKey, const std::function<SpecializedSpirv()>& specialize) {
     std::vector<std::uint64_t> key{variantId};
     key.insert(key.end(), moduleKey.begin(), moduleKey.end());
     static PrimedSharedMutex mutex;
@@ -903,15 +943,20 @@ std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t varian
         const auto found = modules.find(key);
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<RegistrationModuleEntry>()).first->second;
     }
+    SharedSpirv built;
     std::call_once(entry->ready, [&] {
         try {
-            entry->module = specialize();
+            auto specialized = specialize();
+            entry->module = std::move(specialized.module);
+            built = std::move(specialized.spirv);
         } catch (...) {
             entry->failure = std::current_exception();
         }
     });
     if (entry->failure) std::rethrow_exception(entry->failure);
-    return entry->module;
+    if (built.empty()) built = lockedWords(*entry->module);
+    if (built.empty()) built = specialize().spirv;
+    return {entry->module, std::move(built)};
 }
 
 std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
@@ -964,7 +1009,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     return plan;
 }
 
-std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     struct ModuleKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, ModuleKeyStorage>();
     key.clear();
@@ -982,15 +1027,19 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
         const auto found = modules.find(key);
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<SpecializedModuleEntry>()).first->second;
     }
+    SharedSpirv built;
     std::call_once(entry->ready, [&] {
         try {
-            entry->module = buildSpecializedModule(artifact, classes, constants, target);
+            auto specialized = buildSpecializedModule(artifact, classes, constants, target);
+            entry->module = std::move(specialized.module);
+            built = std::move(specialized.spirv);
         } catch (...) {
             entry->failure = std::current_exception();
         }
     });
     if (entry->failure) std::rethrow_exception(entry->failure);
-    return entry->module;
+    if (built.empty()) built = specializedWords(*entry->module, artifact, classes, constants, target);
+    return {entry->module, std::move(built)};
 }
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
@@ -1008,7 +1057,28 @@ const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const R
     return merged;
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false) {
+void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const CompiledVariant& variant) {
+    const auto& layout = variant.bindings.layout;
+    patch = {};
+    for (std::size_t index = 0; index < plan.bindings.size(); ++index) {
+        const auto& binding = plan.bindings[index];
+        const auto position = static_cast<std::uint32_t>(index);
+        if (binding.descriptor.role == DescriptorRole::GuestBuffers) {
+            patch.buffers.push_back({position, binding.resources});
+        } else if (binding.descriptor.role == DescriptorRole::FlattenedSrt) {
+            patch.flattenedSrt = position;
+        } else if (binding.descriptor.role == DescriptorRole::ShaderData) {
+            patch.shaderData = position;
+        }
+    }
+    patch.pushData = layout.UsesPushData();
+    if (patch.pushData || plan.storageData) {
+        for (const auto reg : layout.userDataRegisters) patch.userWords.push_back(reg - variant.info.userDataBase);
+    }
+    patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
+}
+
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr) {
     ResourceSnapshot merged;
     const auto& snapshot = mergeTargetImage(variant, request, captured, registrationDefaults, merged);
     RecompileResult result;
@@ -1112,7 +1182,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             const auto found = plan->modules.find(moduleKey);
             entry = found != plan->modules.end() ? found->second : plan->modules.emplace(moduleKey, std::make_shared<PreparedModuleEntry>()).first->second;
         }
-        const auto prepare = [&] {
+        const auto specialize = [&] {
             auto constants = plan->bindings.specialization;
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
@@ -1137,11 +1207,17 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                     constants.push_back({first + 5u, kind});
                 }
             }
-            const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
+            return artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
+        };
+        SharedSpirv built;
+        const auto prepare = [&] {
+            auto specialized = specialize();
+            const auto& module = specialized.module;
             if (variant.bindings.layout.UsesPushData() && !module->pushData) throw std::runtime_error("specialization removed the prepared push constant interface");
             auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
             entry->bindings = std::move(selected);
             entry->module = module;
+            built = std::move(specialized.spirv);
         };
         std::call_once(entry->ready, [&] {
             try {
@@ -1152,8 +1228,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         });
         if (entry->failure) std::rethrow_exception(entry->failure);
         const auto& module = entry->module;
+        if (built.empty()) built = lockedWords(*module);
+        if (built.empty()) built = specialize().spirv;
         result.specializationId = module->specializationId;
-        result.spirv = module->spirv;
+        result.spirv = std::move(built);
         bindingPlan = &entry->bindings;
     } else {
         result.spirv = artifact.spirv;
@@ -1162,6 +1240,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     const auto& tables = *resolved;
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
+    if (patch != nullptr) recordMemoPatch(*patch, *bindingPlan, variant);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
     if (std::ranges::none_of(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::BdaPagetable || binding.role == DescriptorRole::FaultBuffer; })) result.bdaAbiVersion = 0u;
@@ -1211,13 +1290,16 @@ SharedSpirv InternSpirv(std::vector<std::uint32_t> words) {
     SharedSpirv spirv(std::move(words));
     const auto hash = spirv.ContentHash();
     static std::mutex mutex;
-    static std::unordered_map<std::uint64_t, std::vector<SharedSpirv>> interned;
+    static std::unordered_map<std::uint64_t, std::vector<SharedSpirv::Weak>> interned;
     std::lock_guard lock(mutex);
-    auto& candidates = interned[hash.low ^ (hash.high * 0x9e3779b97f4a7c15ull)];
-    for (const auto& candidate : candidates) {
+    const auto bucket = hash.low ^ (hash.high * 0x9e3779b97f4a7c15ull);
+    auto& candidates = interned[bucket];
+    std::erase_if(candidates, [](const SharedSpirv::Weak& candidate) { return candidate.Expired(); });
+    for (const auto& weak : candidates) {
+        const auto candidate = weak.Lock();
         if (candidate.ContentHash() == hash && candidate == spirv) return candidate;
     }
-    candidates.push_back(spirv);
+    candidates.push_back(spirv.Weaken());
     return spirv;
 }
 
@@ -1357,19 +1439,76 @@ bool ResultMemo() {
     return resultMemo;
 }
 
-ResultMemoEntry* memoSet(SourceEntry& source, std::uint64_t index) {
-    if (source.memo == nullptr) return nullptr;
-    return source.memo->data() + static_cast<std::size_t>((index ^ (index >> 32u)) % ResultMemoSets) * ResultMemoWays;
+bool MaskedResultMemo() {
+    static const bool masked = std::getenv("APS5_NO_MASKED_RESULT_MEMO") == nullptr;
+    return masked;
+}
+
+bool VerifyMaskedResultMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_MASKED_RESULT_MEMO") != nullptr;
+    return verify;
+}
+
+ResultMemoEntry* memoSet(const std::unique_ptr<ResultMemoTable>& table, std::uint64_t index) {
+    if (table == nullptr) return nullptr;
+    return table->data() + static_cast<std::size_t>((index ^ (index >> 32u)) % ResultMemoSets) * ResultMemoWays;
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
+    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
     std::atomic<std::int64_t> lastReport{0};
 };
+
+void applyMemoPatch(RecompileResult& result, const MemoPatch& patch, const ResourceSnapshot& snapshot) {
+    for (const auto& [binding, resources] : patch.buffers) {
+        auto& words = result.bindings.at(binding).guestDescriptor;
+        if (words.size() != resources.size() * 4u) throw std::runtime_error("a patched guest buffer binding changed its width");
+        for (std::size_t element = 0; element < resources.size(); ++element) std::copy_n(snapshot.buffers.at(resources[element]).dwords.begin(), 4u, words.begin() + element * 4u);
+    }
+    if (!patch.userWords.empty()) {
+        if (patch.pushData) {
+            if (patch.userWords.size() * sizeof(std::uint32_t) > result.pushConstants.size()) throw std::runtime_error("patched user data lies outside the push data");
+            for (std::size_t word = 0; word < patch.userWords.size(); ++word) std::memcpy(result.pushConstants.data() + word * sizeof(std::uint32_t), &snapshot.userData.at(patch.userWords[word]), sizeof(std::uint32_t));
+        } else {
+            auto& words = result.bindings.at(patch.shaderData).guestDescriptor;
+            if (patch.userWords.size() > words.size()) throw std::runtime_error("patched user data lies outside the shader data");
+            for (std::size_t word = 0; word < patch.userWords.size(); ++word) words[word] = snapshot.userData.at(patch.userWords[word]);
+        }
+    }
+    if (patch.flattenedSrt != MemoPatch::NoBinding) result.bindings.at(patch.flattenedSrt).guestDescriptor = snapshot.flattenedSrt;
+    result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
+}
+
+const char* patchedResultDifference(const RecompileResult& patched, const RecompileResult& full) {
+    if (patched.bindings.size() != full.bindings.size()) return "binding count";
+    if (patched.pushConstants != full.pushConstants) return "push constants";
+    if (patched.specializationId != full.specializationId || patched.spirv.ContentHash() != full.spirv.ContentHash()) return "module";
+    if (patched.poisonedSrtReads != full.poisonedSrtReads) return "poisoned SRT reads";
+    if (patched.shaderDataUserWords != full.shaderDataUserWords) return "shader data user words";
+    if (patched.specialization.size() != full.specialization.size()) return "specialization";
+    for (std::size_t index = 0; index < patched.specialization.size(); ++index) {
+        if (patched.specialization[index].id != full.specialization[index].id || patched.specialization[index].value != full.specialization[index].value) return "specialization";
+    }
+    for (std::size_t index = 0; index < patched.bindings.size(); ++index) {
+        const auto& left = patched.bindings[index];
+        const auto& right = full.bindings[index];
+        if (left.role != right.role || left.binding != right.binding || left.count != right.count) return "binding shape";
+        if (left.guestDescriptor != right.guestDescriptor) return "binding words";
+    }
+    return nullptr;
+}
 
 ResultMemoCounters& resultMemoCounters() {
     static ResultMemoCounters counters;
     return counters;
+}
+
+void verifyPatchedResult(const RecompileResult& patched, const RecompileResult& full, std::uint64_t variantId) {
+    const auto* difference = patchedResultDifference(patched, full);
+    if (difference == nullptr) return;
+    resultMemoCounters().mismatches.fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<std::uint32_t> printed{0};
+    if (const auto index = printed.fetch_add(1, std::memory_order_relaxed); index < 20u) std::fprintf(stderr, "[recompile] masked result memo mismatch %u: variant %016llx differs in its %s\n", index + 1u, static_cast<unsigned long long>(variantId), difference);
 }
 
 void reportResultMemo() {
@@ -1384,16 +1523,20 @@ void reportResultMemo() {
     }
     if (now - last < 10'000'000'000ll || !counters.lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
     const auto hits = counters.hits.exchange(0, std::memory_order_relaxed);
+    const auto patched = counters.patched.exchange(0, std::memory_order_relaxed);
     const auto misses = counters.misses.exchange(0, std::memory_order_relaxed);
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
+    const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
+    const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
+    const auto total = static_cast<double>(hits + patched + misses);
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches));
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot) {
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -1411,11 +1554,28 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
         }
     };
-    mixDescriptors(snapshot.buffers);
+    if (masked) {
+        mix(snapshot.buffers.size());
+        for (const auto& value : snapshot.buffers) {
+            mix(value.dwordCount);
+            mix(value.availableDwordMask);
+            const bool present = value.dwords[2] != 0u && (value.dwords[0] != 0u || (value.dwords[1] & 0xffffu) != 0u);
+            mix(present ? 4u | (value.dwords[0] & 3u) : 0u);
+            mix(value.dwords[1] & 0xffff0000u);
+            for (std::uint32_t i = 3; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
+        }
+    } else {
+        mixDescriptors(snapshot.buffers);
+    }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
-    mixWords(snapshot.flattenedSrt);
-    mixWords(snapshot.userData);
+    if (masked) {
+        mix(snapshot.flattenedSrt.size());
+        mix(snapshot.userData.size());
+    } else {
+        mixWords(snapshot.flattenedSrt);
+        mixWords(snapshot.userData);
+    }
     mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
     mix(snapshot.uniformFill.resource);
     for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
@@ -1474,16 +1634,16 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
 // as good). `memoHit` reports the hit.
 std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto hash = snapshotHash(request, snapshot);
-    std::uint64_t index = 0;
+    const auto variantId = variant->artifact.variantId;
+    const auto hash = snapshotHash(request, snapshot, false);
+    const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
     {
         std::lock_guard lock(source.mutex);
-        index = (variant->artifact.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
-        if (auto* set = memoSet(source, index)) {
+        if (auto* set = memoSet(source.memo, index)) {
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
-                if (entry.result == nullptr || entry.variantId != variant->artifact.variantId || entry.hash != hash) continue;
+                if (entry.result == nullptr || entry.variantId != variantId || entry.hash != hash) continue;
                 entry.used = ++source.memoClock;
                 counters.hits.fetch_add(1, std::memory_order_relaxed);
                 if (memoHit != nullptr) *memoHit = true;
@@ -1492,32 +1652,61 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             }
         }
     }
-    const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot));
-    result->cacheHit = cacheHit;
-    if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
-    counters.misses.fetch_add(1, std::memory_order_relaxed);
-    std::shared_ptr<const RecompileResult> shared = std::move(result);
-    {
+    const bool masking = MaskedResultMemo();
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, true) : 0u;
+    const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
+    std::shared_ptr<const RecompileResult> donor;
+    std::shared_ptr<const MemoPatch> donorPatch;
+    if (masking) {
         std::lock_guard lock(source.mutex);
-        if (source.memo == nullptr) source.memo = std::make_unique<ResultMemoTable>();
-        auto* set = memoSet(source, index);
-        auto* victim = set;
-        bool present = false;
-        for (std::size_t way = 0; way < ResultMemoWays && !present; ++way) {
-            auto& entry = set[way];
-            if (entry.result != nullptr && entry.variantId == variant->artifact.variantId && entry.hash == hash) {
+        if (auto* set = memoSet(source.maskedMemo, maskedIndex)) {
+            for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+                auto& entry = set[way];
+                if (entry.result == nullptr || entry.variantId != variantId || entry.hash != maskedHash) continue;
                 entry.used = ++source.memoClock;
-                shared = entry.result;
-                present = true;
-            } else if (entry.used < victim->used) {
-                victim = &entry;
+                donor = entry.result;
+                donorPatch = entry.patch;
+                break;
             }
         }
-        if (!present) {
-            if (victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
-            *victim = {variant->artifact.variantId, hash, shared, ++source.memoClock};
+    }
+    const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    std::shared_ptr<RecompileResult> result;
+    std::shared_ptr<MemoPatch> patch;
+    if (donor != nullptr) {
+        result = std::make_shared<RecompileResult>(*donor);
+        applyMemoPatch(*result, *donorPatch, snapshot);
+        if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot), variantId);
+        if (profile) counters.patchNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        counters.patched.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        if (masking) patch = std::make_shared<MemoPatch>();
+        result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get()));
+        if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        counters.misses.fetch_add(1, std::memory_order_relaxed);
+    }
+    result->cacheHit = cacheHit;
+    std::shared_ptr<const RecompileResult> shared = std::move(result);
+    const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
+        if (table == nullptr) table = std::make_unique<ResultMemoTable>();
+        auto* set = memoSet(table, at);
+        auto* victim = set;
+        for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+            auto& entry = set[way];
+            if (entry.result != nullptr && entry.variantId == variantId && entry.hash == key) {
+                entry.used = ++source.memoClock;
+                return entry.result;
+            }
+            if (entry.used < victim->used) victim = &entry;
         }
+        if (count && victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+        *victim = {variantId, key, shared, ++source.memoClock, std::move(recipe)};
+        return shared;
+    };
+    {
+        std::lock_guard lock(source.mutex);
+        shared = insert(source.memo, index, hash, nullptr, true);
+        if (patch != nullptr && patch->valid) static_cast<void>(insert(source.maskedMemo, maskedIndex, maskedHash, patch, false));
     }
     reportResultMemo();
     return shared;

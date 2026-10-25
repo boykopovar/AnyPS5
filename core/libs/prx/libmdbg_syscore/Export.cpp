@@ -1,3 +1,4 @@
+#include "prx/libmdbg_syscore/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

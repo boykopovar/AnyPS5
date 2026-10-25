@@ -172,7 +172,7 @@ def build_pe_with_imports(dlls, names=()):
 def write_source(root, library, text):
     directory = Path(root) / library
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "Export.cpp").write_text(text)
+    (directory / "Export.cpp").write_text(text, encoding="utf-8")
 
 
 def write_registry(path, entries, encoding="utf-8"):
@@ -323,7 +323,7 @@ class ImportAuditTests(unittest.TestCase):
         data = json.loads(report.read_text(encoding="utf-8"))
         records = {record["nid"]: record for record in data["imports"]}
         self.assertEqual(data["references"], 5)
-        self.assertEqual(data["unique_by_class"], {"implemented": 3, "stub": 0, "absent": 1, "module": 0})
+        self.assertEqual(data["unique_by_class"], {"implemented": 3, "partial": 0, "stub": 0, "absent": 1, "module": 0})
         self.assertEqual(records["strcmp"]["references"], 2)
         self.assertEqual(records["strcmp"]["providers"], ["libc.prx"])
         self.assertTrue(records["missing_function"]["weak"])
@@ -614,8 +614,8 @@ class ImportAuditTests(unittest.TestCase):
         data = json.loads(result.read_text())
         self.assertEqual(data["references"], 10)
         self.assertEqual(data["unique_imports"], 9)
-        self.assertEqual(data["unique_by_class"], {"implemented": 3, "stub": 2, "absent": 3, "module": 1})
-        self.assertEqual(data["references_by_class"], {"implemented": 3, "stub": 3, "absent": 3, "module": 1})
+        self.assertEqual(data["unique_by_class"], {"implemented": 3, "partial": 0, "stub": 2, "absent": 3, "module": 1})
+        self.assertEqual(data["references_by_class"], {"implemented": 3, "partial": 0, "stub": 3, "absent": 3, "module": 1})
         self.assertEqual(data["missing_libraries"], {"libSceFoo.prx": 1, "libSceOther.prx": 1})
         self.assertEqual(data["library_mismatch"], 1)
         kinds = {(record["nid"], record["library"]): record["class"] for record in data["imports"]}
@@ -644,7 +644,7 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, err), (1, ""))
         data = json.loads(result.read_text())
         self.assertEqual(data["references"], 4)
-        self.assertEqual(data["unique_by_class"], {"implemented": 2, "stub": 1, "absent": 1, "module": 0})
+        self.assertEqual(data["unique_by_class"], {"implemented": 2, "partial": 0, "stub": 1, "absent": 1, "module": 0})
         self.assertEqual(data["missing_libraries"], {})
         records = {(record["nid"], record["module"]): record for record in data["imports"]}
         self.assertEqual(records[("AAAAAAAAAAA", "main.prx")]["class"], "implemented")
@@ -720,7 +720,7 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         data = json.loads(result.read_text())
         self.assertEqual(data["references"], 3)
-        self.assertEqual(data["unique_by_class"], {"implemented": 2, "stub": 0, "absent": 0, "module": 1})
+        self.assertEqual(data["unique_by_class"], {"implemented": 2, "partial": 0, "stub": 0, "absent": 0, "module": 1})
         self.assertEqual(data["missing_libraries"], {})
         records = {(record["nid"], record.get("module")): record for record in data["imports"]}
         self.assertEqual(records[("AAAAAAAAAAA", "provider.data")]["providers"], ["libSceA.prx"])
@@ -765,7 +765,7 @@ class ImportAuditTests(unittest.TestCase):
                     self.assertEqual((code, err), (0, ""))
                     data = json.loads(report.read_text(encoding="utf-8"))
                     self.assertEqual(data["missing_libraries"], {})
-                    self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 0, "module": 1})
+                    self.assertEqual(data["unique_by_class"], {"implemented": 0, "partial": 0, "stub": 0, "absent": 0, "module": 1})
                     self.assertEqual(data["references"], 1)
                     self.assertEqual(data["imports"][0]["library"], needed)
                 finally:
@@ -784,7 +784,7 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual((code, err), (1, ""))
                 data = json.loads(report.read_text(encoding="utf-8"))
                 self.assertEqual(data["missing_libraries"], {needed: 1})
-                self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 1, "module": 0})
+                self.assertEqual(data["unique_by_class"], {"implemented": 0, "partial": 0, "stub": 0, "absent": 1, "module": 0})
 
     def test_converted_module_matches_imports_of_its_base_name(self):
         work = self.work
@@ -932,7 +932,7 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual((code, err), (1, ""))
                 data = json.loads(result.read_text())
                 self.assertEqual((data["references"], data["unique_imports"]), (2, 2))
-                self.assertEqual(data["unique_by_class"], {"implemented": 1, "stub": 0, "absent": 1, "module": 0})
+                self.assertEqual(data["unique_by_class"], {"implemented": 1, "partial": 0, "stub": 0, "absent": 1, "module": 0})
                 self.assertEqual(data["references_by_class"], data["unique_by_class"])
                 self.assertEqual(data["missing_libraries"], {"libSceMissing.prx": 1})
                 records = {record["nid"]: record for record in data["imports"]}
@@ -1077,7 +1077,7 @@ class ImportAuditTests(unittest.TestCase):
         code, out, err = work.run(registry, "--json", str(result))
         self.assertEqual((code, err), (0, ""))
         data = json.loads(result.read_text())
-        self.assertEqual(data["unique_by_class"], {"implemented": 1, "stub": 0, "absent": 0, "module": 0})
+        self.assertEqual(data["unique_by_class"], {"implemented": 1, "partial": 0, "stub": 0, "absent": 0, "module": 0})
         self.assertEqual(data["references"], 1)
 
     def test_module_export_suffix_is_stripped_with_and_without_sections(self):
@@ -1129,7 +1129,7 @@ class ImportAuditTests(unittest.TestCase):
                     data = json.loads(result.read_text())
                     self.assertEqual(data["references"], 4 + int(unresolved))
                     self.assertEqual(data["unique_by_class"],
-                                     {"implemented": 3, "stub": 0, "absent": int(unresolved), "module": 0})
+                                     {"implemented": 3, "partial": 0, "stub": 0, "absent": int(unresolved), "module": 0})
                     records = {record["nid"]: record for record in data["imports"]}
                     for symbol in (MESSAGE_NID, MESSAGE_NAME, "strlen"):
                         self.assertEqual(records[symbol]["providers"], [provider.name])
@@ -1308,6 +1308,27 @@ class ImportAuditTests(unittest.TestCase):
         self.assertNotIn(("libSceTwin.native.prx", twin), stubs)
         self.assertNotEqual(nid_names.compute_nid("printf"), nid_names.compute_nid("printf_nid_postfix"))
 
+    def test_source_stubs_decodes_source_with_utf8_bom(self):
+        source = self.work.source
+        write_source(source, "libSceBom", "\ufeff" + STUB_SOURCE.format(name="sceBomPending"))
+        stubs = import_audit.source_stubs(source)
+        self.assertEqual(stubs.get(("libSceBom.prx", nid_names.compute_nid("sceBomPending"))), "sceBomPending")
+
+    def test_source_stubs_passes_decoded_text_without_bom_to_alias_scanner(self):
+        source = self.work.source
+        write_source(source, "libSceBomAlias", "\ufeff" + 'APS5_EXPORT("AAAAAAAAAAA", sceBomAlias);\n' + STUB_SOURCE.format(name="sceBomAlias"))
+        seen = []
+        real = nid_names.source_aliases
+
+        def spy(text):
+            seen.append(text)
+            return real(text)
+
+        with patch.object(nid_names, "source_aliases", spy):
+            import_audit.source_stubs(source)
+        self.assertTrue(seen)
+        self.assertTrue(all(text.startswith("APS5_EXPORT(") for text in seen))
+
     def test_disambiguated_stubs_use_the_nid_of_their_symbol(self):
         source = self.work.source
         write_source(source, "libkernel", STUB_SOURCE.format(name="fstat_nid_disambig1_nid_postfix")
@@ -1376,6 +1397,77 @@ class ImportAuditTests(unittest.TestCase):
         nid = nid_names.compute_nid("scePending")
         self.assertEqual(import_audit.source_stubs(source), {
             (library + ".prx", nid): "scePending" for library in ("libA", "libB", "libZOwner")})
+
+    def test_guarded_exports_are_partial_and_unconditional_ones_are_stubs(self):
+        source = self.work.source
+        write_source(source, "libGuard",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "void Check(int value) { if (value) NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceDirect(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                     "int APS5_VABI sceReturned(int value) { return NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceWrapped(int value) { value += 1; Fail(); return value; }\n"
+                     "int APS5_VABI sceIf(int value) { if (value > 1) NotImplemented_nid_no_patch(__func__); return value; }\n"
+                     "int APS5_VABI sceBlock(int value) { if (value) { NotImplemented_nid_no_patch(__func__); } return 0; }\n"
+                     "int APS5_VABI sceElse(int value) { if (value) return 1; else Fail(); return 0; }\n"
+                     "int APS5_VABI sceGuarded(int value) { Check(value); return value; }\n"
+                     "int APS5_VABI sceLoop(int value) { for (int i = 0; i < value; ++i) Fail(); return 0; }\n"
+                     "int APS5_VABI sceSwitch(int value) { switch (value) { case 0: return 0; default: Fail(); } return 1; }\n"
+                     "int APS5_VABI sceTernary(int value) { return value ? value : NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceShort(int value) { return value && NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceLambda(int value) { auto f = [&]() { Fail(); }; return value; }\n"
+                     "int APS5_VABI sceMember(int value) { if (value) Fail(); other.Fail(); return value; }\n"
+                     "int APS5_VABI sceHost(int value) {\n#if defined(_WIN32)\n    return value;\n#elif defined(__linux__)\n"
+                     "    return value + 1;\n#else\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n#endif\n}\n"
+                     "int APS5_VABI sceHostHelper(int value) {\n#ifdef HOST_WITHOUT_IT\n    Fail();\n#endif\n    return value;\n}\n"
+                     "#ifdef ONLY_HERE\nint APS5_VABI sceOuter(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n#endif\n"
+                     "int APS5_VABI sceEveryHost(int value) {\n#if defined(_WIN32)\n    NotImplemented_nid_no_patch(__func__);\n#else\n"
+                     "    NotImplemented_nid_no_patch(__func__);\n#endif\n    return 0;\n}\n"
+                     "int APS5_VABI sceEveryElif(int value) {\n#if defined(HOST_A)\n    Fail();\n#elif defined(HOST_B)\n"
+                     "    NotImplemented_nid_no_patch(__func__);\n#else\n    Fail();\n#endif\n    return 0;\n}\n"
+                     "int APS5_VABI sceNested(int value) {\n#if defined(HOST_A)\n#ifdef FEATURE\n    return value;\n#else\n    Fail();\n#endif\n"
+                     "#else\n    Fail();\n#endif\n    return 0;\n}\n"
+                     "void SoftFail(int value) { if (value == 0) return; NotImplemented_nid_no_patch(__func__); }\n"
+                     "void HardFail(int value) { if (value == 0) throw std::invalid_argument(\"zero\"); NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceGuardReturn(int value) { if (value == 0) return 0; NotImplemented_nid_no_patch(__func__); return 1; }\n"
+                     "int APS5_VABI sceGuardThrow(int value) { if (value == 0) throw std::invalid_argument(\"zero\"); "
+                     "NotImplemented_nid_no_patch(__func__); return 1; }\n"
+                     "int APS5_VABI sceGuardBlock(int value) { { if (value == 0) return 0; } Fail(); return 1; }\n"
+                     "int APS5_VABI sceGuardGoto(int value) { if (value == 0) goto done; Fail(); done: return 0; }\n"
+                     "int APS5_VABI sceGuardHost(int value) {\n#ifdef HOST_A\n    if (value == 0) return 0;\n#endif\n    Fail();\n    return 1;\n}\n"
+                     "int APS5_VABI sceSoftHelper(int value) { SoftFail(value); return 0; }\n"
+                     "int APS5_VABI sceHardHelper(int value) { HardFail(value); return 0; }\n"
+                     "int APS5_VABI scePlainBlock(int value) { { NotImplemented_nid_no_patch(__func__); } return 0; }\n"
+                     "int APS5_VABI sceNestedBlock(int value) { value += 1; { { Fail(); } } return value; }\n"
+                     "int APS5_VABI sceBlockThenGuard(int value) { { if (value == 0) return 0; NotImplemented_nid_no_patch(__func__); } return 1; }\n")
+        write_source(source, "libShared", '#include "prx/libGuard/Export.cpp"\n')
+        stubs, partial = import_audit.source_stub_classes(source)
+        names = ("sceDirect", "sceReturned", "sceWrapped", "sceIf", "sceBlock", "sceElse", "sceGuarded",
+                 "sceLoop", "sceSwitch", "sceTernary", "sceShort", "sceLambda", "sceMember", "sceHost", "sceHostHelper",
+                 "sceOuter", "sceEveryHost", "sceEveryElif", "sceNested", "sceGuardReturn", "sceGuardThrow",
+                 "sceGuardBlock", "sceGuardGoto", "sceGuardHost", "sceSoftHelper", "sceHardHelper",
+                 "scePlainBlock", "sceNestedBlock", "sceBlockThenGuard")
+        kinds = {name: "partial" if ("libGuard.prx", nid_names.compute_nid(name)) in partial else "stub" for name in names}
+        self.assertEqual({name for name, kind in kinds.items() if kind == "stub"},
+                         {"sceDirect", "sceReturned", "sceWrapped", "sceOuter", "sceEveryHost", "sceEveryElif",
+                          "sceGuardThrow", "sceHardHelper", "scePlainBlock", "sceNestedBlock"})
+        self.assertEqual(set(stubs), {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx") for name in names})
+        self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
+                                   for name, kind in kinds.items() if kind == "partial"})
+
+    def test_partial_import_is_its_own_class(self):
+        direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")
+        stubs = {("libA.prx", direct): "sceDirect", ("libA.prx", guarded): "sceGuarded", ("libB.prx", guarded): "sceGuarded"}
+        partial = {("libB.prx", guarded)}
+        exports = {direct: ["libA.prx"], guarded: ["libA.prx", "libB.prx"]}
+        imports = [(direct, "libA.prx", False), (guarded, "libA.prx", False), (guarded, "libA.prx", False)]
+        records, _ = import_audit.audit(imports, exports, stubs, {"libA.prx", "libB.prx"}, set(), partial=partial)
+        self.assertEqual({record["nid"]: (record["class"], record["name"]) for record in records},
+                         {direct: ("stub", "sceDirect"), guarded: ("partial", "sceGuarded")})
+        summary = import_audit.summarize(records, 3, {})
+        self.assertEqual(summary["references_by_class"], {"implemented": 0, "partial": 2, "stub": 1, "absent": 0, "module": 0})
+        text = import_audit.render(summary, records, {}, [])
+        self.assertIn("Stub: exported but throws when called (1)", text)
+        self.assertIn("Partial: exported, throws only for inputs whose behaviour is unknown (1)", text)
 
     def test_shared_source_cycle_fails(self):
         source = self.work.source
@@ -2046,7 +2138,7 @@ class ImportAuditTests(unittest.TestCase):
         data = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(data["source_commit"], commit)
         self.assertIsNone(data["source_dirty"])
-        self.assertEqual(data["unique_by_class"], {"implemented": 1, "stub": 0, "absent": 0, "module": 0})
+        self.assertEqual(data["unique_by_class"], {"implemented": 1, "partial": 0, "stub": 0, "absent": 0, "module": 0})
 
     def test_git_stamp_keeps_commit_when_status_cannot_start(self):
         completed = subprocess.CompletedProcess([], 0, stdout="abcdef\n")
@@ -2144,15 +2236,17 @@ class ImportAuditTests(unittest.TestCase):
         registry = self.work.root / "game.json"
         output = self.work.root / "audit.json"
         (self.work.libs / "libSceExample.prx").write_bytes(exporting(nid))
-        write_source(self.work.source, "libSceExample", STUB_SOURCE.format(name=name))
-        for weak in (False, True):
-            with self.subTest(weak=weak):
-                write_registry(registry, [(nid, "libSceExample.prx", weak)])
-                self.assertEqual(self.work.run(registry)[0], 0)
-                code, out, err = self.work.run(registry, "--strict-stubs", "--json", str(output))
-                self.assertEqual((code, err), (1, ""))
-                self.assertIn("stub", out)
-                self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["unique_by_class"]["stub"], 1)
+        block = "int APS5_VABI {name}(int value) {{ {{ NotImplemented_nid_no_patch(__func__); }} return 0; }}\n"
+        for form in (STUB_SOURCE, block):
+            write_source(self.work.source, "libSceExample", form.format(name=name))
+            for weak in (False, True):
+                with self.subTest(form=form, weak=weak):
+                    write_registry(registry, [(nid, "libSceExample.prx", weak)])
+                    self.assertEqual(self.work.run(registry)[0], 0)
+                    code, out, err = self.work.run(registry, "--strict-stubs", "--json", str(output))
+                    self.assertEqual((code, err), (1, ""))
+                    self.assertIn("stub", out)
+                    self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["unique_by_class"]["stub"], 1)
         write_source(self.work.source, "libSceExample", DONE_SOURCE.format(name=name)
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
@@ -2200,6 +2294,33 @@ class StrictProviderTests(unittest.TestCase):
         registry = work.root / "registry.json"
         write_registry(registry, [("AAAAAAAAAAA", "libSceMissing.prx")])
         self.assertEqual(work.run(registry, "--strict-providers")[0], 1)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(import_audit.sys, "stdout", out), patch.object(import_audit.sys, "stderr", err):
+            try:
+                import_audit.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

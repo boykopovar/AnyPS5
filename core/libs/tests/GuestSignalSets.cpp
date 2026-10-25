@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
@@ -7,21 +9,8 @@
 #include <cstring>
 #include <initializer_list>
 
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-
 extern "C" {
-int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigfillset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigaddset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigdelset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigismember_nid_postfix(const GuestSignalSet*, int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
-[[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
-[[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);
+
 int APS5_VABI JumpKeepingCalleeSaved(std::uint64_t* buffer);
 }
 

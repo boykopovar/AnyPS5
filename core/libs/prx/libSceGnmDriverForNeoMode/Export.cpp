@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>

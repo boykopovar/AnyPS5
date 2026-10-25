@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cctype>
@@ -5,27 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-extern "C" {
-int APS5_VABI isupper_nid_postfix(int);
-int APS5_VABI islower_nid_postfix(int);
-int APS5_VABI isalpha_nid_postfix(int);
-int APS5_VABI isdigit_nid_postfix(int);
-int APS5_VABI isalnum_nid_postfix(int);
-int APS5_VABI isspace_nid_postfix(int);
-int APS5_VABI isblank_nid_postfix(int);
-int APS5_VABI iscntrl_nid_postfix(int);
-int APS5_VABI isprint_nid_postfix(int);
-int APS5_VABI isgraph_nid_postfix(int);
-int APS5_VABI ispunct_nid_postfix(int);
-int APS5_VABI isxdigit_nid_postfix(int);
-int APS5_VABI isascii_nid_postfix(int);
-int APS5_VABI toascii_nid_postfix(int);
-int APS5_VABI toupper_nid_postfix(int);
-int APS5_VABI tolower_nid_postfix(int);
-const short* APS5_VABI _Getptolower_nid_postfix();
-const short* APS5_VABI _Getptoupper_nid_postfix();
-const char* APS5_VABI setlocale_nid_postfix(int, const char*);
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);

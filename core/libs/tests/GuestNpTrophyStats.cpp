@@ -1,3 +1,5 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
@@ -20,26 +22,6 @@
 
 struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
-
-extern "C" {
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemRegisterContext(int, int, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateHandle(int*);
-int APS5_VABI sceNpUniversalDataSystemCreateEvent(const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEvent**, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent*);
-int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject*, const char*, int32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(NpUniversalDataSystemEventPropertyObject*, const char*, uint32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(NpUniversalDataSystemEventPropertyObject*, const char*, int64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(NpUniversalDataSystemEventPropertyObject*, const char*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(NpUniversalDataSystemEventPropertyObject*, const char*, float);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(NpUniversalDataSystemEventPropertyObject*, const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-}
 
 static constexpr int InitialUser = 0x10000000;
 
@@ -165,13 +147,13 @@ private:
     int saved = -1;
 };
 
-struct Uds {
+struct UdsSession {
     int context = 0;
     int handle = 0;
 };
 
-static Uds OpenUds(std::uint32_t serviceLabel) {
-    Uds uds;
+static UdsSession OpenUds(std::uint32_t serviceLabel) {
+    UdsSession uds;
     Require(sceNpUniversalDataSystemCreateContext(&uds.context, InitialUser, serviceLabel, 0) == 0, "UDS context was not created");
     Require(sceNpUniversalDataSystemCreateHandle(&uds.handle) == 0, "UDS handle was not created");
     Require(sceNpUniversalDataSystemRegisterContext(uds.context, uds.handle, 0) == 0, "UDS context was not registered");
@@ -179,7 +161,7 @@ static Uds OpenUds(std::uint32_t serviceLabel) {
 }
 
 template <typename TSet>
-static void Post(const Uds& uds, const char* name, TSet set) {
+static void Post(const UdsSession& uds, const char* name, TSet set) {
     NpUniversalDataSystemEventPropertyObject* properties = nullptr;
     Require(sceNpUniversalDataSystemCreateEventPropertyObject(&properties) == 0, "property object was not created");
     set(properties);

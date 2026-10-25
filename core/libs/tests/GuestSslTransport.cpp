@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSsl/include/Ssl.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -27,40 +30,6 @@
 #include <exception>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslGetMemoryPoolStats(int, SceSsl::MemoryPoolStats*);
-int APS5_VABI sceSslLoadCert(int, int, SceSsl::Data**, SceSsl::Data*, SceSsl::Data*);
-int APS5_VABI sceSslCreateConnection(int, int, const char*);
-int APS5_VABI sceSslDeleteConnection(int);
-int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, void**, int, void*), void*);
-int APS5_VABI sceSslConnect(int);
-int APS5_VABI sceSslRead(int, void*, std::size_t, int);
-int APS5_VABI sceSslWrite(int, void*, std::size_t, int);
-int APS5_VABI sceSslRecv(int, void*, std::size_t);
-int APS5_VABI sceSslSend(int, void*, std::size_t);
-int APS5_VABI sceSslClose(int);
-int APS5_VABI sceSslEnableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslDisableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslSetMinSslVersion(int, int);
-int APS5_VABI sceSslSetAlpn(int, const char*);
-const char* APS5_VABI sceSslGetAlpnSelected(int);
-void* APS5_VABI sceSslGetSubjectName(int, void*);
-int APS5_VABI sceSslGetNameEntryCount(int, void*);
-int APS5_VABI sceSslGetNameEntryInfo(int, void*, int, char*, std::size_t, char*, std::size_t, std::size_t*);
-int APS5_VABI sceSslFreeSslCertName(int, void*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceNetInit_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-int APS5_VABI sceNetSocketClose(int);
-}
 
 namespace {
 
@@ -314,6 +283,7 @@ struct Sockets {
     int Set(int descriptor, int option, const void* value, std::uint32_t length) const {
         return net ? sceNetSetsockopt(descriptor, GuestSocketLevel, option, value, length)
                    : setsockopt_nid_postfix(descriptor, GuestSocketLevel, option, value, length);
+
     }
 
     int Close(int descriptor) const { return net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor); }

@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>

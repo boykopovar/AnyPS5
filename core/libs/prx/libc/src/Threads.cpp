@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #ifdef _WIN32
@@ -25,11 +26,6 @@
 #endif
 
 namespace {
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
 
 constexpr std::int64_t nanosPerSecond = 1000000000;
 constexpr std::int64_t longestSleepSeconds = 86400;
@@ -392,13 +388,6 @@ int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
 }
 
-struct GuestPad {
-    unsigned (APS5_VABI* const* vtable)(GuestPad*);
-    void* condition;
-    void* mutex;
-    bool started;
-};
-
 static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) == 0x10 && offsetof(GuestPad, started) == 0x18 && sizeof(GuestPad) == 0x20);
 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
@@ -446,6 +435,7 @@ void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
     const int created = _Mtx_init_nid_postfix(&pad->mutex, 1);
     if (created != threadSuccess) {
         _Cnd_destroy_nid_postfix(&pad->condition);
+
         RequireThrd(created, "_Pad::_Pad: _Mtx_init");
     }
     pad->started = false;
@@ -453,6 +443,7 @@ void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
     if (locked != threadSuccess) {
         _Mtx_destroy_nid_postfix(&pad->mutex);
         _Cnd_destroy_nid_postfix(&pad->condition);
+
         RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
     }
 }
@@ -462,6 +453,7 @@ void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
     RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::~_Pad: _Mtx_unlock");
     _Mtx_destroy_nid_postfix(&pad->mutex);
     _Cnd_destroy_nid_postfix(&pad->condition);
+
 }
 
 void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
@@ -673,4 +665,3 @@ void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
 }
 
 }
-

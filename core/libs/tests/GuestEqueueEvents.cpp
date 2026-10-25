@@ -1,3 +1,6 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdint>
@@ -6,38 +9,7 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id);
-int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
-int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
-int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id);
-int APS5_VABI EqueueTriggerEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData);
-int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata);
-int APS5_VABI sceKernelAddTimerEvent(KernelEqueue eq, int id, KernelUseconds usec, void* udata);
-int APS5_VABI sceKernelDeleteTimerEvent(KernelEqueue eq, int id);
-intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev);
-int APS5_VABI sceKernelGetEventError(const KernelEvent* ev);
-intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev);
-int APS5_VABI sceKernelGetEventFilter(const KernelEvent* ev);
-uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
-void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
-static constexpr int EVFILT_TIMER = -7;
-static constexpr int EVFILT_USER = -11;
-static constexpr int EVFILT_HRTIMER = -15;
-static constexpr int EVFILT_AMPR = -25;
-static constexpr std::uint16_t EV_ERROR = 0x4000;
-static constexpr std::uint16_t EV_EOF = 0x8000;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -54,6 +26,7 @@ static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
 static bool RejectsWideFflags(const KernelEvent* ev) {
     try {
         sceKernelGetEventError(ev);
+
     } catch (const std::runtime_error&) {
         return true;
     }

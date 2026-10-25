@@ -1,3 +1,4 @@
+#include "prx/libSceGameUpdate/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -5,16 +6,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceGameUpdateInitialize(void);
-int APS5_VABI sceGameUpdateTerminate(void);
-int APS5_VABI sceGameUpdateGetAddcontLatestVersion(std::uint32_t, const NpUnifiedEntitlementLabel*, GameUpdateAddcontVersionInfo*);
-int APS5_VABI sceGameUpdateCreateRequest(void);
-int APS5_VABI sceGameUpdateCheck(int, const GameUpdateCheckParam*, GameUpdateCheckResult*);
-int APS5_VABI sceGameUpdateAbortRequest(int);
-int APS5_VABI sceGameUpdateDeleteRequest(int);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <chrono>
 #include <cstdlib>
@@ -9,12 +10,6 @@
 #include <windows.h>
 #include <aclapi.h>
 #endif
-
-extern "C" {
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI chdir_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

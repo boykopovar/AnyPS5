@@ -1,38 +1,11 @@
+#include "prx/libSceNpMatching2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 
-struct InitializeParameter {
-    std::uint64_t poolSize;
-    std::uint64_t reserved;
-    std::int32_t priority;
-    std::uint8_t padding[4];
-    std::uint64_t stackSize;
-    std::uint64_t size;
-    std::uint64_t sslPoolSize;
-};
 
-struct CreateContextParameter {
-    const void* npId;
-    const void* npCommunicationId;
-    const void* npPassphrase;
-    std::uint32_t serviceLabel;
-    std::uint64_t size;
-};
 
-extern "C" {
-int APS5_VABI sceNpMatching2Initialize(const InitializeParameter* param);
-int APS5_VABI sceNpMatching2Terminate();
-int APS5_VABI sceNpMatching2CreateContext(const CreateContextParameter* param, std::uint16_t* ctxId);
-int APS5_VABI sceNpMatching2DestroyContext(std::uint16_t ctxId);
-int APS5_VABI sceNpMatching2ContextStart(std::uint16_t ctxId, std::uint64_t timeout);
-int APS5_VABI sceNpMatching2ContextStop(std::uint16_t ctxId);
-int APS5_VABI sceNpMatching2RegisterContextCallback(void* callback, void* userdata);
-int APS5_VABI sceNpMatching2RegisterRoomEventCallback(std::uint16_t ctxId, void* callback, void* userdata);
-int APS5_VABI sceNpMatching2RegisterRoomMessageCallback(std::uint16_t ctxId, void* callback, void* userdata);
-int APS5_VABI sceNpMatching2RegisterSignalingCallback(std::uint16_t ctxId, void* callback, void* userdata);
-int APS5_VABI sceNpMatching2SetDefaultRequestOptParam(std::uint16_t ctxId, const void* requestOpt);
-}
+
 
 namespace {
 
@@ -54,8 +27,8 @@ void Require(bool value, const char* name, const char* what) {
 }
 
 int main() {
-    InitializeParameter init{};
-    CreateContextParameter create{};
+    NpMatching2InitializeParameter init{};
+    NpMatching2CreateContextParameter create{};
     create.size = 0x28;
     unsigned char requestOpt[24] = {};
     std::uint16_t context = 77;

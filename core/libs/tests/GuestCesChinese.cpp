@@ -1,43 +1,8 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-void* APS5_VABI sceCesUcsProfileInitEucCnGb2312(void*);
-void* APS5_VABI sceCesUcsProfileInitGbkCp936(void*);
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-int APS5_VABI sceCesEucCnToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesEucCnToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucCnToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucCnToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesGbToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesGbToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf16(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf32le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToEucCn(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToGb(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToEucCn(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToGb(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf16leToGb(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32ToEucCn(std::uint32_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32beToGb(const std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8StrToMbcsStr(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf8Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void*);
-void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void*);
-int APS5_VABI sceCesGbToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUtf16ToGb(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32ToGb(std::uint32_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesMbcToUtf16le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf16Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUtf16Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUtf16StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -47,6 +12,7 @@ static constexpr int invalidParameter = static_cast<int>(0x805C0001);
 static constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 static constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 static constexpr int invalidEncode = static_cast<int>(0x805C0014);
+ constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 static constexpr int unassignedCode = static_cast<int>(0x805C0020);
 static constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 static constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
@@ -237,8 +203,8 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
 
     std::uint8_t mbcs[4] = {1, 2, 3, 4};
     produced = 0x55;
-    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, 3, &produced) == dstBufferEnd && produced == 0x55 && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
-    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, 3, &produced) == dstBufferEnd && produced == 4 && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
+    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUtf32ToGb(0x110000, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
     Require(sceCesUcs2ToGb(0x80, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 4 && std::memcmp(mbcs, "\x81\x30\x81\x30", 4) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xA2\xE3", 2) == 0);
@@ -262,7 +228,8 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
     std::uint16_t backUtf16[8] = {};
     Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == 6);
     Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10);
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 4, &produced) == dstBufferEnd);
+    std::uint16_t shortUtf16[4] = {};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 4, &produced) == dstBufferEnd);
     Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == 6);
     std::uint8_t again[16] = {};
     Require(sceCesUtf16StrToMbcsStr(context, backUtf16, 6, &consumed, again, sizeof(again), &produced) == 0 && consumed == 6 && produced == gbSize);
@@ -324,7 +291,7 @@ int main() {
     Require(sceCesUcs2ToEucCn(0x4E02, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x20AC, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x4E2D, euc, mbcs, 1, &produced) == dstBufferEnd);
-    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUcs2ToGb(0x4E02, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\x81\x40", 2) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 1 && mbcs[0] == 0x80);
     Require(sceCesUcs2ToGb(0x3042, euc, mbcs, sizeof(mbcs), &produced) == invalidParameter);

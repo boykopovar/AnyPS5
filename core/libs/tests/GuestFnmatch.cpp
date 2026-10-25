@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -5,10 +7,7 @@
 #include <clocale>
 #include <cctype>
 #include <string>
-extern "C" int APS5_VABI fnmatch_nid_postfix(const char*, const char*, int);
-extern "C" int APS5_VABI strcasecmp_nid_postfix(const char*, const char*);
-extern "C" int APS5_VABI strncasecmp_nid_postfix(const char*, const char*, std::size_t);
-extern "C" char* APS5_VABI strcasestr_nid_postfix(const char*, const char*);
+
 struct Case {
     const char* pattern;
     const char* string;
@@ -143,6 +142,7 @@ int main() {
     bool threw = false;
     try {
         fnmatch_nid_postfix(nullptr, "x", 0);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
