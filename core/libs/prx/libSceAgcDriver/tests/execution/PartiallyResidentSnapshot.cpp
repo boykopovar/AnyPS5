@@ -366,7 +366,6 @@ void UntrackedHint(const Context& context, ReservedSurface& surface) {
 }
 #endif
 
-#ifdef _WIN32
 std::vector<std::uint32_t> TexelFetchShader(std::uint32_t side) {
     ShaderRecompiler::SpirvModule module;
     module.EmitCapability(spv::CapabilityShader);
@@ -397,20 +396,23 @@ std::vector<std::uint32_t> TexelFetchShader(std::uint32_t side) {
     module.AddFunction(spv::OpLabel, module.AllocateId());
     const auto loaded = module.AllocateId();
     module.AddFunction(spv::OpLoad, v3, loaded, group);
-    const auto index = module.AllocateId();
-    module.AddFunction(spv::OpCompositeExtract, u32, index, loaded, 0u);
     const auto binary = [&](spv::Op op, std::uint32_t a, std::uint32_t b) {
         const auto result = module.AllocateId();
         module.AddFunction(op, u32, result, a, b);
         return result;
     };
+    const auto x = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, x, loaded, 0u);
+    const auto y = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, y, loaded, 1u);
+    const auto index = binary(spv::OpIAdd, x, binary(spv::OpIMul, y, constant(side)));
     const auto signedValue = [&](std::uint32_t value) {
         const auto result = module.AllocateId();
         module.AddFunction(spv::OpBitcast, i32, result, value);
         return result;
     };
     const auto coordinate = module.AllocateId();
-    module.AddFunction(spv::OpCompositeConstruct, v2, coordinate, signedValue(binary(spv::OpUMod, index, constant(side))), signedValue(binary(spv::OpUDiv, index, constant(side))));
+    module.AddFunction(spv::OpCompositeConstruct, v2, coordinate, signedValue(x), signedValue(y));
     const auto object = module.AllocateId();
     module.AddFunction(spv::OpLoad, imageType, object, image);
     const auto value = module.AllocateId();
@@ -467,10 +469,10 @@ public:
     TexelFetch(const TexelFetch&) = delete;
     TexelFetch& operator=(const TexelFetch&) = delete;
 
-    void Run(VkCommandBuffer commands, std::uint32_t groups) const {
+    void Run(VkCommandBuffer commands, std::uint32_t side) const {
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
-        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1u, 1u);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, side, side, 1u);
     }
 
 private:
@@ -497,7 +499,7 @@ std::vector<std::uint32_t> FetchTexels(const Context& context, const Texture& te
     std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
     const TexelFetch fetch(context, texture, output, TexelFetchShader(side));
     CommandBatch batch(context);
-    fetch.Run(batch.Handle(), count);
+    fetch.Run(batch.Handle(), side);
     RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
     batch.SubmitAndWait();
     output.Invalidate();
@@ -506,6 +508,26 @@ std::vector<std::uint32_t> FetchTexels(const Context& context, const Texture& te
     return texels;
 }
 
+void LargeTrackedTexels(const Context& context, ReservedSurface& surface, std::size_t committedBytes) {
+    const auto words = Descriptor(surface.Address(), LargeSide);
+    const auto layout = committedBytes == LargeSurfaceBytes ? std::string("committed") : std::string("partially resident");
+    surface.Commit(0, committedBytes);
+    auto* data = reinterpret_cast<std::uint32_t*>(surface.Data());
+    for (std::size_t word = 0; word < committedBytes / sizeof(std::uint32_t); ++word) data[word] = static_cast<std::uint32_t>(word * 2654435761u) | 1u;
+    std::vector<std::uint32_t> expected(LargeSurfaceBytes / sizeof(std::uint32_t), 0u);
+    std::copy_n(data, committedBytes / sizeof(std::uint32_t), expected.begin());
+    std::sort(expected.begin(), expected.end());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr && !texture->ViewsStorageImage(), "the large " + layout + " surface was not sampled through a snapshot for its texel check");
+    auto texels = FetchTexels(context, *texture, LargeSide);
+    std::sort(texels.begin(), texels.end());
+    Require(texels == expected, "the GPU read texels of the large " + layout + " surface that are not its guest words (uncommitted pages read as zero)");
+    ClearCachedTextures(context.device);
+    surface.Decommit(0, committedBytes);
+}
+
+#ifdef _WIN32
 void ComparedShared(const Context& context) {
     constexpr std::uint32_t side = 128;
     constexpr std::size_t bytes = 2 * BlockBytes;
@@ -628,6 +650,8 @@ int main(int argc, char** argv) {
             if (large) {
                 LargeTracked(context, surface, LargeSurfaceBytes);
                 LargeTracked(context, surface, BlockBytes);
+                LargeTrackedTexels(context, surface, LargeSurfaceBytes);
+                LargeTrackedTexels(context, surface, BlockBytes);
             } else if (argc == 2 && std::string_view(argv[1]) == "--pending-stores") PendingStores(context, surface);
             else if (argc == 2 && std::string_view(argv[1]) == "--compared-shared") {
 #ifdef _WIN32

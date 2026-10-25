@@ -694,33 +694,50 @@ void recycleTests(const Context& context) {
     const WatchedSurface watchedFirst(context, BigBytes);
     const WatchedSurface watchedSecond(context, BigBytes);
     const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
+    Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a big snapshot of watched memory made a " + std::to_string(TextureCacheUsage().spareBytes) + "-byte host copy and parked it, instead of reading guest memory into its staging buffer");
     const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide);
-    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not take the parked spare of its size");
+    Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "the second big snapshot of watched memory made a host copy");
+}
+
+bool parkReplacedSnapshot(const Context& context, const Block& block, std::uint32_t side, std::size_t bytes) {
+    const auto snapshot = Sampled(context, block.Surface(0), side);
+    Require(!snapshot->ViewsStorageImage(), "the spare fixture's surface is not a snapshot before its import");
+    if (HostImportFor(context, block.Surface(0), BlockBytes) == nullptr) return false;
+    const auto view = Sampled(context, block.Surface(0), side);
+    Require(view->ViewsStorageImage(), "the spare fixture's imported surface is not a view of its storage image");
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == bytes, "a big snapshot replaced by a view of its storage image did not park its " + std::to_string(bytes) + "-byte buffer in the spare pool");
+    return true;
 }
 
 void spareAgeTests(const Context& context) {
-    Block block(context);
+    if (context.hostImportAlignment == 0) {
+        std::puts("host imports unavailable: spare snapshot ageing not tested");
+        return;
+    }
     ClearCachedTextures(context.device);
     constexpr std::uint32_t BigSide = Side * 2;
     constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    Block small(context);
     {
-        const WatchedSurface watched(context, BigBytes);
-        const auto first = Sampled(context, watched.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big snapshot did not park its dropped buffer in the spare pool");
+        Block imported(context);
+        if (!parkReplacedSnapshot(context, imported, BigSide, BigBytes)) {
+            std::puts("host import of the spare fixture refused: spare snapshot ageing not tested");
+            return;
+        }
         for (std::uint64_t present = 0; present <= SpareSnapshotPresents; ++present) Recorder::CountPresent();
-        const auto small = Sampled(context, block.Surface(0));
+        const auto released = Sampled(context, small.Surface(0));
         Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a spare idle for " + std::to_string(SpareSnapshotPresents + 1u) + " presents was not released");
     }
     ClearCachedTextures(context.device);
     {
-        const WatchedSurface watchedFirst(context, BigBytes);
-        const WatchedSurface watchedSecond(context, BigBytes);
-        const auto second = Sampled(context, watchedFirst.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not park its dropped buffer in the spare pool");
+        Block imported(context);
+        Block taker(context);
+        Require(parkReplacedSnapshot(context, imported, BigSide, BigBytes), "the second spare fixture's host import was refused");
         for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
-        const auto third = Sampled(context, watchedSecond.Address(), BigSide);
-        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare taken within " + std::to_string(SpareSnapshotPresents) + " presents was released instead of reused");
+        const auto kept = Sampled(context, small.Surface(1));
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare idle for " + std::to_string(SpareSnapshotPresents) + " presents was released");
+        const auto taken = Sampled(context, taker.Surface(0), BigSide);
+        Require(!taken->ViewsStorageImage() && TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a big snapshot outside the write watch did not take the parked spare of its size");
     }
 }
 
