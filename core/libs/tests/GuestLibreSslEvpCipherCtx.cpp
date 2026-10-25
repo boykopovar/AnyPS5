@@ -783,6 +783,285 @@ static void TestAesCtr() {
     RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 1); });
 }
 
+constexpr int ControlCopy = 0x8;
+constexpr int GcmSetIvLength = 0x9;
+constexpr int GcmGetTag = 0x10;
+constexpr int GcmSetTag = 0x11;
+constexpr int GcmSetIvFixed = 0x12;
+constexpr int GcmIvGenerate = 0x13;
+constexpr int TlsAad = 0x16;
+constexpr int GcmSetIvInvocation = 0x18;
+constexpr std::size_t GcmContextBytes = 680;
+constexpr const char* Gcm3Key = "feffe9928665731c6d6a8f9467308308";
+constexpr const char* Gcm3Iv = "cafebabefacedbaddecaf888";
+constexpr const char* Gcm3Plain = "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255";
+constexpr const char* Gcm4Plain = "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39";
+constexpr const char* Gcm4Aad = "feedfacedeadbeeffeedfacedeadbeefabaddad2";
+constexpr const char* Gcm6Iv = "9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b";
+
+struct GcmVector {
+    Descriptor descriptor;
+    const char* key;
+    const char* iv;
+    const char* plain;
+    const char* aad;
+    const char* encrypted;
+    const char* tag;
+};
+
+const GcmVector GcmVectors[] {
+    {EVP_aes_128_gcm_nid_postfix, "00000000000000000000000000000000", "000000000000000000000000", "", "", "", "58e2fccefa7e3061367f1d57a4e7455a"},
+    {EVP_aes_128_gcm_nid_postfix, "00000000000000000000000000000000", "000000000000000000000000", "00000000000000000000000000000000", "",
+        "0388dace60b6a392f328c2b971b2fe78", "ab6e47d42cec13bdf53a67b21257bddf"},
+    {EVP_aes_128_gcm_nid_postfix, Gcm3Key, Gcm3Iv, Gcm3Plain, "",
+        "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985",
+        "4d5c2af327cd64a62cf35abd2ba6fab4"},
+    {EVP_aes_128_gcm_nid_postfix, Gcm3Key, Gcm3Iv, Gcm4Plain, Gcm4Aad,
+        "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091",
+        "5bc94fbc3221a5db94fae95ae7121a47"},
+    {EVP_aes_128_gcm_nid_postfix, Gcm3Key, "cafebabefacedbad", Gcm4Plain, Gcm4Aad,
+        "61353b4c2806934a777ff51fa22a4755699b2a714fcdc6f83766e5f97b6c742373806900e49f24b22b097544d4896b424989b5e1ebac0f07c23f4598",
+        "3612d2e79e3b0785561be14aaca2fccb"},
+    {EVP_aes_128_gcm_nid_postfix, Gcm3Key, Gcm6Iv, Gcm4Plain, Gcm4Aad,
+        "8ce24998625615b603a033aca13fb894be9112a5c3a211a8ba262a3cca7e2ca701e4a9a4fba43c90ccdcb281d48c7c6fd62875d2aca417034c34aee5",
+        "619cc5aefffe0bfa462af43c1699d050"},
+    {EVP_aes_192_gcm_nid_postfix, "000000000000000000000000000000000000000000000000", "000000000000000000000000", "", "", "", "cd33b28ac773f74ba00ed1f312572435"},
+    {EVP_aes_192_gcm_nid_postfix, "000000000000000000000000000000000000000000000000", "000000000000000000000000", "00000000000000000000000000000000", "",
+        "98e7247c07f0fe411c267e4384b0f600", "2ff58d80033927ab8ef4d4587514f0fb"},
+    {EVP_aes_256_gcm_nid_postfix, "0000000000000000000000000000000000000000000000000000000000000000", "000000000000000000000000", "", "", "",
+        "530f8afbc74536b9a963b4f1c4cb738b"},
+    {EVP_aes_256_gcm_nid_postfix, "0000000000000000000000000000000000000000000000000000000000000000", "000000000000000000000000",
+        "00000000000000000000000000000000", "", "cea7403d4d606b6e074ec5d3baf39d18", "d0d1c8a799996bf0265b98b5d48ab919"},
+};
+
+static bool InitForm(unsigned char* context, const void* cipher, const unsigned char* key, const unsigned char* iv, int encrypt, bool generic) {
+    if (generic) return EVP_CipherInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key, iv, encrypt) == 1;
+    if (encrypt) return EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key, iv) == 1;
+    return EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key, iv) == 1;
+}
+
+static Bytes RunGcm(unsigned char* context, const GcmVector& test, int encrypt, bool generic, std::size_t chunk) {
+    const auto key = Hex(test.key);
+    const auto iv = Hex(test.iv);
+    const auto aad = Hex(test.aad);
+    const auto input = Hex(encrypt ? test.plain : test.encrypted);
+    const Update update = generic ? EVP_CipherUpdate_nid_postfix : encrypt ? EVP_EncryptUpdate_nid_postfix : EVP_DecryptUpdate_nid_postfix;
+    Require(InitForm(context, test.descriptor(), nullptr, nullptr, encrypt, generic));
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, static_cast<int>(iv.size()), nullptr) == 1);
+    Require(InitForm(context, nullptr, key.data(), iv.data(), encrypt, generic));
+    int written = -1;
+    if (!aad.empty()) Require(update(Context(context), nullptr, &written, aad.data(), static_cast<int>(aad.size())) == 1 && written == static_cast<int>(aad.size()));
+    Bytes output(input.size(), 0xEE);
+    for (std::size_t offset = 0; offset < input.size(); offset += chunk) {
+        const int length = static_cast<int>(input.size() - offset < chunk ? input.size() - offset : chunk);
+        Require(update(Context(context), output.data() + offset, &written, input.data() + offset, length) == 1 && written == length);
+    }
+    return output;
+}
+
+static void TestAesGcmVectors() {
+    for (const auto& test : GcmVectors) {
+        const auto* cipher = reinterpret_cast<const Cipher*>(test.descriptor());
+        const auto key = Hex(test.key);
+        const int nid = key.size() == 16 ? 895 : key.size() == 24 ? 898 : 901;
+        Require(EvpCipher(cipher) == test.descriptor());
+        RequireDescriptor(cipher, nid, key.size(), 12, 0x305476, 680);
+        Require(cipher->cleanup != nullptr && cipher->control != nullptr);
+        const auto tag = Hex(test.tag);
+        for (std::size_t chunk : {1, 7, 64}) {
+            for (bool generic : {false, true}) {
+                unsigned char context[ContextBytes] {};
+                unsigned char computed[16] {};
+                int written = -1;
+                Require(RunGcm(context, test, 1, generic, chunk) == Hex(test.encrypted));
+                const Final encryptFinal = generic ? EVP_CipherFinal_ex_nid_postfix : EVP_EncryptFinal_ex_nid_postfix;
+                Require(encryptFinal(Context(context), computed, &written) == 1 && written == 0);
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 16, computed) == 1 && Bytes(computed, computed + 16) == tag);
+                std::memset(computed, 0, sizeof(computed));
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 12, computed) == 1 && std::memcmp(computed, tag.data(), 12) == 0 && computed[12] == 0);
+                Require(encryptFinal(Context(context), computed, &written) == 0);
+                Require(RunGcm(context, test, 0, generic, chunk) == Hex(test.plain));
+                const Final decryptFinal = generic ? EVP_CipherFinal_ex_nid_postfix : EVP_DecryptFinal_ex_nid_postfix;
+                Require(decryptFinal(Context(context), computed, &written) == 0 && written == 0);
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 16, const_cast<unsigned char*>(tag.data())) == 1);
+                Require(decryptFinal(Context(context), computed, &written) == 1 && written == 0);
+                Require(RunGcm(context, test, 0, generic, chunk) == Hex(test.plain));
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 16, const_cast<unsigned char*>(tag.data())) == 1);
+                written = -1;
+                Require(decryptFinal(Context(context), computed, &written) == 1 && written == 0);
+                auto wrong = tag;
+                wrong[5] ^= 0x20;
+                Require(RunGcm(context, test, 0, generic, chunk) == Hex(test.plain));
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 16, wrong.data()) == 1);
+                Require(decryptFinal(Context(context), computed, &written) == 0 && written == 0);
+                Require(RunGcm(context, test, 0, generic, chunk) == Hex(test.plain));
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 12, wrong.data()) == 1);
+                Require(decryptFinal(Context(context), computed, &written) == 0);
+                Require(RunGcm(context, test, 0, generic, chunk) == Hex(test.plain));
+                Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 5, const_cast<unsigned char*>(tag.data())) == 1);
+                Require(decryptFinal(Context(context), computed, &written) == 1);
+                Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+                RequireCleared(context);
+            }
+        }
+    }
+}
+
+static void TestAesGcmControl() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_gcm_nid_postfix());
+    const auto key = Hex(Gcm3Key);
+    const auto iv = Hex(Gcm3Iv);
+    const auto plain = Hex(Gcm3Plain);
+    unsigned char context[ContextBytes] {};
+    unsigned char tag[17] {};
+    unsigned char out[64] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+    Require(Load<void*>(context, CipherDataOffset) != nullptr);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 0, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, -3, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 16, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 16, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x7777, 0, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmIvGenerate, 8, tag) == 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 16) == 0 && written == -1);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), out, &written) == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 16) == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, nullptr, iv.data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 16) == 1 && written == 16);
+    Require(std::memcmp(out, Hex(GcmVectors[2].encrypted).data(), 16) == 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, plain.data(), 4) == 0 && written == 16);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), nullptr, &written, plain.data(), 4) == 0 && written == 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data() + 16, 48) == 1 && written == 48);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 17, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 0, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 16, tag) == 1);
+    Require(Bytes(tag, tag + 16) == Hex(GcmVectors[2].tag));
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), iv.data()) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmGetTag, 16, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 17, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetTag, 0, tag) == 0);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data()) == 1);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written) == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+
+    const auto& longIv = GcmVectors[5];
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 60, nullptr) == 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, nullptr, Hex(longIv.iv).data()) == 1);
+    for (std::size_t index = 0; index < 16; ++index) Require(context[IvOffset + index] == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nullptr) == 1);
+    const auto aad = Hex(longIv.aad);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, aad.data(), static_cast<int>(aad.size())) == 1);
+    unsigned char copy[ContextBytes];
+    std::memcpy(copy, context, ContextBytes);
+    auto* data = malloc_nid_postfix(GcmContextBytes);
+    Require(data != nullptr);
+    std::memcpy(data, Load<void*>(context, CipherDataOffset), GcmContextBytes);
+    Store(copy, CipherDataOffset, data);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), ControlCopy, 0, copy) == 1);
+    for (unsigned char* each : {context, copy}) {
+        const auto message = Hex(longIv.plain);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(each), out, &written, message.data(), static_cast<int>(message.size())) == 1);
+        Require(Bytes(out, out + written) == Hex(longIv.encrypted));
+        Require(EVP_EncryptFinal_ex_nid_postfix(Context(each), out, &written) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(each), GcmGetTag, 16, tag) == 1 && Bytes(tag, tag + 16) == Hex(longIv.tag));
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(each)) == 1);
+    }
+
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+    std::memcpy(copy, context, ContextBytes);
+    data = malloc_nid_postfix(GcmContextBytes);
+    Require(data != nullptr);
+    std::memcpy(data, Load<void*>(context, CipherDataOffset), GcmContextBytes);
+    Store(copy, CipherDataOffset, data);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), ControlCopy, 0, copy) == 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(copy), nullptr, nullptr, nullptr, iv.data()) == 1);
+    Require(std::memcmp(copy + IvOffset, iv.data(), 12) == 0);
+    for (std::size_t index = 0; index < 16; ++index) Require(context[IvOffset + index] == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(copy), nullptr, nullptr, key.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(copy), out, &written, plain.data(), 64) == 1);
+    Require(Bytes(out, out + 64) == Hex(GcmVectors[2].encrypted));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(copy)) == 1);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 12, nullptr) == 0);
+    RequireThrows([&] { cipher->control(context, GcmSetIvLength, 12, nullptr); });
+    RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 16); });
+}
+
+static Bytes TlsAadFor(int sequence, int length) {
+    Bytes aad(13, 0);
+    aad[7] = static_cast<unsigned char>(sequence);
+    aad[8] = 0x17;
+    aad[9] = 0x03;
+    aad[10] = 0x03;
+    aad[11] = static_cast<unsigned char>(length >> 8);
+    aad[12] = static_cast<unsigned char>(length);
+    return aad;
+}
+
+static void TestAesGcmTls() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_gcm_nid_postfix());
+    const auto key = Hex(Gcm3Key);
+    const auto iv = Hex(Gcm3Iv);
+    const auto message = Hex(Gcm3Plain);
+    const Bytes plain(message.begin(), message.begin() + 37);
+    const Bytes records[] {
+        Hex("facedbaddecaf88842831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b2544c778d019b1b98643bb3d0d3467c192e"),
+        Hex("facedbaddecaf8895c21c68aa9787c7294b2d7a47a6e8e4d8adafeea894bf504323d55f62afe5ba118a028444dd9c8388aa114d2b38f3541e5513447cc"),
+    };
+    unsigned char context[ContextBytes] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvInvocation, 8, const_cast<unsigned char*>(iv.data())) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvFixed, -1, const_cast<unsigned char*>(iv.data())) == 1);
+    for (int sequence : {1, 2}) {
+        auto aad = TlsAadFor(sequence, 8 + 37);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 16);
+        Require(context[BufOffset + 11] == 0 && context[BufOffset + 12] == 37);
+        Bytes record(61, 0xAA);
+        std::copy(plain.begin(), plain.end(), record.begin() + 8);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 1 && written == 61);
+        Require(record == records[sequence - 1]);
+    }
+    auto aad = TlsAadFor(3, 7);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 12, aad.data()) == 0);
+    aad = TlsAadFor(3, 8 + 37);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 16);
+    Bytes record(61, 0);
+    Bytes other(61, 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), other.data(), &written, record.data(), 61) == 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 23) == 0);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 1 && written == 61);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvFixed, 3, const_cast<unsigned char*>(iv.data())) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvFixed, 5, const_cast<unsigned char*>(iv.data())) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvFixed, 4, const_cast<unsigned char*>(iv.data())) == 1);
+    aad = TlsAadFor(1, 8 + 15);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 0);
+    for (int sequence : {1, 2}) {
+        aad = TlsAadFor(sequence, 61);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 16);
+        Require(context[BufOffset + 11] == 0 && context[BufOffset + 12] == 37);
+        record = records[sequence - 1];
+        Require(EVP_DecryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 1 && written == 37);
+        Require(Bytes(record.begin() + 8, record.begin() + 45) == plain);
+    }
+    aad = TlsAadFor(2, 61);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), TlsAad, 13, aad.data()) == 16);
+    record = records[1];
+    record[60] ^= 1;
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), record.data(), &written, record.data(), 61) == 0 && written == 0);
+    for (std::size_t index = 8; index < 45; ++index) Require(record[index] == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -801,5 +1080,8 @@ int main() {
     TestUpdateArguments();
     TestAesCfb8();
     TestAesCtr();
+    TestAesGcmVectors();
+    TestAesGcmControl();
+    TestAesGcmTls();
     return 0;
 }

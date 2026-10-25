@@ -564,27 +564,12 @@ int APS5_VABI EVP_aes_128_cbc_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_aes_128_gcm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_aes_192_cbc_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI EVP_aes_192_gcm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_aes_256_cbc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_aes_256_gcm_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

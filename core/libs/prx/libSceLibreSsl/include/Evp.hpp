@@ -12,6 +12,7 @@ inline constexpr std::uint64_t CipherModeCbc = 2;
 inline constexpr std::uint64_t CipherModeCfb = 3;
 inline constexpr std::uint64_t CipherModeOfb = 4;
 inline constexpr std::uint64_t CipherModeCtr = 5;
+inline constexpr std::uint64_t CipherModeGcm = 6;
 inline constexpr std::uint64_t CipherFlagCustomIv = 0x10;
 inline constexpr std::uint64_t CipherFlagAlwaysCallInit = 0x20;
 inline constexpr std::uint64_t CipherFlagCtrlInit = 0x40;
