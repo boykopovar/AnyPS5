@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -35,11 +36,8 @@ static_assert(sizeof(TestCertKey) == 24 && sizeof(TestCert) == 256);
 static_assert(sizeof(TestSession) == 232 && offsetof(TestSession, cipher) == 168);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offsetof(TestSsl, session) == 128);
 
-extern "C" {
-TestSession* APS5_VABI SSL_get_session_nid_postfix(const TestSsl*);
-const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const TestSsl*);
-void* APS5_VABI SSL_get_certificate_nid_postfix(const TestSsl*);
-void* APS5_VABI SSL_get_privatekey_nid_postfix(const TestSsl*);
+static const LibreSslSessionConnection* Connection(const TestSsl* ssl) {
+    return reinterpret_cast<const LibreSslSessionConnection*>(ssl);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -58,10 +56,10 @@ static void TestGetSession() {
     TestCert cert {};
     TestSsl ssl {};
     RequireThrows([] { SSL_get_session_nid_postfix(nullptr); });
-    Require(SSL_get_session_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_session_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
     ssl.session = &session;
-    Require(SSL_get_session_nid_postfix(&ssl) == &session);
+    Require(reinterpret_cast<TestSession*>(SSL_get_session_nid_postfix(Connection(&ssl))) == &session);
 }
 
 static void TestCurrentCipher() {
@@ -69,11 +67,11 @@ static void TestCurrentCipher() {
     TestSession session {};
     TestSsl ssl {};
     RequireThrows([] { SSL_get_current_cipher_nid_postfix(nullptr); });
-    Require(SSL_get_current_cipher_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_current_cipher_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.session = &session;
-    Require(SSL_get_current_cipher_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_current_cipher_nid_postfix(Connection(&ssl)) == nullptr);
     session.cipher = &cipher;
-    Require(SSL_get_current_cipher_nid_postfix(&ssl) == &cipher);
+    Require(SSL_get_current_cipher_nid_postfix(Connection(&ssl)) == &cipher);
 }
 
 static void TestGetCertificate() {
@@ -83,16 +81,16 @@ static void TestGetCertificate() {
     TestCert cert {};
     TestSsl ssl {};
     RequireThrows([] { SSL_get_certificate_nid_postfix(nullptr); });
-    Require(SSL_get_certificate_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_certificate_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
-    RequireThrows([&] { SSL_get_certificate_nid_postfix(&ssl); });
+    RequireThrows([&] { SSL_get_certificate_nid_postfix(Connection(&ssl)); });
     cert.pkeys[0].x509 = &other;
     cert.pkeys[2].x509 = &x509;
     cert.pkeys[2].privatekey = &key;
     cert.key = &cert.pkeys[1];
-    Require(SSL_get_certificate_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_certificate_nid_postfix(Connection(&ssl)) == nullptr);
     cert.key = &cert.pkeys[2];
-    Require(SSL_get_certificate_nid_postfix(&ssl) == &x509);
+    Require(SSL_get_certificate_nid_postfix(Connection(&ssl)) == &x509);
 }
 
 static void TestGetPrivateKey() {
@@ -102,16 +100,16 @@ static void TestGetPrivateKey() {
     TestCert cert {};
     TestSsl ssl {};
     RequireThrows([] { SSL_get_privatekey_nid_postfix(nullptr); });
-    Require(SSL_get_privatekey_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_privatekey_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
-    RequireThrows([&] { SSL_get_privatekey_nid_postfix(&ssl); });
+    RequireThrows([&] { SSL_get_privatekey_nid_postfix(Connection(&ssl)); });
     cert.pkeys[0].privatekey = &other;
     cert.pkeys[3].x509 = &x509;
     cert.pkeys[3].privatekey = &key;
     cert.key = &cert.pkeys[1];
-    Require(SSL_get_privatekey_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_privatekey_nid_postfix(Connection(&ssl)) == nullptr);
     cert.key = &cert.pkeys[3];
-    Require(SSL_get_privatekey_nid_postfix(&ssl) == &key);
+    Require(SSL_get_privatekey_nid_postfix(Connection(&ssl)) == &key);
 }
 
 int main() {
