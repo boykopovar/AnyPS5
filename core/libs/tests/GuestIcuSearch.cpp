@@ -1,4 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +57,57 @@ void Memory() {
     Throws([&] { u_memmove_nid_postfix(nullptr, original.data(), 1); });
     Throws([&] { u_memmove_nid_postfix(original.data(), nullptr, 1); });
     Throws([&] { u_memset_nid_postfix(nullptr, 0, 1); });
+}
+
+void MappedMemory() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = 2 * page;
+    constexpr std::size_t unitsPerPage = page / sizeof(char16_t);
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, bytes, 3, 0, physical, 0) == 0 && mapping);
+    auto* data = static_cast<char16_t*>(mapping);
+    std::array<char16_t, bytes / sizeof(char16_t)> expected;
+    for (std::size_t index = 0; index < expected.size(); ++index) expected[index] = static_cast<char16_t>(index * 257 + 17);
+    {
+        GuestArena::HostWrite access(data, bytes);
+        Require(access.Open());
+        std::copy(expected.begin(), expected.end(), data);
+    }
+    const auto original = expected;
+    Require(u_memmove_nid_postfix(data + 5, data + 2, 31) == data + 5);
+    for (std::size_t index = 0; index < 31; ++index) expected[index + 5] = original[index + 2];
+    Require(u_memset_nid_postfix(data + unitsPerPage - 3, 0xd812, 7) == data + unitsPerPage - 3);
+    std::fill_n(expected.data() + unitsPerPage - 3, 7, 0xd812);
+    Require(std::equal(expected.begin(), expected.end(), data));
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    Require(u_memmove_nid_postfix(data + unitsPerPage + 9, data + 1, 19) == data + unitsPerPage + 9);
+    std::copy_n(expected.data() + 1, 19, expected.data() + unitsPerPage + 9);
+    Require(std::equal(expected.begin(), expected.end(), data));
+    for (const auto count : {0, -1, std::numeric_limits<std::int32_t>::min()}) {
+        Require(u_memmove_nid_postfix(data + 7, data + unitsPerPage, count) == data + 7);
+        Require(u_memset_nid_postfix(data + 7, 0xffff, count) == data + 7);
+    }
+#ifdef _WIN32
+    for (const auto offset : {std::size_t{7}, unitsPerPage - 2}) {
+        {
+            GuestArena::HostWrite access(data + offset, 4 * sizeof(char16_t));
+            Require(!access.Open());
+        }
+        Throws([&] { u_memmove_nid_postfix(data + offset, data + unitsPerPage + 40, 4); });
+        Require(std::equal(expected.begin(), expected.end(), data));
+        Throws([&] { u_memset_nid_postfix(data + offset, 0xffff, 4); });
+        Require(std::equal(expected.begin(), expected.end(), data));
+    }
+#endif
+    Require(std::equal(expected.begin(), expected.end(), data));
+    Require(sceKernelMprotect(mapping, page, 3) == 0);
+    Require(u_memset_nid_postfix(data + 7, 0xffff, 4) == data + 7);
+    std::fill_n(expected.data() + 7, 4, 0xffff);
+    Require(std::equal(expected.begin(), expected.end(), data));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
 }
 
 void Characters() {
@@ -149,6 +203,7 @@ void Comparisons() {
 
 int main() {
     Memory();
+    MappedMemory();
     Characters();
     Substrings();
     Comparisons();

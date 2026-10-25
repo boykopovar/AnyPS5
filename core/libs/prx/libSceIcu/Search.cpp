@@ -119,6 +119,7 @@ char16_t* APS5_VABI u_memmove_nid_postfix(char16_t* destination, const char16_t*
     if (!destination || !source) NotImplemented_nid_no_patch(__func__);
     const auto bytes = static_cast<std::size_t>(count) * sizeof(char16_t);
     GuestArena::HostWrite access(destination, bytes);
+    if (!access.Open()) NotImplemented_nid_no_patch(__func__);
     std::memmove(destination, source, bytes);
     return destination;
 }
@@ -127,6 +128,7 @@ char16_t* APS5_VABI u_memset_nid_postfix(char16_t* destination, char16_t value, 
     if (count <= 0) return destination;
     if (!destination) NotImplemented_nid_no_patch(__func__);
     GuestArena::HostWrite access(destination, static_cast<std::size_t>(count) * sizeof(char16_t));
+    if (!access.Open()) NotImplemented_nid_no_patch(__func__);
     for (std::int32_t position = 0; position < count; ++position) destination[position] = value;
     return destination;
 }
