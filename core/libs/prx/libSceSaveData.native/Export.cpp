@@ -298,9 +298,17 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     return SAVE_DATA_OK;
 }
 
-int APS5_VABI sceSaveDataCommit(const SaveDataCommitParam* param) {
-    (void)param;
+static int commit(const SaveDataCommitParam* param) {
+    if (param == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataCommit(const SaveDataCommitParam* param) {
+    const int rc = commit(param);
+    SAVEDATA_TRACE("commit resource=%d mode=0x%x -> 0x%08x", param != nullptr ? param->resource : -1, param != nullptr ? param->commit_mode : 0u, static_cast<unsigned>(rc));
+    return rc;
 }
 
 int APS5_VABI sceSaveDataCreateTransactionResource(uint32_t size) {
@@ -667,10 +675,21 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
     return rc;
 }
 
-int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mount_point, const SaveDataPrepareParam* param) {
-    (void)mount_point;
-    (void)param;
+static int prepare(const SaveDataMountPoint* mount_point, const SaveDataPrepareParam* param) {
+    if (mount_point == nullptr || param == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::lock_guard lock(g_slots_mutex);
+    if (find_slot_by_mount_point(mount_point->data) == -1) {
+        return SAVE_DATA_ERROR_NOT_MOUNTED;
+    }
     return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mount_point, const SaveDataPrepareParam* param) {
+    const int rc = prepare(mount_point, param);
+    SAVEDATA_TRACE("prepare point=%s resource=%d mode=0x%x -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", param != nullptr ? param->resource : -1, param != nullptr ? param->prepare_mode : 0u, static_cast<unsigned>(rc));
+    return rc;
 }
 
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const SaveDataIcon* icon) {
