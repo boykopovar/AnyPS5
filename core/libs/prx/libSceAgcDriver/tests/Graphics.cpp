@@ -1682,6 +1682,34 @@ void UnexportedPixelInputTests() {
     Require(std::ranges::equal(unchanged.interpolatorSettings, pixel.interpolatorSettings), "inputs of exported parameters were changed");
 }
 
+void ShaderDeclaredPixelInputTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.context[0x1b3] = queue.context[0x1b4] = 0x302;
+    queue.context[0x1b6] = 1;
+    for (std::uint32_t i = 0; i < 5; ++i) queue.context[0x191 + i] = i;
+    const std::array<std::uint8_t, 8> exports{};
+    const auto stateOnly = DecodePixelStageInfo(queue.context, exports);
+    Require(stateOnly.interpolatorCount == 1, "the queued input count was not decoded without a shader header");
+    std::vector<std::byte> header(sizeof(Shader));
+    Shader shader{};
+    shader.num_input_semantics = 5;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    const auto declared = DecodePixelStageInfo(queue.context, exports, false, header);
+    Require(declared.interpolatorCount == 5, "the fragment header's declared inputs did not extend the input count");
+    for (std::uint32_t i = 0; i < 5; ++i) Require(declared.interpolatorSettings[i] == i, "a declared input lost its queued SPI_PS_INPUT_CNTL setting");
+    auto missing = queue;
+    missing.context.erase(0x193);
+    const auto defaulted = DecodePixelStageInfo(missing.context, exports, false, header);
+    Require(defaulted.interpolatorCount == 5 && defaulted.interpolatorSettings[2] == 2, "an unwritten input beyond the queued count did not read parameter 2");
+    queue.context[0x1b6] |= 1u << 9u;
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "per-primitive pixel inputs");
+    queue.context[0x1b6] = 1u;
+    shader.num_input_semantics = 33;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "input count exceeds 32");
+}
+
 void PixelInputLayoutTests() {
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputVgpr;
@@ -12138,6 +12166,7 @@ int main(int argc, char** argv) {
         PolygonPrimitiveTests();
         vertexPointListTests();
         TuningFieldTests();
+        ShaderDeclaredPixelInputTests();
         PixelInputLayoutTests();
         UnexportedPixelInputTests();
         ColorPipeBankXorTests();
