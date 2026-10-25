@@ -102,6 +102,9 @@ void Values() {
     for (const GuestItimerspec bad : {GuestItimerspec{{0, 0}, {-1, 0}}, GuestItimerspec{{0, 0}, {0, -1}}, GuestItimerspec{{0, 0}, {0, Second}},
                                  GuestItimerspec{{-1, 0}, {1, 0}}, GuestItimerspec{{0, Second}, {1, 0}}})
         Require(ktimer_settime_nid_postfix(id, 0, &bad, nullptr) == -1 && Error() == Einval);
+    const GuestItimerspec valid{{0, 0}, {1, 0}};
+    for (const int badFlags : {-1, 2, ~TimerAbstime})
+        Require(ktimer_settime_nid_postfix(id, badFlags, &valid, nullptr) == -1 && Error() == Einval);
 
     const GuestItimerspec clear{{-1, 0}, {0, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &clear, nullptr) == 0);
