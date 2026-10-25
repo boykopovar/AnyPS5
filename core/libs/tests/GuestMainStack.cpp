@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdint>
@@ -5,15 +7,6 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-[[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (*entry)(void*));
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-int APS5_VABI sceKernelMapFlexibleMemory(void** addr, std::size_t len, int prot, int flags);
-int APS5_VABI sceKernelMunmap(void* addr, std::size_t len);
-}
 
 #ifdef ANYPS5_ENABLE_ASAN
 static constexpr std::uintptr_t GuestArenaOffset = 0x0000100000000000ull;
@@ -105,7 +98,7 @@ static void RefusesAnOverlap() {
     Require(refused);
     Require(Permissions(reinterpret_cast<std::uintptr_t>(sentinel)) == 'w');
     for (std::size_t i = 0; i < Bytes / 4; ++i) Require(words[i] == Pattern);
-    Require(sceKernelMunmap(sentinel, Bytes) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(sentinel), Bytes) == 0);
 }
 
 int main() {

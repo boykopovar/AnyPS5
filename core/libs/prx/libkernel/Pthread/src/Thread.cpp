@@ -222,7 +222,7 @@ static std::size_t GuestMainStackBytes() {
     return (bytes + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE * PS5_PAGE_SIZE;
 }
 
-extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (*entry)(void*)) {
+extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("EnterGuestMainStack: null entry point");
     if (guestMainStackLow.load(std::memory_order_acquire) != 0) throw std::runtime_error("EnterGuestMainStack: the guest main stack was already entered");
     std::uintptr_t arenaBase = 0;
