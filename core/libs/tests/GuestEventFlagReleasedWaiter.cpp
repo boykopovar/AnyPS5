@@ -57,8 +57,68 @@ static void RequireReleasedWaiterKeepsResult(bool cancel) {
     Require(consumed == ROUNDS);
 }
 
+static void RequireCancelWinsBeforeSet() {
+    for (int round = 0; round < ROUNDS; ++round) {
+        KernelEventFlag flag = nullptr;
+        Require(sceKernelCreateEventFlag(&flag, "cancel_first", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+        int result = -1;
+        std::uint64_t pattern = UINT64_MAX;
+        std::thread waiter([&] { result = sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern, nullptr); });
+        WaitForWaiters(flag, 1);
+        int woken = 0;
+        Require(sceKernelCancelEventFlag(flag, 0, &woken) == SCE_OK);
+        Require(woken == 1);
+        Require(sceKernelSetEventFlag(flag, 1) == SCE_OK);
+        waiter.join();
+        Require(result == SCE_KERNEL_ERROR_ECANCELED);
+        Require(pattern == 0);
+        std::uint64_t remaining = 0;
+        Require(sceKernelPollEventFlag(flag, 1, EVF_WAITMODE_OR, &remaining) == SCE_OK);
+        Require(remaining == 1);
+        Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
+    }
+}
+
+static void RequireDeleteWinsBeforeSet() {
+    for (int round = 0; round < ROUNDS; ++round) {
+        KernelEventFlag flag = nullptr;
+        Require(sceKernelCreateEventFlag(&flag, "delete_first", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+        int result = -1;
+        std::uint64_t pattern = UINT64_MAX;
+        std::thread waiter([&] { result = sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern, nullptr); });
+        WaitForWaiters(flag, 1);
+        Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
+        waiter.join();
+        Require(result == SCE_KERNEL_ERROR_EACCES);
+        Require(pattern == 0);
+    }
+}
+
+static void RequireTimeoutWinsBeforeSet() {
+    for (int round = 0; round < ROUNDS; ++round) {
+        KernelEventFlag flag = nullptr;
+        Require(sceKernelCreateEventFlag(&flag, "timeout_first", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+        int result = -1;
+        std::uint64_t pattern = UINT64_MAX;
+        KernelUseconds timeout = 1000;
+        std::thread waiter([&] { result = sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern, &timeout); });
+        WaitForWaiters(flag, 1);
+        waiter.join();
+        Require(result == SCE_KERNEL_ERROR_ETIMEDOUT);
+        Require(pattern == 0);
+        Require(sceKernelSetEventFlag(flag, 1) == SCE_OK);
+        std::uint64_t remaining = 0;
+        Require(sceKernelPollEventFlag(flag, 1, EVF_WAITMODE_OR, &remaining) == SCE_OK);
+        Require(remaining == 1);
+        Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
+    }
+}
+
 int main() {
     RequireReleasedWaiterKeepsResult(true);
     RequireReleasedWaiterKeepsResult(false);
+    RequireCancelWinsBeforeSet();
+    RequireDeleteWinsBeforeSet();
+    RequireTimeoutWinsBeforeSet();
     return 0;
 }
