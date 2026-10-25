@@ -351,7 +351,11 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
                 recordDeferredLabels(localDevice.get(), queue);
                 const auto outcome = localDevice->CopyBuffer(copy.destination, copy.source, copy.bytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, queue, [](std::span<const std::byte>, std::uint64_t) {});
                 if (outcome.path == 1 || outcome.path == 3) return;
-                if (outcome.path == 2 && !Graphics::RegisteredReadableCovers(copy.destination, copy.bytes) && !localDevice->StoresPendingOver(copy.destination, copy.bytes)) ++copiesToHostMemory;
+                if (outcome.path == 2 && !Graphics::RegisteredReadableCovers(copy.destination, copy.bytes)) {
+                    auto* recorder = Graphics::Recorder::Active();
+                    if (recorder != nullptr && localDevice->StoresPendingOver(copy.destination, copy.bytes)) recorder->SyncThrough(copy.destination, copy.bytes);
+                    if (!localDevice->StoresPendingOver(copy.destination, copy.bytes)) ++copiesToHostMemory;
+                }
             }
         }
         std::vector<std::byte> bytes(copy.bytes);
