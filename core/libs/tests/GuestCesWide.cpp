@@ -1,37 +1,8 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void);
-const std::uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void);
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void*);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-int APS5_VABI sceCesSbcToUcs2(const std::uint8_t*, std::uint8_t, std::uint16_t*);
-int APS5_VABI sceCesSbcToUtf16(const std::uint8_t*, std::uint8_t, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSbcToUtf16be(const std::uint8_t*, std::uint8_t, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSbcToUtf16le(const std::uint8_t*, std::uint8_t, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesSbcToUtf32(const std::uint8_t*, std::uint8_t, std::uint32_t*);
-int APS5_VABI sceCesSbcToUtf32be(const std::uint8_t*, std::uint8_t, std::uint32_t*);
-int APS5_VABI sceCesSbcToUtf32le(const std::uint8_t*, std::uint8_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToSbc(std::uint16_t, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf16ToSbc(const std::uint16_t*, std::uint32_t, std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf16beToSbc(const std::uint16_t*, std::uint32_t, std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf16leToSbc(const std::uint16_t*, std::uint32_t, std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf32ToSbc(std::uint32_t, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf32beToSbc(const std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf32leToSbc(const std::uint32_t*, const std::uint8_t*, std::uint8_t*);
-int APS5_VABI sceCesUtf16StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf16StrGetMbcsLen(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUtf32StrToMbcsStr(void*, const std::uint32_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32StrGetMbcsLen(void*, const std::uint32_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf16Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUtf16Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf32Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUtf32Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -97,6 +68,10 @@ int main() {
     Require(sceCesUtf32leToSbc(&yLe, cp1252, &sbc) == 0 && sbc == 0x9F);
     Require(sceCesUtf32leToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
     for (int value = 0; value < 256; ++value) {
+        if (value == 0x98) {
+            Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == unassignedCode);
+            continue;
+        }
         Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == 0);
         Require(sceCesUtf32ToSbc(utf32, cp1251, &sbc) == 0 && sbc == value);
     }

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -14,23 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI __sys_socketex_nid_postfix(const char*, int, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI _fcntl_nid_postfix(int, int, ...);
-int APS5_VABI ioctl_nid_postfix(int, std::uint64_t, void*);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceKernelFcntl(int, int, ...);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static constexpr int DuplicateCommand = 0;
 static constexpr int GetDescriptorFlags = 1;

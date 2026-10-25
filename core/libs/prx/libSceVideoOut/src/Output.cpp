@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>

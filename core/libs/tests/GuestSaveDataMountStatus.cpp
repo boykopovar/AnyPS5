@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -7,20 +9,9 @@
 #include <set>
 #include <string>
 #include <system_error>
-
-extern "C" {
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataBackup(const SaveDataBackup*);
-int APS5_VABI sceSaveDataGetEventResult(const void*, SaveDataEvent*);
-int APS5_VABI sceSaveDataMount3(const SaveDataMount3*, SaveDataMountResult*);
-int APS5_VABI sceSaveDataUmount2(std::uint32_t, const SaveDataMountPoint*);
-int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint*, SaveDataMountInfo*);
-int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint*, std::uint32_t, void*, std::size_t, std::size_t*);
-int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint*, std::uint32_t, const void*, std::size_t);
-int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint*, SaveDataIcon*);
-int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint*, const SaveDataIcon*);
-int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint*, const char*);
-}
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -163,7 +154,15 @@ void CheckEquivalentMounts() {
     const auto casePath = std::filesystem::path("_sd") / "IDENTITY";
     const bool caseAlias = std::filesystem::exists(casePath) && std::filesystem::equivalent(originalPath, casePath, error);
     Check(!error || error == std::errc::no_such_file_or_directory, "case-alias identity check succeeds");
+#ifdef _WIN32
+    error.clear();
+    if (!CreateSymbolicLinkW((std::filesystem::path("_sd") / "linked").c_str(), L"identity",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        error = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_directory_symlink("identity", std::filesystem::path("_sd") / "linked", error);
+#endif
     const bool symlinkAlias = !error;
     Check(caseAlias || symlinkAlias, "a host alias is available to check mount identity");
 
@@ -185,7 +184,12 @@ void CheckEquivalentMounts() {
     if (caseAlias) MountAndCheck("IDENTITY", MountReadWrite, 0u, "case alias after unmount");
     if (symlinkAlias) {
         MountAndCheck("linked", MountReadWrite, 0u, "symlink alias after unmount");
+#ifdef _WIN32
+        error.clear();
+        if (!RemoveDirectoryW((std::filesystem::path("_sd") / "linked").c_str())) error = std::error_code(GetLastError(), std::system_category());
+#else
         std::filesystem::remove(std::filesystem::path("_sd") / "linked", error);
+#endif
         Check(!error, "symlink alias is removed");
     }
 }

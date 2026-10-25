@@ -1,3 +1,5 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -7,14 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleListInternal(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

@@ -290,7 +290,7 @@ class CheckCompileTests(unittest.TestCase):
         result = self.tool("unit.cpp")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
-                         [*flags, "-fsyntax-only", str(source)])
+                         ["-fsyntax-only", *flags, str(source)])
 
     def test_nothing_checked_is_a_failure(self):
         self.manifest([])
@@ -503,7 +503,7 @@ class CheckCompileTests(unittest.TestCase):
                 result = self.tool(source.name)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
-                                 [*flags, "-fsyntax-only", str(source)])
+                                 ["-fsyntax-only", *flags, str(source)])
 
     def test_invalid_argument_arrays_are_rejected_without_a_traceback(self):
         source = self.source("unit.cpp")

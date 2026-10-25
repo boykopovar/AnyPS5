@@ -1,3 +1,4 @@
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <atomic>
@@ -8,133 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceNpAtomicCas32(std::int32_t* value, std::int32_t expected, std::int32_t desired);
-int APS5_VABI sceNpAtomicInc32(std::int32_t* value);
-int APS5_VABI sceNpAtomicDec32(std::int32_t* value);
-int APS5_VABI sceNpCreateSema(KernelSema* sema, std::uint32_t flags, int initial, int maximum, const char* name);
-int APS5_VABI sceNpDeleteSema(KernelSema sema);
-int APS5_VABI sceNpPollSema(KernelSema sema);
-int APS5_VABI sceNpSignalSema(KernelSema sema);
-int APS5_VABI sceNpCreateEventFlag(KernelEventFlag* flag, const char* name, std::uint32_t attr, std::uint64_t pattern);
-int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag);
-int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern);
-int APS5_VABI sceNpPollEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result);
-int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, int priority, std::size_t stackSize, KernelCpumask affinity, const char* name);
-int APS5_VABI sceNpJoinThread(Pthread thread, void** value);
-int APS5_VABI sceNpThreadGetId(Pthread* thread);
-
-struct NpHeap {
-    void* mspace;
-};
-
-struct NpHeapStat {
-    std::uint64_t maxSystemSize;
-    std::uint64_t maxInuseSize;
-    std::uint64_t currentInuseSize;
-};
-
-struct NpKernelMemory {
-    std::uint64_t size;
-    std::uint64_t reserved;
-    void* address;
-};
-
-struct NpMemoryHeap {
-    NpKernelMemory memory;
-    NpHeap heap;
-};
-
-struct NpAllocator {
-    void* (APS5_VABI *allocate)(std::size_t size, void* context);
-    void* (APS5_VABI *reallocate)(void* pointer, std::size_t size, void* context);
-    void (APS5_VABI *release)(void* pointer, void* context);
-    void* context;
-};
-
-struct NpAllocatorEx {
-    NpAllocator allocator;
-    int outOfMemoryError;
-};
-
-int APS5_VABI sceNpHeapInit(NpHeap* heap, void* base, std::size_t size, const char* name);
-void APS5_VABI sceNpHeapDestroy(NpHeap* heap);
-void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator);
-int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat);
-int APS5_VABI sceNpMemoryHeapInit(NpMemoryHeap* heap, std::uint64_t size, const char* name);
-void APS5_VABI sceNpMemoryHeapDestroy(NpMemoryHeap* heap);
-void APS5_VABI sceNpMemoryHeapGetAllocatorEx(NpMemoryHeap* heap, int outOfMemoryError, NpAllocatorEx* allocator);
-int APS5_VABI sceNpArchInit(void);
-int APS5_VABI sceNpIpc2ClientInit(void);
-int APS5_VABI sceNpIpc2ClientTerm(void);
-void APS5_VABI sceNpArchTerm(void);
-NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void);
-int APS5_VABI sceNpAllocateKernelMemoryWithAlignment(std::uint64_t size, const char* name, void** address, NpKernelMemory* memory);
-int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory);
-struct NpCallout {
-    NpCallout* next;
-    void (APS5_VABI *handler)(void* arg);
-    std::uint64_t deadline;
-    void* arg;
-    std::uint64_t reserved;
-};
-
-struct NpCalloutContext {
-    Pthread thread;
-    PthreadMutex mutex;
-    PthreadCond cond;
-    int initialized;
-    int stopping;
-    NpCallout* pending;
-};
-
-int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, std::size_t stackSize, int priority, KernelCpumask affinity);
-void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context);
-int APS5_VABI sceNpCalloutStartOnCtx(NpCalloutContext* context, NpCallout* callout, std::uint32_t usec, void (APS5_VABI *handler)(void* arg), void* arg);
-int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callout, int* wasPending);
-int APS5_VABI sceNpUtilCmpAccountId(std::uint64_t left, std::uint64_t right);
-int APS5_VABI sceNpCmpNpId(const void* npId1, const void* npId2);
-bool APS5_VABI sceNpIntIsOnlineIdString(const char* text);
-int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code);
-int APS5_VABI sceNpUtilGetNpLanguageCode2(int language, char* tag);
-const char* APS5_VABI sceNpUtilGetNpLanguageCodeStr(int language);
-const char* APS5_VABI sceNpUtilGetNpLanguageCode2Str(int language);
-std::uint32_t APS5_VABI sceNpDbgAssignDebugId(void);
-int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength);
-int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength);
-int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength, std::size_t* consumed);
-int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character);
-int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength);
-struct NpTitleIdParts {
-    char id[9];
-    char reserved;
-    std::uint8_t index;
-};
-
-int APS5_VABI sceNpUtilBuildTitleId(const NpTitleIdParts* parts, char* titleId, std::size_t size);
-int APS5_VABI sceNpBase64GetDecodeSize(const char* src, std::size_t length);
-int APS5_VABI sceNpBase64Decoder(const char* src, std::size_t length, void* dst, std::size_t capacity);
-int APS5_VABI sceNpBase64Encoder(const void* src, char* dst, std::size_t length);
-int APS5_VABI sceNpBase64UrlGetDecodeSize(const char* src, std::size_t length);
-int APS5_VABI sceNpBase64UrlDecoder(const char* src, std::size_t length, void* dst, std::size_t capacity);
-int APS5_VABI sceNpBase64UrlEncoder(const void* src, char* dst, std::size_t length);
-int APS5_VABI sceNpHexToInt(int c);
-int APS5_VABI sceNpIntToHex(std::uint32_t value, bool uppercase);
-int APS5_VABI sceNpUInt32ToStr(char* buf, std::size_t size, std::uint32_t value, std::uint32_t radix, std::uint32_t flags, std::size_t* length);
-int APS5_VABI sceNpUInt64ToStr(char* buf, std::size_t size, std::uint64_t value, std::uint32_t radix, std::uint32_t flags, std::size_t* length);
-int APS5_VABI sceNpInt32ToStr(char* buf, std::size_t size, std::int32_t value, std::uint32_t radix, std::uint32_t flags, std::size_t* length);
-int APS5_VABI sceNpInt64ToStr(char* buf, std::size_t size, std::int64_t value, std::uint32_t radix, std::uint32_t flags, std::size_t* length);
-int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, std::size_t* parsedLength);
-int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, std::size_t* parsedLength);
-int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, std::size_t* parsedLength);
-int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, std::size_t* parsedLength);
-int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase);
-int APS5_VABI sceNpStrParseHex(const char* hex, void* out, std::size_t capacity);
-int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, std::size_t capacity);
-int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src);
-int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength);
-}
 
 namespace {
 
@@ -156,7 +30,10 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
+constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
+constexpr std::uint32_t EventFlagShared = 0x100;
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -193,6 +70,20 @@ void TestSemaphoresAndFlags() {
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
 }
 
+void TestSharedEventFlags() {
+    KernelEventFlag creator {};
+    Require(sceNpCreateEventFlag(&creator, "NpSharedFlag", EventFlagShared, 0) == 0, "a shared event flag is created");
+    KernelEventFlag opened {};
+    Require(sceNpOpenEventFlag(&opened, "NpSharedFlag") == 0 && opened != creator, "the shared event flag is opened by name");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(opened, 2) == 0 && sceNpPollEventFlag(creator, 2, EventFlagWaitAnd, &result) == 0 && result == 2,
+        "a bit set through the opened handle is polled through the creator");
+    Require(sceNpCloseEventFlag(creator) == KernelNotPermitted, "the creator handle is not closed");
+    Require(sceNpCloseEventFlag(opened) == 0, "the opened handle is closed");
+    Require(sceNpCloseEventFlag(opened) == KernelNoSuchObject, "a closed handle is gone");
+    Require(sceNpDeleteEventFlag(creator) == 0, "the creator deletes the shared event flag");
+}
+
 void TestThreads() {
     Require(sceNpThreadGetId(nullptr) == NpInvalidArgument, "a null thread id output is refused");
     Pthread thread {};
@@ -220,10 +111,12 @@ void TestHeaps() {
         "the memory heap size is rounded up to 16 KiB");
     NpAllocatorEx allocatorEx {};
     sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocatorEx);
+
     Require(allocatorEx.allocator.context == &memoryHeap && allocatorEx.outOfMemoryError == 0x1234,
         "the extended allocator carries the caller's error code");
     UseAllocator(allocatorEx.allocator);
     sceNpMemoryHeapDestroy(&memoryHeap);
+
     Require(memoryHeap.memory.address == nullptr && memoryHeap.heap.mspace == nullptr, "destroying clears the memory heap");
 
     NpKernelMemory memory {};
@@ -237,11 +130,13 @@ void TestHeaps() {
     Require(sceNpHeapInit(&heap, memory.address, memory.size, "np-test") == 0 && heap.mspace != nullptr, "a heap is created");
     NpAllocator allocator {};
     sceNpHeapGetAllocator(&heap, &allocator);
+
     Require(allocator.context == &heap, "the heap allocator uses the heap as its context");
     UseAllocator(allocator);
     NpHeapStat stat {};
     Require(sceNpHeapGetStat(&heap, &stat) == 0 && stat.maxInuseSize >= stat.currentInuseSize, "heap statistics are reported");
     sceNpHeapDestroy(&heap);
+
     Require(heap.mspace == nullptr, "destroying clears the heap");
     Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
     Require(sceNpFreeKernelMemory(nullptr) == NpNullObject, "freeing needs an object");
@@ -251,6 +146,7 @@ void TestHeaps() {
     Require(global->outOfMemoryError == NpOutOfMemory, "the global allocator reports the library's out-of-memory error");
     UseAllocator(global->allocator);
     sceNpArchTerm();
+
     UseAllocator(sceNpGlobalHeapGetAllocatorExPtr()->allocator);
     sceNpArchTerm();
 
@@ -313,8 +209,10 @@ void TestCallouts() {
     for (int i = 0; i < 2000 && g_callouts.second == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(g_callouts.first == 1 && g_callouts.second == 2, "callouts run in deadline order");
     sceNpCalloutTermCtx(&context);
+
     Require(context.initialized == 0, "terminating clears the context");
     sceNpCalloutTermCtx(&context);
+
 }
 
 bool Equals(const char* actual, const char* expected) {
@@ -519,6 +417,7 @@ void TestHexAndCopies() {
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestSharedEventFlags();
     TestThreads();
     TestHeaps();
     TestBase64();

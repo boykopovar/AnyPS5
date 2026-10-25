@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
@@ -9,33 +11,6 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes**);
-int APS5_VABI posix_spawnattr_destroy_nid_postfix(PosixSpawnAttributes**);
-int APS5_VABI posix_spawnattr_setflags_nid_postfix(PosixSpawnAttributes**, std::int16_t);
-int APS5_VABI posix_spawnattr_setsigdefault_nid_postfix(PosixSpawnAttributes**, const GuestSignalSet*);
-int APS5_VABI posix_spawnattr_getflags_nid_postfix(PosixSpawnAttributes* const*, std::int16_t*);
-int APS5_VABI posix_spawnattr_getpgroup_nid_postfix(PosixSpawnAttributes* const*, std::int32_t*);
-int APS5_VABI posix_spawnattr_getschedparam_nid_postfix(PosixSpawnAttributes* const*, std::int32_t*);
-int APS5_VABI posix_spawnattr_getschedpolicy_nid_postfix(PosixSpawnAttributes* const*, std::int32_t*);
-int APS5_VABI posix_spawnattr_getsigdefault_nid_postfix(PosixSpawnAttributes* const*, GuestSignalSet*);
-int APS5_VABI posix_spawnattr_getsigmask_nid_postfix(PosixSpawnAttributes* const*, GuestSignalSet*);
-int APS5_VABI posix_spawnattr_setpgroup_nid_postfix(PosixSpawnAttributes**, std::int32_t);
-int APS5_VABI posix_spawnattr_setschedparam_nid_postfix(PosixSpawnAttributes**, const std::int32_t*);
-int APS5_VABI posix_spawnattr_setschedpolicy_nid_postfix(PosixSpawnAttributes**, std::int32_t);
-int APS5_VABI posix_spawnattr_setsigmask_nid_postfix(PosixSpawnAttributes**, const GuestSignalSet*);
-int APS5_VABI posix_spawn_file_actions_init_nid_postfix(PosixSpawnFileActions**);
-int APS5_VABI posix_spawn_file_actions_destroy_nid_postfix(PosixSpawnFileActions**);
-int APS5_VABI posix_spawn_file_actions_addopen_nid_postfix(PosixSpawnFileActions**, int, const char*, int, std::uint16_t);
-int APS5_VABI posix_spawn_file_actions_adddup2_nid_postfix(PosixSpawnFileActions**, int, int);
-int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileActions**, int);
-int APS5_VABI posix_spawn_nid_postfix(std::int32_t*, const char*, PosixSpawnFileActions* const*, PosixSpawnAttributes* const*, char* const*, char* const*);
-int APS5_VABI posix_spawnp_nid_postfix(std::int32_t*, const char*, PosixSpawnFileActions* const*, PosixSpawnAttributes* const*, char* const*, char* const*);
-int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
-int APS5_VABI unsetenv_nid_postfix(const char*);
-int APS5_VABI chdir_nid_postfix(const char*);
-}
 
 static void Require(bool condition, int line) {
     if (!condition) {

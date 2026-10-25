@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdlib>
@@ -17,17 +18,7 @@
 #include <stdexcept>
 #include <source_location>
 #include <thread>
-extern "C" {
-int APS5_VABI sceKernelDlsym(std::int32_t, const char*, void**);
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-char* APS5_VABI dlerror_nid_postfix();
-int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
-int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
-int APS5_VABI sceKernelLoadStartModule(const char*, std::size_t, const void*, unsigned, const void*, int*);
-int APS5_VABI sceKernelStopUnloadModule(int, std::size_t, const void*, unsigned, const void*, int*);
-}
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "guest_dynamic_loader: failed at %s:%u\n", location.file_name(), location.line());
@@ -115,6 +106,7 @@ static bool CheckGlobalVisibility(const char* path, bool globalFirst) {
             std::fprintf(stderr, "RTLD_GLOBAL lost after closing its handle: global_first=%d scope=%s; surviving handle returns %d\n",
                 globalFirst, scope == nullptr ? "NULL" : "-2", add(20, 22));
             dlerror_nid_postfix();
+
             visible = false;
         }
     }
@@ -146,6 +138,7 @@ int main(int argc, char** argv) {
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
+
     void* executable = dlopen_nid_postfix(nullptr, 2);
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
 #ifdef _WIN32

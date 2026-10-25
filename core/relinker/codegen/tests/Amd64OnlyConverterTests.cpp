@@ -208,6 +208,8 @@ void decoderTwoByteOpcodeLengths() {
 }
 
 void sse4aOperands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x08, 0x00}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK EXTRQ was accepted");
+    requireFailure([] { const Bytes bytes = {0xF2, 0xF0, 0x0F, 0x79, 0xC1}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK INSERTQ was accepted");
     const auto check = [](const Bytes& site, const bool insertq, const int dst, const int src, const int length, const int index) {
         const auto operands = Codegen::DecodeSse4a(site.data(), site.size());
         require(operands.Insertq == insertq && !operands.RegisterForm && operands.Destination == dst && operands.Source == src && operands.Length == length && operands.Index == index, "SSE4a operands were decoded incorrectly");
@@ -231,6 +233,8 @@ void sse4aOperands() {
 }
 
 void sha256Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x38, 0xCB, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256RNDS2 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xCC, 0x08}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha256Operation operation, const int dst, const int src) {
         const auto operands = Codegen::DecodeSha256(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src, "SHA-256 operands were decoded incorrectly");
@@ -261,6 +265,8 @@ void sha256Operands() {
 }
 
 void sha1Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x3A, 0xCC, 0xCA, 0x00}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1RNDS4 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xC9, 0x08}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha1Operation operation, const int dst, const int src, const int function) {
         const auto operands = Codegen::DecodeSha1(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src && operands.Function == function, "SHA-1 operands were decoded incorrectly");
@@ -561,6 +567,9 @@ void converterSha256() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-256 was accepted") == 0x200, "LOCK SHA-256 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 2 && result.Reports.size() == 2 && result.Bytes == file, "SHA-256 sites were not lowered through stubs");
     const auto& rounds = result.Trampolines[0];
@@ -596,6 +605,9 @@ void converterSha1() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-1 was accepted") == 0x200, "LOCK SHA-1 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 3 && result.Reports.size() == 3 && result.Bytes == file, "SHA-1 sites were not lowered through stubs");
     require(result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 5 && result.Reports[0].InstructionName == "SHA1RNDS4", "SHA1RNDS4 was not lowered as one site");

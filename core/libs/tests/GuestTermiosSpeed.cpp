@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -13,8 +14,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 

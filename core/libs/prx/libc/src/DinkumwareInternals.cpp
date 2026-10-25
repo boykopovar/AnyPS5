@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -6,27 +7,6 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-double APS5_VABI strtod_nid_postfix(const char* str, char** endptr);
-float APS5_VABI strtof_nid_postfix(const char* str, char** endptr);
-long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr);
-long long APS5_VABI strtoll_nid_postfix(const char* str, char** endptr, int base);
-unsigned long long APS5_VABI strtoull_nid_postfix(const char* str, char** endptr, int base);
-double APS5_VABI sin_nid_postfix(double x);
-double APS5_VABI cos_nid_postfix(double x);
-float APS5_VABI sinf_nid_postfix(float x);
-float APS5_VABI cosf_nid_postfix(float x);
-long double APS5_VABI sinl_nid_postfix(long double x);
-long double APS5_VABI cosl_nid_postfix(long double x);
-double APS5_VABI log_nid_postfix(double x);
-double APS5_VABI log10_nid_postfix(double x);
-double APS5_VABI log2_nid_postfix(double x);
-float APS5_VABI logf_nid_postfix(float x);
-float APS5_VABI log10f_nid_postfix(float x);
-float APS5_VABI log2f_nid_postfix(float x);
-}
 
 namespace {
 
@@ -163,6 +143,22 @@ long double APS5_VABI _LSin_nid_postfix(long double x, unsigned int quadrant) {
     return quadrant != 0 ? cosl_nid_postfix(x) : sinl_nid_postfix(x);
 }
 
+double APS5_VABI _Divide_nid_postfix(double x, double y) {
+    return x / y;
+}
+
+float APS5_VABI _FDivide_nid_postfix(float x, float y) {
+    return x / y;
+}
+
+double APS5_VABI _Recip_nid_postfix(double x) {
+    return 1.0 / x;
+}
+
+float APS5_VABI _FRecip_nid_postfix(float x) {
+    return 1.0f / x;
+}
+
 double APS5_VABI _Log_nid_postfix(double x, int base) {
     if (base > 0) return log10_nid_postfix(x);
     return base == 0 ? log_nid_postfix(x) : log2_nid_postfix(x);
@@ -171,6 +167,19 @@ double APS5_VABI _Log_nid_postfix(double x, int base) {
 float APS5_VABI _FLog_nid_postfix(float x, int base) {
     if (base > 0) return log10f_nid_postfix(x);
     return base == 0 ? logf_nid_postfix(x) : log2f_nid_postfix(x);
+}
+
+long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
+    if (base > 0) return log10l_nid_postfix(x);
+    return base == 0 ? logl_nid_postfix(x) : log2l_nid_postfix(x);
+}
+
+long double APS5_VABI _LDivide_nid_postfix(long double x, long double y) {
+    return x / y;
+}
+
+long double APS5_VABI _LRecip_nid_postfix(long double x) {
+    return 1.0L / x;
 }
 
 }

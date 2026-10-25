@@ -1,3 +1,4 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include <array>
 #include <span>
 #include <cstdint>
@@ -24,6 +25,8 @@ extern "C" {
 
 namespace {
 
+using namespace SceVideodec2;
+
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
 constexpr std::uint32_t PitchAlignment = 256;
 constexpr std::uint32_t HeightAlignment = 32;
@@ -32,107 +35,6 @@ constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
-
-struct ComputeMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-};
-
-struct ComputeConfigInfo {
-    std::uint64_t thisSize;
-    std::uint16_t computePipeId;
-    std::uint16_t computeQueueId;
-    bool checkMemoryType;
-};
-
-struct DecoderConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct DecoderMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    bool isAccepted;
-};
-
-struct OutputInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    bool isErrorFrame;
-    std::uint8_t pictureCount;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    std::uint32_t frameFormat;
-    std::uint32_t framePitchInBytes;
-};
-
-struct AvcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint8_t idrPictureFlag;
-    std::uint8_t profileIdc;
-    std::uint8_t levelIdc;
-    std::uint32_t picWidthInLumaSamples;
-    std::uint32_t picHeightInLumaSamples;
-};
-
-struct Vp9PictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t profile;
-    std::uint32_t level;
-    std::uint32_t keyFrameFlag;
-    std::uint32_t intraOnly;
-    std::uint8_t bitDepth;
-    std::uint8_t colorRange;
-    std::uint32_t colorSpace;
-    std::uint32_t numFrames;
-    std::uint32_t frameWidth;
-    std::uint32_t frameHeight;
-    std::uint32_t renderWidth;
-    std::uint32_t renderHeight;
-};
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);

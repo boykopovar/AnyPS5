@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -8,43 +9,6 @@
 #include <initializer_list>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceUltInitialize();
-int APS5_VABI sceUltFinalize();
-int APS5_VABI sceUltMutexCreate(void*, const char*, void*, const UltMutexOptParam*, std::uint32_t);
-int APS5_VABI sceUltMutexLock(void*);
-int APS5_VABI sceUltMutexTryLock(void*);
-int APS5_VABI sceUltMutexUnlock(void*);
-int APS5_VABI sceUltMutexDestroy(void*);
-int APS5_VABI sceUltSemaphoreOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltQueueOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltQueueDataResourcePoolOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltWaitingQueueResourcePoolOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltUlthreadOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI _sceUltWaitingQueueResourcePoolCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*);
-int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void*);
-int APS5_VABI sceUltReaderWriterLockOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltConditionVariableOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI _sceUltConditionVariableOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI sceUltReaderWriterLockCreate(void*, const char*, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltReaderWriterLockDestroy(void*);
-int APS5_VABI sceUltReaderWriterLockLockRead(void*);
-int APS5_VABI sceUltReaderWriterLockTryLockRead(void*);
-int APS5_VABI sceUltReaderWriterLockUnlockRead(void*);
-int APS5_VABI sceUltReaderWriterLockLockWrite(void*);
-int APS5_VABI sceUltReaderWriterLockTryLockWrite(void*);
-int APS5_VABI sceUltReaderWriterLockUnlockWrite(void*);
-std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t, std::uint32_t);
-int APS5_VABI sceUltUlthreadRuntimeCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltUlthreadRuntimeDestroy(void*);
-int APS5_VABI sceUltUlthreadCreate(void*, const char*, UltUlthreadEntry, std::uint64_t, void*, std::uint64_t, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltUlthreadJoin(void*, std::int32_t*);
-int APS5_VABI sceUltUlthreadTryJoin(void*, std::int32_t*);
-int APS5_VABI sceUltUlthreadGetSelf(void**);
-int APS5_VABI sceUltUlthreadYield();
-int APS5_VABI sceUltUlthreadExit(std::int32_t);
-}
 
 namespace {
 
@@ -98,19 +62,18 @@ void MutexTryLock() {
 }
 
 void OptParams() {
-    using Initializer = int (APS5_VABI *)(void*, std::uint32_t);
+    using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
                                          sceUltWaitingQueueResourcePoolOptParamInitialize, sceUltUlthreadOptParamInitialize, sceUltReaderWriterLockOptParamInitialize,
                                          sceUltConditionVariableOptParamInitialize, _sceUltConditionVariableOptParamInitialize}) {
-        std::uint8_t bytes[136];
+        alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
         CHECK(initialize(nullptr, 0) == Null);
-        CHECK(initialize(bytes, 0) == Ok);
+        CHECK(initialize(reinterpret_cast<UltOptParam*>(bytes), 0) == Ok);
         for (std::size_t index = 0; index < 128; ++index) CHECK(bytes[index] == 0);
         for (std::size_t index = 128; index < sizeof(bytes); ++index) CHECK(bytes[index] == 0xa5);
     }
 }
-
 
 void WaitUntil(const std::atomic<bool>& flag) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -273,6 +236,7 @@ std::int32_t APS5_VABI ExitingEntry(std::uint64_t status) {
     if (sceUltUlthreadGetSelf(&self) == Ok) gSelf = self;
     gYield = sceUltUlthreadYield();
     sceUltUlthreadExit(static_cast<std::int32_t>(status));
+
     gPastExit = true;
     return -1;
 }

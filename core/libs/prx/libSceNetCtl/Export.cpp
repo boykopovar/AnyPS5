@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -35,16 +36,6 @@
 #include <vector>
 
 // Network-control state reflects host interface addressing, not PSN sign-in status.
-union NetCtlInfoV6;
-struct NetCtlConnectionConfiguration;
-struct NetCtlScanOptions;
-struct NetCtlScanBssidList;
-struct NetCtlScanInfo;
-struct NetCtlNatInfoInternal;
-struct NetCtlBandwidthInfo;
-struct NetCtlNetEvConfiguration;
-struct NetBweInfo;
-struct NetCtlWifiInfo;
 
 static constexpr int SCE_NET_CTL_ERROR_NOT_INITIALIZED = static_cast<int>(0x80412101);
 static constexpr int SCE_NET_CTL_ERROR_ID_NOT_FOUND = static_cast<int>(0x80412104);

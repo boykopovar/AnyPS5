@@ -1,21 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <array>
 #include <bit>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceKernelGetCurrentCpu(void);
-int APS5_VABI sceKernelGetMainSocId(void);
-int APS5_VABI sceKernelGetCpumode(void);
-std::int64_t APS5_VABI sceKernelGetCpuFrequency(void);
-std::uint64_t APS5_VABI sceKernelGetTscFrequency(void);
-KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr unsigned MAX_HOST_CPUS = 256;

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
@@ -11,8 +13,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
-
-extern "C" int APS5_VABI sceKernelFstat(int d, FileStat* sb);
 
 static constexpr std::uint64_t FileRepollNs = 1000000;
 
@@ -287,6 +287,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         while (e.triggered && ret < num) {
             ev[ret++] = e.event;
             if ((e.event.flags & EV_ONESHOT) != 0) {
+                if (e.filter.deleteEventFunc != nullptr) {
+                    auto owner = e.filter.owner;
+                    e.filter.deleteEventFunc(m_handle, &e);
+                }
                 erase = true;
                 break;
             }
@@ -615,7 +619,6 @@ int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, in
     return owner->DeleteEvent(ident, filter);
 }
 
-
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -797,6 +800,7 @@ int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
         }
     };
     EqueueAddEvent_nid_postfix(eq, event);
+
     return EQUEUE_OK;
 }
 
@@ -809,6 +813,7 @@ int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
         return EQUEUE_OK;
     }
     EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_AMPR);
+
     return EQUEUE_OK;
 }
 

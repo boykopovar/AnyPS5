@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
@@ -36,16 +39,6 @@ struct GuestStatfs {
 };
 static_assert(sizeof(GuestStatfs) == 472);
 
-extern "C" {
-int APS5_VABI _fstatfs_nid_postfix(int, GuestStatfs*);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI kqueue_nid_postfix();
-int* APS5_VABI __error_nid_postfix();
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "fstatfs check failed at line %d\n", line);
@@ -64,7 +57,7 @@ static void RequireFailure(int descriptor, int error) {
     GuestStatfs fs;
     std::memset(&fs, 0x5a, sizeof(fs));
     *__error_nid_postfix() = 0;
-    Require(_fstatfs_nid_postfix(descriptor, &fs) == -1);
+    Require(_fstatfs_nid_postfix(descriptor, reinterpret_cast<KernelStatfs*>(&fs)) == -1);
     Require(*__error_nid_postfix() == error);
     for (std::size_t i = 0; i < sizeof(fs); ++i) Require(reinterpret_cast<const unsigned char*>(&fs)[i] == 0x5a);
 }
@@ -72,7 +65,7 @@ static void RequireFailure(int descriptor, int error) {
 static void RequireVolume(int descriptor, const std::filesystem::path& path) {
     GuestStatfs fs;
     std::memset(&fs, 0x5a, sizeof(fs));
-    Require(_fstatfs_nid_postfix(descriptor, &fs) == 0);
+    Require(_fstatfs_nid_postfix(descriptor, reinterpret_cast<KernelStatfs*>(&fs)) == 0);
     const auto space = std::filesystem::space(path);
     Require(fs.f_version == StatfsVersion);
     Require(fs.f_bsize > 0 && fs.f_iosize > 0);
@@ -87,7 +80,7 @@ static void RequireVolume(int descriptor, const std::filesystem::path& path) {
 static void RequireDeviceFilesystem(int descriptor) {
     GuestStatfs fs;
     std::memset(&fs, 0x5a, sizeof(fs));
-    Require(_fstatfs_nid_postfix(descriptor, &fs) == 0);
+    Require(_fstatfs_nid_postfix(descriptor, reinterpret_cast<KernelStatfs*>(&fs)) == 0);
     GuestStatfs expected{};
     expected.f_version = StatfsVersion;
     expected.f_bsize = 512;

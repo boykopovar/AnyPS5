@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestList.hpp"
 
 #include <array>
@@ -8,16 +9,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-GuestListNodeRec* APS5_VABI FT_List_Find_nid_postfix(GuestListRec*, void*);
-void APS5_VABI FT_List_Add_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Insert_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Remove_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Up_nid_postfix(GuestListRec*, GuestListNodeRec*);
-int APS5_VABI FT_List_Iterate_nid_postfix(GuestListRec*, GuestListIterator, void*);
-void APS5_VABI FT_List_Finalize_nid_postfix(GuestListRec*, GuestListDestructor, GuestMemoryRec*, void*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -62,6 +53,7 @@ struct Lists {
     void Fill() {
         for (std::size_t i = 0; i < Count; ++i) {
             FT_List_Add_nid_postfix(&guest, &actual[i]);
+
             FT_List_Add(&native, &expected[i]);
         }
         Match();
@@ -79,10 +71,12 @@ static void Mutations() {
         if (active[i]) {
             if (choice) {
                 FT_List_Up_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Up(&lists.native, &lists.expected[i]);
                 ++operations[3];
             } else {
                 FT_List_Remove_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Remove(&lists.native, &lists.expected[i]);
                 active[i] = false;
                 ++operations[2];
@@ -90,10 +84,12 @@ static void Mutations() {
         } else {
             if (choice) {
                 FT_List_Insert_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Insert(&lists.native, &lists.expected[i]);
                 ++operations[1];
             } else {
                 FT_List_Add_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Add(&lists.native, &lists.expected[i]);
                 ++operations[0];
             }
@@ -236,14 +232,18 @@ static void FinalizationCases() {
                 guest.live.emplace(a, i);
                 native.live.emplace(b, i);
                 FT_List_Add_nid_postfix(&guestList, a);
+
                 FT_List_Add(&nativeList, b);
             }
             const auto savedHead = guestList.head;
             FT_List_Finalize_nid_postfix(&guestList, GuestDestroy, nullptr, &token);
+
             Require(guestList.head == savedHead && guest.events.empty());
             FT_List_Finalize_nid_postfix(nullptr, GuestDestroy, &guestMemory, &token);
+
             Require(guest.events.empty());
             FT_List_Finalize_nid_postfix(&guestList, destroy ? GuestDestroy : nullptr, &guestMemory, &token);
+
             FT_List_Finalize(&nativeList, destroy ? NativeDestroy : nullptr, &nativeMemory, &token);
             Require(guestList.head == nullptr && guestList.tail == nullptr && nativeList.head == nullptr && nativeList.tail == nullptr);
             Require(guest.live.empty() && native.live.empty());

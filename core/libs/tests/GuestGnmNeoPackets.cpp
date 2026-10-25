@@ -1,27 +1,8 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceGnmInsertDingDongMarker(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceGnmDrawIndexAuto(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndex(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndexOffset(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDispatchDirect(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDispatchIndirect(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDispatchIndirectOnMec(std::uint32_t*, std::uint32_t, std::uint64_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndirect(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndexIndirect(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndirectMulti(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndexIndirectMulti(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndirectCountMulti(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmDrawIndexIndirectCountMulti(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t*, std::uint32_t, std::uint64_t, std::uint32_t);
-int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t*, std::uint32_t, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmSetVgtControl(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmResetVgtControl(std::uint32_t*, std::uint32_t);
-}
 
 namespace {
 

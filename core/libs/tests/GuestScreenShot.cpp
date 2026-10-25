@@ -1,3 +1,4 @@
+#include "prx/libSceScreenShot/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -10,16 +11,6 @@
 #include <fstream>
 #include <random>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceScreenShotDisable();
-int APS5_VABI sceScreenShotEnable();
-int APS5_VABI sceScreenShotIsDisabled(int id, int* isDisabled);
-int APS5_VABI sceScreenShotDisableNotification();
-int APS5_VABI sceScreenShotEnableNotification();
-int APS5_VABI sceScreenShotSetOverlayImage(const char* path, int offsetX, int offsetY);
-int APS5_VABI sceScreenShotSetOverlayImageWithOrigin(const char* path, int offsetX, int offsetY, int origin);
-}
 
 namespace {
 

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "AppArchiveFixture.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -16,48 +19,10 @@
 #include <typeinfo>
 #include <vector>
 
-struct KernelIovec {
-    void* base;
-    std::size_t length;
-};
-
 extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes);
-std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes);
-std::int64_t APS5_VABI sceKernelPread(int d, void* buf, std::size_t nbytes, std::int64_t offset);
-std::int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt);
-std::int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* iov, int iovcnt, std::int64_t offset);
-std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
-int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
-int APS5_VABI sceKernelFstat(int d, FileStat* sb);
-int APS5_VABI sceKernelCheckReachability(const char* path);
-int APS5_VABI dup_nid_postfix(int d);
-int APS5_VABI dup2_nid_postfix(int from, int to);
-int APS5_VABI close_nid_postfix(int d);
-std::int64_t APS5_VABI pread_nid_postfix(int d, void* buf, std::size_t nbytes, std::int64_t offset);
-std::int64_t APS5_VABI lseek_nid_postfix(int d, std::int64_t offset, int whence);
-int APS5_VABI fcntl_nid_postfix(int d, int command, ...);
-int APS5_VABI ioctl_nid_postfix(int d, std::uint64_t request, void* argument);
-void* APS5_VABI opendir_nid_postfix(const char* path);
-void* APS5_VABI fdopen_nid_postfix(int d, const char* mode);
-int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioWaitRequest(std::int32_t id, std::int32_t* state, std::uint32_t* usec);
-int APS5_VABI sceKernelAioDeleteRequest(std::int32_t id, std::int32_t* ret);
-int APS5_VABI flock_nid_postfix(int d, int operation);
-int APS5_VABI _fstatfs_nid_postfix(int d, void* buf);
-int APS5_VABI ftruncate_nid_postfix(int d, std::int64_t length);
-int APS5_VABI sceKernelFsync(int d);
-int APS5_VABI sceKernelFdatasync(int d);
-int APS5_VABI sceKernelGetdents(int d, char* buf, int nbytes);
-int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode);
-int APS5_VABI sceKernelFutimes(int d, const void* times);
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
-void* APS5_VABI __cxa_current_primary_exception_nid_postfix();
-std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix();
+
 using TerminateHandler = void (*)();
-TerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(TerminateHandler);
+
 }
 
 namespace {
@@ -198,7 +163,7 @@ void Refusals() {
     Check(fd >= 0);
     Check(NotImplemented([fd] { (void)fdopen_nid_postfix(fd, "r"); }));
     Check(NotImplemented([fd] { (void)flock_nid_postfix(fd, 1); }));
-    Check(NotImplemented([fd] { alignas(8) char statfs[512]; (void)_fstatfs_nid_postfix(fd, statfs); }));
+    Check(NotImplemented([fd] { alignas(8) char statfs[512]; (void)_fstatfs_nid_postfix(fd, reinterpret_cast<KernelStatfs*>(statfs)); }));
     Check(NotImplemented([fd] { (void)ftruncate_nid_postfix(fd, 0); }));
     Check(NotImplemented([fd] { (void)sceKernelFsync(fd); }));
     Check(NotImplemented([fd] { (void)sceKernelFdatasync(fd); }));
@@ -243,6 +208,7 @@ int main(int argc, char** argv) {
         const int fd = sceKernelOpen("/app0/Data/Small.txt", SCE_KERNEL_O_RDONLY, 0);
         Check(fd >= 0);
         _ZSt13set_terminatePFvvE_nid_postfix(OnMmapRefused);
+
         (void)mmap_nid_postfix(nullptr, 16384, 1, 2, fd, 0);
         return 1;
     } else if (mode == "plain") {

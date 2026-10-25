@@ -1751,7 +1751,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (!tracker.watched) return;
     bool restored = false;
     for (const auto& [begin, end] : ranges) {
-        if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WriteBlockBytes != 0 || (end - tracker.base) % WriteBlockBytes != 0) continue;
+        if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WritePageBytes != 0 || (end - tracker.base) % WritePageBytes != 0) continue;
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (tracker.coverage.Covers(begin, bytes)) continue;
         GuestArena::GuestArenaCompareWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), bytes);

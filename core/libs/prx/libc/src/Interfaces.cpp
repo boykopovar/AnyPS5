@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -31,17 +32,6 @@
 #include <utility>
 #include <vector>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestInterfaceAddress {
-    GuestInterfaceAddress* next;
-    char* name;
-    std::uint32_t flags;
-    void* address;
-    void* netmask;
-    void* destination;
-    void* data;
-};
 static_assert(sizeof(GuestInterfaceAddress) == 56);
 static_assert(offsetof(GuestInterfaceAddress, flags) == 16);
 static_assert(offsetof(GuestInterfaceAddress, address) == 24);

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Equeue/include/EdgeWatch.hpp"
 #include "prx/libc/include/General.hpp"
@@ -31,8 +33,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -401,7 +401,7 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if (change.filter == EVFILT_TIMER) {
+    if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
     const bool descriptor = change.filter == EVFILT_READ || change.filter == EVFILT_WRITE;

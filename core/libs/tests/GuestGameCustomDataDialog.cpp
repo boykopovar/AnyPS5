@@ -1,16 +1,7 @@
+#include "prx/libSceGameCustomDataDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceGameCustomDataDialogInitialize(void);
-int APS5_VABI sceGameCustomDataDialogOpenA(const void* param);
-int APS5_VABI sceGameCustomDataDialogUpdateStatus(void);
-int APS5_VABI sceGameCustomDataDialogGetStatus(void);
-int APS5_VABI sceGameCustomDataDialogGetResultA(void* result);
-int APS5_VABI sceGameCustomDataDialogClose(void);
-int APS5_VABI sceGameCustomDataDialogTerminate(void);
-}
 
 namespace {
 
