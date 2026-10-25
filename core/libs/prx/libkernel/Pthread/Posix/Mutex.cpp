@@ -115,8 +115,7 @@ int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
 }
 
 int APS5_VABI pthread_mutexattr_getpshared_nid_postfix(const PthreadMutexattr* attr, int* pshared) {
-    if (!attr || !*attr) return POSIX_EINVAL;
-    if (!pshared) throw std::runtime_error("pthread_mutexattr_getpshared: null pshared");
+    if (!attr || !*attr || !pshared) return POSIX_EINVAL;
     *pshared = (*attr)->pshared;
     return 0;
 }
@@ -137,8 +136,7 @@ int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, 
 }
 
 int APS5_VABI pthread_mutexattr_getprotocol_nid_postfix(const PthreadMutexattr* attr, int* protocol) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!protocol) throw std::runtime_error("pthread_mutexattr_getprotocol: null protocol");
+    if (!attr || !*attr || !protocol) return PosixThread::GUEST_EINVAL;
     *protocol = (*attr)->protocol;
     return 0;
 }
@@ -151,8 +149,7 @@ int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* att
 }
 
 int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexattr* attr, int* prioceiling) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!prioceiling) throw std::runtime_error("pthread_mutexattr_getprioceiling: null prioceiling");
+    if (!attr || !*attr || !prioceiling) return PosixThread::GUEST_EINVAL;
     if ((*attr)->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
     *prioceiling = (*attr)->ceiling;
     return 0;
@@ -163,8 +160,7 @@ int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int 
 }
 
 int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr, int* type) {
-    if (!attr || !*attr) return POSIX_EINVAL;
-    if (!type) throw std::runtime_error("pthread_mutexattr_gettype: null type");
+    if (!attr || !*attr || !type) return POSIX_EINVAL;
     *type = static_cast<int>((*attr)->type);
     return 0;
 }
