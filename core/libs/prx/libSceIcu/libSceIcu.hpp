@@ -3,4 +3,5 @@
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "Numeric.hpp"
+#include "Set.hpp"
 #include "Version.hpp"
