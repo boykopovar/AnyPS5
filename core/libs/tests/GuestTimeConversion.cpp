@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -15,6 +16,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 
@@ -372,6 +377,26 @@ static void CheckGuestZone() {
 
 }
 
+#ifdef _WIN32
+static void CheckWindowsZoneNameEncoding() {
+    const std::string ansiName{"C\xe4T", 3};
+    Require(GuestTimeZoneNameToUtf8(ansiName.c_str(), 1252) == "C\xc3\xa4T", "Windows zone name was not converted from the ANSI code page to UTF-8");
+    Require(GuestTimeZoneNameToUtf8("UTC", 1252) == "UTC", "ASCII Windows zone name changed during UTF-8 conversion");
+
+    tzset_nid_postfix();
+    for (int index = 0; index < 2; ++index) {
+        const std::string expected = GuestTimeZoneNameToUtf8(_tzname[index], CP_ACP);
+        Require(std::strcmp(tzname_nid_postfix[index], expected.c_str()) == 0, "tzname did not expose the Windows zone name as UTF-8");
+    }
+    const std::int64_t now = 172800;
+    GuestTm local{};
+    Require(localtime_s_nid_postfix(&now, &local) == &local, "Windows localtime conversion failed");
+    const std::string expected = GuestTimeZoneNameToUtf8(_tzname[local.tm_isdst > 0 ? 1 : 0], CP_ACP);
+    Require(local.tm_zone != nullptr && std::strcmp(local.tm_zone, expected.c_str()) == 0,
+        "localtime tm_zone did not expose the Windows zone name as UTF-8");
+}
+#endif
+
 static bool ZoneFieldsConsistent(const GuestTm& time, std::int64_t instant, int hour) {
     const std::int64_t localSeconds = ((instant + time.tm_gmtoff) % 86400 + 86400) % 86400;
     if (time.tm_hour * 3600 + time.tm_min * 60 + time.tm_sec != localSeconds || time.tm_hour != hour) return false;
@@ -560,6 +585,9 @@ int main() {
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
     CheckGuestZone();
+#ifdef _WIN32
+    CheckWindowsZoneNameEncoding();
+#endif
     CheckZoneRace();
 #ifdef _WIN32
     CheckRejectedZone();
