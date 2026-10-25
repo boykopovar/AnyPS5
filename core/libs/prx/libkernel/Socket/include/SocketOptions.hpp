@@ -23,6 +23,8 @@ struct SocketOptionState {
     unsigned int tcpKeepInterval = 0;
     unsigned int tcpKeepCount = 0;
     int keptFlags = 0;
+    int tcpFlags = 0;
+    int ipReceiveOptions = 0;
     std::uint32_t multicastInterface = 0;
     std::vector<std::uint64_t> memberships;
 };

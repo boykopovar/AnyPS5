@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <utility>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -74,13 +75,14 @@ int main() {
     Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
     const int server = accept_nid_postfix(listener, nullptr, nullptr);
     Require(server >= 0);
-    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1) && Set(listener, TcpLevel, 0x100, 60));
+    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1) && Set(listener, TcpLevel, 0x100, 60) && Set(listener, TcpLevel, 4, 1) && Set(listener, TcpLevel, 8, 1));
     const int secondClient = socket_nid_postfix(2, 1, 0);
     Require(secondClient >= 0 && connect_nid_postfix(secondClient, address.data(), address.size()) == 0);
     const int inheriting = accept_nid_postfix(listener, nullptr, nullptr);
     Require(inheriting >= 0);
     Require(Get(inheriting, SocketLevel, NoSigpipe) == NoSigpipe && Get(inheriting, TcpLevel, TcpNoDelay) == 4);
     Require(Get(inheriting, TcpLevel, 0x100) == 60 && Get(server, TcpLevel, 0x100) == 7200);
+    Require(Get(inheriting, TcpLevel, 4) == 0x1000 && Get(inheriting, TcpLevel, 8) == 0);
     Require(Get(server, SocketLevel, NoSigpipe) == 0 && Get(server, TcpLevel, TcpNoDelay) == 0);
     Require(close_nid_postfix(inheriting) == 0 && close_nid_postfix(secondClient) == 0);
     const int datagram = socket_nid_postfix(2, 2, 0);
@@ -112,6 +114,12 @@ int main() {
     Require(Set(fresh, TcpLevel, 0x400, 3) && Get(fresh, TcpLevel, 0x400) == 3);
     Require(Set(fresh, TcpLevel, 0x400, -1) && Get(fresh, TcpLevel, 0x400) == -1);
     Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, sizeof(one)), NoProtocolOption));
+    for (const auto& [option, bit] : {std::pair{4, 0x1000}, std::pair{8, 0x8}, std::pair{0x80, 0x10000}}) {
+        Require(Get(fresh, TcpLevel, option) == 0);
+        Require(Set(fresh, TcpLevel, option, 5) && Get(fresh, TcpLevel, option) == bit);
+        Require(Set(fresh, TcpLevel, option, -1) && Get(fresh, TcpLevel, option) == bit);
+        Require(Set(fresh, TcpLevel, option, 0) && Get(fresh, TcpLevel, option) == 0);
+    }
     Require(close_nid_postfix(fresh) == 0);
     length = sizeof(value);
     Require(Fails(setsockopt_nid_postfix(datagram, TcpLevel, TcpNoDelay, &one, sizeof(one)), Invalid));
