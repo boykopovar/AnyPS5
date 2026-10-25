@@ -1485,6 +1485,31 @@ static std::uint32_t NormalizedChannelMask(VkFormat format) {
     }
 }
 
+namespace {
+
+std::vector<std::uint32_t> ColorExportSlots(std::uint32_t shaderMask) {
+    std::vector<std::uint32_t> slots;
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.push_back(slot);
+    }
+    return slots;
+}
+
+std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, const std::vector<std::uint32_t>& slots) {
+    const auto formatEntry = find(context, 0x1c5);
+    const auto format = formatEntry == context.end() ? 0u : formatEntry->second;
+    std::uint32_t count = 0;
+    for (std::uint32_t index = 0; index < slots.size(); ++index) {
+        if (((written >> (4u * slots[index])) & 0xfu) == 0) continue;
+        if (((format >> (4u * index)) & 0xfu) == 0) continue;
+        count = index + 1;
+    }
+    if (((read(context, 0x202) >> 4u) & 7u) == 0u) count = 0;
+    return count;
+}
+
+}
+
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
@@ -1641,18 +1666,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
     const auto exportFormatEntry = find(cx, 0x1c5);
     const auto exportFormat = exportFormatEntry == cx.end() ? 0u : exportFormatEntry->second;
-    std::vector<std::uint32_t> exportSlots;
-    for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) exportSlots.push_back(slot);
-    }
-    const auto written = [&](std::uint32_t slot) { return ((targetMask >> (4u * slot)) & 0xfu) != 0; };
-    std::uint32_t exportCount = 0;
-    for (std::uint32_t index = 0; index < exportSlots.size(); ++index) {
-        if (!written(exportSlots[index])) continue;
-        if (((exportFormat >> (4u * index)) & 0xfu) == 0) continue;
-        exportCount = index + 1;
-    }
-    if (((read(cx, 0x202) >> 4u) & 7u) == 0u) exportCount = 0;
+    const auto exportSlots = ColorExportSlots(shaderMask);
+    const auto exportCount = ColorExportCount(cx, targetMask, exportSlots);
     result.hasColorTarget = exportCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u exports=%u", result.hasColorTarget ? 1u : 0u, exportCount);
 
@@ -1666,7 +1681,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
     for (std::uint32_t index = 0; index < exportCount; ++index) {
         const auto slot = exportSlots[index];
-        if (!written(slot)) continue;
+        if (((targetMask >> (4u * slot)) & 0xfu) == 0) continue;
         // Export formats only matter for the targets the draw writes.
         const auto slotExport = (exportFormat >> (4u * index)) & 0xfu;
         if (slotExport == 0) continue;
@@ -2528,7 +2543,10 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
     if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
-    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, ColorWriteMask(cx) != 0)) return colorControlMessage(word);
+    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
+        const auto slots = ColorExportSlots(shaderMask);
+        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots) != 0)) return colorControlMessage(word);
+    }
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);
     for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {

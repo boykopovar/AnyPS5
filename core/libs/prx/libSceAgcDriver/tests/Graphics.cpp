@@ -2362,6 +2362,18 @@ void CompactedExportTests() {
     queue.context[0x1c5] = 0x90009u;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.colors.size() == 1 && state.colors[0].slot == 0 && state.colors[0].exportIndex == 0, "a zero color export format exported a color target");
+    queue.context[0x1c5] = 0x40u;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].slot == 4 && state.colors[0].exportIndex == 1 && state.blends.size() == 2 && state.blends[0].colorWriteMask == 0, "a zero export format shifted a later MRT export");
+    auto resolve = makeState();
+    resolve.context[0x1b3] = 2;
+    resolve.context[0x1b4] = 2;
+    resolve.context[0x1c5] = 0;
+    resolve.context[0x202] = 0xcc0030u;
+    const auto resolveReason = AgcDriver::Graphics::DrawRejection(resolve, false);
+    Require(resolveReason.empty(), "the precheck rejected a resolve draw whose every export format is zero: " + resolveReason);
+    resolve.context[0x1c5] = 9;
+    Require(AgcDriver::Graphics::DrawRejection(resolve, false).find("CB_COLOR_CONTROL") != std::string::npos, "the precheck accepted a resolve draw with a color export");
     queue.context[0x8e] = 0xf000fu;
     queue.context[0x8f] = 0xf0f0fu;
     queue.context[0x1c5] = 0x999u;
