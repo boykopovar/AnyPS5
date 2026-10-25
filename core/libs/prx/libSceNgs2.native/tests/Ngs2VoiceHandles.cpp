@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <algorithm>
@@ -42,6 +43,7 @@ static bool MatrixInfoThrows(uintptr_t voice, std::uint32_t matrixId) {
     bool threw = false;
     try {
         sceNgs2VoiceGetMatrixInfo(voice, matrixId, &info, sizeof(info));
+
     } catch (const TException&) {
         threw = true;
     }

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -80,8 +81,7 @@ const bool standardDescriptorsOpen = [] {
 FileStream input{stdin};
 }
 extern "C" {
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
+
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
@@ -124,7 +124,6 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
     return static_cast<std::int32_t>(code);
 }
 
-
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
@@ -159,6 +158,7 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
     auto* stream = __stdinp_nid_postfix;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     flockfile_nid_postfix(stream);
+
     struct Unlock {
         FileStream* stream;
         ~Unlock() { funlockfile_nid_postfix(stream); }
@@ -281,5 +281,6 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);
+
 }
 }

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <algorithm>
@@ -13,56 +16,9 @@
 #include <set>
 #include <string>
 
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-struct GuestSigaction {
-    std::uintptr_t handler;
-    int flags;
-    GuestSignalSet mask;
-};
 static_assert(sizeof(GuestSigaction) == 32);
-struct Iovec {
-    void* base;
-    std::uint64_t length;
-};
-struct Msghdr {
-    void* name;
-    std::uint32_t nameLength;
-    Iovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
-static_assert(sizeof(Msghdr) == 48);
 
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI _bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI _listen_nid_postfix(int, int);
-int APS5_VABI _accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI _connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI _getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI _getpeername_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI _setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI _getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI _sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI _recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI _sendmsg_nid_postfix(int, const Msghdr*, int);
-std::int64_t APS5_VABI _recvmsg_nid_postfix(int, Msghdr*, int);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-int APS5_VABI getdirentries_nid_postfix(int, char*, int, std::int64_t*);
-int APS5_VABI _getdirentries_nid_postfix(int, char*, int, std::int64_t*);
-int APS5_VABI raise_nid_postfix(int);
-int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
-int APS5_VABI _sigaction_nid_postfix(int, const GuestSigaction*, GuestSigaction*);
-int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet*);
-}
+static_assert(sizeof(GuestMsghdr) == 48);
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -183,21 +139,21 @@ static void DatagramSockets() {
 
     char head[] = "scatter ";
     char tail[] = "gather";
-    Iovec parts[2]{{head, 8}, {tail, 6}};
-    Msghdr outgoing{destination.data(), static_cast<std::uint32_t>(destination.size()), parts, 2, nullptr, 0, 0};
+    KernelIovec parts[2]{{head, 8}, {tail, 6}};
+    GuestMsghdr outgoing{destination.data(), static_cast<std::uint32_t>(destination.size()), parts, 2, nullptr, 0, 0};
     Require(_sendmsg_nid_postfix(sender, &outgoing, 0) == 14);
     char first[4]{};
     char second[16]{};
-    Iovec pieces[2]{{first, sizeof(first)}, {second, sizeof(second)}};
+    KernelIovec pieces[2]{{first, sizeof(first)}, {second, sizeof(second)}};
     source.fill(0);
-    Msghdr incoming{source.data(), static_cast<std::uint32_t>(source.size()), pieces, 2, nullptr, 0, -1};
+    GuestMsghdr incoming{source.data(), static_cast<std::uint32_t>(source.size()), pieces, 2, nullptr, 0, -1};
     Require(_recvmsg_nid_postfix(receiver, &incoming, 0) == 14);
     Require(std::memcmp(first, "scat", 4) == 0 && std::memcmp(second, "ter gather", 10) == 0);
     Require(incoming.flags == 0 && incoming.nameLength == 16 && source[2] == senderName[2] && source[3] == senderName[3] && source[4] == 127);
     Require(_sendmsg_nid_postfix(sender, &outgoing, 0) == 14);
     char shortBuffer[5]{};
-    Iovec single{shortBuffer, sizeof(shortBuffer)};
-    Msghdr truncated{nullptr, 0, &single, 1, nullptr, 0, 0};
+    KernelIovec single{shortBuffer, sizeof(shortBuffer)};
+    GuestMsghdr truncated{nullptr, 0, &single, 1, nullptr, 0, 0};
     Require(_recvmsg_nid_postfix(receiver, &truncated, 0) == 5 && std::memcmp(shortBuffer, "scatt", 5) == 0 && truncated.flags == Truncated);
     Require(Fails(_sendmsg_nid_postfix(sender, nullptr, 0), BadAddress));
     Require(Fails(_recvmsg_nid_postfix(receiver, nullptr, 0), BadAddress));

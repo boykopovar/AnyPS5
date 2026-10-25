@@ -7,13 +7,6 @@
 #include <stdexcept>
 #include <string_view>
 
-extern "C" {
-int APS5_VABI sceUsbStorageGetMountPointOfShellCore(unsigned int device, char* mountPoint);
-int APS5_VABI sceUsbStorageClearFakeWriteProtection();
-int APS5_VABI sceUsbStorageSetFakeMapLockForDebug();
-int APS5_VABI sceUsbStorageSetFakeWriteProtection();
-}
-
 namespace {
 
 int g_attr = 0;

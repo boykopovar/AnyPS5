@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -447,10 +448,7 @@ char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, si
 
 }
 
-
 extern "C" {
-
-int APS5_VABI tolower_nid_postfix(int);
 
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
@@ -811,6 +809,7 @@ int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     if (destsz > RsizeMax) return GuestErange;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return src ? GuestErange : GuestEinval;
     }
     const auto destination = reinterpret_cast<std::uintptr_t>(dest);
@@ -818,6 +817,7 @@ int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     const auto distance = destination < source ? source - destination : destination - source;
     if (count != 0 && distance < count * sizeof(char16_t)) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return GuestEinval;
     }
     if (count != 0) std::memcpy(dest, src, count * sizeof(char16_t));
@@ -832,6 +832,7 @@ int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16
     if (destsz > RsizeMax) return GuestErange;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return src ? GuestErange : GuestEinval;
     }
     if (count != 0) std::memmove(dest, src, count * sizeof(char16_t));

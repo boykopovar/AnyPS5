@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
@@ -11,8 +12,7 @@
 
 extern "C" {
 _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
-int APS5_VABI fputc_nid_postfix(int, FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
+
 }
 
 namespace {

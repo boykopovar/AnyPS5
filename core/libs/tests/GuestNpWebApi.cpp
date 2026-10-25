@@ -1,18 +1,8 @@
+#include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize);
-int APS5_VABI sceNpWebApiTerminate(int libCtxId);
-int APS5_VABI sceNpWebApiCreateHandle(int libCtxId);
-int APS5_VABI sceNpWebApiDeleteHandle(int libCtxId, int handleId);
-int APS5_VABI sceNpWebApiCreatePushEventFilter(int libCtxId, const void* filterParam, std::size_t filterParamNum);
-int APS5_VABI sceNpWebApiDeletePushEventFilter(int libCtxId, int filterId);
-int APS5_VABI sceNpWebApiCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, unsigned npServiceLabel, const void* filterParam, std::size_t filterParamNum);
-int APS5_VABI sceNpWebApiDeleteServicePushEventFilter(int libCtxId, int filterId);
-}
 
 namespace {
 

@@ -38,7 +38,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -47,7 +47,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 9u;
+constexpr std::uint32_t FileFormat = 10u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -206,6 +206,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.rectList);
     writer.Bool(state.dualSourceBlend);
     writer.U32(state.reversedBlend);
+    writer.U32(state.colorRop);
     writer.U32(static_cast<std::uint32_t>(state.topology));
     writer.Bool(state.primitiveRestart);
     writer.Bool(state.negativeOneToOne);
@@ -273,6 +274,7 @@ void decodeState(Reader& reader, State& state) {
     state.rectList = reader.Bool();
     state.dualSourceBlend = reader.Bool();
     state.reversedBlend = reader.U32();
+    state.colorRop = static_cast<std::uint8_t>(reader.U32());
     state.topology = static_cast<VkPrimitiveTopology>(reader.U32());
     state.primitiveRestart = reader.Bool();
     state.negativeOneToOne = reader.Bool();
@@ -1511,6 +1513,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.rectList = state.rectList;
     canonical.dualSourceBlend = state.dualSourceBlend;
     canonical.reversedBlend = state.reversedBlend;
+    canonical.colorRop = state.colorRop;
     canonical.topology = state.topology;
     canonical.primitiveRestart = state.primitiveRestart;
     canonical.negativeOneToOne = state.negativeOneToOne;

@@ -28,6 +28,34 @@
 
 namespace AgcDriver::Graphics {
 
+namespace {
+
+bool LogicOpFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_UNORM:
+        case VK_FORMAT_R8G8_UNORM:
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R8_UINT:
+        case VK_FORMAT_R8G8_UINT:
+        case VK_FORMAT_R8G8B8A8_UINT:
+        case VK_FORMAT_R16_UINT:
+        case VK_FORMAT_R16G16_UINT:
+        case VK_FORMAT_R16G16B16A16_UINT:
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_R32G32_UINT:
+        case VK_FORMAT_R32G32B32A32_UINT: return true;
+        default: return false;
+    }
+}
+
+}
+
 void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline) {
     if (!context.pipelineExecutableInfo) return;
     const auto getProperties = context.Function<PFN_vkGetPipelineExecutablePropertiesKHR>("vkGetPipelineExecutablePropertiesKHR");
@@ -363,6 +391,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         }
     }
     for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, blend);
+    appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
     for (const auto& color : state.colors) {
@@ -429,6 +458,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
     Require(!state.dualSourceBlend || (context.dualSrcBlend && state.blends.size() <= context.limits.maxFragmentDualSrcAttachments), "device does not support dual-source blending into this many attachments");
     Require(state.reversedBlend == 0 || (context.dualSrcBlend && state.blends.size() <= context.limits.maxFragmentDualSrcAttachments), "blending into a color target with a reversed component order through a second source color needs dual-source blending, which the device does not support");
+    Require(LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_COPY || context.logicOp, "device does not support color logic operations");
+    Require(LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_COPY || std::ranges::all_of(state.colors, [](const ColorTarget& color) { return LogicOpFormat(color.format); }), "color logic operations on a color target that is not a normalized or integer format are not implemented");
     Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
     Require(!state.perSampleShading || context.sampleRateShading, "per-sample pixel shading requires the sampleRateShading device feature");
     Require(!state.mergedCoverage || (context.mergedCoverageSampleCounts & state.samples) != 0, "an overrasterized draw (a multisampled rasterizer into one-sample color targets) requires VK_NV_framebuffer_mixed_samples with merged coverage reduction");
@@ -651,6 +682,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
                 secondChannels[index].dstColorBlendFactor = state.blends[index].dstAlphaBlendFactor;
                 secondChannels[index].colorBlendOp = state.blends[index].alphaBlendOp;
             }
+        }
+        if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
+            blend.logicOpEnable = VK_TRUE;
+            blend.logicOp = logicOp;
         }
         blend.attachmentCount = static_cast<std::uint32_t>(firstChannels.size());
         blend.pAttachments = firstChannels.empty() ? nullptr : firstChannels.data();
@@ -995,6 +1030,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
     for (const auto& blend : state.blends) append(key, blend);
+    append(key, state.colorRop);
     for (const auto value : state.blendConstants) append(key, value);
     append(key, state.samples);
     append(key, state.perSampleShading);

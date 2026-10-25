@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
@@ -5,13 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {

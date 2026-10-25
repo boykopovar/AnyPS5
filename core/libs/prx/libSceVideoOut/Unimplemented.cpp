@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -61,7 +62,6 @@ int APS5_VABI sceVideoOutAdjustColorSpaceConversion_(int handle, const VideoOutC
     if (settings_size < sizeof(VideoOutColorSpaceConversionSettings)) throw std::runtime_error("sceVideoOutAdjustColorSpaceConversion_: VIDEO_OUT_ERROR_INVALID_VALUE");
     return sceVideoOutAdjustColorSpaceConversion(handle, settings);
 }
-
 
 int APS5_VABI sceDbgVideoOutAddOutputModeVr60Privilege() {
     NotImplemented_nid_no_patch(__func__);

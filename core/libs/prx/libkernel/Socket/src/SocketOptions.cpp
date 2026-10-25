@@ -16,6 +16,7 @@
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 
 namespace GuestSockets {
 namespace {
@@ -40,11 +41,17 @@ constexpr int GuestNonBlocking = 0x1200;
 constexpr int GuestNonBlockingState = 0x100;
 constexpr int GuestUnix = 1;
 constexpr int GuestTcpNoDelay = 1;
+constexpr int GuestReusePort = 0x200;
+constexpr int KeptFlags = 0x1 | GuestReuseAddress | 0x40 | GuestReusePort | 0x400 | 0x2000 | 0x10000;
+constexpr int WriteOnlyFlags = 0x4000 | 0x8000;
 constexpr int GuestTcpNoDelayFlag = 4;
 constexpr int GuestTcpMaximumSegment = 2;
 constexpr int GuestTcpKeepIdle = 0x100;
 constexpr int GuestTcpKeepInterval = 0x200;
 constexpr int GuestTcpKeepCount = 0x400;
+constexpr int GuestTcpNoPush = 4;
+constexpr int GuestTcpNoOptions = 8;
+constexpr int GuestTcpOption80 = 0x80;
 constexpr int MinimumSegment = 216;
 constexpr unsigned int TicksPerSecond = 1000;
 constexpr unsigned int DefaultKeepIdle = 7200;
@@ -55,6 +62,16 @@ constexpr int GuestIpTypeOfService = 3;
 constexpr int GuestIpTimeToLive = 4;
 constexpr int GuestIpMulticastTimeToLive = 10;
 constexpr int GuestIpMulticastLoop = 11;
+constexpr int GuestIpMulticastInterface = 9;
+constexpr int GuestIpAddMembership = 12;
+constexpr int GuestIpDropMembership = 13;
+constexpr int GuestIpReceiveDestination = 7;
+constexpr int GuestIpReceiveInterface = 20;
+constexpr int GuestIpReceiveTimeToLive = 65;
+constexpr std::uint32_t MulticastRequestWithIndex = 12;
+constexpr int ErrorNotSupported = 45;
+constexpr int ErrorAddressInUse = 48;
+constexpr int ErrorAddressNotAvailable = 49;
 
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
@@ -98,7 +115,6 @@ int HostError() { return GuestErrorFromHost(errno); }
 
 int NativeBoolean(int option) {
     switch (option) {
-        case GuestReuseAddress: return SO_REUSEADDR;
         case GuestKeepAlive: return SO_KEEPALIVE;
         case GuestDontRoute: return SO_DONTROUTE;
         case GuestBroadcast: return SO_BROADCAST;
@@ -118,6 +134,24 @@ void EnsureBuffers(SocketOptionState& state, int family, int type) {
     }
     state.sendLowWater = std::min(2048, state.sendBuffer);
     state.receiveLowWater = 1;
+}
+
+int TcpFlagBit(int option) {
+    switch (option) {
+        case GuestTcpNoPush: return 0x1000;
+        case GuestTcpNoOptions: return 0x8;
+        case GuestTcpOption80: return 0x10000;
+        default: return 0;
+    }
+}
+
+int IpReceiveBit(int option) {
+    switch (option) {
+        case GuestIpReceiveDestination: return 1;
+        case GuestIpReceiveInterface: return 2;
+        case GuestIpReceiveTimeToLive: return 4;
+        default: return 0;
+    }
 }
 
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
@@ -202,6 +236,25 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         if (::setsockopt(handle, SOL_SOCKET, NativeBoolean(option), reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
         return 0;
     }
+    if ((option & (KeptFlags | WriteOnlyFlags)) != 0 && (option & (option - 1)) == 0) {
+        if (length < sizeof(int)) return ErrorInvalid;
+        int number;
+        std::memcpy(&number, value, sizeof(number));
+        if ((option & KeptFlags) == 0) return 0;
+        const int flags = number != 0 ? state.keptFlags | option : state.keptFlags & ~option;
+        if (option == GuestReuseAddress || option == GuestReusePort) {
+#ifdef _WIN32
+            const int reuseAddress = (flags & (GuestReuseAddress | GuestReusePort)) != 0 ? 1 : 0;
+#else
+            const int reuseAddress = (flags & GuestReuseAddress) != 0 ? 1 : 0;
+            const int reusePort = (flags & GuestReusePort) != 0 ? 1 : 0;
+            if (::setsockopt(handle, SOL_SOCKET, SO_REUSEPORT, reinterpret_cast<NativeOptionValue>(&reusePort), sizeof(reusePort))) return HostError();
+#endif
+            if (::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<NativeOptionValue>(&reuseAddress), sizeof(reuseAddress))) return HostError();
+        }
+        state.keptFlags = flags;
+        return 0;
+    }
     return ErrorNoProtocolOption;
 }
 
@@ -244,6 +297,8 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         number = listening ? GuestAcceptConnection : 0;
     } else if (option == GuestType) {
         number = type;
+    } else if ((option & KeptFlags) != 0 && (option & (option - 1)) == 0) {
+        number = state.keptFlags & option;
     } else if (option == GuestNoSigpipe) {
         number = state.noSignal ? GuestNoSigpipe : 0;
     } else if (option == GuestNonBlocking) {
@@ -270,11 +325,15 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
 int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length) {
     if (!tcp) return ErrorInvalid;
     if (option != GuestTcpNoDelay && option != GuestTcpMaximumSegment && option != GuestTcpKeepIdle && option != GuestTcpKeepInterval &&
-        option != GuestTcpKeepCount)
+        option != GuestTcpKeepCount && TcpFlagBit(option) == 0)
         return ErrorNoProtocolOption;
     if (length < sizeof(int)) return ErrorInvalid;
     int number;
     std::memcpy(&number, value, sizeof(number));
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        state.tcpFlags = number != 0 ? state.tcpFlags | bit : state.tcpFlags & ~bit;
+        return 0;
+    }
     const auto unsignedNumber = static_cast<unsigned int>(number);
     if (option == GuestTcpMaximumSegment) {
         if (number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
@@ -304,6 +363,10 @@ int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp,
             : (state.tcpKeepCount != 0 ? state.tcpKeepCount : DefaultKeepCount);
         return Copy(value, length, &number, sizeof(number));
     }
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        const int number = state.tcpFlags & bit;
+        return Copy(value, length, &number, sizeof(number));
+    }
     if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
     int enabled = 0;
     socklen_t size = sizeof(enabled);
@@ -312,9 +375,66 @@ int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp,
     return Copy(value, length, &number, sizeof(number));
 }
 
-int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4, int option, const void* value, std::uint32_t length) {
+bool MulticastOption(int option) {
+    return option == GuestIpMulticastInterface || option == GuestIpMulticastTimeToLive || option == GuestIpMulticastLoop ||
+        option == GuestIpAddMembership || option == GuestIpDropMembership;
+}
+
+int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4, bool datagram, int option, const void* value, std::uint32_t length) {
     if (!ipv4) return ErrorInvalid;
+    if (MulticastOption(option) && !datagram) return ErrorNotSupported;
     const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestIpAddMembership || option == GuestIpDropMembership) {
+        if (length < sizeof(ip_mreq)) return ErrorInvalid;
+        ip_mreq request{};
+        std::memcpy(&request, value, sizeof(request));
+        const auto* group = reinterpret_cast<const unsigned char*>(&request.imr_multiaddr);
+        if ((group[0] & 0xf0) != 0xe0) return ErrorInvalid;
+        std::uint32_t groupBits;
+        std::uint32_t interfaceBits;
+        std::memcpy(&groupBits, &request.imr_multiaddr, sizeof(groupBits));
+        std::memcpy(&interfaceBits, &request.imr_interface, sizeof(interfaceBits));
+        const std::uint64_t key = (std::uint64_t{groupBits} << 32) | interfaceBits;
+        const bool join = option == GuestIpAddMembership;
+        const auto found = join || interfaceBits != 0
+            ? std::find(state.memberships.begin(), state.memberships.end(), key)
+            : std::find_if(state.memberships.begin(), state.memberships.end(), [groupBits](std::uint64_t joined) { return joined >> 32 == groupBits; });
+        if (join && found != state.memberships.end()) return ErrorAddressInUse;
+        if (!join && found == state.memberships.end()) return ErrorAddressNotAvailable;
+        if (!join) {
+            const auto joinedInterface = static_cast<std::uint32_t>(*found);
+            std::memcpy(&request.imr_interface, &joinedInterface, sizeof(joinedInterface));
+        }
+        if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request)))
+            return HostError();
+        if (join) state.memberships.push_back(key);
+        else state.memberships.erase(found);
+        return 0;
+    }
+    if (option == GuestIpMulticastInterface) {
+        if (length < sizeof(in_addr)) return ErrorInvalid;
+        in_addr address{};
+        if (length == MulticastRequestWithIndex) {
+            std::int32_t index;
+            std::memcpy(&index, static_cast<const unsigned char*>(value) + 8, sizeof(index));
+            if (index != 0) throw std::runtime_error("IP_MULTICAST_IF: an interface index is not supported");
+            const auto* addresses = static_cast<const unsigned char*>(value);
+            if (std::any_of(addresses, addresses + 8, [](unsigned char byte) { return byte != 0; }))
+                throw std::runtime_error("IP_MULTICAST_IF: an ip_mreqn with a non-zero address is not supported");
+        } else {
+            std::memcpy(&address, value, sizeof(address));
+        }
+        if (::setsockopt(handle, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<NativeOptionValue>(&address), sizeof(address))) return HostError();
+        std::memcpy(&state.multicastInterface, &address, sizeof(address));
+        return 0;
+    }
+    if (const int bit = IpReceiveBit(option); bit != 0) {
+        if (length < sizeof(int)) return ErrorInvalid;
+        int number;
+        std::memcpy(&number, value, sizeof(number));
+        state.ipReceiveOptions = number != 0 ? state.ipReceiveOptions | bit : state.ipReceiveOptions & ~bit;
+        return 0;
+    }
     if (option == GuestIpTimeToLive || option == GuestIpTypeOfService) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
@@ -349,10 +469,16 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
     return ErrorNoProtocolOption;
 }
 
-int GetIpLevelOption(SocketOptionState& state, bool ipv4, int option, void* value, std::uint32_t* length) {
+int GetIpLevelOption(SocketOptionState& state, bool ipv4, bool datagram, int option, void* value, std::uint32_t* length) {
     if (!ipv4) return ErrorInvalid;
+    if (MulticastOption(option) && option != GuestIpAddMembership && option != GuestIpDropMembership && !datagram) return ErrorNotSupported;
+    if (option == GuestIpMulticastInterface) {
+        if (*length == MulticastRequestWithIndex) throw std::runtime_error("IP_MULTICAST_IF: reading an ip_mreqn is not supported");
+        return Copy(value, length, &state.multicastInterface, sizeof(state.multicastInterface));
+    }
     int number;
-    if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
+    if (const int bit = IpReceiveBit(option); bit != 0) number = (state.ipReceiveOptions & bit) != 0 ? 1 : 0;
+    else if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
     else if (option == GuestIpTypeOfService) number = state.ipTypeOfService;
     else if (option == GuestIpMulticastTimeToLive) number = state.multicastTimeToLive;
     else if (option == GuestIpMulticastLoop) number = state.multicastLoop ? 1 : 0;

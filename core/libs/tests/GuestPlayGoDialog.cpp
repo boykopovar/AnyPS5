@@ -1,18 +1,9 @@
+#include "prx/libScePlayGoDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI scePlayGoDialogInitialize(void);
-int APS5_VABI scePlayGoDialogTerminate(void);
-int APS5_VABI scePlayGoDialogOpen(const void* param);
-int APS5_VABI scePlayGoDialogClose(void);
-int APS5_VABI scePlayGoDialogUpdateStatus(void);
-int APS5_VABI scePlayGoDialogGetStatus(void);
-int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

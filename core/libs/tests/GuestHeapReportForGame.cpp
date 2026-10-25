@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -14,10 +15,6 @@
 #include <sstream>
 #include <string>
 
-extern "C" {
-void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
-void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
-}
 
 static std::string ReadAll(const std::filesystem::path& path) {
     std::ifstream file(path);

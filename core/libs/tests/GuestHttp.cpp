@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
@@ -13,55 +14,14 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
-int APS5_VABI sceHttpUriCopy(SceHttpUriElement*, const SceHttpUriElement*, void*, std::size_t, std::size_t*);
-int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
-int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
-int APS5_VABI sceHttpSetRequestStatusCallback(int, void (APS5_VABI *)(int, int, void*), void*);
-int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
-int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
-int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriSweepPath(char*, const char*, std::size_t);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpWaitRequest(HttpEpollHandle, HttpNBEvent*, int, int);
-int APS5_VABI sceHttpAbortWaitRequest(HttpEpollHandle);
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpAuthCacheFlush(int);
-int APS5_VABI sceHttpCookieFlush(int);
-int APS5_VABI sceHttpGetMemoryPoolStats(int, void*);
-int APS5_VABI sceHttpReadData(int, void*, std::size_t);
-int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
-int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
-int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
-int APS5_VABI sceHttpGetLastErrno(int, int*);
-int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
-int APS5_VABI sceHttpSetRecvBlockSize(int, std::uint32_t);
-int APS5_VABI sceHttpRedirectCacheFlush(int);
-int APS5_VABI sceHttpsUnloadCert(int);
-int APS5_VABI sceHttpsSetSslVersion(int, int);
-int APS5_VABI sceHttpsGetSslError(int, int*, std::uint32_t*);
-int APS5_VABI sceHttpSetRedirectCallback(int, HttpRedirectCallback, void*);
-int APS5_VABI sceHttpSetCookieRecvCallback(int, HttpCookieRecvCallback, void*);
-int APS5_VABI sceHttpSetAuthInfoCallback(int, HttpAuthInfoCallback, void*);
-int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
-}
-
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
 
-struct HttpPoolStats {
-    std::size_t poolSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
-static_assert(sizeof(HttpPoolStats) == 24);
+
+static_assert(sizeof(HttpMemoryPoolStats) == 24);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -74,20 +34,20 @@ static bool Throws(TCall call) {
 }
 
 static void CheckPoolStatsRejected(int id, int expected) {
-    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(id, buffer) == expected);
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == expected);
     for (unsigned char byte : buffer) Require(byte == 0x5a);
 }
 
 static void CheckPoolStats(int id, std::size_t poolSize) {
-    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(id, buffer) == 0);
-    HttpPoolStats stats;
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == 0);
+    HttpMemoryPoolStats stats;
     std::memcpy(&stats, buffer, sizeof(stats));
     Require(stats.poolSize == poolSize);
-    Require(stats.maxInuseSize == 0 && stats.currentInuseSize == 0);
+    Require(stats.peakUsedSize == 0 && stats.usedSize == 0);
     for (std::size_t i = sizeof(stats); i < sizeof(buffer); ++i) Require(buffer[i] == 0x5a);
 }
 

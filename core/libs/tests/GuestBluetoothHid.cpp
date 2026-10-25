@@ -1,3 +1,4 @@
+#include "prx/libSceBluetoothHid/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -5,36 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-struct BluetoothHidEvent;
-struct BluetoothHidDeviceInfo;
-struct BluetoothHidThreadParam {
-    std::int32_t priority;
-    std::uint32_t padding;
-    std::uint64_t affinityMask;
-    std::uint32_t reserved;
-    std::uint32_t tailPadding;
-};
-struct BluetoothHidParam {
-    const BluetoothHidThreadParam* threadParam;
-    std::uint32_t reserved;
-    std::uint32_t padding;
-};
-using BluetoothHidCallback = void (APS5_VABI *)(const BluetoothHidEvent*, std::int32_t, void*);
-
-extern "C" {
-std::int32_t APS5_VABI sceBluetoothHidInit();
-std::int32_t APS5_VABI sceBluetoothHidRegisterCallback(BluetoothHidCallback callback, void* userData, const BluetoothHidParam* param);
-std::int32_t APS5_VABI sceBluetoothHidUnregisterCallback();
-std::int32_t APS5_VABI sceBluetoothHidRegisterDevice(std::uint16_t vendorId, std::uint16_t productId);
-std::int32_t APS5_VABI sceBluetoothHidUnregisterDevice(std::uint16_t vendorId, std::uint16_t productId);
-int APS5_VABI sceBluetoothHidGetInputReport(std::uint64_t, std::uint8_t);
-int APS5_VABI sceBluetoothHidDebugGetVersion();
-int APS5_VABI sceBluetoothHidGetDeviceInfo(std::int32_t, BluetoothHidDeviceInfo*);
-int APS5_VABI sceBluetoothHidDisconnectDevice(std::int32_t);
-int APS5_VABI sceBluetoothHidGetFeatureReport(std::uint64_t, std::uint8_t);
-int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t, std::uint8_t, const void*, std::size_t);
-}
 
 namespace {
 
@@ -82,6 +53,7 @@ int main() {
     threw = false;
     try {
         sceBluetoothHidGetInputReport(0, 0);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -90,6 +62,7 @@ int main() {
     threw = false;
     try {
         sceBluetoothHidGetDeviceInfo(0, nullptr);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -97,6 +70,7 @@ int main() {
     threw = false;
     try {
         sceBluetoothHidDisconnectDevice(0);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -104,6 +78,7 @@ int main() {
     threw = false;
     try {
         sceBluetoothHidGetFeatureReport(0, 0);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -111,6 +86,7 @@ int main() {
     threw = false;
     try {
         sceBluetoothHidSetFeatureReport(0, 0, nullptr, 0);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

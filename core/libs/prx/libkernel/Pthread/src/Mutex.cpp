@@ -1,3 +1,4 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"

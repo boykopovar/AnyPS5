@@ -1,25 +1,8 @@
+#include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceNpScoreCreateNpTitleCtx(std::uint32_t serviceLabel, const void* selfNpId);
-int APS5_VABI sceNpScoreDeleteNpTitleCtx(int titleCtxId);
-int APS5_VABI sceNpScoreCreateRequest(int titleCtxId);
-int APS5_VABI sceNpScoreDeleteRequest(int reqId);
-int APS5_VABI sceNpScoreAbortRequest(int reqId);
-int APS5_VABI sceNpScorePollAsync(int reqId, int* result);
-int APS5_VABI sceNpScoreRecordScore(int reqId, std::uint32_t boardId, std::int64_t score, const void* scoreComment, const void* gameInfo, std::uint32_t* tmpRank, const void* compareDate, void* option);
-int APS5_VABI sceNpScoreRecordScoreAsync(int reqId, std::uint32_t boardId, std::int64_t score, const void* scoreComment, const void* gameInfo, std::uint32_t* tmpRank, const void* compareDate, void* option);
-int APS5_VABI sceNpScoreGetRankingByRange(int reqId, std::uint32_t boardId, std::uint32_t startSerialRank, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
-int APS5_VABI sceNpScoreGetRankingByRangeAsync(int reqId, std::uint32_t boardId, std::uint32_t startSerialRank, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
-int APS5_VABI sceNpScoreGetRankingByNpId(int reqId, std::uint32_t boardId, const void* npIdArray, std::uint64_t npIdArraySize, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
-int APS5_VABI sceNpScoreGetRankingByNpIdAsync(int reqId, std::uint32_t boardId, const void* npIdArray, std::uint64_t npIdArraySize, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
-int APS5_VABI sceNpScoreGetFriendsRanking(int reqId, std::uint32_t boardId, int includeSelf, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, const void* option);
-int APS5_VABI sceNpScoreGetFriendsRankingAsync(int reqId, std::uint32_t boardId, int includeSelf, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, const void* option);
-int APS5_VABI sceNpScoreGetBoardInfo(int reqId, std::uint32_t boardId, void* boardInfo, void* option);
-}
 
 namespace {
 
@@ -33,18 +16,6 @@ constexpr int InvalidAlignment = static_cast<int>(0x80550714u);
 constexpr int TooManyNpId = static_cast<int>(0x80550719u);
 constexpr int PollFinished = 0;
 constexpr int PollRunning = 1;
-
-struct GameInfo {
-    std::uint64_t infoSize;
-    std::uint8_t data[189];
-    std::uint8_t pad[3];
-};
-
-struct FriendOption {
-    std::uint64_t size;
-    const std::uint32_t* startSerialRank;
-    const std::uint32_t* hits;
-};
 
 int failures = 0;
 int context = 0;
@@ -122,10 +93,11 @@ void CheckRequests() {
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreAbortRequest", "aborting a finished request changed its result");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a finished request was not reused");
     sceNpScoreDeleteRequest(req);
+
 }
 
 void CheckRecord() {
-    GameInfo info{};
+    NpScoreGameInfo info{};
     std::uint32_t tmpRank = 77;
     const int req = NewRequest();
     info.infoSize = 190;
@@ -138,6 +110,7 @@ void CheckRecord() {
     CheckOffline("sceNpScoreRecordScoreAsync", sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr), req);
     Require(tmpRank == 77, "sceNpScoreRecordScoreAsync", "a rank was written");
     sceNpScoreDeleteRequest(req);
+
 }
 
 void CheckRange() {
@@ -156,6 +129,7 @@ void CheckRange() {
     Require(sceNpScoreGetRankingByRangeAsync(req, 1, 0, ranks, 0x100, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpScoreGetRankingByRangeAsync", "rank 0 was taken");
     Require(sceNpScoreGetRankingByRangeAsync(req, 1, 1, manyRanks, 100 * 0x80, nullptr, 0, nullptr, 0, 100, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByRangeAsync", "100 ranks did not return SIGNED_OUT");
     sceNpScoreDeleteRequest(req);
+
 }
 
 void CheckNpId() {
@@ -171,15 +145,16 @@ void CheckNpId() {
     Require(sceNpScoreGetRankingByNpIdAsync(req, 1, npIds, 0, ranks, 0, nullptr, 0, nullptr, 0, 0, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByNpIdAsync", "zero NpIds did not return SIGNED_OUT");
     Require(sceNpScoreGetRankingByNpIdAsync(req, 1, manyNpIds, sizeof(manyNpIds), manyRanks, sizeof(manyRanks), nullptr, 0, nullptr, 0, 101, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByNpIdAsync", "101 NpIds did not return SIGNED_OUT");
     sceNpScoreDeleteRequest(req);
+
 }
 
 void CheckFriends() {
     const int req = NewRequest();
     const std::uint32_t zero = 0;
     const std::uint32_t five = 5;
-    const FriendOption shortOption{16, nullptr, nullptr};
-    const FriendOption rankZero{24, &zero, nullptr};
-    const FriendOption rankFive{24, &five, nullptr};
+    const NpScoreFriendRankingOption shortOption{16, nullptr, nullptr};
+    const NpScoreFriendRankingOption rankZero{24, &zero, nullptr};
+    const NpScoreFriendRankingOption rankFive{24, &five, nullptr};
     Require(sceNpScoreGetFriendsRanking(req, 1, 0, nullptr, 0x80, nullptr, 0, nullptr, 0, 0, nullptr, nullptr, &shortOption) == InvalidArgument, "sceNpScoreGetFriendsRanking", "a null rank array was taken");
     Require(sceNpScoreGetFriendsRanking(req, 1, 0, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &shortOption) == InvalidAlignment, "sceNpScoreGetFriendsRanking", "the rank array size was not checked before the option");
     Require(sceNpScoreGetFriendsRanking(req, 1, 0, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &rankFive) == InvalidArgument, "sceNpScoreGetFriendsRanking", "an option without includeSelf was taken");
@@ -192,6 +167,7 @@ void CheckFriends() {
     Require(sceNpScoreGetFriendsRankingAsync(req, 1, 0, ranks, 0x100, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetFriendsRankingAsync", "valid arguments did not return SIGNED_OUT");
     Require(sceNpScoreGetFriendsRankingAsync(req, 1, 0, manyRanks, 100 * 0x80, nullptr, 0, nullptr, 0, 100, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetFriendsRankingAsync", "100 friends did not return SIGNED_OUT");
     sceNpScoreDeleteRequest(req);
+
 }
 
 void CheckBoard() {
@@ -200,6 +176,7 @@ void CheckBoard() {
     Require(sceNpScoreGetBoardInfo(req + 100, 1, board, nullptr) == InvalidId, "sceNpScoreGetBoardInfo", "an unknown request was taken");
     CheckOffline("sceNpScoreGetBoardInfo", sceNpScoreGetBoardInfo(req, 1, board, nullptr), req);
     sceNpScoreDeleteRequest(req);
+
 }
 
 }

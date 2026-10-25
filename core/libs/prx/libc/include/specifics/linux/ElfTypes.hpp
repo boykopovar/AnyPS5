@@ -1,6 +1,10 @@
 #ifndef PRX_LIBC_INCLUDE_SPECIFICS_LINUX_ELFTYPES_HPP
 #define PRX_LIBC_INCLUDE_SPECIFICS_LINUX_ELFTYPES_HPP
 
+#ifdef __linux__
+#include <link.h>
+#else
+
 #include <cstdint>
 #include <cstddef>
 
@@ -31,6 +35,8 @@ static constexpr std::uint32_t PF_W = 2;
 extern "C" int dl_iterate_phdr(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data) __asm__("_dl_iterate_phdr_nid_no_patch");
 #else
 extern "C" int dl_iterate_phdr(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data);
+#endif
+
 #endif
 
 #endif

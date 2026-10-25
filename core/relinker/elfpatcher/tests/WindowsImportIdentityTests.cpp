@@ -74,7 +74,7 @@ void generateProbe(const Fs::path& file, const std::string& libraries, const std
     directories[1] = imports.Directory;
     directories[3] = startup.ExceptionDirectory;
     directories[12] = imports.AddressTable;
-    const auto image = WindowsPeWriter().Write({entry, got, imports.Section, startup.Data, startup.Code}, startup.Code.Rva, directories, false, ImageBase, false);
+    const auto image = WindowsPeWriter().Write({entry, got, imports.Section, startup.Data, startup.Code}, startup.Code.Rva, directories, false, ImageBase, true, false);
     std::ofstream stream(file, std::ios::binary);
     stream.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
     require(static_cast<bool>(stream), "Cannot write " + file.string());

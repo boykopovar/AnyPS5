@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -50,10 +52,6 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, std::uint64_t info_size);
 
 namespace {
 
@@ -273,40 +271,12 @@ std::int64_t toGuestLimit(rlim_t value) {
 
 }
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestResourceLimit {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-
 namespace {
 std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
 std::mutex processLimitMutex;
 GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
 }
-
-struct GuestResourceUsage {
-    KernelTimeval ru_utime;
-    KernelTimeval ru_stime;
-    std::int64_t ru_maxrss;
-    std::int64_t ru_ixrss;
-    std::int64_t ru_idrss;
-    std::int64_t ru_isrss;
-    std::int64_t ru_minflt;
-    std::int64_t ru_majflt;
-    std::int64_t ru_nswap;
-    std::int64_t ru_inblock;
-    std::int64_t ru_oublock;
-    std::int64_t ru_msgsnd;
-    std::int64_t ru_msgrcv;
-    std::int64_t ru_nsignals;
-    std::int64_t ru_nvcsw;
-    std::int64_t ru_nivcsw;
-};
-
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 extern "C" {
 
@@ -460,8 +430,6 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
     return -1;
 }
 
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);
-
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
     if (limit == nullptr) {
         *__error_nid_postfix() = guestFault;
@@ -482,6 +450,7 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
 
     GuestResourceLimit current{};
     getrlimit_nid_postfix(resource, &current);
+
     if (resource == guestRlimitNofile) {
         if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
             std::lock_guard lock(openFileLimitMutex);
@@ -600,6 +569,7 @@ void APS5_VABI sceKernelSync(void) {
 
 void APS5_VABI sync_nid_postfix(void) {
     sceKernelSync();
+
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
@@ -846,6 +816,7 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
+
     std::int64_t tableSize = limit.rlim_cur;
 #ifndef _WIN32
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));

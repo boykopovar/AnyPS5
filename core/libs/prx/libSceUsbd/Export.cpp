@@ -1,3 +1,4 @@
+#include "prx/libSceUsbd/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -30,35 +31,6 @@ constexpr std::int32_t CONTROL_SETUP_SIZE = 8;
 constexpr std::uint8_t SUPPORTED_TRANSFER_FLAGS = LIBUSB_TRANSFER_SHORT_NOT_OK | LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 constexpr std::uint16_t STRING_DESCRIPTOR_SIZE = 255;
 constexpr std::uint32_t STRING_DESCRIPTOR_TIMEOUT = 1000;
-
-struct UsbdTimeval {
-    std::int64_t seconds;
-    std::int64_t microseconds;
-};
-
-struct UsbdIsoPacketDescriptor {
-    std::uint32_t length;
-    std::uint32_t actualLength;
-    std::int32_t status;
-};
-
-using UsbdTransferCallback = void (APS5_VABI*)(struct UsbdTransfer*);
-
-struct UsbdTransfer {
-    void* deviceHandle;
-    std::uint8_t flags;
-    std::uint8_t endpoint;
-    std::uint8_t type;
-    std::uint32_t timeout;
-    std::int32_t status;
-    std::int32_t length;
-    std::int32_t actualLength;
-    UsbdTransferCallback callback;
-    void* userData;
-    std::uint8_t* buffer;
-    std::int32_t numIsoPackets;
-    UsbdIsoPacketDescriptor isoPacketDescriptors[1];
-};
 
 static_assert(offsetof(UsbdTransfer, timeout) == 12 && offsetof(UsbdTransfer, callback) == 32 && offsetof(UsbdTransfer, numIsoPackets) == 56 && offsetof(UsbdTransfer, isoPacketDescriptors) == 60);
 static_assert(sizeof(libusb_device_descriptor) == 18);

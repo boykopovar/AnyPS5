@@ -1,8 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <thread>
-
-extern "C" unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
 
 int main() {
     const unsigned result = _ZNSt6thread20hardware_concurrencyEv_nid_postfix();

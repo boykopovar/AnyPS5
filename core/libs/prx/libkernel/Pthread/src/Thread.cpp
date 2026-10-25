@@ -1,3 +1,6 @@
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
@@ -35,6 +38,20 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
+
+#ifdef __linux__
+#include <sys/syscall.h>
+#else
+static const auto initialThreadId = std::this_thread::get_id();
+#endif
+
+extern "C" bool IsInitialPthread_nid_no_patch() {
+#ifdef __linux__
+    return ::syscall(SYS_gettid) == ::getpid();
+#else
+    return std::this_thread::get_id() == initialThreadId;
+#endif
+}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
@@ -1247,6 +1264,7 @@ int APS5_VABI scePthreadCancel(Pthread thread) {
             thread->cancelWait->NotifyAll();
         }
         scePthreadYield();
+
     }
 }
 
@@ -1274,6 +1292,7 @@ void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*)
 
 void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute) {
     __pthread_cleanup_pop_imp_nid_postfix(execute);
+
 }
 
 int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2) {
@@ -1373,6 +1392,7 @@ int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
     CleanupHandler reset{};
     void* const mark = ThreadCancel::CleanupMark();
     __pthread_cleanup_push_imp_nid_postfix(ResetOnce, once, &reset);
+
     try {
         init();
     } catch (...) {

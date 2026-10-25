@@ -1,12 +1,7 @@
+#include "prx/libSceNpPartner001/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpEAAccessInitialize(void);
-int APS5_VABI sceNpEAAccessTerminate(void);
-int APS5_VABI sceNpHasEAAccessSubscription(int, bool*);
-}
 
 namespace {
 
