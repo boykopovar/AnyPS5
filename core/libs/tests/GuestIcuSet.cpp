@@ -79,6 +79,17 @@ void CodePointRanges() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, 5, 3);
     Require(uset_getItemCount_nid_postfix(set) == 0, "reversed range adds nothing");
+    uset_addRange_nid_postfix(set, 0x41, 0x41);
+    Require(Items(set) == Ranges{{0x41, 0x41}}, "equal endpoints add that code point");
+    uset_addRange_nid_postfix(set, 0x41, 0x41);
+    Require(Items(set) == Ranges{{0x41, 0x41}}, "adding the same code point again changes nothing");
+    USet* fresh = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(fresh, 0x110000, 0x110005);
+    uset_addRange_nid_postfix(fresh, -9, -9);
+    Require(Items(fresh) == Ranges{{0, 0}, {0x10ffff, 0x10ffff}}, "out-of-range equal endpoints pin and add");
+    uset_close_nid_postfix(fresh);
+    uset_close_nid_postfix(set);
+    set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, -5, -1);
     Require(Items(set) == Ranges{{0, 0}}, "a range below zero pins to U+0000");
     uset_addRange_nid_postfix(set, 0x200000, 0x300000);
