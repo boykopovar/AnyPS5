@@ -443,6 +443,41 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
             definedSymbols.push_back(index);
     }
 
+    if (!definedSymbols.empty()) {
+        for (std::size_t i = 1; i < definedSymbols.size(); ++i) {
+            if (definedSymbols[i] != definedSymbols[i - 1] + 1)
+                throw std::runtime_error("LinuxElfPatcher: defined dynamic symbols are not contiguous");
+        }
+        const auto symoffset = definedSymbols.front();
+        const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
+        const auto relaCount = dynSection.RelaData.size() / kRelaEntrySize;
+        for (std::size_t i = 0; i < relaCount; ++i) {
+            const auto r_info = Io::ReadU64(dynSection.RelaData, i * kRelaEntrySize + 8);
+            const auto r_sym = static_cast<std::uint32_t>(r_info >> 32);
+            if (r_sym >= symoffset && r_sym < symoffset + numDefined)
+                throw std::runtime_error("LinuxElfPatcher: relocation references a defined dynamic symbol");
+        }
+        const auto nbuckets = std::max<std::uint32_t>(numDefined, 1);
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
+        symHashes.reserve(numDefined);
+        for (std::uint32_t symIdx : definedSymbols) {
+            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            symHashes.emplace_back(symIdx, GnuHash(name));
+        }
+        std::stable_sort(symHashes.begin(), symHashes.end(), [nbuckets](const auto& a, const auto& b) {
+            return (a.second % nbuckets) < (b.second % nbuckets);
+        });
+        std::vector<std::uint8_t> sortedSymbols;
+        sortedSymbols.reserve(numDefined * kSymEntrySize);
+        for (const auto& [origIdx, hash] : symHashes) {
+            const auto* src = symbols.data() + origIdx * kSymEntrySize;
+            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
+        }
+        std::memcpy(symbols.data() + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
+        std::memcpy(buf.data() + dynSymOff + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
+    }
+
     const auto hashOff = static_cast<std::uint64_t>(buf.size());
     if (definedSymbols.empty()) {
         Io::AppendU32(buf, 1);
@@ -451,9 +486,12 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         for (std::uint32_t index = 0; index < symbolCount; ++index)
             Io::AppendU32(buf, 0);
     } else {
-        const auto bucketCount = std::max<std::uint32_t>(static_cast<std::uint32_t>(definedSymbols.size()), 1);
+        const auto symoffset = definedSymbols.front();
+        const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
+        const auto bucketCount = std::max<std::uint32_t>(numDefined, 1);
         std::vector<std::uint32_t> sysvBuckets(bucketCount, 0), sysvChains(symbolCount, 0);
-        for (std::uint32_t symIdx : definedSymbols) {
+        for (std::uint32_t i = 0; i < numDefined; ++i) {
+            const auto symIdx = symoffset + i;
             const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
             const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
             const auto hash = ElfHash(name);
@@ -486,24 +524,12 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
         std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
         symHashes.reserve(numDefined);
-        for (std::uint32_t symIdx : definedSymbols) {
+        for (std::uint32_t i = 0; i < numDefined; ++i) {
+            const auto symIdx = symoffset + i;
             const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
             const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
             symHashes.emplace_back(symIdx, GnuHash(name));
         }
-
-        std::stable_sort(symHashes.begin(), symHashes.end(), [nbuckets](const auto& a, const auto& b) {
-            return (a.second % nbuckets) < (b.second % nbuckets);
-        });
-
-        std::vector<std::uint8_t> sortedSymbols;
-        sortedSymbols.reserve(numDefined * kSymEntrySize);
-        for (const auto& [origIdx, hash] : symHashes) {
-            const auto* src = symbols.data() + origIdx * kSymEntrySize;
-            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
-        }
-        std::memcpy(symbols.data() + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
-        std::memcpy(buf.data() + dynSymOff + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
 
         std::vector<std::uint64_t> bloom(bloomSize, 0);
         for (const auto& [idx, hash] : symHashes) {
