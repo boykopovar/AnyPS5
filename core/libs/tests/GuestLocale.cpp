@@ -500,6 +500,8 @@ static void CheckFacetGetcat() {
     }
     Require(_ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(nullptr, &locale) == 2);
     Require(_ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&punct, &locale) == 4);
+}
+
 static void CheckWideCtypeVtableObject() {
     for (std::uintptr_t& slot : _ZTVSt5ctypeIwE_nid_postfix) {
         Require(slot == 0);
