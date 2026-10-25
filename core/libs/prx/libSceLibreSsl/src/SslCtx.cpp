@@ -1,30 +1,9 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslCtxInternal {
-    unsigned char beforeQuietShutdown[292];
-    int quietShutdown;
-    unsigned char rest[168];
-};
-
-struct LibreSslCtx {
-    const void* method;
-    void* cipherList;
-    void* certStore;
-    std::int64_t sessionTimeout;
-    int references;
-    void* extraCerts;
-    int verifyMode;
-    unsigned int sidCtxLength;
-    unsigned char sidCtx[32];
-    void* param;
-    void* defaultPasswdCallback;
-    void* defaultPasswdCallbackUserdata;
-    LibreSslCtxInternal* internal;
-};
 
 static_assert(sizeof(LibreSslCtxInternal) == 464);
 static_assert(offsetof(LibreSslCtxInternal, quietShutdown) == 292);
