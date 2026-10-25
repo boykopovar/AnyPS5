@@ -497,7 +497,7 @@ VkDeviceSize BufferPool::ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::stea
             for (auto it = deviceTier.free.begin(); it != deviceTier.free.end(); ++it) {
                 if (it->second.empty()) continue;
                 const auto& slot = it->second.front();
-                if (slot.allocation.buffer == VK_NULL_HANDLE || slot.allocation.slab || slot.lastUse > reclaimBefore) continue;
+                if (slot.allocation.buffer == VK_NULL_HANDLE || slot.allocation.slab || slot.allocation.hostPlaced || slot.lastUse > reclaimBefore) continue;
                 if (oldest == deviceTier.free.end() || slot.lastUse < oldest->second.front().lastUse) oldest = it;
             }
             if (oldest == deviceTier.free.end()) {

@@ -945,6 +945,35 @@ void IdleDeviceReclaim() {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "idle device reclaim leaked an allocation");
 }
 
+void IdleReclaimSkipsHostPlaced() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 1620 * MiB;
+        reportedUsage = 1600 * MiB;
+        VkDeviceMemory placed = VK_NULL_HANDLE;
+        {
+            DeviceBuffer large(context, 176 * MiB, usage);
+            placed = MemoryOf(large.Handle());
+            Expect(mock.memoryTypes.at(placed) == 1, "the older device buffer was not placed in host memory");
+        }
+        reportedUsage = 200 * MiB;
+        VkDeviceMemory device = VK_NULL_HANDLE;
+        {
+            DeviceBuffer small(context, 4 * MiB, usage);
+            device = MemoryOf(small.Handle());
+            Expect(mock.memoryTypes.at(device) == 0, "the younger device buffer was not placed in device-local memory");
+        }
+        auto& pool = *context.bufferPool;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        Expect(pool.ReclaimIdleDevice(MiB, start) == 0, "the first pressure observation reclaimed a buffer");
+        Expect(pool.ReclaimIdleDevice(MiB, start + std::chrono::seconds(1)) == 4 * MiB, "idle device reclaim counted a host-placed buffer as device memory");
+        Expect(mock.memoryBytes.contains(placed) && !mock.memoryBytes.contains(device), "idle device reclaim freed the host-placed buffer instead of the idle device-local one");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "host-placed reclaim test leaked an allocation");
+}
+
 void IdleReclaimPreservesWorkingSet() {
     mock = MockDevice{};
     {
@@ -1424,6 +1453,7 @@ int main(int argc, char** argv) {
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
+        IdleReclaimSkipsHostPlaced();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
