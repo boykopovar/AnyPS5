@@ -48,7 +48,7 @@ int StatType(const char* path, int* perms, int* error) {
             code = failure ? FilesystemError(failure) : GuestFilesystem::NoSuchFile;
             if (code == GuestFilesystem::NoSuchFile) code = NotFoundError_nid_no_patch(native);
             errno = code;
-            type = GuestFilesystem::TypeNotFound;
+            type = IsNotFound(code) ? GuestFilesystem::TypeNotFound : GuestFilesystem::TypeNone;
         }
     }
     if (error) *error = errno;

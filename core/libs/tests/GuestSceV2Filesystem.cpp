@@ -10,14 +10,17 @@
 #include <random>
 #include <set>
 #include <string>
+#include <system_error>
 
 namespace {
 
 constexpr int NoSuchFile = 2;
 constexpr int TypeNotFound = -1;
+constexpr int TypeNone = 0;
 constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
 constexpr int TypeUnknown = 8;
+constexpr int Loop = 62;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -46,6 +49,19 @@ void TestStat() {
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+}
+
+void TestStatError() {
+    const auto loop = At("loop");
+    std::error_code failure;
+    std::filesystem::create_symlink("loop", loop, failure);
+    if (failure) return;
+    std::error_code probe;
+    (void)std::filesystem::status(loop, probe);
+    if (probe != std::errc::too_many_symbolic_link_levels) return;
+    int perms = 1234;
+    int error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(loop.c_str(), &perms, &error) == TypeNone && error == Loop && perms == 1234, "a symlink loop is not reported as not found");
 }
 
 void TestDirectories() {
@@ -82,6 +98,7 @@ int main() {
     root = "anyps5-sce-v2-filesystem-" + std::to_string(std::random_device{}());
     std::filesystem::create_directory(root);
     TestStat();
+    TestStatError();
     TestDirectories();
     TestCurrent();
     std::error_code ignored;
