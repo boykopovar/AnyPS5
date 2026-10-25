@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -18,17 +19,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
-int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
-std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(GuestFaceRec*, std::uint64_t);
-int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
-int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec*, std::int32_t);
-int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec*, GuestCharMapRec*);
-std::uint64_t APS5_VABI FT_Get_First_Char_nid_postfix(GuestFaceRec*, std::uint32_t*);
-std::uint64_t APS5_VABI FT_Get_Next_Char_nid_postfix(GuestFaceRec*, std::uint64_t, std::uint32_t*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -76,7 +66,7 @@ int main() {
     Require(FT_New_Memory_Face(native, font.data(), static_cast<FT_Long>(font.size()), 0, &host) == 0);
     Require(FT_New_Memory_Face(native, font.data(), static_cast<FT_Long>(font.size()), 0, &foreignHost) == 0);
     Require(FT_New_Memory_Face(native, zeroFont.data(), static_cast<FT_Long>(zeroFont.size()), 0, &zeroHost) == 0);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     GuestFaceRec* foreign = nullptr;
     GuestFaceRec* zero = nullptr;

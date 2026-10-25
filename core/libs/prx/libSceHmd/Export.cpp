@@ -1,3 +1,4 @@
+#include "prx/libSceHmd/include/Api.hpp"
 #include "Hmd.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -8,55 +9,11 @@
 #include <initializer_list>
 #include <string>
 
-struct HmdDistortionCommandParameter;
-struct HmdWideNearDistortionCommandParameter;
-struct Hmd2dVrCommandParameter;
-
-struct HmdCommandBuffer {
-    const std::uint32_t* commands;
-    std::uint32_t dwordCount;
-};
-
 static_assert(sizeof(HmdCommandBuffer) == 16);
 static_assert(offsetof(HmdCommandBuffer, dwordCount) == 8);
 
-struct HmdReprojectionFrameParameter;
-struct HmdReprojectionWideNearParameter;
-struct HmdReprojection2dVrParameter;
-struct HmdReprojectionPose;
-struct HmdReprojectionOverlayParameter;
-struct HmdReprojectionSubmissionParameter;
-struct HmdReprojectionInitializeParameter;
-struct HmdReprojectionMultilayerParameter;
-struct HmdDeviceInformation;
-struct HmdDistortionParameters;
-struct HmdInertialSensorData;
-struct HmdStatusReport;
-
-struct HmdFieldOfView {
-    float angles[4];
-};
-
-struct HmdAssemblyError {
-    float offsets[4];
-};
-
 static_assert(sizeof(HmdFieldOfView) == 16);
 static_assert(sizeof(HmdAssemblyError) == 16);
-
-struct HmdVr2dData;
-struct HmdPuPositionParameter;
-struct HmdOpticalParameter;
-struct HmdCrashDumpInfo;
-struct HmdScreenOutputParameter;
-struct HmdScreenFadeParameter;
-struct HmdScreenStatus;
-struct HmdCaptureInitializeParameter;
-struct HmdCaptureInfo;
-struct HmdLiveCaptureParameter;
-struct HmdReprojectionDebugInfo;
-struct HmdReprojectionMultilayerDebugInfo;
-struct HmdReprojectionCallbackParameter;
 
 namespace {
 
@@ -101,59 +58,19 @@ std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, cons
 
 }
 
-struct HmdEyeDistances {
-    std::uint32_t left;
-    std::uint32_t right;
-};
-
-struct HmdEyeOffset {
-    float x;
-    float y;
-    float z;
-};
-
-struct HmdMirroringAspect {
-    std::uint16_t reserved0;
-    std::int16_t aspect;
-    std::uint16_t reserved1;
-    std::uint16_t reserved2;
-};
-
-struct HmdMirroringAspectDebug {
-    std::uint16_t values[5];
-    std::uint8_t mode;
-};
-
 static_assert(sizeof(HmdMirroringAspectDebug) == 12);
 static_assert(offsetof(HmdMirroringAspectDebug, mode) == 10);
 static_assert(sizeof(HmdMirroringAspect) == 8);
 static_assert(offsetof(HmdMirroringAspect, aspect) == 2);
 
-using HmdEventCallback = void (APS5_VABI *)(std::uint32_t events);
-
-struct HmdDfuData {
-    const void* data;
-    std::uint32_t size;
-    std::uint32_t mode;
-};
-
 static_assert(sizeof(HmdDfuData) == 16);
 static_assert(offsetof(HmdDfuData, size) == 8);
 static_assert(offsetof(HmdDfuData, mode) == 12);
-
-struct HmdScreenData {
-    const void* data;
-    std::int32_t size;
-};
 
 static_assert(sizeof(HmdScreenData) == 16);
 static_assert(offsetof(HmdScreenData, size) == 8);
 static_assert(sizeof(HmdEyeDistances) == 8);
 static_assert(sizeof(HmdEyeOffset) == 12);
-
-struct HmdLedData {
-    std::uint8_t values[9];
-};
 
 static_assert(sizeof(HmdLedData) == 9);
 

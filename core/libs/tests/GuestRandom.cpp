@@ -1,11 +1,9 @@
+#include "prx/libSceRandom/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 
-extern "C" {
-int APS5_VABI sceRandomGetRandomNumber(void*, std::size_t);
-}
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);

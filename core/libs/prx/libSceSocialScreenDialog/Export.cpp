@@ -1,3 +1,4 @@
+#include "prx/libSceSocialScreenDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>

@@ -1,14 +1,9 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <string>
-extern "C" {
-char* APS5_VABI getenv_nid_postfix(const char*);
-int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
-int APS5_VABI unsetenv_nid_postfix(const char*);
-int APS5_VABI putenv_nid_postfix(char*);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const char* key = "ANYPS5_GUEST_ENV_TEST_4C27";

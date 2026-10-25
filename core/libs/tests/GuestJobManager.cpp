@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -13,65 +16,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-struct MemorySizeQueryParams {
-    std::uint32_t version;
-    std::uint32_t workers;
-    std::uint32_t sequences;
-    std::uint32_t invocations;
-    std::uint32_t dispatches;
-    std::uint32_t syncPoints;
-    std::uint32_t waits;
-    std::uint32_t computeSequences;
-    std::uint64_t computeQueueMask;
-};
-
-struct ConfigParams {
-    std::uint32_t version;
-    std::uint32_t threadFlags;
-    std::uint32_t stackSize;
-    std::uint32_t priority;
-    const char* threadName;
-    std::uint32_t spinMicroseconds;
-    std::uint32_t computeAffinity;
-    std::uint32_t computePriority;
-    std::uint32_t reserved;
-};
-
-using JobEntry = void (APS5_VABI*)(void*, std::uint32_t);
-
-struct Sequence {
-    APS5_VABI virtual int Dispatch(JobEntry, void*, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int SyncPoint() = 0;
-    APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-};
-
-struct SequenceFactory {
-    APS5_VABI virtual int Create(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int Destroy(Sequence*) = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-    APS5_VABI virtual int CreateCompute(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int DestroyCompute(Sequence*) = 0;
-};
-
-extern "C" {
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId);
-int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* time);
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-void APS5_VABI _ZN3sce3Job10JobManagerC1Ev(void*);
-void APS5_VABI _ZN3sce3Job10JobManagerD1Ev(void*);
-std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams*);
-int APS5_VABI _ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(void*, void*, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, const ConfigParams*);
-int APS5_VABI _ZN3sce3Job10JobManager10initializeEPvmjjPKNS1_12ConfigParamsE(void*, void*, std::uint64_t, std::uint32_t, std::uint32_t, const ConfigParams*);
-int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void*);
-SequenceFactory* APS5_VABI _ZN3sce3Job10JobManager27getSequenceFactoryInterfaceENS1_8PriorityE(void*, std::uint32_t);
-SequenceFactory* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void*, std::uint32_t);
-int APS5_VABI _ZN3sce3Job10JobManager24setPersistentThreadCountEj(void*, std::uint32_t);
-}
 
 #define Construct _ZN3sce3Job10JobManagerC1Ev
 #define Destruct _ZN3sce3Job10JobManagerD1Ev
@@ -145,6 +89,46 @@ static void MemoryCase() {
 static void APS5_VABI Nothing(void*, std::uint32_t) {
 }
 
+static void OwnedStateCase() {
+    for (const auto [workers, count] : {std::pair{1u, 1u}, std::pair{3u, 32u}, std::pair{13u, 2u}}) {
+        const auto size = SizeFor(workers, count, count * 4, count * 2, count * 2);
+        Block block(size + 256);
+        std::memset(block.memory, 0xa5, block.bytes);
+        ManagerObject manager;
+        const auto begin = reinterpret_cast<std::uintptr_t>(block.memory);
+        const auto inside = [begin, size](const void* pointer) {
+            const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+            return address >= begin && address < begin + size;
+        };
+        for (int round = 0; round < 3; ++round) {
+            Require(Initialize(manager.storage, block.memory, size, workers, count, nullptr) == 0);
+            void* implementation = nullptr;
+            std::memcpy(&implementation, manager.storage, sizeof(implementation));
+            Require(inside(implementation));
+            for (std::uint32_t priority = 0; priority < 2; ++priority) {
+                Require(inside(Factories(manager.storage, priority)));
+                Require(inside(UnifiedFactories(manager.storage, priority)));
+            }
+            auto* factory = Factories(manager.storage, round % 2);
+            std::array<ISequence*, 32> sequences{};
+            for (std::uint32_t index = 0; index < count; ++index) {
+                auto*& sequence = sequences[index];
+                Require(factory->Create(&sequence, 4, 4, 2, 2, nullptr) == 0 && inside(sequence));
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+                Require(sequence->SyncPoint() == 0);
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+            }
+            for (std::uint32_t index = count; index != 0; --index) {
+                Require(sequences[index - 1]->Wait() == 0);
+                Require(factory->Destroy(sequences[index - 1]) == 0);
+            }
+            Require(Shutdown(manager.storage) == 0);
+            const auto* bytes = static_cast<const std::uint8_t*>(block.memory);
+            for (auto offset = size; offset < block.bytes; ++offset) Require(bytes[offset] == 0xa5);
+        }
+    }
+}
+
 static void ValidationCase() {
     Block block(SizeFor(2, 2, 16, 4, 4));
     ManagerObject manager;
@@ -184,10 +168,10 @@ static void ValidationCase() {
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == AlreadyInitialized);
     Require(SetPersistentThreadCount(manager.storage, 3) == InvalidArgument);
     Require(SetPersistentThreadCount(manager.storage, 2) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
+    ISequenceFactory* factory = Factories(manager.storage, 0);
     Require(factory != nullptr && Factories(manager.storage, 1) != nullptr && factory != Factories(manager.storage, 1));
     Require(UnifiedFactories(manager.storage, 0) != nullptr);
-    Sequence* sequence = nullptr;
+    ISequence* sequence = nullptr;
     Require(factory->Create(nullptr, 1, 1, 1, 1, nullptr) == NullArgument);
     Require(factory->Create(&sequence, 0, 0, 0, 0, nullptr) == OutOfRange);
     Require(factory->Create(&sequence, 0x8000, 1, 1, 1, nullptr) == OutOfRange);
@@ -195,13 +179,13 @@ static void ValidationCase() {
     Require(factory->Create(&sequence, 1, 1, 0x100, 1, nullptr) == OutOfRange);
     Require(factory->Create(&sequence, 1, 1, 1, 0x40, nullptr) == OutOfRange);
     Require(factory->CreateCompute(&sequence, 1, 1, 1, 1, nullptr) == NoneFree && sequence == nullptr);
-    Sequence* first = nullptr;
-    Sequence* second = nullptr;
+    ISequence* first = nullptr;
+    ISequence* second = nullptr;
     Require(factory->Create(&first, 8, 8, 2, 2, "first") == 0 && first != nullptr);
     Require(factory->Create(&second, 8, 8, 2, 2, "second") == 0 && second != nullptr && second != first);
     Require(factory->Create(&sequence, 8, 8, 2, 2, "third") == NoneFree);
     Require(factory->DestroyCompute(first) == Invalid);
-    Require(factory->Destroy(reinterpret_cast<Sequence*>(block.memory)) == Invalid);
+    Require(factory->Destroy(reinterpret_cast<ISequence*>(block.memory)) == Invalid);
     Require(factory->Destroy(first) == 0 && factory->Destroy(first) == Invalid);
     Require(factory->Create(&sequence, 8, 8, 2, 2, "again") == 0 && sequence == first);
     Require(sequence->Dispatch(nullptr, nullptr, 1, nullptr) == NullArgument);
@@ -227,8 +211,8 @@ static void DispatchCase() {
     Block block(SizeFor(4, 1, 8, 2, 2));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, nullptr) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
-    Sequence* sequence = nullptr;
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* sequence = nullptr;
     Require(factory->Create(&sequence, 0x7fff, 8, 2, 2, "dispatch") == 0);
     Tally tally(1000);
     Tally single(1);
@@ -259,8 +243,8 @@ static void OrderingCase() {
     Block block(SizeFor(4, 1, 8, 4, 2));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, nullptr) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 1);
-    Sequence* sequence = nullptr;
+    ISequenceFactory* factory = Factories(manager.storage, 1);
+    ISequence* sequence = nullptr;
     Require(factory->Create(&sequence, 256, 8, 4, 2, "ordering") == 0);
     std::atomic<std::uint32_t> finished{0};
     std::atomic<std::uint32_t> early{0};
@@ -281,7 +265,7 @@ static void OrderingCase() {
 }
 
 struct Nested {
-    Sequence* sequence;
+    ISequence* sequence;
     std::atomic<bool> barrierAppended{false};
     std::atomic<bool> followerAppended{false};
     std::atomic<bool> leaderFinished{false};
@@ -307,7 +291,7 @@ static void RequireParked(int clock);
 
 struct WorkerWait {
     int spareClock = 0;
-    Sequence* child;
+    ISequence* child;
     std::atomic<bool> publisherEntered{false};
     std::atomic<bool> spareEntered{false};
     std::atomic<bool> publish{false};
@@ -339,8 +323,8 @@ static void WorkerWaitCase() {
     const ConfigParams config{0, 0x21fff, 0x10000, 0x2bc, "WorkerWait", 0, 0, 0, 0};
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
     Require(SetPersistentThreadCount(manager.storage, 0) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
-    Sequence* publisher = nullptr;
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* publisher = nullptr;
     WorkerWait state{};
     Require(factory->Create(&publisher, 2, 1, 0, 1, "publisher") == 0);
     Require(factory->Create(&state.child, 1, 1, 0, 1, "child") == 0);
@@ -362,7 +346,7 @@ static void NestedCase() {
     Block block(SizeFor(2, 1, 4, 2, 2));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 1, nullptr) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
+    ISequenceFactory* factory = Factories(manager.storage, 0);
     Nested nested{};
     Require(factory->Create(&nested.sequence, 16, 4, 2, 2, "nested") == 0);
     Require(nested.sequence->Dispatch(LeaderJob, &nested, 1, "leader") == 0);
@@ -386,8 +370,8 @@ static void LimitsCase() {
     Block block(SizeFor(2, 2, 2, 1, 1));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
-    Sequence* sequence = nullptr;
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* sequence = nullptr;
     Require(factory->Create(&sequence, 4, 2, 1, 1, "limits") == 0);
     for (int round = 0; round < 3; ++round) {
         Require(sequence->Dispatch(Nothing, nullptr, 2, nullptr) == 0);
@@ -418,8 +402,8 @@ static void NodePoolCase() {
     Block block(SizeFor(2, 2, 2, 1, 1));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
-    SequenceFactory* factory = Factories(manager.storage, 0);
-    Sequence* sequence = nullptr;
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* sequence = nullptr;
     Require(factory->Create(&sequence, 0x7fff, 0x3ff, 0xff, 1, "nodes") == 0);
     int result = 0;
     int accepted = 0;
@@ -485,9 +469,9 @@ static void PriorityCase() {
     Block block(SizeFor(1, 3, 8, 2, 4));
     ManagerObject manager;
     Require(Initialize(manager.storage, block.memory, block.bytes, 1, 3, nullptr) == 0);
-    Sequence* gate = nullptr;
-    Sequence* low = nullptr;
-    Sequence* high = nullptr;
+    ISequence* gate = nullptr;
+    ISequence* low = nullptr;
+    ISequence* high = nullptr;
     Require(Factories(manager.storage, 0)->Create(&gate, 4, 4, 1, 1, "gate") == 0);
     Require(Factories(manager.storage, 0)->Create(&low, 4, 4, 1, 1, "low") == 0);
     Require(Factories(manager.storage, 1)->Create(&high, 4, 4, 1, 1, "high") == 0);
@@ -509,8 +493,8 @@ static void ShutdownCase() {
     ManagerObject manager;
     for (int round = 0; round < 3; ++round) {
         Require(Initialize(manager.storage, block.memory, block.bytes, 3, 2, nullptr) == 0);
-        SequenceFactory* factory = UnifiedFactories(manager.storage, 0);
-        Sequence* sequence = nullptr;
+        ISequenceFactory* factory = UnifiedFactories(manager.storage, 0);
+        ISequence* sequence = nullptr;
         Tally tally(64);
         Require(factory->Create(&sequence, 64, 8, 2, 2, "shutdown") == 0);
         Require(sequence->Dispatch(CountJob, &tally, 64, nullptr) == 0 && sequence->Wait() == 0 && tally.calls == 64);
@@ -550,7 +534,7 @@ static void WorkerPolicyCase() {
             const ConfigParams config{0, mode | 0x1fff, 0x10000, 0x2bc, "WorkerPolicy", spin, 0, 0, 0};
             Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, &config) == 0);
             auto* factory = Factories(manager.storage, 0);
-            Sequence* sequence = nullptr;
+            ISequence* sequence = nullptr;
             Require(factory->Create(&sequence, 8, 8, 2, 2, "worker policy") == 0);
             int clock = 0;
             Require(sequence->Dispatch(CaptureWorkerClock, &clock, 1, nullptr) == 0 && sequence->Wait() == 0);
@@ -581,7 +565,7 @@ static void WorkerWakeCase() {
     for (const std::uint32_t mode : {0x10000u, 0x20000u}) {
         const ConfigParams config{0, mode | 0x1fff, 0x10000, 0x2bc, "WorkerWake", 50, 0, 0, 0};
         Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, &config) == 0);
-        Sequence* sequence = nullptr;
+        ISequence* sequence = nullptr;
         auto* factory = Factories(manager.storage, 0);
         Require(factory->Create(&sequence, 1024, 8, 2, 2, "worker wake") == 0);
         for (std::uint32_t round = 0; round < 60; ++round) {
@@ -656,8 +640,8 @@ static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bo
     const ConfigParams config{0, 0x10003, 0x10000, 0x2bc, "WorkerSpin", spin, 0, 0, 0};
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
     auto* factory = Factories(manager.storage, 0);
-    Sequence* held = nullptr;
-    Sequence* pulse = nullptr;
+    ISequence* held = nullptr;
+    ISequence* pulse = nullptr;
     Require(factory->Create(&held, 4, 4, 2, 2, "held worker") == 0);
     Require(factory->Create(&pulse, 4, 4, 2, 2, "idle worker") == 0);
     HeldWorker worker;
@@ -722,7 +706,7 @@ static void WorkerCountCase() {
     ManagerObject manager;
     const ConfigParams config{0, 0x1000f, 0x10000, 0x2bc, "WorkerCount", 0, 0, 0, 0};
     Require(Initialize(manager.storage, block.memory, block.bytes, 4, 1, &config) == 0);
-    Sequence* sequence = nullptr;
+    ISequence* sequence = nullptr;
     Require(Factories(manager.storage, 0)->Create(&sequence, 8, 8, 2, 2, "worker count") == 0);
     WorkerClocks workers;
     Require(sequence->Dispatch(CaptureWorkerClocks, &workers, 4, nullptr) == 0);
@@ -754,9 +738,150 @@ static void WorkerCountCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+static void APS5_VABI ShutdownGateJob(void* argument, std::uint32_t index) {
+    GateJob(argument, index);
+    ++static_cast<Order*>(argument)->next;
+}
+
+static void ShutdownActiveCase(bool wait, bool queue, bool destroy, std::uint32_t count = 1) {
+    for (int round = 0; round < 3; ++round) {
+        Block block(SizeFor(1, 1, 4, 2, 2));
+        ManagerObject manager;
+        Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, nullptr) == 0);
+        ISequenceFactory* factory = Factories(manager.storage, 0);
+        ISequence* sequence = nullptr;
+        Require(factory->Create(&sequence, 4, 4, 2, 2, "shutdown active") == 0);
+        Order order;
+        Require(sequence->Dispatch(ShutdownGateJob, &order, count, nullptr) == 0);
+        while (!order.started) std::this_thread::yield();
+        if (queue) {
+            Require(sequence->SyncPoint() == 0);
+            Require(sequence->Dispatch(LowJob, &order, 1, nullptr) == 0);
+        }
+        std::atomic<bool> entered{false};
+        std::atomic<bool> returned{false};
+        std::thread waiter;
+        if (wait) {
+            waiter = std::thread([&] {
+                entered = true;
+                Require(destroy ? factory->Destroy(sequence) == 0 : sequence->Wait() == 0);
+                returned = true;
+            });
+            while (!entered) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            Require(!returned);
+        }
+        std::atomic<bool> stopping{false};
+        std::atomic<bool> stopped{false};
+        std::thread shutdown([&] {
+            stopping = true;
+            Require(Shutdown(manager.storage) == 0);
+            stopped = true;
+        });
+        while (!stopping) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        Require(!stopped);
+        order.release = true;
+        shutdown.join();
+        if (waiter.joinable()) waiter.join();
+        Require(stopped && (!wait || returned));
+        Require(order.next == 1);
+        Require(Factories(manager.storage, 0) == nullptr);
+        Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, nullptr) == 0);
+        Require(Shutdown(manager.storage) == 0);
+    }
+}
+
+struct ShutdownCrossWait {
+    ISequence* sequence;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+};
+
+static void APS5_VABI ShutdownWaitOther(void* argument, std::uint32_t) {
+    auto& state = *static_cast<ShutdownCrossWait*>(argument);
+    state.entered = true;
+    Require(state.sequence->Wait() == 0);
+    state.returned = true;
+}
+
+static void ConcurrentWaitCase() {
+    for (const bool stop : {false, true}) {
+        for (int round = 0; round < 3; ++round) {
+            Block block(SizeFor(2, 1, 4, 2, 8));
+            ManagerObject manager;
+            Require(Initialize(manager.storage, block.memory, block.bytes, 2, 1, nullptr) == 0);
+            auto* factory = Factories(manager.storage, 0);
+            ISequence* sequence = nullptr;
+            Require(factory->Create(&sequence, 2, 2, 1, 8, nullptr) == 0);
+            Order order;
+            Require(sequence->Dispatch(ShutdownGateJob, &order, 1, nullptr) == 0);
+            while (!order.started) std::this_thread::yield();
+            std::atomic<std::uint32_t> entered{0};
+            std::atomic<std::uint32_t> returned{0};
+            std::array<std::thread, 4> waiters;
+            for (auto& waiter : waiters) waiter = std::thread([&] {
+                ++entered;
+                Require(sequence->Wait() == 0);
+                ++returned;
+            });
+            while (entered != waiters.size()) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(returned == 0);
+            std::thread shutdown;
+            if (stop) {
+                shutdown = std::thread([&] { Require(Shutdown(manager.storage) == 0); });
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            order.release = true;
+            for (auto& waiter : waiters) waiter.join();
+            Require(returned == waiters.size() && order.next == 1);
+            if (stop) shutdown.join();
+            else {
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+                Require(factory->Destroy(sequence) == 0);
+                Require(Shutdown(manager.storage) == 0);
+            }
+        }
+    }
+}
+
+static void ShutdownCrossWaitCase() {
+    Block block(SizeFor(2, 2, 4, 2, 2));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    auto* factory = Factories(manager.storage, 0);
+    ISequence* producer = nullptr;
+    ISequence* consumer = nullptr;
+    Require(factory->Create(&producer, 1, 1, 1, 1, nullptr) == 0);
+    Require(factory->Create(&consumer, 1, 1, 1, 1, nullptr) == 0);
+    Order order;
+    Require(producer->Dispatch(ShutdownGateJob, &order, 1, nullptr) == 0);
+    while (!order.started) std::this_thread::yield();
+    ShutdownCrossWait state{producer};
+    Require(consumer->Dispatch(ShutdownWaitOther, &state, 1, nullptr) == 0);
+    while (!state.entered) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!state.returned);
+    std::atomic<bool> stopping{false};
+    std::atomic<bool> stopped{false};
+    std::thread shutdown([&] {
+        stopping = true;
+        Require(Shutdown(manager.storage) == 0);
+        stopped = true;
+    });
+    while (!stopping) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!stopped);
+    order.release = true;
+    shutdown.join();
+    Require(state.returned && stopped && order.next == 1);
+}
+
 int RunJobManagerCase(const char* caseName) {
     const std::string name = caseName;
     if (name == "memory") MemoryCase();
+    else if (name == "owned_state") OwnedStateCase();
     else if (name == "validation") ValidationCase();
     else if (name == "dispatch") DispatchCase();
     else if (name == "ordering") OrderingCase();
@@ -770,6 +895,13 @@ int RunJobManagerCase(const char* caseName) {
     else if (name == "worker_wake") WorkerWakeCase();
     else if (name == "worker_spin") WorkerSpinCase();
     else if (name == "worker_count") WorkerCountCase();
+    else if (name == "shutdown_running") ShutdownActiveCase(false, false, false);
+    else if (name == "shutdown_waiter") ShutdownActiveCase(true, false, false);
+    else if (name == "shutdown_queued") ShutdownActiveCase(true, true, false);
+    else if (name == "shutdown_destroy") ShutdownActiveCase(true, true, true);
+    else if (name == "shutdown_partial") ShutdownActiveCase(true, false, false, 4);
+    else if (name == "shutdown_cross_wait") ShutdownCrossWaitCase();
+    else if (name == "concurrent_wait") ConcurrentWaitCase();
     else return 2;
     return 0;
 }

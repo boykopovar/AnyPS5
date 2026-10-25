@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include <atomic>
@@ -5,19 +6,6 @@
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
-int APS5_VABI scePthreadJoin(Pthread, void**);
-int APS5_VABI scePthreadCancel(Pthread);
-int APS5_VABI scePthreadSetcancelstate(int, int*);
-int APS5_VABI scePthreadSemInit(PthreadSem*, int, unsigned, const char*);
-int APS5_VABI scePthreadSemDestroy(PthreadSem*);
-int APS5_VABI scePthreadSemPost(PthreadSem*);
-int APS5_VABI scePthreadSemWait(PthreadSem*);
-int APS5_VABI scePthreadSemTimedwait(PthreadSem*, KernelUseconds);
-int APS5_VABI scePthreadSemGetvalue(PthreadSem*, int*);
-}
 
 namespace {
 

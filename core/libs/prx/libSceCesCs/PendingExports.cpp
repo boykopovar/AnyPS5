@@ -1,3 +1,4 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {

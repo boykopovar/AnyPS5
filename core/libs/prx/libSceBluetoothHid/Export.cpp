@@ -1,3 +1,4 @@
+#include "prx/libSceBluetoothHid/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -5,36 +6,6 @@
 
 #include <string>
 #include <mutex>
-
-struct BluetoothHidThreadParam {
-    std::int32_t priority;
-    std::uint32_t padding;
-    std::uint64_t affinityMask;
-    std::uint32_t reserved;
-    std::uint32_t tailPadding;
-};
-
-struct BluetoothHidParam {
-    const BluetoothHidThreadParam* threadParam;
-    std::uint32_t reserved;
-    std::uint32_t padding;
-};
-
-struct BluetoothHidEvent {
-    std::uint64_t deviceHandle;
-    std::uint16_t vendorId;
-    std::uint16_t productId;
-    std::uint8_t type;
-    std::uint8_t status;
-    std::uint16_t reportSize;
-    std::uint8_t reserved[8];
-    std::uint8_t report[78];
-    std::uint8_t padding[2];
-};
-
-struct BluetoothHidDeviceInfo;
-struct BluetoothHidDeviceName;
-using BluetoothHidCallback = void (APS5_VABI *)(const BluetoothHidEvent*, std::int32_t, void*);
 
 static_assert(sizeof(BluetoothHidThreadParam) == 24);
 static_assert(offsetof(BluetoothHidThreadParam, affinityMask) == 8);

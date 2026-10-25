@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -465,8 +466,6 @@ struct Session {
         throw std::runtime_error(message + "; the console's error code is unknown");
     }
 };
-
-using SslVerifyCallback = int (APS5_VABI *)(int, unsigned int, void**, int, void*);
 
 constexpr int SslVersionSsl30 = 2;
 constexpr int SslVersionTls12 = 5;
@@ -1350,6 +1349,11 @@ int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen) {
 }
 
 int APS5_VABI sceSslSetSslVersion() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslSetServerName() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
