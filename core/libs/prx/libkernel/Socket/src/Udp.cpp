@@ -583,7 +583,7 @@ short ClosedStreamEvents(int descriptor, short revents, short requested) {
     if (!socket || socket->type != 1) return revents;
     revents = static_cast<short>(revents | (requested & POLLRDNORM));
     std::lock_guard lock(socket->modeMutex);
-    return socket->sendShut ? revents : static_cast<short>(revents & ~POLLHUP);
+    return socket->sendShut ? revents : static_cast<short>((revents & ~POLLHUP) | (requested & POLLOUT));
 }
 #endif
 [[noreturn]] void ThrowReadEndWritable(int descriptor) {
@@ -1850,8 +1850,10 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
                 entry.revents = static_cast<short>(entry.revents | flag.guest);
         for (const auto& flag : StatusFlags)
             if (native[i].revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
-        if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
-        if (pipe && (entry.revents & GuestPollHangUp))
+        const auto socket = pipe ? nullptr : Find(entry.descriptor);
+        const bool stream = socket && socket->type == 1;
+        if ((pipe || stream) && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
+        if ((pipe || stream) && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
 #ifndef _WIN32
         if (entry.revents & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
