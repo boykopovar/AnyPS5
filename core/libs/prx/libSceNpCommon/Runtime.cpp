@@ -326,6 +326,10 @@ int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name) {
     return NpResult(sceKernelOpenEventFlag(flag, name));
 }
 
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag) {
+    return NpResult(sceKernelCloseEventFlag(flag));
+}
+
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern) {
     return NpResult(sceKernelSetEventFlag(flag, pattern));
 }

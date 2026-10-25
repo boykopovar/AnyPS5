@@ -240,6 +240,7 @@ struct Context {
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool tessellationPipelineCache = true;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;

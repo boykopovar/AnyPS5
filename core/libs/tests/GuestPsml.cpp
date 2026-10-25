@@ -1,4 +1,4 @@
-#include "prx/libScePsml_debug/include/Api.hpp"
+#include "prx/libScePsml_debug/libScePsml_debug.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -185,6 +185,44 @@ void SetupAfterInit() {
     Require(scePsmlMfsrReleaseSharedResources(sharedResources) == 0);
 }
 
+void Mfsr2OnBaseConsole() {
+    constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x8A8A0001);
+    constexpr std::int32_t unsupportedConsole = static_cast<std::int32_t>(0x8A8A0012);
+    Require(scePsmlMfsr2Init() == unsupportedConsole);
+    Require(scePsmlMfsr2Init() == unsupportedConsole);
+
+    std::array<std::uint8_t, 0x30> param{};
+    std::array<std::uint8_t, 0x18> requirement;
+    requirement.fill(0xa5);
+    const auto untouchedRequirement = requirement;
+    Require(scePsmlMfsr2GetSharedResourcesInitRequirement(reinterpret_cast<MfsrRequirement*>(requirement.data()), reinterpret_cast<const Mfsr2SharedResourcesParam*>(param.data())) == notInitialized);
+    Require(scePsmlMfsr2GetContextInitRequirement(reinterpret_cast<MfsrRequirement*>(requirement.data()), reinterpret_cast<const Mfsr2ContextParam*>(param.data())) == notInitialized);
+    Require(requirement == untouchedRequirement);
+
+    std::uint64_t storage = 0;
+    void* const sentinel = &storage;
+    void* handle = sentinel;
+    Require(scePsmlMfsr2CreateSharedResources(&handle, reinterpret_cast<const Mfsr2SharedResourcesParam*>(param.data())) == notInitialized);
+    Require(scePsmlMfsr2CreateContext(&handle, reinterpret_cast<const Mfsr2ContextParam*>(param.data())) == notInitialized);
+    Require(handle == sentinel);
+    Require(scePsmlMfsr2ReleaseContext(sentinel) == notInitialized);
+    Require(scePsmlMfsr2ReleaseSharedResources(sentinel) == notInitialized);
+
+    std::uint32_t packetDwords = 0xa5a5a5a5;
+    Require(scePsmlMfsr2GetDispatchPacketsSizeInDwords(sentinel, &packetDwords) == notInitialized);
+    Require(packetDwords == 0xa5a5a5a5);
+
+    std::array<std::uint8_t, 112> dispatchParam{};
+    std::array<std::uint32_t, 64> dwords;
+    dwords.fill(0xa5a5a5a5u);
+    const auto untouchedDwords = dwords;
+    MfsrCommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
+    Require(scePsmlMfsr2GetDispatchPackets(sentinel, &commandBuffer, reinterpret_cast<const Mfsr2DispatchParam*>(dispatchParam.data())) == notInitialized);
+    Require(commandBuffer.cursor == dwords.data());
+    Require(commandBuffer.sizeInDwords == dwords.size());
+    Require(dwords == untouchedDwords);
+}
+
 void RefusedAfterInit() {
     MfsrSharedResourcesParam sharedParam{};
     MfsrRequirement requirement{};
@@ -266,6 +304,7 @@ int main() {
     DispatchPacketUntouched(scePsmlMfsrGetDispatchMfsrPacket1000);
     DispatchPacketUntouched(scePsmlMfsrGetDispatchMfsrPacket1300);
     SetupBeforeInit();
+    Mfsr2OnBaseConsole();
     SetupAfterInit();
     RefusedAfterInit();
 }

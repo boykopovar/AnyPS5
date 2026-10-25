@@ -22,7 +22,7 @@ namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
-    "--to-intel", "--to-rosetta", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
+    "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 

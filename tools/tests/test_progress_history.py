@@ -99,6 +99,17 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("<svg", html)
         self.assertIn("2026-01-02", html)
 
+    def test_unknown_ref_is_reported_with_git_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                with self.assertRaises(ValueError) as raised:
+                    progress_history.daily_commits("no-such-ref")
+        self.assertIn("no-such-ref", str(raised.exception))
+        self.assertIn("unknown revision", str(raised.exception))
+
     def test_days_are_utc_whatever_the_committer_offset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

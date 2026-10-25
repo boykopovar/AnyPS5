@@ -6,13 +6,19 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 
 namespace {
+
+constexpr int ThreadNameInvalid = 22;
+constexpr int ThreadNameTooLong = 63;
+constexpr std::size_t ThreadNameCapacity = 32;
 
 constexpr int FnmNomatch = 1;
 constexpr int FnmNoescape = 0x01;
@@ -275,6 +281,14 @@ int APS5_VABI setenv_np() {
 APS5_EXPORT("9Vqxt-qBPB4", scePosixForWebKit_sysinfo);
 int APS5_VABI scePosixForWebKit_sysinfo() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
+    if (thread == nullptr || name == nullptr) return ThreadNameInvalid;
+    if (std::strlen(name) >= ThreadNameCapacity) return ThreadNameTooLong;
+    std::lock_guard lock(thread->nameLock);
+    thread->name = name;
     return 0;
 }
 

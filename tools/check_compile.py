@@ -11,8 +11,18 @@ from contextlib import nullcontext
 from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
-DROP = ("-c", "-MD", "-MMD", "-MP")
+DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
+PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
+                 "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
+                 "-C", "-CC", "-dM", "-dD", "-dI")
+WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
+              "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
+              "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
+              "-arch", "-std", "-T", "-u", "-e", "--param", "-Xclang", "-Xpreprocessor", "-Xassembler", "-Xlinker")
+WITHOUT_VALUE = (*DROP, *PREPROCESSING, "-S", "-fsyntax-only", "-Werror", "-Wall", "-Wextra",
+                 "-pedantic", "-pedantic-errors", "-pthread", "-pipe", "-v")
+JOINED_OPTIONS = ("-I", "-L", "-F", "-B", "-D", "-U", "-O", "-g", "-W")
 
 
 def capture(command, cwd=None, encoding="utf-8"):
@@ -149,32 +159,88 @@ def syntax_only(entry, source):
     return syntax_arguments(arguments, directory, source)
 
 
+def preprocessor_arguments(argument):
+    forwarded = argument[4:].split(",")
+    if any(option.startswith("@") for option in forwarded):
+        raise ValueError(f"unsupported forwarded compiler option response file in {argument}")
+    options = iter(forwarded)
+    kept = []
+    for option in options:
+        if option in ("-MD", "-MMD", "-MF", "-MT", "-MQ", "--write-dependencies", "--write-user-dependencies"):
+            if not next(options, None):
+                raise ValueError(f"missing value for {option} in {argument}")
+            continue
+        if option in ("-M", "-MM", "-MG", "-MP", "--dependencies", "--user-dependencies",
+                      "--print-missing-file-dependencies") or option.startswith(("-MF", "-MT", "-MQ")):
+            continue
+        kept.append(option)
+        if option in ("-D", "-U", "-I", "-F", "-include", "--include", "-imacros", "--imacros",
+                      "-isystem", "-iquote", "-idirafter", "-isysroot"):
+            value = next(options, None)
+            if not value:
+                raise ValueError(f"missing operand for {option} in {argument}")
+            kept.append(value)
+        elif not (option.startswith(("-D", "-U", "-I", "-F")) and len(option) > 2):
+            raise ValueError(f"unsupported forwarded compiler option {option} in {argument}")
+    return "-Wp," + ",".join(kept) if kept else None
+
+
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
     for argument in arguments[1:]:
         if argument.startswith("@"):
             raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")
     wanted = source.resolve()
-    trimmed = []
-    index = 0
+    trimmed = [arguments[0]]
+    index = 1
+    positional = False
+    syntax_added = False
     while index < len(arguments):
         argument = arguments[index]
-        if argument in DROP_WITH_VALUE:
-            index += 2
-            continue
-        if argument in DROP or argument.startswith(("-MT", "-MF", "-MQ", "-MJ")):
+        if not syntax_added and argument.startswith("-"):
+            trimmed.append("-fsyntax-only")
+            syntax_added = True
+        if not positional and argument == "--":
+            positional = True
+            trimmed.append(argument)
             index += 1
             continue
-        if not argument.startswith("-"):
+        if not positional and (argument in ("-Xclang", "-Xpreprocessor") or argument.startswith(("-Xclang=", "-Xpreprocessor="))):
+            raise ValueError(f"unsupported forwarded compiler option {argument}")
+        if not positional and argument in (*DROP_WITH_VALUE, *WITH_VALUE):
+            if index + 1 == len(arguments):
+                raise ValueError(f"missing operand for {argument}")
+            if argument in WITH_VALUE:
+                trimmed.extend(arguments[index:index + 2])
+            index += 2
+            continue
+        if not positional and argument.startswith("-Wp,"):
+            if forwarded := preprocessor_arguments(argument):
+                trimmed.append(forwarded)
+            index += 1
+            continue
+        if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
+            index += 1
+            continue
+        if positional or not argument.startswith("-"):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
             if candidate.resolve() == wanted:
                 index += 1
                 continue
+            if positional:
+                trimmed.append(str(candidate.resolve()))
+                index += 1
+                continue
+        elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
+              and arguments[index + 1] in PREPROCESSING):
+            raise ValueError(f"unknown operand count for {argument} before {arguments[index + 1]}")
         trimmed.append(argument)
         index += 1
-    trimmed += ["-fsyntax-only", str(wanted)]
+    if not syntax_added:
+        trimmed.append("-fsyntax-only")
+    trimmed.append(str(wanted))
     return trimmed
 
 

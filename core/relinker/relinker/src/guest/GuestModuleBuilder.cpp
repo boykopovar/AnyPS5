@@ -289,6 +289,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             if (provider != nullptr) {
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
+                if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
