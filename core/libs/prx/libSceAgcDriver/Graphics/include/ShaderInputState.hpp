@@ -10,7 +10,7 @@
 
 namespace AgcDriver::Graphics {
 
-ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram = false);
+ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram = false, std::span<const std::byte> shaderHeader = {});
 bool PixelEarlyZ(std::uint32_t shaderControl);
 ShaderRecompiler::ShaderPixelStageInfo DefaultUnexportedInputs(ShaderRecompiler::ShaderPixelStageInfo pixel, std::span<const std::uint32_t> parameterExports);
 ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers& shader, std::span<const std::byte> header);
