@@ -13,13 +13,17 @@
 #endif
 #include <windows.h>
 #else
+#include <pthread.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <chrono>
 #include <random>
 #include <set>
@@ -37,6 +41,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -366,6 +371,18 @@ void ClearEnvironment(const char* name) {
 #endif
 }
 
+#ifndef _WIN32
+int WaitExit(pid_t child) {
+    int status = 0;
+    pid_t waited = 0;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited == -1 && errno == EINTR);
+    if (waited != child) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+#endif
+
 int RunEagerReference(const char* self) {
 #ifdef _WIN32
     const std::string command = "\"" + std::string(self) + "\" --eager-reference";
@@ -374,11 +391,63 @@ int RunEagerReference(const char* self) {
     const char* arguments[] = {self, "--eager-reference", nullptr};
     pid_t child = 0;
     if (posix_spawnp(&child, self, nullptr, nullptr, const_cast<char**>(arguments), environ) != 0) return -1;
-    int status = 0;
-    if (waitpid(child, &status, 0) != child) return -1;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return WaitExit(child);
 #endif
 }
+
+#ifndef _WIN32
+volatile sig_atomic_t Interruptions = 0;
+int Release[2] = {-1, -1};
+
+void ReleaseChild(int) {
+    Interruptions = Interruptions + 1;
+    const char byte = 0;
+    if (write(Release[1], &byte, 1) < 0) Interruptions = -1;
+}
+
+pid_t Child(int code, bool killed, bool waitsForRelease) {
+    const pid_t child = fork();
+    Require(child >= 0, "lazy resolved ABI: fork failed");
+    if (child == 0) {
+        if (waitsForRelease) {
+            char byte = 0;
+            while (read(Release[0], &byte, 1) < 0 && errno == EINTR) {
+            }
+        }
+        if (killed) kill(getpid(), SIGKILL);
+        _exit(code);
+    }
+    return child;
+}
+
+void CheckWaitExit() {
+    Require(WaitExit(Child(0, false, false)) == 0, "lazy resolved ABI: a child that exited with 0 did not report 0");
+    Require(WaitExit(Child(3, false, false)) == 3, "lazy resolved ABI: a child that exited with 3 did not report 3");
+    Require(WaitExit(Child(0, true, false)) == -1, "lazy resolved ABI: a child killed by a signal did not report a failure");
+    Require(pipe(Release) == 0, "lazy resolved ABI: cannot create the release pipe");
+    struct sigaction release{};
+    struct sigaction previous{};
+    release.sa_handler = ReleaseChild;
+    sigemptyset(&release.sa_mask);
+    release.sa_flags = 0;
+    Require(sigaction(SIGALRM, &release, &previous) == 0, "lazy resolved ABI: cannot install the SIGALRM handler");
+    Interruptions = 0;
+    const pid_t gated = Child(0, false, true);
+    const pthread_t waiter = pthread_self();
+    std::thread interrupter([waiter] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        pthread_kill(waiter, SIGALRM);
+    });
+    const int code = WaitExit(gated);
+    interrupter.join();
+    sigaction(SIGALRM, &previous, nullptr);
+    close(Release[0]);
+    close(Release[1]);
+    Require(Interruptions == 1, "lazy resolved ABI: the signal sent to the waiting thread did not arrive once");
+    Require(code == 0, "lazy resolved ABI: a wait interrupted by a signal did not reap the child and report its exit code");
+    Require(RunEagerReference("/nonexistent/aps5-lazy-resolved-abi") == -1, "lazy resolved ABI: a failed spawn did not report a failure");
+}
+#endif
 
 void Settle(std::span<const Synthetic> programs) {
     std::vector<const Shader*> registered;
@@ -625,6 +694,9 @@ int main(int argc, char** argv) {
             SetEnvironment("ANYPS5_SHADER_CACHE_DIR", cache.string());
             SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "1");
             ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
+#ifndef _WIN32
+            CheckWaitExit();
+#endif
             Require(RunEagerReference(argv[0]) == 0, "lazy resolved ABI: the eager reference process failed");
             cached = CacheFiles(cache);
             Require(!cached.empty(), "lazy resolved ABI: the eager reference process wrote no shader cache files");
