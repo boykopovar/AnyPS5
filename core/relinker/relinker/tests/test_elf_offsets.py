@@ -10,7 +10,7 @@ from test_optional_plt import fixture
 def main():
     relinker = Path(sys.argv[1]).resolve()
     cases = [
-        ("program-header-offset", 0x20, "FileByteOffset out of bounds (offset 0xffffffffffffffff)"),
+        ("program-header-offset", 0x20, "Program header table out of bounds (offset 0xffffffffffffffff)"),
         ("load-offset", 64 + 8, "Segment offset out of bounds (offset 0xffffffffffffffff)"),
         ("dynamic-offset", 120 + 8, "Dynamic segment out of bounds (offset 0xffffffffffffffff)"),
     ]

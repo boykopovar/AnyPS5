@@ -227,6 +227,16 @@ int main() {
             Write<std::uint64_t>(bytes, 288, 5);
             RejectSections(std::move(bytes));
         }},
+        {"program header table truncation", [] {
+            auto bytes = Fixture();
+            bytes.resize(64 + 1 * 56 - 1);
+            RejectProgramHeaders(std::move(bytes));
+        }},
+        {"program header table offset overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 32, std::numeric_limits<std::uint64_t>::max() - 31);
+            RejectProgramHeaders(std::move(bytes));
+        }},
         {"section header table truncation", [] {
             auto bytes = Fixture();
             Write<std::uint16_t>(bytes, 62, 0);

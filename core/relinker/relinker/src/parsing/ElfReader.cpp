@@ -125,6 +125,10 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (header.ProgramHeaderCount != 0 && header.ProgramHeaderEntrySize != 56) {
         throw RelinkerException("Invalid ELF program header entry size: expected 56 bytes", 0x36);
     }
+    const ByteCount tableSize = static_cast<ByteCount>(header.ProgramHeaderCount) * header.ProgramHeaderEntrySize;
+    if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
+        throw RelinkerException("Program header table out of bounds", header.ProgramHeaderOffset);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
