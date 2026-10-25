@@ -1,3 +1,4 @@
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -6,57 +7,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code);
-int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id);
-int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id);
-int APS5_VABI sceNpGetUserIdByAccountId(std::uint64_t account_id, int* user_id);
-int APS5_VABI sceNpUnknown_8weiQyIdI3A(int userId, const NpOnlineId* buffer);
-int APS5_VABI sceNpUnknown_WxLcN76q19o(void);
-int APS5_VABI sceNpGetAccountCountry(const NpOnlineId* online_id, void* country_code);
-int APS5_VABI sceNpGetAccountDateOfBirth(const NpOnlineId* online_id, void* date_of_birth);
-int APS5_VABI sceNpGetAccountLanguage(int req_id, const NpOnlineId* online_id, void* language);
-int APS5_VABI sceNpGetParentalControlInfo(int req_id, const NpOnlineId* online_id, std::int8_t* age, void* info);
-int APS5_VABI sceNpGetUserIdByOnlineId(const NpOnlineId* online_id, int* user_id);
-int APS5_VABI sceNpCheckPlus(int req_id, const void* param, void* result);
-int APS5_VABI sceNpNotifyPlusFeature(const void* param);
-int APS5_VABI sceNpGetAccountId(const NpOnlineId* online_id, std::uint64_t* account_id);
-int APS5_VABI sceNpSetGamePresenceOnline(int req_id, const NpOnlineId* online_id, std::uint32_t presence);
-int APS5_VABI sceNpRegisterPlusEventCallback(void* callback, void* userdata);
-int APS5_VABI sceNpUnregisterPlusEventCallback(void);
-int APS5_VABI sceNpIsPlusMember(int user_id, bool* is_member);
-int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction);
-}
-
-extern "C" {
-int APS5_VABI sceNpCreateRequest(void);
-int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param);
-int APS5_VABI sceNpDeleteRequest(int reqId);
-int APS5_VABI sceNpSetTimeout(int reqId, std::int32_t resolveRetry, std::uint32_t resolveTimeout,
-    std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout);
-}
-
-extern "C" {
-int APS5_VABI sceNpCheckCallback(void);
-int APS5_VABI sceNpCheckCallbackForLib(void);
-int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata);
-int APS5_VABI sceNpUnregisterStateCallback(void);
-int APS5_VABI sceNpRegisterStateCallbackA(void* callback, void* userdata);
-int APS5_VABI sceNpUnregisterStateCallbackA(int callbackId);
-int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata);
-void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata);
-int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void);
-}
-
-extern "C" {
-int APS5_VABI sceNpCheckNpAvailabilityA(int reqId, int userId);
-int APS5_VABI sceNpGetAccountDateOfBirthA(int userId, void* dateOfBirth);
-int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language);
-int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, std::uint32_t* status);
-int APS5_VABI sceNpGetGamePresenceStatusA(int userId, std::uint32_t* status);
-int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, std::int8_t* age, void* info);
-}
 
 namespace {
 
@@ -135,27 +85,28 @@ void CheckStateCallbacksA() {
     int userdata[9]{};
     Require(sceNpRegisterStateCallbackA(nullptr, &userdata[0]) == InvalidArgument, "null state callback");
     int ids[8]{};
-    ids[0] = sceNpRegisterStateCallbackA(callbacks[0], &userdata[0]);
+    ids[0] = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[0]);
     Require(ids[0] >= 1 && ids[0] <= 8, "state callback id outside 1..8");
-    Require(sceNpRegisterStateCallbackA(callbacks[0], &userdata[1]) == AlreadyRegistered, "duplicate state callback");
+    Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[0]), &userdata[1]) == AlreadyRegistered, "duplicate state callback");
     Require(stateCallsA[0].calls == 0, "registering calls the state callback");
     Require(sceNpRegisterNpReachabilityStateCallback(reinterpret_cast<void*>(&AbortingReachabilityCallback), nullptr) == 0,
         "registering the reachability callback");
     sceNpRegisterGamePresenceCallback(nullptr, nullptr);
     sceNpRegisterGamePresenceCallback(reinterpret_cast<void*>(&AbortingGamePresenceCallback), &userdata[0]);
+
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed");
     Require(SignedOutOnce(stateCallsA[0], &userdata[0]), "sceNpCheckCallback must deliver SIGNED_OUT once");
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0, "unregistering the reachability callback");
     Require(sceNpCheckCallback() == 0, "second sceNpCheckCallback failed");
     Require(stateCallsA[0].calls == 1, "the second sceNpCheckCallback delivered the state again");
     for (int index = 1; index < 8; ++index) {
-        ids[index] = sceNpRegisterStateCallbackA(callbacks[index], &userdata[index]);
+        ids[index] = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[index]), &userdata[index]);
         Require(ids[index] >= 1 && ids[index] <= 8, "state callback id outside 1..8");
         for (int other = 0; other < index; ++other) {
             Require(ids[index] != ids[other], "two state callbacks got the same id");
         }
     }
-    Require(sceNpRegisterStateCallbackA(callbacks[8], &userdata[8]) == CallbackMax, "ninth state callback");
+    Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[8]), &userdata[8]) == CallbackMax, "ninth state callback");
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed with eight callbacks");
     for (int index = 0; index < 8; ++index) {
         Require(SignedOutOnce(stateCallsA[index], &userdata[index]), "each callback gets SIGNED_OUT once");
@@ -166,10 +117,10 @@ void CheckStateCallbacksA() {
     Require(sceNpUnregisterStateCallbackA(ids[3]) == 0, "unregistering one state callback");
     for (int index = 0; index < 8; ++index) {
         if (index == 3) continue;
-        Require(sceNpRegisterStateCallbackA(callbacks[index], &userdata[index]) == AlreadyRegistered,
+        Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[index]), &userdata[index]) == AlreadyRegistered,
             "unregistering one id removed another callback");
     }
-    Require(sceNpRegisterStateCallbackA(callbacks[3], &userdata[3]) == ids[3], "registering again takes the freed slot");
+    Require(sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[3]), &userdata[3]) == ids[3], "registering again takes the freed slot");
     Require(sceNpCheckCallbackForLib() == 0, "sceNpCheckCallbackForLib failed after registering again");
     for (int index = 0; index < 8; ++index) {
         Require(stateCallsA[index].calls == (index == 3 ? 2 : 1), "only the registration made again gets SIGNED_OUT");
@@ -182,13 +133,13 @@ void CheckStateCallbacksA() {
         Require(sceNpUnregisterStateCallbackA(ids[index]) == 0, "unregistering a state callback");
     }
     Require(sceNpUnregisterStateCallbackA(ids[0]) == NotRegistered, "unregistering a state callback twice");
-    const int removed = sceNpRegisterStateCallbackA(callbacks[8], &userdata[8]);
+    const int removed = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(callbacks[8]), &userdata[8]);
     Require(removed >= 1 && removed <= 8, "a freed slot is reused");
     Require(sceNpUnregisterStateCallbackA(removed) == 0, "unregistering before sceNpCheckCallback");
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed with no callbacks");
     Require(stateCallsA[8].calls == 0, "an unregistered callback was called");
     SelfUnregister self{};
-    self.id = sceNpRegisterStateCallbackA(reinterpret_cast<void*>(&SelfUnregisteringCallback), &self);
+    self.id = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(reinterpret_cast<void*>(&SelfUnregisteringCallback)), &self);
     Require(self.id >= 1 && self.id <= 8, "state callback id outside 1..8");
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed with a callback that unregisters itself");
     Require(self.calls == 1 && self.result == 0, "a state callback must be able to unregister itself");
@@ -201,8 +152,8 @@ void CheckLegacyStateCallback() {
     auto* callback = reinterpret_cast<void*>(&LegacyStateCallback);
     Require(sceNpUnregisterStateCallback() == NotRegistered, "unregistering with no legacy callback");
     Require(sceNpRegisterStateCallback(nullptr, &userdata) == InvalidArgument, "null legacy callback");
-    Require(sceNpRegisterStateCallback(callback, &userdata) == 0, "registering the legacy callback");
-    Require(sceNpRegisterStateCallback(callback, nullptr) == AlreadyRegistered, "duplicate legacy callback");
+    Require(sceNpRegisterStateCallback(reinterpret_cast<NpStateCallback>(callback), &userdata) == 0, "registering the legacy callback");
+    Require(sceNpRegisterStateCallback(reinterpret_cast<NpStateCallback>(callback), nullptr) == AlreadyRegistered, "duplicate legacy callback");
     legacyStateCall.npId = &sentinel;
     Require(sceNpCheckCallback() == 0, "sceNpCheckCallback failed with the legacy callback");
     Require(SignedOutOnce(legacyStateCall, &userdata), "the legacy callback must get SIGNED_OUT with no NpId");
@@ -236,6 +187,33 @@ void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(asyncId, 2, 0, 0, 0, 0) == 0, "async request");
     Require(sceNpDeleteRequest(asyncId) == 0, "sceNpDeleteRequest failed on the async request");
     Require(sceNpSetTimeout(asyncId, 2, 0, 0, 0, 0) == RequestNotFound, "deleted async request");
+}
+
+void CheckAsyncRequestLifecycle() {
+    NpCreateAsyncRequestParameter param{};
+    const int unusedAsyncResult = sceNpCreateAsyncRequest(&param);
+    Require(unusedAsyncResult > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    const int deletedId = sceNpCreateAsyncRequest(&param);
+    Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
+
+    constexpr int resultSentinel = 0x5a5a5a5a;
+    const int unknownIds[] = {0, -1, 0x7fffffff, deletedId};
+    for (const int id : unknownIds) {
+        int result = resultSentinel;
+        Require(sceNpPollAsync(id, &result) == RequestNotFound, "poll must reject an absent or deleted id");
+        Require(result == resultSentinel, "poll must not touch the result for an absent or deleted id");
+        Require(sceNpPollAsync(id, nullptr) == InvalidArgument,
+            "poll must reject a null result before the id");
+        Require(sceNpAbortRequest(id) == RequestNotFound, "abort must reject an absent or deleted id");
+        Require(sceNpDeleteRequest(id) == RequestNotFound, "delete must reject an absent or deleted id");
+    }
+
+    int result = resultSentinel;
+    Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
+    Require(result == SignedOut, "poll must report the signed-out result on a live async request");
+    Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == 0, "delete after abort");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
 }
 
 void CheckOnlineIdQueries() {
@@ -284,6 +262,7 @@ void CheckOnlineIdQueries() {
     Require(std::memcmp(output, untouched, sizeof(output)) == 0 && age == 0x5a && userId == 0x5a5a && accountId == 0x5a5a, "a failed query wrote its output");
     try {
         sceNpNotifyPlusFeature(output);
+
         Require(false, "sceNpNotifyPlusFeature must report that it is not implemented");
     } catch (const std::runtime_error& error) {
         Require(std::string(error.what()) == "sceNpNotifyPlusFeature not implemented", "sceNpNotifyPlusFeature threw");
@@ -394,6 +373,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckRequestTimeouts();
+    CheckAsyncRequestLifecycle();
     CheckPlusAndContentRestriction();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
@@ -424,6 +404,7 @@ int main() {
     NpOnlineId buffer{};
     try {
         sceNpUnknown_8weiQyIdI3A(0x10000, &buffer);
+
         Require(false, "sceNpUnknown_8weiQyIdI3A must report that it is not implemented");
     } catch (const std::runtime_error& error) {
         Require(std::string(error.what()) == "sceNpUnknown_8weiQyIdI3A not implemented",
@@ -431,6 +412,7 @@ int main() {
     }
     try {
         sceNpUnknown_WxLcN76q19o();
+
         Require(false, "sceNpUnknown_WxLcN76q19o must report that it is not implemented");
     } catch (const std::runtime_error& error) {
         Require(std::string(error.what()) == "sceNpUnknown_WxLcN76q19o not implemented",

@@ -367,6 +367,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         program.Metadata().pixelIteratesSamples = iterated;
         const bool offsets = options.interpolationFunctions && options.fragmentShaderBarycentricEnabled;
         const bool centers = iterated && offsets;
+        if (ps->mergeSamples > 1u && !offsets && ps->SampleLocationsOffCenter() && (loaded(PixelInput::PerspectiveCenter) || loaded(PixelInput::LinearCenter))) {
+            throw std::runtime_error("a partial write of a multisampled packed color target runs the pixel shader once per sample, and without interpolation functions and fragment shader barycentrics its centre-located barycentrics would follow the sample");
+        }
         const bool sampleOffsets = offsets && ps->SampleLocationsOffCenter();
         const auto smoothSample = sampleOffsets ? StageInputKind::BaryCoordSmoothSample : StageInputKind::BaryCoordSmooth;
         const auto linearSample = sampleOffsets ? StageInputKind::BaryCoordNoPerspectiveSample : StageInputKind::BaryCoordNoPerspective;
@@ -596,6 +599,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16);
+        context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {

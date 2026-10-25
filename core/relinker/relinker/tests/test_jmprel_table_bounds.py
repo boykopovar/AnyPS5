@@ -124,6 +124,11 @@ def main():
                         "Symbol table entry out of bounds", target=output_target)
                     run(relinker, work, prefix + "-none", fixture(symbol_bytes=0, symbol_index=0xFFFFFFFF,
                                                                  relocation_type=0, **options), target=output_target)
+                else:
+                    run(relinker, work, prefix + "-unsupported-plt-type", fixture(relocation_type=6, **options),
+                        "Unsupported PLT relocation type", target=output_target)
+                    run(relinker, work, prefix + "-relative-in-plt", fixture(relocation_type=8, **options),
+                        "Unsupported PLT relocation type", target=output_target)
     print("Jump relocation table bounds tests passed")
 
 

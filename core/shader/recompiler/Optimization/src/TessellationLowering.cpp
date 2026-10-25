@@ -253,6 +253,82 @@ bool Implies(IrValue* rawPredicate, IrValue* rawCondition) {
     return predicate->Opcode() == IrOpcode::LogicalAnd && (Implies(predicate->Argument(0), condition) || Implies(predicate->Argument(1), condition));
 }
 
+bool ImpliesNot(IrValue* rawPredicate, IrValue* rawCondition) {
+    IrValue* predicate = rawPredicate->Resolve();
+    IrValue* condition = rawCondition->Resolve();
+    if (condition->HasImmediate() && condition->Type() == IrType::Bool && !condition->ImmediateBool()) return true;
+    if (condition->Opcode() == IrOpcode::LogicalNot) return Implies(predicate, condition->Argument(0));
+    if (predicate->Opcode() == IrOpcode::LogicalNot) return Implies(condition, predicate->Argument(0));
+    return predicate->Opcode() == IrOpcode::LogicalAnd && (ImpliesNot(predicate->Argument(0), condition) || ImpliesNot(predicate->Argument(1), condition));
+}
+
+bool CarriesRelativeBits(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::Identity:
+    case IrOpcode::Phi:
+    case IrOpcode::IAdd32:
+    case IrOpcode::ISub32:
+    case IrOpcode::IMul32:
+    case IrOpcode::ShiftLeftLogical32:
+    case IrOpcode::ShiftRightLogical32:
+    case IrOpcode::ShiftRightArithmetic32:
+    case IrOpcode::BitwiseAnd32:
+    case IrOpcode::BitwiseOr32:
+    case IrOpcode::BitwiseXor32:
+    case IrOpcode::BitwiseNot32:
+    case IrOpcode::BitFieldUExtract:
+    case IrOpcode::BitFieldSExtract:
+    case IrOpcode::BitFieldInsert:
+    case IrOpcode::Select:
+    case IrOpcode::SelectU1:
+    case IrOpcode::SelectU32:
+    case IrOpcode::SelectF32:
+    case IrOpcode::BitCastU32F32:
+    case IrOpcode::BitCastF32U32:
+    case IrOpcode::BitCastU16F16:
+    case IrOpcode::BitCastF16U16:
+    case IrOpcode::ConvertF32U32:
+    case IrOpcode::ConvertU32F32:
+    case IrOpcode::ConvertF32S32:
+    case IrOpcode::ConvertS32F32:
+    case IrOpcode::ConvertFToU32:
+    case IrOpcode::ConvertUToF32:
+    case IrOpcode::ConvertFToI32:
+    case IrOpcode::ConvertIToF32:
+    case IrOpcode::ConvertF32F16:
+    case IrOpcode::ConvertF16F32:
+    case IrOpcode::ConvertU16U32:
+    case IrOpcode::ConvertU32U16:
+    case IrOpcode::ConvertU8U32:
+    case IrOpcode::ConvertU32U8:
+    case IrOpcode::FPAdd32:
+    case IrOpcode::FPSub32:
+    case IrOpcode::FPMul32:
+    case IrOpcode::FPMad32:
+    case IrOpcode::FPFma32:
+    case IrOpcode::FFma32:
+    case IrOpcode::FPMin32:
+    case IrOpcode::FPMax32:
+    case IrOpcode::FPNeg32:
+    case IrOpcode::FPAbs32:
+    case IrOpcode::CompositeConstructU64:
+    case IrOpcode::CompositeConstructU32x2:
+    case IrOpcode::CompositeConstructU32x3:
+    case IrOpcode::CompositeConstructU32x4:
+    case IrOpcode::CompositeExtractU64:
+    case IrOpcode::CompositeExtractU32x2:
+    case IrOpcode::CompositeExtractU32x3:
+    case IrOpcode::CompositeExtractU32x4:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsRelativeSelect(IrOpcode opcode) {
+    return opcode == IrOpcode::Select || opcode == IrOpcode::SelectU1 || opcode == IrOpcode::SelectU32 || opcode == IrOpcode::SelectF32;
+}
+
 class AddressEvaluator {
 public:
     AddressEvaluator(std::uint32_t vertexCount, std::int64_t relativeCount) : vertexCount(vertexCount), relativeCount(relativeCount) {}
@@ -784,33 +860,86 @@ private:
         return address && address->dynamic && address->relative == stride;
     }
 
+    bool dependsOnRelative(IrValue* raw, IrValue* rawPredicate) {
+        if (raw == nullptr) return false;
+        IrValue* value = raw->Resolve();
+        IrValue* predicate = rawPredicate == nullptr ? nullptr : rawPredicate->Resolve();
+        if (value->HasImmediate()) return false;
+        const auto key = std::pair<const IrValue*, const IrValue*>{value, predicate};
+        if (const auto found = dependence.find(key); found != dependence.end()) return found->second == Dependence::Yes;
+        const auto inserted = dependence.emplace(key, Dependence::Visiting);
+        if (!inserted.second) return false;
+        const bool result = [&] {
+            if (const auto form = evaluator.Evaluate(value, predicate)) return form->relative != 0;
+            if (IsRelativeSelect(value->Opcode()) && predicate != nullptr) {
+                IrValue* condition = value->Argument(0);
+                if (Implies(predicate, condition)) return dependsOnRelative(value->Argument(1), predicate);
+                if (ImpliesNot(predicate, condition)) return dependsOnRelative(value->Argument(2), predicate);
+            }
+            for (IrValue* argument : value->Arguments()) {
+                if (dependsOnRelative(argument, predicate)) return true;
+            }
+            return false;
+        }();
+        inserted.first->second = result ? Dependence::Yes : Dependence::No;
+        return result;
+    }
+
+    bool windowLoadObserves(IrValue* store) {
+        IrBlock* start = store->Parent();
+        if (start == nullptr) return true;
+        std::unordered_set<IrBlock*> seen;
+        std::vector<IrBlock*> pending = start->Successors();
+        bool loops = false;
+        while (!pending.empty()) {
+            IrBlock* block = pending.back();
+            pending.pop_back();
+            if (block == nullptr) continue;
+            if (block == start) {
+                loops = true;
+                continue;
+            }
+            if (!seen.insert(block).second) continue;
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::LoadVectorWindow) return true;
+            }
+            for (IrBlock* next : block->Successors()) pending.push_back(next);
+        }
+        bool after = false;
+        for (IrValue* inst : start->Instructions()) {
+            if (inst == store) {
+                after = true;
+                continue;
+            }
+            if (inst->Opcode() == IrOpcode::LoadVectorWindow && (after || loops)) return true;
+        }
+        return false;
+    }
+
+    IrValue* effectPredicate(IrValue* user) const {
+        if (!user->MayHaveSideEffects() || user->ArgumentCount() == 0u) return nullptr;
+        IrValue* last = user->Argument(user->ArgumentCount() - 1u);
+        if (last == nullptr || last->Resolve()->Type() != IrType::Bool) return nullptr;
+        return last;
+    }
+
     bool usedAsData(const std::vector<IrValue*>& bases) {
+        dependence.clear();
         std::vector<IrValue*> pending(bases.begin(), bases.end());
         std::unordered_set<IrValue*> visited(bases.begin(), bases.end());
         while (!pending.empty()) {
             IrValue* value = pending.back();
             pending.pop_back();
             for (IrValue* user : value->Uses()) {
-                switch (user->Opcode()) {
-                case IrOpcode::Identity:
-                case IrOpcode::IAdd32:
-                case IrOpcode::ISub32:
-                case IrOpcode::IMul32:
-                case IrOpcode::ShiftLeftLogical32:
-                case IrOpcode::ShiftRightLogical32:
-                case IrOpcode::BitwiseAnd32:
-                case IrOpcode::BitwiseOr32:
-                case IrOpcode::BitFieldUExtract:
-                case IrOpcode::SelectU32:
-                case IrOpcode::Phi:
+                if (user == nullptr) continue;
+                if (CarriesRelativeBits(user->Opcode())) {
                     if (visited.insert(user).second) pending.push_back(user);
                     continue;
-                default:
-                    break;
                 }
                 if (dynamicInputAddress(user, value)) continue;
-                const auto address = evaluator.Evaluate(value, nullptr);
-                if (!address || address->relative != 0) return true;
+                if (!dependsOnRelative(value, effectPredicate(user))) continue;
+                if (user->Opcode() == IrOpcode::StoreVectorWindow && !windowLoadObserves(user)) continue;
+                return true;
             }
         }
         return false;
@@ -1075,10 +1204,13 @@ private:
     bool merged;
     AddressEvaluator evaluator;
     std::vector<Access> accesses;
+    enum class Dependence : std::uint8_t { Visiting, No, Yes };
+
     std::uint32_t localStride;
     std::uint32_t controlStride = 0;
     std::uint32_t patchStride = 0;
     std::uint32_t sharedStride = 0;
+    std::map<std::pair<const IrValue*, const IrValue*>, Dependence> dependence;
 };
 
 }

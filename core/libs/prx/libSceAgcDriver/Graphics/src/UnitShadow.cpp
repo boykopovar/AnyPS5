@@ -22,7 +22,7 @@ namespace {
 
 constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
-constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown"};
+constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
 
 std::uint64_t BudgetBytes() {
     static const std::uint64_t budget = [] {
@@ -454,6 +454,7 @@ PublishReason PublishReasonFor(const char* flushReason) {
     if (is("packet store")) return PublishReason::Label;
     if (is("buffer copy count") || is("dispatch-cache entry")) return PublishReason::Validate;
     if (is("storage image creation") || is("storage refresh")) return PublishReason::Upload;
+    if (is("address-based heaps")) return PublishReason::Address;
     return PublishReason::Hook;
 }
 
@@ -472,9 +473,9 @@ ShadowSlabPin::~ShadowSlabPin() {
     slab->pins.fetch_sub(1, std::memory_order_relaxed);
 }
 
-std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason) {
+std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason, bool waited) {
     if (!UnitShadowEnabled() || scope == PublishScope::None || bytes == 0) return 0;
-    if (Recorder::InCompletion() && GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::Store) {
+    if (!waited && Recorder::InCompletion() && GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::Store) {
         // The store's own stamp makes the unit stale; a publish recorded now would land over the
         // store when the batch runs (the completion is not waited for).
         Stats().skippedInCompletion.fetch_add(1, std::memory_order_relaxed);
@@ -492,11 +493,11 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
     return units;
 }
 
-bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
-    if (!UnitShadowEnabled() || bytes == 0) return false;
+namespace {
+
+bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return false;
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
     return anyOverlapping(registry, address, end, [&](const std::shared_ptr<UnitShadow>& shadow) {
         if (shadow->liveUnits == 0) return false;
         const auto begin = std::max(address, shadow->importBase);
@@ -508,10 +509,21 @@ bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
     });
 }
 
+}
+
+bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
+    if (!UnitShadowEnabled() || bytes == 0) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    return anyShadowedLocked(registry, address, bytes);
+}
+
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
-    if (!UnitShadowEnabled()) return false;
+    if (!UnitShadowEnabled() || ranges.empty()) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && AnyShadowedOverlaps(begin, static_cast<std::size_t>(end - begin))) return true;
+        if (end > begin && anyShadowedLocked(registry, begin, static_cast<std::size_t>(end - begin))) return true;
     }
     return false;
 }

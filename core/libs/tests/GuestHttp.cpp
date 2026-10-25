@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
@@ -9,50 +10,46 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
-int APS5_VABI sceHttpUriCopy(SceHttpUriElement*, const SceHttpUriElement*, void*, std::size_t, std::size_t*);
-int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
-int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
-int APS5_VABI sceHttpSetRequestStatusCallback(int, void (APS5_VABI *)(int, int, void*), void*);
-int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
-int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
-int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriSweepPath(char*, const char*, std::size_t);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpWaitRequest(HttpEpollHandle, HttpNBEvent*, int, int);
-int APS5_VABI sceHttpAbortWaitRequest(HttpEpollHandle);
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpAuthCacheFlush(int);
-int APS5_VABI sceHttpCookieFlush(int);
-int APS5_VABI sceHttpReadData(int, void*, std::size_t);
-int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
-int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
-int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
-int APS5_VABI sceHttpGetLastErrno(int, int*);
-int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
-int APS5_VABI sceHttpSetRecvBlockSize(int, std::uint32_t);
-int APS5_VABI sceHttpRedirectCacheFlush(int);
-int APS5_VABI sceHttpsUnloadCert(int);
-int APS5_VABI sceHttpsSetSslVersion(int, int);
-int APS5_VABI sceHttpsGetSslError(int, int*, std::uint32_t*);
-int APS5_VABI sceHttpSetRedirectCallback(int, HttpRedirectCallback, void*);
-int APS5_VABI sceHttpSetCookieRecvCallback(int, HttpCookieRecvCallback, void*);
-int APS5_VABI sceHttpSetAuthInfoCallback(int, HttpAuthInfoCallback, void*);
-int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
-}
 
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
+
+
+static_assert(sizeof(HttpMemoryPoolStats) == 24);
+
+template <typename TCall>
+static bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+static void CheckPoolStatsRejected(int id, int expected) {
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == expected);
+    for (unsigned char byte : buffer) Require(byte == 0x5a);
+}
+
+static void CheckPoolStats(int id, std::size_t poolSize) {
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == 0);
+    HttpMemoryPoolStats stats;
+    std::memcpy(&stats, buffer, sizeof(stats));
+    Require(stats.poolSize == poolSize);
+    Require(stats.peakUsedSize == 0 && stats.usedSize == 0);
+    for (std::size_t i = sizeof(stats); i < sizeof(buffer); ++i) Require(buffer[i] == 0x5a);
+}
 
 static void CheckUriParseCharacters() {
     char pool[256];
@@ -252,6 +249,163 @@ static void CheckUriEscapeBytes() {
         for (char byte : output) Require(byte == 'Z');
         Require(sceHttpUriEscape(output, &required, size, input) == 0 && required == size);
         Require(Equal(output, expected) && output[size] == 'Z');
+    }
+}
+
+struct StatusLineCase {
+    bool tildeFill;
+    const char* line;
+    std::size_t length;
+    int result;
+    std::int32_t major;
+    std::int32_t minor;
+    std::int32_t code;
+    long reasonOffset;
+    std::size_t phraseLength;
+};
+
+static void CheckStatusLineAsMeasured() {
+    constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
+    constexpr StatusLineCase cases[] = {
+        {false, "HTTP/1.1 200 OK\r\n", 17, 17, 1, 1, 200, 12, 0x3},
+        {false, "HTTP/1.0 404 Not Found\n", 23, 23, 1, 0, 404, 12, 0xa},
+        {false, "HTTP/1.1 200 OK", 15, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {false, "HTTP/1.1 200\r\n", 14, 14, 1, 1, 200, 12, 0x0},
+        {false, "HTTP/1.1 200 \r\n", 15, 15, 1, 1, 200, 12, 0x1},
+        {false, "HTTP/2 200 OK\r\n", 15, parseInvalidResponse, 2, 0, -7, -1, 0xabcd},
+        {false, "HTTP/10.20 999 X\r\n", 18, 18, 10, 20, 999, 14, 0x2},
+        {false, "HTTP/1.1 20 OK\r\n", 16, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 2000 OK\r\n", 18, 18, 1, 1, 200, 12, 0x4},
+        {false, "HTTP/1.1 abc OK\r\n", 17, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, "http/1.1 200 OK\r\n", 17, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {false, "HTTP/1.1  200 OK\r\n", 18, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, "HTTP/1.1\t200 OK\r\n", 17, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 200OK\r\n", 16, 16, 1, 1, 200, 12, 0x2},
+        {false, "ICY 200 OK\r\n", 12, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 200 OK\r", 16, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {false, "HTTP/1.1 200 OK\r\nX: y", 21, 17, 1, 1, 200, 12, 0x3},
+        {false, "HTTP/1.1 200 OK\r\r\n", 18, 18, 1, 1, 200, 12, 0x4},
+        {false, "HTTP/.1 200 OK\r\n", 16, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {false, "HTTP/1. 200 OK\r\n", 16, parseInvalidResponse, 1, 0, -7, -1, 0xabcd},
+        {false, "HTTP/4294967297.1 200 OK\n", 25, 25, 1, 1, 200, 21, 0x3},
+        {false, "HTTP/1.1 -12 OK\n", 16, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, " HTTP/1.1 200 OK\n", 17, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 200 A\nB\n", 17, 15, 1, 1, 200, 12, 0x2},
+        {false, "HTTP/1.1 200\n", 13, 13, 1, 1, 200, 12, 0x0},
+        {false, "HTTP/1.1 200 OK\n", 15, 16, 1, 1, 200, 12, 0x3},
+        {false, "HTTP/1.1 200 OK\n", 12, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {false, "HTTP/1.1 200 OK\n", 11, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 200 OK\n", 8, 16, 1, 1, 200, 12, 0x3},
+        {false, "HTTP/1.1 200 OK\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {false, "HTTP/1.1 200 OK\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 1, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 2, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 3, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 4, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 5, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 6, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 8, 16, 1, 1, 200, 12, 0x3},
+        {true, "HTTP/1.1 200 OK\n", 9, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 10, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 11, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 12, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 13, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 14, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK\n", 15, 16, 1, 1, 200, 12, 0x3},
+        {true, "HTTP/1.1 200 OK\n", 16, 16, 1, 1, 200, 12, 0x3},
+        {true, "HTTP/10.20 999 X\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 1, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 2, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 3, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 4, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 5, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 6, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 8, 17, 10, 20, 999, 14, 0x2},
+        {true, "HTTP/10.20 999 X\n", 9, 17, 10, 20, 999, 14, 0x2},
+        {true, "HTTP/10.20 999 X\n", 10, 17, 10, 20, 999, 14, 0x2},
+        {true, "HTTP/10.20 999 X\n", 11, parseInvalidResponse, 10, 20, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 12, parseInvalidResponse, 10, 20, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 13, parseInvalidResponse, 10, 20, -7, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 14, parseInvalidResponse, 10, 20, 999, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 15, parseInvalidResponse, 10, 20, 999, -1, 0xabcd},
+        {true, "HTTP/10.20 999 X\n", 16, 17, 10, 20, 999, 14, 0x2},
+        {true, "HTTP/10.20 999 X\n", 17, 17, 10, 20, 999, 14, 0x2},
+        {true, "HTTP/1.12 200 OK\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 1, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 2, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 3, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 4, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 5, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 6, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 8, 17, 1, 12, 200, 13, 0x3},
+        {true, "HTTP/1.12 200 OK\n", 9, 17, 1, 12, 200, 13, 0x3},
+        {true, "HTTP/1.12 200 OK\n", 10, parseInvalidResponse, 1, 12, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 11, parseInvalidResponse, 1, 12, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 12, parseInvalidResponse, 1, 12, -7, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 13, parseInvalidResponse, 1, 12, 200, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 14, parseInvalidResponse, 1, 12, 200, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 15, parseInvalidResponse, 1, 12, 200, -1, 0xabcd},
+        {true, "HTTP/1.12 200 OK\n", 16, 17, 1, 12, 200, 13, 0x3},
+        {true, "HTTP/1.12 200 OK\n", 17, 17, 1, 12, 200, 13, 0x3},
+        {true, "HTTP/12.1 200 OK\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 1, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 2, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 3, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 4, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 5, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 6, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 8, 17, 12, 1, 200, 13, 0x3},
+        {true, "HTTP/12.1 200 OK\n", 9, 17, 12, 1, 200, 13, 0x3},
+        {true, "HTTP/12.1 200 OK\n", 10, parseInvalidResponse, 12, 1, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 11, parseInvalidResponse, 12, 1, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 12, parseInvalidResponse, 12, 1, -7, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 13, parseInvalidResponse, 12, 1, 200, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 14, parseInvalidResponse, 12, 1, 200, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 15, parseInvalidResponse, 12, 1, 200, -1, 0xabcd},
+        {true, "HTTP/12.1 200 OK\n", 16, 17, 12, 1, 200, 13, 0x3},
+        {true, "HTTP/12.1 200 OK\n", 17, 17, 12, 1, 200, 13, 0x3},
+        {true, "HTTP/1.1 200\n", 0, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 1, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 2, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 3, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 4, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 5, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 6, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 7, parseInvalidResponse, 0, 0, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 8, 13, 1, 1, 200, 12, 0x0},
+        {true, "HTTP/1.1 200\n", 9, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 10, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 11, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200\n", 12, 13, 1, 1, 200, 12, 0x0},
+        {true, "HTTP/1.1 200\n", 13, 13, 1, 1, 200, 12, 0x0},
+        {true, "HTTP/1.1 200 OK", 15, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK", 8, 255, 1, 1, 200, 12, 0xf2},
+        {true, "HTTP/1.1 200 OK", 9, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK", 12, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 200 OK", 13, parseInvalidResponse, 1, 1, 200, -1, 0xabcd},
+        {true, "HTTP/1.1 2", 8, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1 20", 8, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+        {true, "HTTP/1.1", 8, parseInvalidResponse, 1, 1, -7, -1, 0xabcd},
+    };
+    static char buffer[256];
+    for (const auto& row : cases) {
+        std::memset(buffer, row.tildeFill ? '~' : '\0', sizeof(buffer));
+        std::memcpy(buffer, row.line, std::strlen(row.line));
+        if (row.tildeFill) buffer[sizeof(buffer) - 2] = '\n';
+        buffer[sizeof(buffer) - 1] = '\0';
+        std::int32_t major = -7;
+        std::int32_t minor = -7;
+        std::int32_t code = -7;
+        const char* reason = nullptr;
+        std::size_t phraseLength = 0xabcd;
+        Require(sceHttpParseStatusLine(buffer, row.length, &major, &minor, &code, &reason, &phraseLength) == row.result);
+        Require(major == row.major && minor == row.minor && code == row.code && phraseLength == row.phraseLength);
+        Require(row.reasonOffset < 0 ? reason == nullptr : reason == buffer + row.reasonOffset);
     }
 }
 
@@ -522,6 +676,10 @@ int main() {
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
     flushCaches(request, beforeInit);
+    CheckPoolStatsRejected(0, beforeInit);
+    CheckPoolStatsRejected(-1, beforeInit);
+    CheckPoolStatsRejected(request, beforeInit);
+    Require(Throws([] { sceHttpGetMemoryPoolStats(0, nullptr); }));
     HttpEpollHandle epoll = nullptr;
     HttpNBEvent events[2]{};
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
@@ -535,6 +693,14 @@ int main() {
     flushCaches(-1, invalidId);
     flushCaches(INT32_MAX, invalidId);
     flushCaches(request, invalidId);
+    CheckPoolStats(context, 0x10000);
+    CheckPoolStats(context, 0x10000);
+    CheckPoolStatsRejected(0, invalidId);
+    CheckPoolStatsRejected(-1, invalidId);
+    CheckPoolStatsRejected(INT32_MAX, invalidId);
+    CheckPoolStatsRejected(request, invalidId);
+    Require(Throws([context] { sceHttpGetMemoryPoolStats(context, nullptr); }));
+    Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
@@ -576,11 +742,15 @@ int main() {
     Require(waitWokenBy([&] { Require(sceHttpDestroyEpoll(context, epoll) == 0); }) == 0);
 
     Require(sceHttpCreateEpoll(context, &epoll) == 0);
-    const int otherContext = sceHttpInit_nid_postfix(0, 0, 0x10000);
+    const int otherContext = sceHttpInit_nid_postfix(0, 0, 0x23000);
     Require(otherContext > 0 && otherContext != context);
     flushCaches(otherContext, 0);
+    CheckPoolStats(otherContext, 0x23000);
+    CheckPoolStats(context, 0x10000);
     Require(sceHttpTerm_nid_postfix(otherContext) == 0);
     flushCaches(otherContext, invalidId);
+    CheckPoolStatsRejected(otherContext, invalidId);
+    CheckPoolStats(context, 0x10000);
     flushCaches(context, 0);
     Require(sceHttpTerm_nid_postfix(otherContext) == invalidId);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
@@ -588,13 +758,23 @@ int main() {
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == beforeInit);
     Require(sceHttpTerm_nid_postfix(context) == beforeInit);
     flushCaches(context, beforeInit);
-    const int newContext = sceHttpInit_nid_postfix(0, 0, 0x10000);
+    CheckPoolStatsRejected(context, beforeInit);
+    const int newContext = sceHttpInit_nid_postfix(0, 0, 0x123456000ull);
     Require(newContext > 0 && newContext != context && newContext != otherContext);
     flushCaches(context, invalidId);
     flushCaches(otherContext, invalidId);
     flushCaches(newContext, 0);
+    CheckPoolStatsRejected(context, invalidId);
+    CheckPoolStatsRejected(otherContext, invalidId);
+    CheckPoolStats(newContext, 0x123456000ull);
     Require(sceHttpTerm_nid_postfix(newContext) == 0);
     flushCaches(newContext, beforeInit);
+    CheckPoolStatsRejected(newContext, beforeInit);
+    const int emptyPoolContext = sceHttpInit_nid_postfix(0, 0, 0);
+    Require(emptyPoolContext > 0);
+    CheckPoolStats(emptyPoolContext, 0);
+    CheckPoolStatsRejected(newContext, invalidId);
+    Require(sceHttpTerm_nid_postfix(emptyPoolContext) == 0);
 
     char data[16];
     Require(sceHttpReadData(1, data, sizeof(data)) == network);
@@ -671,8 +851,9 @@ int main() {
     Require(parse("HTTP/1.1 2x0 OK\n", 16) == parseInvalidResponse);
     Require(parse("HTTP/1.1 20", 11) == parseInvalidResponse);
     Require(parse(response, 15) == parseInvalidResponse);
-    Require(parse(response, 16) == parseInvalidResponse);
     Require(phrase == nullptr && phraseLength == 0);
+    Require(parse(response, 16) == 17 && phrase == response + 12 && phraseLength == 3);
+    CheckStatusLineAsMeasured();
     auto sweep = [](const char* src, const char* expected) {
         char swept[128];
         std::memset(swept, 'x', sizeof(swept));
@@ -724,5 +905,89 @@ int main() {
         Require(sceHttpUriCopy(nullptr, &source, nullptr, 0, nullptr) == static_cast<int>(0x804311FE));
         SceHttpUriElement empty{};
         Require(sceHttpUriCopy(&copy, &empty, pool, sizeof(pool), &needed) == 0 && needed == 5 && copy.scheme != nullptr && copy.scheme[0] == 0);
+        Require(copy.scheme == pool && copy.hostname == pool + 1 && copy.path == pool + 2 && copy.username == pool + 3 && copy.password == pool + 4);
+
+        auto allBytes = [](const void* data, std::size_t size, unsigned char value) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            for (std::size_t i = 0; i < size; ++i) {
+                if (bytes[i] != value) return false;
+            }
+            return true;
+        };
+        std::memset(pool, '~', sizeof(pool));
+        std::memset(&copy, 0x5a, sizeof(copy));
+        Require(sceHttpUriCopy(&copy, &source, pool, 64, &needed) == 0 && needed == 30);
+        Require(copy.scheme == pool && copy.hostname == pool + 5 && copy.path == pool + 17 && copy.username == pool + 22 && copy.password == pool + 27);
+        Require(allBytes(pool + 30, 34, 0) && pool[64] == '~' && copy.query == nullptr && copy.fragment == nullptr);
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 4, 4, 0) && allBytes(copy.reserved, sizeof(copy.reserved), 0));
+
+        std::memset(pool, '~', sizeof(pool));
+        std::memset(&copy, 0x5a, sizeof(copy));
+        needed = 0xabcd;
+        Require(sceHttpUriCopy(&copy, &source, pool, 29, &needed) == static_cast<int>(0x80431022) && needed == 0xabcd);
+        Require(allBytes(&copy, sizeof(copy), 0) && allBytes(pool, 29, 0) && pool[29] == '~');
+        std::memset(pool, '~', sizeof(pool));
+        Require(sceHttpUriCopy(&copy, &empty, pool, 0, &needed) == static_cast<int>(0x80431022) && pool[0] == '~' && needed == 0xabcd);
+        Require(sceHttpUriCopy(&copy, &source, pool, 4, nullptr) == static_cast<int>(0x80431022));
+
+        std::memset(pool, '~', sizeof(pool));
+        Require(sceHttpUriCopy(nullptr, &source, pool, sizeof(pool), &needed) == 0 && needed == 30 && pool[0] == '~');
+        Require(sceHttpUriCopy(nullptr, &source, pool, sizeof(pool), nullptr) == static_cast<int>(0x804311FE));
+        std::memset(&copy, 0x5a, sizeof(copy));
+        Require(sceHttpUriCopy(&copy, &source, nullptr, 64, &needed) == 0 && needed == 30 && allBytes(&copy, sizeof(copy), 0x5a));
+        Require(sceHttpUriCopy(&copy, &source, nullptr, 64, nullptr) == static_cast<int>(0x804311FE) && allBytes(&copy, sizeof(copy), 0x5a));
+        needed = 0xabcd;
+        Require(sceHttpUriCopy(&copy, nullptr, pool, sizeof(pool), &needed) == static_cast<int>(0x80433060) && needed == 0xabcd && allBytes(&copy, sizeof(copy), 0x5a));
+        Require(sceHttpUriCopy(nullptr, nullptr, nullptr, 0, nullptr) == static_cast<int>(0x80433060));
+
+        char scheme[] = "SCH";
+        char user[] = "usr";
+        char pass[] = "pwd";
+        char host[] = "hostname";
+        char path[] = "/p/q";
+        char query[] = "?query";
+        char fragment[] = "#frag";
+        char blank[] = "";
+        SceHttpUriElement manual{};
+        manual.opaque = 7;
+        manual.scheme = scheme;
+        manual.username = user;
+        manual.password = pass;
+        manual.hostname = host;
+        manual.path = path;
+        manual.query = query;
+        manual.fragment = fragment;
+        manual.port = 1234;
+        std::memset(manual.reserved, 0x11, sizeof(manual.reserved));
+        Require(sceHttpUriCopy(&copy, &manual, pool, sizeof(pool), &needed) == 0 && needed == 26 && copy.opaque == 0 && copy.port == 1234);
+        Require(Equal(copy.scheme, "SCH") && copy.hostname == pool + 4 && Equal(copy.hostname, "hostname") && copy.path == pool + 13 && Equal(copy.path, "/p/q"));
+        Require(copy.username == pool + 18 && Equal(copy.username, "usr") && copy.password == pool + 22 && Equal(copy.password, "pwd"));
+        Require(copy.query == nullptr && copy.fragment == nullptr && allBytes(copy.reserved, sizeof(copy.reserved), 0));
+
+        SceHttpUriElement mixed{};
+        mixed.hostname = host;
+        mixed.username = blank;
+        mixed.query = query;
+        mixed.port = 80;
+        Require(sceHttpUriCopy(&copy, &mixed, pool, sizeof(pool), &needed) == 0 && needed == 13 && copy.port == 80);
+        Require(copy.scheme == pool && copy.hostname == pool + 1 && copy.path == pool + 10 && copy.username == pool + 11 && copy.password == pool + 12);
+
+        SceHttpUriElement inPlace = manual;
+        Require(sceHttpUriCopy(&inPlace, &inPlace, pool, sizeof(pool), &needed) == 0 && needed == 5 && inPlace.port == 0);
+        Require(inPlace.scheme == pool && inPlace.hostname == pool + 1 && inPlace.password == pool + 4 && inPlace.password[0] == 0);
+        inPlace = manual;
+        Require(sceHttpUriCopy(&inPlace, &inPlace, nullptr, 0, &needed) == 0 && needed == 26 && inPlace.scheme == scheme);
+
+        alignas(SceHttpUriElement) char hostPool[256];
+        auto* inside = reinterpret_cast<SceHttpUriElement*>(hostPool + 160);
+        std::memcpy(static_cast<void*>(inside), &manual, sizeof(manual));
+        Require(sceHttpUriCopy(&copy, inside, hostPool, sizeof(hostPool), &needed) == 0 && needed == 5 && copy.port == 0 && copy.hostname[0] == 0);
+
+        std::memcpy(hostPool + 200, "HOSTINPOOL", 11);
+        SceHttpUriElement pooled = manual;
+        pooled.hostname = hostPool + 200;
+        Require(sceHttpUriCopy(nullptr, &pooled, hostPool, sizeof(hostPool), &needed) == 0 && needed == 28);
+        Require(sceHttpUriCopy(&copy, &pooled, hostPool, sizeof(hostPool), &needed) == 0 && needed == 18 && copy.hostname == hostPool + 4 && copy.hostname[0] == 0);
+        Require(Equal(copy.path, "/p/q") && copy.path == hostPool + 5 && copy.port == 1234);
     }
 }

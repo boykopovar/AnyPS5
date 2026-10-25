@@ -1,3 +1,4 @@
+#include "prx/libSceNotification/include/Api.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"

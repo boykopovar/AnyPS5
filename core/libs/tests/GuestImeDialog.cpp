@@ -1,3 +1,4 @@
+#include "prx/libSceImeDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
@@ -6,18 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceImeDialogInit(const Param*, const ExtendedParam*);
-int APS5_VABI sceImeDialogGetStatus(void);
-int APS5_VABI sceImeDialogGetResult(Result*);
-int APS5_VABI sceImeDialogAbort(void);
-int APS5_VABI sceImeDialogTerm(void);
-int APS5_VABI sceImeDialogForceClose(void);
-int APS5_VABI sceImeDialogGetCurrentStarState(std::int64_t);
-int APS5_VABI sceImeDialogInitInternal(const Param*, const ExtendedParam*);
-int APS5_VABI sceImeDialogSetPanelPosition(std::int32_t, std::int32_t);
-}
 
 namespace {
 
@@ -181,6 +170,13 @@ int main() {
     Open(param);
     Close();
 
+    Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened);
+    std::uint32_t panelWidth = 0;
+    std::uint32_t panelHeight = 0;
+    Require(sceImeDialogGetPanelSize(nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
+    panelWidth = 0;
+    panelHeight = 0;
+    Require(sceImeDialogGetPanelSizeExtended(nullptr, nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     const Param empty = DialogParam(buffer, 0);
     Require(sceImeDialogInit(&empty, nullptr) == ErrorInvalidMaxTextLength);

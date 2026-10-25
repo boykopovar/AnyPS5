@@ -121,6 +121,26 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertIn("1 file(s) changed on both sides", result.stdout)
         self.assertIn("#77", result.stdout)
 
+    def test_a_subdirectory_reports_the_same_conflicts_and_pull_requests(self):
+        (self.repo.path / "docs").mkdir()
+        self.repo.write("docs/notes.txt", "x\n")
+        self.repo.commit("add docs")
+        self.branch("feature")
+        self.repo.write("shared.txt", "one\nmine\nthree\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("checkout", "-q", "-b", "theirs")
+        self.repo.write("shared.txt", "one\ntheirs\nthree\n")
+        self.repo.commit("their edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.merge_pull(77, "theirs")
+        from_root = check_main_sync.report(self.repo.path, "main", "feature")
+        self.assertEqual((from_root["conflicts"], from_root["pulls"].keys()), (["shared.txt"], {77}))
+        self.assertEqual(check_main_sync.report(self.repo.path / "docs", "main", "feature"), from_root)
+        result = run_tool(self.repo.path / "docs", "--head", "feature")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, run_tool(self.repo.path, "--head", "feature").stdout)
+
     def test_paths_with_spaces_and_unicode_are_reported_verbatim(self):
         name = "sp ace \u00e9.txt"
         self.repo.write(name, "one\ntwo\n")

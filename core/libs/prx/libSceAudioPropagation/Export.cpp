@@ -1,8 +1,10 @@
+#include "prx/libSceAudioPropagation/include/Api.hpp"
+#include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -27,11 +29,16 @@ struct SystemState {
     std::uint32_t maxSources;
 };
 
-enum class Kind { Room, Portal, Source, Material };
+enum class Kind { Room, Portal, Source, Material, Path };
 
 struct Object {
     Kind kind;
     AudioPropagationHandle system;
+};
+
+struct PathState {
+    AudioPath data{};
+    float gain = 0.0f;
 };
 
 struct Registry {
@@ -39,6 +46,8 @@ struct Registry {
     std::unordered_set<AudioPropagationHandle> systems;
     std::unordered_map<AudioPropagationHandle, Object> objects;
     std::unordered_map<AudioPropagationHandle, Object> orphans;
+    std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
+    std::unordered_map<AudioPropagationHandle, PathState> paths;
     AudioPropagationHandle next = 1;
 };
 
@@ -101,6 +110,13 @@ void destroyObject(AudioPropagationHandle system, AudioPropagationHandle handle,
         return;
     }
     require(requireObject(state, handle, kind, function).system == system, function);
+    if (kind == Kind::Source) {
+        for (const auto path : state.sourcePaths.at(handle)) {
+            state.paths.erase(path);
+            state.objects.erase(path);
+        }
+        state.sourcePaths.erase(handle);
+    }
     state.objects.erase(handle);
 }
 
@@ -169,9 +185,11 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
+    std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
+    std::erase_if(state.sourcePaths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.objects, [&](const auto& entry) {
         if (entry.second.system != system) return false;
-        state.orphans.insert(entry);
+        if (entry.second.kind != Kind::Path) state.orphans.insert(entry);
         return true;
     });
     reinterpret_cast<SystemState*>(system)->magic = 0;
@@ -257,7 +275,30 @@ std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHa
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle system, AudioPropagationHandle* outSource) {
-    createObject(system, Kind::Source, outSource, __func__);
+    require(outSource != nullptr, __func__);
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    AudioPropagationHandle source = 0;
+    createObjectLocked(state, system, Kind::Source, &source, __func__);
+    std::array<AudioPropagationHandle, MaxPaths> handles{};
+    try {
+        for (auto& handle : handles) {
+            createObjectLocked(state, system, Kind::Path, &handle, __func__);
+            PathState path{};
+            path.data.desc = {PathId, sizeof(AudioPath)};
+            path.data.flags = PathInvalid;
+            state.paths.emplace(handle, path);
+        }
+        state.sourcePaths.emplace(source, handles);
+    } catch (...) {
+        for (const auto handle : handles) {
+            state.paths.erase(handle);
+            state.objects.erase(handle);
+        }
+        state.objects.erase(source);
+        throw;
+    }
+    *outSource = source;
     return 0;
 }
 
@@ -279,7 +320,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagati
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(count != nullptr, __func__);
-    *count = 0;
+    *count = MaxPaths;
     return 0;
 }
 
@@ -289,8 +330,18 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     const auto found = state.objects.find(source);
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
-    static_cast<void>(index);
-    return ErrorInvalidArgument;
+    if (index >= MaxPaths) return ErrorInvalidArgument;
+    *outPath = state.sourcePaths.at(source)[index];
+    return 0;
+}
+
+std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    requireObject(state, path, Kind::Path, __func__);
+    require(count != nullptr, __func__);
+    *count = state.paths.at(path).data.pointCount;
+    return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays, std::uint32_t* count) {
@@ -322,10 +373,19 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHandle path, const AudioPath* data, float gain) {
-    static_cast<void>(path);
-    static_cast<void>(data);
-    static_cast<void>(gain);
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto system = requireObject(state, path, Kind::Path, __func__).system;
+    requireDescriptor(data != nullptr ? &static_cast<const AudioPath*>(data)->desc : nullptr, PathId, sizeof(AudioPath), __func__);
+    const auto replacement = *static_cast<const AudioPath*>(data);
+    require(std::isfinite(gain) && gain >= 0.0f && replacement.pointCount <= MaxPathPoints && (replacement.flags & ~(PathInvalid | PathPortal)) == 0, __func__);
+    for (std::uint32_t index = 0; index < replacement.pointCount; ++index) {
+        const auto& point = replacement.points[index];
+        requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), __func__);
+        require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), __func__);
+        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, __func__).system == system, __func__);
+    }
+    state.paths.at(path) = PathState{replacement, gain};
     return 0;
 }
 
@@ -336,22 +396,32 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
     requireSystem(state, system, __func__);
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
     require(count <= configuration.maxSources, __func__);
-    const auto requiredBytes = static_cast<std::size_t>(configuration.frameSamples) * 16 * sizeof(float);
     for (std::uint32_t index = 0; index < count; ++index) {
         const auto& info = infos[index];
         requireDescriptor(&info.desc, RenderInfoId, RenderInfoSize, __func__);
         require(requireObject(state, info.source, Kind::Source, __func__).system == system, __func__);
-        require(info.output != nullptr && info.outputSize >= requiredBytes, __func__);
-        if (info.format != RenderFormat) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " is unknown");
+        require(info.output != nullptr && info.outputSize != 0, __func__);
+        std::uint32_t channels = 0;
+        switch (info.format) {
+        case 0: channels = 4; break;
+        case 1: channels = 9; break;
+        case 2: channels = 16; break;
+        case 4:
+        case 5: channels = 8; break;
+        default: throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " is unknown");
+        }
+        const auto requiredBytes = static_cast<std::size_t>(configuration.frameSamples) * channels * sizeof(float);
+        require(info.outputSize >= requiredBytes && info.outputSize % (channels * sizeof(float)) == 0, __func__);
+        for (const auto handle : state.sourcePaths.at(info.source)) {
+            const auto& path = state.paths.at(handle);
+            if (path.gain > 0.0f && path.data.pointCount != 0 && (path.data.flags & PathInvalid) == 0) {
+                throw std::runtime_error(std::string(__func__) + ": nonempty audio path rendering is not implemented");
+            }
+        }
     }
     for (std::uint32_t index = 0; index < count; ++index) {
         infos[index].channelCount = 0;
     }
-    return 0;
-}
-
-int APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

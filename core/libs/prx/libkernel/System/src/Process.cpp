@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -51,13 +53,10 @@
 #include <sys/resource.h>
 #endif
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, std::uint64_t info_size);
-
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
+constexpr int errnoOperationNotPermitted = 1;
 constexpr int errnoNoSuchProcess = 3;
 constexpr int errnoNoChild = 10;
 constexpr int errnoBadAddress = 14;
@@ -246,6 +245,7 @@ constexpr int guestRlimitCount = 15;
 constexpr std::int64_t guestRlimitInfinity = std::numeric_limits<std::int64_t>::max();
 constexpr std::int64_t guestStackLimit = 0x200000;
 constexpr std::int64_t guestProcessLimit = 1604;
+constexpr std::int64_t guestProcessLimitPerUser = 1443;
 
 #ifdef _WIN32
 std::int64_t hostMemoryLimit() {
@@ -271,38 +271,12 @@ std::int64_t toGuestLimit(rlim_t value) {
 
 }
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestResourceLimit {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-
 namespace {
 std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
+std::mutex processLimitMutex;
+GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
 }
-
-struct GuestResourceUsage {
-    KernelTimeval ru_utime;
-    KernelTimeval ru_stime;
-    std::int64_t ru_maxrss;
-    std::int64_t ru_ixrss;
-    std::int64_t ru_idrss;
-    std::int64_t ru_isrss;
-    std::int64_t ru_minflt;
-    std::int64_t ru_majflt;
-    std::int64_t ru_nswap;
-    std::int64_t ru_inblock;
-    std::int64_t ru_oublock;
-    std::int64_t ru_msgsnd;
-    std::int64_t ru_msgrcv;
-    std::int64_t ru_nsignals;
-    std::int64_t ru_nvcsw;
-    std::int64_t ru_nivcsw;
-};
-
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 extern "C" {
 
@@ -339,6 +313,24 @@ int APS5_VABI getsid_nid_postfix(int pid) {
     if (pid == 0 || pid == self) return self;
     *__error_nid_postfix() = errnoNoSuchProcess;
     return -1;
+}
+
+int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
+    if (pgid < 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+    const int self = getpid_nid_postfix();
+    if (pid != 0 && pid != self) {
+        *__error_nid_postfix() = errnoNoSuchProcess;
+        return -1;
+    }
+    *__error_nid_postfix() = errnoOperationNotPermitted;
+    return -1;
+}
+
+int APS5_VABI setpgrp_nid_postfix(int pid, int pgrp) {
+    return setpgid_nid_postfix(pid, pgrp);
 }
 
 int APS5_VABI getppid_nid_postfix(void) {
@@ -438,8 +430,6 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
     return -1;
 }
 
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);
-
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
     if (limit == nullptr) {
         *__error_nid_postfix() = guestFault;
@@ -460,6 +450,7 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
 
     GuestResourceLimit current{};
     getrlimit_nid_postfix(resource, &current);
+
     if (resource == guestRlimitNofile) {
         if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
             std::lock_guard lock(openFileLimitMutex);
@@ -467,8 +458,13 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
             return 0;
         }
     }
-    if (resource == guestRlimitNproc)
-        throw std::runtime_error("setrlimit: RLIMIT_NPROC is not stored");
+    if (resource == guestRlimitNproc) {
+        requested.rlim_cur = std::clamp(requested.rlim_cur, std::int64_t{1}, guestProcessLimitPerUser);
+        requested.rlim_max = std::clamp(requested.rlim_max, std::int64_t{1}, guestProcessLimitPerUser);
+        std::lock_guard lock(processLimitMutex);
+        guestProcessResourceLimit = requested;
+        return 0;
+    }
     if (requested.rlim_cur != current.rlim_cur || requested.rlim_max != current.rlim_max)
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
@@ -573,6 +569,7 @@ void APS5_VABI sceKernelSync(void) {
 
 void APS5_VABI sync_nid_postfix(void) {
     sceKernelSync();
+
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
@@ -721,20 +718,21 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    GuestResourceLimit result{};
     switch (resource) {
     case guestRlimitData: {
 #ifdef _WIN32
         const std::int64_t memory = hostMemoryLimit();
-        limit->rlim_cur = memory;
-        limit->rlim_max = memory;
+        result.rlim_cur = memory;
+        result.rlim_max = memory;
 #else
         rlimit native{};
         if (::getrlimit(RLIMIT_DATA, &native) != 0)
             throw std::system_error(errno, std::generic_category(), "getrlimit: getrlimit failed");
-        limit->rlim_cur = toGuestLimit(native.rlim_cur);
-        limit->rlim_max = toGuestLimit(native.rlim_max);
+        result.rlim_cur = toGuestLimit(native.rlim_cur);
+        result.rlim_max = toGuestLimit(native.rlim_max);
 #endif
-        return 0;
+        break;
     }
     case guestRlimitNofile: {
         std::lock_guard lock(openFileLimitMutex);
@@ -749,17 +747,18 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
             guestOpenFileLimit = GuestResourceLimit{toGuestLimit(native.rlim_cur), toGuestLimit(native.rlim_max)};
 #endif
         }
-        *limit = *guestOpenFileLimit;
-        return 0;
+        result = *guestOpenFileLimit;
+        break;
     }
     case guestRlimitStack:
-        limit->rlim_cur = guestStackLimit;
-        limit->rlim_max = guestStackLimit;
-        return 0;
-    case guestRlimitNproc:
-        limit->rlim_cur = guestProcessLimit;
-        limit->rlim_max = guestProcessLimit;
-        return 0;
+        result.rlim_cur = guestStackLimit;
+        result.rlim_max = guestStackLimit;
+        break;
+    case guestRlimitNproc: {
+        std::lock_guard lock(processLimitMutex);
+        result = guestProcessResourceLimit;
+        break;
+    }
     case guestRlimitCpu:
     case guestRlimitFsize:
     case guestRlimitCore:
@@ -771,12 +770,17 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
     case guestRlimitSwap:
     case guestRlimitKqueues:
     case guestRlimitUmtxp:
-        limit->rlim_cur = guestRlimitInfinity;
-        limit->rlim_max = guestRlimitInfinity;
-        return 0;
+        result.rlim_cur = guestRlimitInfinity;
+        result.rlim_max = guestRlimitInfinity;
+        break;
     default:
         throw std::runtime_error("getrlimit: unsupported resource " + std::to_string(resource));
     }
+    if (!WriteGuest(limit, &result, sizeof(result))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    return 0;
 }
 
 int APS5_VABI getpriority_nid_postfix(int which, int who) {
@@ -812,6 +816,7 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
+
     std::int64_t tableSize = limit.rlim_cur;
 #ifndef _WIN32
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));

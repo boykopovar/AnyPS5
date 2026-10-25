@@ -1,27 +1,9 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-struct MinMaxPointers {
-    const void* minimum;
-    const void* maximum;
-};
-
-extern "C" {
-const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void*, const void*, std::uint16_t);
-const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void*, std::uint8_t);
-const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void*, std::uint32_t);
-std::size_t APS5_VABI __std_count_trivial_8_nid_postfix(const void*, const void*, std::uint64_t);
-const void* APS5_VABI __std_min_element_1_nid_postfix(const void*, const void*, bool);
-const void* APS5_VABI __std_max_element_4_nid_postfix(const void*, const void*, bool);
-MinMaxPointers APS5_VABI __std_minmax_element_2_nid_postfix(const void*, const void*, bool);
-MinMaxPointers APS5_VABI __std_minmax_element_8_nid_postfix(const void*, const void*, bool);
-void APS5_VABI __std_reverse_trivially_swappable_2_nid_postfix(void*, void*);
-void APS5_VABI __std_reverse_copy_trivially_copyable_8_nid_postfix(const void*, const void*, void*);
-void APS5_VABI __std_swap_ranges_trivially_swappable_noalias_nid_postfix(void*, void*, void*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -48,6 +30,36 @@ static void CheckUnsizedRescan() {
     bytes[3] = 0;
     bytes[20] = 0;
     Require(__std_find_trivial_unsized_1_nid_postfix(bytes + 8, 'x') == bytes + 70);
+
+    alignas(32) std::uint16_t halves[32] = {};
+    halves[0] = 17;
+    halves[4] = 17;
+    halves[20] = 17;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves + 4);
+    halves[4] = 0;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves);
+    halves[0] = 0;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves + 20);
+
+    alignas(32) std::uint32_t quads[16] = {};
+    quads[0] = 42;
+    quads[5] = 42;
+    quads[12] = 42;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads + 5);
+    quads[5] = 0;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads);
+    quads[0] = 0;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads + 12);
+
+    alignas(32) std::uint64_t wides[8] = {};
+    wides[0] = 99;
+    wides[2] = 99;
+    wides[6] = 99;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides + 2);
+    wides[2] = 0;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides);
+    wides[0] = 0;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides + 6);
 }
 
 static void CheckMinMax() {
@@ -73,10 +85,12 @@ static void CheckMinMax() {
 static void CheckReverseAndSwap() {
     std::uint16_t halves[] = {1, 2, 3, 4, 5};
     __std_reverse_trivially_swappable_2_nid_postfix(halves, halves + 5);
+
     Require(halves[0] == 5 && halves[1] == 4 && halves[2] == 3 && halves[3] == 2 && halves[4] == 1);
     const std::uint64_t wides[] = {1, 2, 3};
     std::uint64_t reversed[4] = {9, 9, 9, 9};
     __std_reverse_copy_trivially_copyable_8_nid_postfix(wides, wides + 3, reversed);
+
     Require(reversed[0] == 3 && reversed[1] == 2 && reversed[2] == 1 && reversed[3] == 9);
     unsigned char left[37], right[37];
     for (int i = 0; i < 37; ++i) {
@@ -84,6 +98,7 @@ static void CheckReverseAndSwap() {
         right[i] = static_cast<unsigned char>(100 + i);
     }
     __std_swap_ranges_trivially_swappable_noalias_nid_postfix(left, left + 37, right);
+
     for (int i = 0; i < 37; ++i) Require(left[i] == 100 + i && right[i] == i);
 }
 

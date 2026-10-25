@@ -1,20 +1,14 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 
-extern "C" {
-int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int* APS5_VABI __error_nid_postfix();
-}
-
 using Nanosleep = int (APS5_VABI *)(const KernelTimespec*, KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static constexpr int GUEST_EACCES = 13;
 static constexpr int GUEST_EFAULT = 14;

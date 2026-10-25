@@ -81,7 +81,7 @@ def commands(content):
                 argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
-                argument = argument[width:-width]
+                argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
 
@@ -160,7 +160,7 @@ def unrun_scripts(root):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
