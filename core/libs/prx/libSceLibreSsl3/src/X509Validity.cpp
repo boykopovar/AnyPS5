@@ -1,28 +1,8 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSsl3X509Validity {
-    void* notBefore;
-    void* notAfter;
-};
-
-struct LibreSsl3ValidityCertInfo {
-    void* version;
-    void* serialNumber;
-    void* signature;
-    void* issuer;
-    LibreSsl3X509Validity* validity;
-    unsigned char rest[64];
-};
-
-struct LibreSsl3ValidityX509 {
-    LibreSsl3ValidityCertInfo* certInfo;
-    const void* sigAlg;
-    const void* signature;
-    unsigned char rest[192];
-};
 
 static_assert(sizeof(LibreSsl3X509Validity) == 16);
 static_assert(sizeof(LibreSsl3ValidityCertInfo) == 104);
