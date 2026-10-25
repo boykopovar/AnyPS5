@@ -136,11 +136,10 @@ private:
             default: throw RelinkerException("Strict filter: unsupported unwind pointer base", field);
         }
         if ((encoding & 0x70) != 0) {
-            if ((encoding & 0x08) != 0) {
-                const bool negative = (value >> 63) != 0;
-                if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
-                    throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
-            }
+            const bool isSigned = (encoding & 0x08) != 0 || (encoding & 0x0F) == 0;
+            const bool negative = isSigned && (value >> 63) != 0;
+            if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
+                throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
             value = base + value;
         }
         if ((encoding & 0x80) != 0 && !importSlots.contains(value)) {

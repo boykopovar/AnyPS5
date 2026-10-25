@@ -37,7 +37,7 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 10; ++kind) {
+        for (int kind = 0; kind < 11; ++kind) {
             auto bytes = Fixture(); auto segment = load;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
@@ -56,6 +56,7 @@ int main() {
                     break;
                 }
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
+                case 10: bytes[3] = 0x14; Io::WriteU64(bytes, 16, std::numeric_limits<std::uint64_t>::max()); break;
             }
             bool rejected = false;
             std::vector<Domain::ProgramHeader> headers = {segment, eh};
@@ -67,6 +68,6 @@ int main() {
             catch (const std::exception&) { rejected = true; }
             Require(rejected);
         }
-        std::cout << "14 unwind record cases passed\n";
+        std::cout << "15 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
