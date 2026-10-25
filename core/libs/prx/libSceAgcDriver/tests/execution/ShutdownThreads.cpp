@@ -76,6 +76,41 @@ void ClosingJoinsPreparation() {
     Require(ranHere && RegistrationPreparationThreads() == 0, "a closed preparation pool restarted after being joined");
 }
 
+void ClosingDropsQueuedPrebuilds() {
+    using namespace AgcDriver::DriverDetail;
+    std::promise<void> started;
+    auto running = started.get_future();
+    std::promise<void> gate;
+    auto opened = gate.get_future().share();
+    bool queuedRan = false;
+    SubmitLibraryPrebuild([&] { started.set_value(); opened.wait(); });
+    for (int index = 0; index < 3; ++index) SubmitLibraryPrebuild([&] { queuedRan = true; });
+    running.wait();
+    auto entering = std::make_shared<std::promise<void>>();
+    auto entered = entering->get_future();
+    auto awaited = std::make_shared<std::promise<void>>();
+    auto woken = awaited->get_future();
+    std::thread([entering, awaited] {
+        entering->set_value();
+        AwaitLibraryPrebuilds();
+        awaited->set_value();
+    }).detach();
+    entered.wait();
+    const bool waiting = woken.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout;
+    auto closing = std::async(std::launch::async, [] { CloseRegistrationPreparation(); });
+    const bool waited = closing.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout;
+    gate.set_value();
+    const bool returned = closing.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    const bool wokeUp = woken.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    closing.get();
+    Require(waiting, "a waiter for the library prebuilds returned while one was still running");
+    Require(waited, "closing returned while a library prebuild was still running");
+    Require(returned, "closing did not return once the running library prebuild ended");
+    Require(wokeUp, "a waiter for the library prebuilds did not return after closing dropped the queued ones");
+    Require(!queuedRan, "closing ran the queued library prebuilds");
+    Require(RegistrationPreparationThreads() == 0, "closing the library prebuilds left their thread running");
+}
+
 void StoppingJoinsCompareHelpers() {
     using namespace AgcDriver::Graphics;
     const std::vector<std::byte> first(std::size_t{2} << 20u, std::byte{1});
@@ -168,6 +203,7 @@ int main(int argc, char** argv) {
     try {
         const std::string_view mode = argc > 1 ? argv[1] : "";
         if (mode == "--joined") ClosingJoinsPreparation();
+        else if (mode == "--queued-prebuilds") ClosingDropsQueuedPrebuilds();
         else if (mode == "--compare-helpers") StoppingJoinsCompareHelpers();
         else if (mode == "--draw-committer") ShutdownJoinsDrawCommitter();
         else if (mode == "--shader-cache-writer") ShutdownJoinsShaderCacheWriter();

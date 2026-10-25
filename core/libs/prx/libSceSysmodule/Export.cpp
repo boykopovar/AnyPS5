@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -16,8 +18,6 @@
 #include "SceTypes.hpp"
 #include "ModuleTable.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
 
 namespace {
 

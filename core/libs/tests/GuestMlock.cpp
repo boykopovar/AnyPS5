@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -15,17 +17,6 @@
 #include <string>
 #endif
 
-extern "C" {
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI mlock_nid_postfix(const void*, std::size_t);
-int APS5_VABI munlock_nid_postfix(const void*, std::size_t);
-int APS5_VABI mlockall_nid_postfix(int);
-int APS5_VABI munlockall_nid_postfix();
-int* APS5_VABI __error_nid_postfix();
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void RequireLockAllInvalid(int flags) {
@@ -37,6 +28,7 @@ static void RequireLockAllUnsupported(int flags) {
     bool rejected = false;
     try {
         mlockall_nid_postfix(flags);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -140,9 +132,9 @@ int main() {
     *__error_nid_postfix() = untouched;
     Require(munlock_nid_postfix(reserved, page) == 0);
     Require(*__error_nid_postfix() == untouched);
-    Require(sceKernelMunmap(reserved, page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
 
-    Require(sceKernelMunmap(mapped, length) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
 #ifndef ANYPS5_ENABLE_ASAN
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(mapped, page) == -1 && *__error_nid_postfix() == 12);

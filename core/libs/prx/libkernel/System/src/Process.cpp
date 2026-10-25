@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -8,16 +10,28 @@
 #else
 #include <sched.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/uio.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #endif
 #if defined(__linux__) && defined(__x86_64__)
 #include <asm/prctl.h>
 #include <sys/syscall.h>
 #endif
 
+#ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
+#else
+#include <sys/wait.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -44,12 +58,10 @@
 #include <sys/resource.h>
 #endif
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
+constexpr int errnoOperationNotPermitted = 1;
 constexpr int errnoNoSuchProcess = 3;
 constexpr int errnoNoChild = 10;
 constexpr int errnoBadAddress = 14;
@@ -58,6 +70,86 @@ constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
+
+bool StoreGuestId(std::uint32_t* output) {
+    if (output == nullptr) return true;
+    const auto address = reinterpret_cast<std::uintptr_t>(output);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - sizeof(*output)) return false;
+    const auto end = address + sizeof(*output);
+    for (auto cursor = address; cursor < end;) {
+        VirtualQueryInfo info{};
+        if (sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info)) != 0 ||
+            info.end <= cursor || (info.protection & 2) == 0)
+            return false;
+        cursor = std::min(end, info.end);
+    }
+    const GuestArena::HostWrite guard(output, sizeof(*output));
+    if (!guard.Open()) return false;
+    constexpr std::uint32_t zero = 0;
+#ifdef _WIN32
+    SIZE_T written = 0;
+    return WriteProcessMemory(GetCurrentProcess(), output, &zero, sizeof(zero), &written) != 0 && written == sizeof(zero);
+#elif defined(__linux__)
+    iovec local{const_cast<std::uint32_t*>(&zero), sizeof(zero)};
+    iovec remote{output, sizeof(zero)};
+    return ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(sizeof(zero));
+#elif defined(__APPLE__)
+    return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(output),
+        reinterpret_cast<vm_offset_t>(const_cast<std::uint32_t*>(&zero)), sizeof(zero)) == KERN_SUCCESS;
+#else
+    *output = zero;
+    return true;
+#endif
+}
+
+bool GuestRange(const void* pointer, std::size_t bytes) {
+    const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+    return start != 0 && bytes <= std::numeric_limits<std::uintptr_t>::max() - start;
+}
+
+bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    if (!GuestRange(source, bytes)) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
+#elif defined(__linux__)
+    iovec local{destination, bytes};
+    iovec remote{const_cast<void*>(source), bytes};
+    const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_readv failed with errno " + std::to_string(errno));
+    return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return ::mach_vm_read_overwrite(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
+        reinterpret_cast<mach_vm_address_t>(destination), &copied) == KERN_SUCCESS && copied == bytes;
+#else
+    throw std::runtime_error("credentials: checked guest reads are not implemented on this host");
+#endif
+}
+
+bool WriteGuest(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    if (!GuestRange(destination, bytes)) return false;
+    const GuestArena::HostWrite guard(destination, bytes);
+    if (!guard.Open()) return false;
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return WriteProcessMemory(GetCurrentProcess(), destination, source, bytes, &copied) != 0 && copied == bytes;
+#elif defined(__linux__)
+    iovec local{const_cast<void*>(source), bytes};
+    iovec remote{destination, bytes};
+    const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_writev failed with errno " + std::to_string(errno));
+    return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
+#elif defined(__APPLE__)
+    return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
+        reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;
+#else
+    throw std::runtime_error("credentials: checked guest writes are not implemented on this host");
+#endif
+}
 
 std::atomic<std::uint32_t> gpoBits{0};
 constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
@@ -158,6 +250,7 @@ constexpr int guestRlimitCount = 15;
 constexpr std::int64_t guestRlimitInfinity = std::numeric_limits<std::int64_t>::max();
 constexpr std::int64_t guestStackLimit = 0x200000;
 constexpr std::int64_t guestProcessLimit = 1604;
+constexpr std::int64_t guestProcessLimitPerUser = 1443;
 
 #ifdef _WIN32
 std::int64_t hostMemoryLimit() {
@@ -183,38 +276,12 @@ std::int64_t toGuestLimit(rlim_t value) {
 
 }
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestResourceLimit {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-
 namespace {
 std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
+std::mutex processLimitMutex;
+GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
 }
-
-struct GuestResourceUsage {
-    KernelTimeval ru_utime;
-    KernelTimeval ru_stime;
-    std::int64_t ru_maxrss;
-    std::int64_t ru_ixrss;
-    std::int64_t ru_idrss;
-    std::int64_t ru_isrss;
-    std::int64_t ru_minflt;
-    std::int64_t ru_majflt;
-    std::int64_t ru_nswap;
-    std::int64_t ru_inblock;
-    std::int64_t ru_oublock;
-    std::int64_t ru_msgsnd;
-    std::int64_t ru_msgrcv;
-    std::int64_t ru_nsignals;
-    std::int64_t ru_nvcsw;
-    std::int64_t ru_nivcsw;
-};
-
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 extern "C" {
 
@@ -251,6 +318,24 @@ int APS5_VABI getsid_nid_postfix(int pid) {
     if (pid == 0 || pid == self) return self;
     *__error_nid_postfix() = errnoNoSuchProcess;
     return -1;
+}
+
+int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
+    if (pgid < 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+    const int self = getpid_nid_postfix();
+    if (pid != 0 && pid != self) {
+        *__error_nid_postfix() = errnoNoSuchProcess;
+        return -1;
+    }
+    *__error_nid_postfix() = errnoOperationNotPermitted;
+    return -1;
+}
+
+int APS5_VABI setpgrp_nid_postfix(int pid, int pgrp) {
+    return setpgid_nid_postfix(pid, pgrp);
 }
 
 int APS5_VABI getppid_nid_postfix(void) {
@@ -314,6 +399,22 @@ int APS5_VABI issetugid_nid_postfix(void) {
     return 0;
 }
 
+int APS5_VABI getresuid_nid_postfix(std::uint32_t* ruid, std::uint32_t* euid, std::uint32_t* suid) {
+    if (!StoreGuestId(ruid) || !StoreGuestId(euid) || !StoreGuestId(suid)) {
+        *__error_nid_postfix() = errnoBadAddress;
+        return -1;
+    }
+    return 0;
+}
+
+int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, std::uint32_t* sgid) {
+    if (!StoreGuestId(rgid) || !StoreGuestId(egid) || !StoreGuestId(sgid)) {
+        *__error_nid_postfix() = errnoBadAddress;
+        return -1;
+    }
+    return 0;
+}
+
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
@@ -328,13 +429,59 @@ int APS5_VABI system_nid_postfix(const char* command) {
 }
 
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
-    (void)pid;
-    (void)status;
-    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
-    return -1;
+    if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+#ifdef _WIN32
+    int encoded = 0;
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded);
+    if (reaped == -2) {
+        *__error_nid_postfix() = errnoNoChild;
+        return -1;
+    }
+    if (reaped == -1) return -1;
+    if (reaped == 0) return 0;
+    if (status != nullptr) *status = encoded;
+    return static_cast<int>(reaped);
+#else
+    unsigned hostOptions = static_cast<unsigned>(options) & 3u;
+    if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
+    int encoded = 0;
+    const int result = ::waitpid(pid, &encoded, static_cast<int>(hostOptions));
+    if (result < 0) {
+        *__error_nid_postfix() = errno;
+        return -1;
+    }
+    if (result == 0) return 0;
+    if (WIFCONTINUED(encoded)) {
+        encoded = 0x13;
+    } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+        const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        int guestSignal = hostSignal;
+        switch (hostSignal) {
+        case 7: guestSignal = 10; break;
+        case 10: guestSignal = 30; break;
+        case 12: guestSignal = 31; break;
+        case 17: guestSignal = 20; break;
+        case 18: guestSignal = 19; break;
+        case 19: guestSignal = 17; break;
+        case 20: guestSignal = 18; break;
+        case 23: guestSignal = 16; break;
+        case 29: guestSignal = 23; break;
+        case 31: guestSignal = 12; break;
+        case 16:
+        case 30:
+            NotImplemented_nid_no_patch("waitpid: a child stopped or died with a signal without a guest equivalent");
+            return -1;
+        default: break;
+        }
+        encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
+    }
+    if (status != nullptr) *status = encoded;
+    return result;
+#endif
 }
-
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
     if (limit == nullptr) {
@@ -356,6 +503,7 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
 
     GuestResourceLimit current{};
     getrlimit_nid_postfix(resource, &current);
+
     if (resource == guestRlimitNofile) {
         if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
             std::lock_guard lock(openFileLimitMutex);
@@ -363,8 +511,13 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
             return 0;
         }
     }
-    if (resource == guestRlimitNproc)
-        throw std::runtime_error("setrlimit: RLIMIT_NPROC is not stored");
+    if (resource == guestRlimitNproc) {
+        requested.rlim_cur = std::clamp(requested.rlim_cur, std::int64_t{1}, guestProcessLimitPerUser);
+        requested.rlim_max = std::clamp(requested.rlim_max, std::int64_t{1}, guestProcessLimitPerUser);
+        std::lock_guard lock(processLimitMutex);
+        guestProcessResourceLimit = requested;
+        return 0;
+    }
     if (requested.rlim_cur != current.rlim_cur || requested.rlim_max != current.rlim_max)
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
@@ -469,6 +622,7 @@ void APS5_VABI sceKernelSync(void) {
 
 void APS5_VABI sync_nid_postfix(void) {
     sceKernelSync();
+
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
@@ -543,8 +697,12 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    GuestResourceUsage result{};
     if (who == -1) {
-        *usage = {};
+        if (!WriteGuest(usage, &result, sizeof(result))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
 #ifdef _WIN32
@@ -564,47 +722,37 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     };
     const auto userMicros = toMicros(user);
     const auto kernelMicros = toMicros(kernel);
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
-    usage->ru_maxrss = 0;
-    usage->ru_ixrss = 0;
-    usage->ru_idrss = 0;
-    usage->ru_isrss = 0;
-    usage->ru_minflt = 0;
-    usage->ru_majflt = 0;
-    usage->ru_nswap = 0;
-    usage->ru_inblock = 0;
-    usage->ru_oublock = 0;
-    usage->ru_msgsnd = 0;
-    usage->ru_msgrcv = 0;
-    usage->ru_nsignals = 0;
-    usage->ru_nvcsw = 0;
-    usage->ru_nivcsw = 0;
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
-    usage->ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
-    usage->ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
-    usage->ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
-    usage->ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
-    usage->ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
-    usage->ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
-    usage->ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
-    usage->ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
-    usage->ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
-    usage->ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
-    usage->ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
-    usage->ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
-    usage->ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
-    usage->ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
+    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
+    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
+    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
+    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
+    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
+    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
+    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
+    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
+    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
+    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
+    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
+    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
 #endif
+    if (!WriteGuest(usage, &result, sizeof(result))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 }
 
@@ -617,20 +765,21 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    GuestResourceLimit result{};
     switch (resource) {
     case guestRlimitData: {
 #ifdef _WIN32
         const std::int64_t memory = hostMemoryLimit();
-        limit->rlim_cur = memory;
-        limit->rlim_max = memory;
+        result.rlim_cur = memory;
+        result.rlim_max = memory;
 #else
         rlimit native{};
         if (::getrlimit(RLIMIT_DATA, &native) != 0)
             throw std::system_error(errno, std::generic_category(), "getrlimit: getrlimit failed");
-        limit->rlim_cur = toGuestLimit(native.rlim_cur);
-        limit->rlim_max = toGuestLimit(native.rlim_max);
+        result.rlim_cur = toGuestLimit(native.rlim_cur);
+        result.rlim_max = toGuestLimit(native.rlim_max);
 #endif
-        return 0;
+        break;
     }
     case guestRlimitNofile: {
         std::lock_guard lock(openFileLimitMutex);
@@ -645,17 +794,18 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
             guestOpenFileLimit = GuestResourceLimit{toGuestLimit(native.rlim_cur), toGuestLimit(native.rlim_max)};
 #endif
         }
-        *limit = *guestOpenFileLimit;
-        return 0;
+        result = *guestOpenFileLimit;
+        break;
     }
     case guestRlimitStack:
-        limit->rlim_cur = guestStackLimit;
-        limit->rlim_max = guestStackLimit;
-        return 0;
-    case guestRlimitNproc:
-        limit->rlim_cur = guestProcessLimit;
-        limit->rlim_max = guestProcessLimit;
-        return 0;
+        result.rlim_cur = guestStackLimit;
+        result.rlim_max = guestStackLimit;
+        break;
+    case guestRlimitNproc: {
+        std::lock_guard lock(processLimitMutex);
+        result = guestProcessResourceLimit;
+        break;
+    }
     case guestRlimitCpu:
     case guestRlimitFsize:
     case guestRlimitCore:
@@ -667,12 +817,17 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
     case guestRlimitSwap:
     case guestRlimitKqueues:
     case guestRlimitUmtxp:
-        limit->rlim_cur = guestRlimitInfinity;
-        limit->rlim_max = guestRlimitInfinity;
-        return 0;
+        result.rlim_cur = guestRlimitInfinity;
+        result.rlim_max = guestRlimitInfinity;
+        break;
     default:
         throw std::runtime_error("getrlimit: unsupported resource " + std::to_string(resource));
     }
+    if (!WriteGuest(limit, &result, sizeof(result))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    return 0;
 }
 
 int APS5_VABI getpriority_nid_postfix(int which, int who) {
@@ -708,6 +863,7 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
+
     std::int64_t tableSize = limit.rlim_cur;
 #ifndef _WIN32
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
@@ -770,6 +926,28 @@ int APS5_VABI setregid_nid_postfix(std::uint32_t rgid, std::uint32_t egid) {
     return 0;
 }
 
+int APS5_VABI setresuid_nid_postfix(std::uint32_t ruid, std::uint32_t euid, std::uint32_t suid) {
+    constexpr std::uint32_t unchanged = 0xffffffffu;
+    if (ruid != 0 && ruid != unchanged)
+        throw std::runtime_error("setresuid: unsupported real user id " + std::to_string(ruid));
+    if (euid != 0 && euid != unchanged)
+        throw std::runtime_error("setresuid: unsupported effective user id " + std::to_string(euid));
+    if (suid != 0 && suid != unchanged)
+        throw std::runtime_error("setresuid: unsupported saved user id " + std::to_string(suid));
+    return 0;
+}
+
+int APS5_VABI setresgid_nid_postfix(std::uint32_t rgid, std::uint32_t egid, std::uint32_t sgid) {
+    constexpr std::uint32_t unchanged = 0xffffffffu;
+    if (rgid != 0 && rgid != unchanged)
+        throw std::runtime_error("setresgid: unsupported real group id " + std::to_string(rgid));
+    if (egid != 0 && egid != unchanged)
+        throw std::runtime_error("setresgid: unsupported effective group id " + std::to_string(egid));
+    if (sgid != 0 && sgid != unchanged)
+        throw std::runtime_error("setresgid: unsupported saved group id " + std::to_string(sgid));
+    return 0;
+}
+
 int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
     if (count < 0 || count > freebsdGroupsMax) {
         *__error_nid_postfix() = errnoInvalidArgument;
@@ -779,14 +957,22 @@ int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
         *__error_nid_postfix() = errnoBadAddress;
         return -1;
     }
-    if (count > 0 && groups[0] != 0)
-        throw std::runtime_error("setgroups: unsupported effective group id " + std::to_string(groups[0]));
+    std::vector<std::uint32_t> requested;
+    if (count > 0) {
+        requested.resize(static_cast<std::size_t>(count));
+        if (!ReadGuest(requested.data(), groups, requested.size() * sizeof(requested[0]))) {
+            *__error_nid_postfix() = errnoBadAddress;
+            return -1;
+        }
+    }
+    if (count > 0 && requested[0] != 0)
+        throw std::runtime_error("setgroups: unsupported effective group id " + std::to_string(requested[0]));
     std::lock_guard lock(supplementaryGroupsMutex);
     if (count == 0) {
         supplementaryGroups.resize(1);
         return 0;
     }
-    supplementaryGroups.assign(groups, groups + count);
+    supplementaryGroups.swap(requested);
     return 0;
 }
 
@@ -802,7 +988,10 @@ int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
         *__error_nid_postfix() = errnoBadAddress;
         return -1;
     }
-    std::copy(supplementaryGroups.begin(), supplementaryGroups.end(), groups);
+    if (!WriteGuest(groups, supplementaryGroups.data(), supplementaryGroups.size() * sizeof(supplementaryGroups[0]))) {
+        *__error_nid_postfix() = errnoBadAddress;
+        return -1;
+    }
     return count;
 }
 

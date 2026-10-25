@@ -1,3 +1,4 @@
+#include "prx/libScePngEnc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
 #include <new>

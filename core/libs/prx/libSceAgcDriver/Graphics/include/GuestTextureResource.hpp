@@ -108,6 +108,7 @@ struct GuestTextureResource {
     std::uint32_t gcnPitch = 0;
     bool gcnPow2Pad = false;
     bool gcnLinearGeneral = false;
+    std::uint64_t fmaskCmaskAddress = 0;
 };
 
 constexpr bool IsGcnMicroTiled(TextureTileMode mode) {
@@ -140,6 +141,7 @@ float EffectiveMinLod(const GuestTextureResource& resource);
 
 bool IsNullTextureResource(std::span<const std::uint32_t> words);
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words);
+std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource);
 bool DescriptorSingleLevel(std::span<const std::uint32_t> words);
 bool FirstLayerDescriptor(std::span<const std::uint32_t> words, std::array<std::uint32_t, 8>& narrowed);
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension);

@@ -76,6 +76,11 @@ def change_tag(image, tag, value=None, replacement=None):
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
 
+def unsized_lifecycle(rela, sce, initial):
+    image = module(rela, sce=sce, lifecycle=True, initial=initial)
+    return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
+
+
 def check_output(data, system, rela, plt, initial):
     expected_rela = [(entry[0], entry[1] & 0xffffffff, entry[2])
                      if (entry[1] & 0xffffffff) == 8 and entry[1] >> 32 else entry
@@ -123,6 +128,7 @@ def invalid_cases(sce):
     entry = 0x61000033 if sce else 9
     address = 0x6100002f if sce else 7
     plt_format = 0x6100002b if sce else 20
+    yield "lifecycle-without-address", change_tag(module([RELATIVE], sce=sce, lifecycle=True, initial=0), 25, replacement=0x61000001), "Incomplete guest lifecycle array"
     yield "partial-entry", change_tag(module([NOOP], sce=sce), size, 23), "Invalid relocation table size"
     yield "entry-size", change_tag(module([NOOP], sce=sce), entry, 16), "Invalid RELA entry size"
     yield "unmapped-table", change_tag(module([NOOP], sce=sce), address, 0xffffffffffffffff), ("SCE table exceeds" if sce else "Unmapped ELF address")
@@ -186,6 +192,15 @@ def main():
                             executed = subprocess.run([sys.executable, __file__, "--load", str(artifact)],
                                                       capture_output=True, text=True, timeout=10)
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
+            for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
+                                        ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
+                image = unsized_lifecycle(rela, sce, initial)
+                for system in ("linux", "windows", "macos"):
+                    result, artifact, output = convert(f"{sce}-{name}", system, image)
+                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
+                    check_output(artifact.read_bytes(), system, rela, [], initial)
+                    if system == "linux":
+                        assert not {25, 26, 27, 28} & set(dynamic_tags(artifact.read_bytes())), name
             for name, image, error in invalid_cases(sce):
                 result, artifact, output = convert(f"{sce}-{name}", "linux", image)
                 assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)

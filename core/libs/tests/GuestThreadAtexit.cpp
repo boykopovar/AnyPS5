@@ -1,16 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(void (APS5_VABI* destructor)(void*), void* object, void* dsoSymbol);
-void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
-}
 
 namespace {
 
@@ -47,6 +41,7 @@ void* APS5_VABI Worker(void*) {
 bool DestructorsThrow() {
     try {
         _sceLibcInternalThreadDtors_nid_postfix();
+
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -61,9 +56,11 @@ int main() {
     Require(Register(RecordAndRegister, 2) == 0);
     Require(Register(Record, 3) == 0);
     _sceLibcInternalThreadDtors_nid_postfix();
+
     Require(calls == std::vector<std::intptr_t>{3, 2, 9, 1});
     Require(callers == std::vector<Pthread>(4, mainThread));
     _sceLibcInternalThreadDtors_nid_postfix();
+
     Require(calls.size() == 4);
 
     calls.clear();
@@ -83,5 +80,6 @@ int main() {
     Require(DestructorsThrow());
     Require(calls.empty());
     _sceLibcInternalThreadDtors_nid_postfix();
+
     Require(calls == std::vector<std::intptr_t>{6});
 }

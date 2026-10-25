@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -30,14 +31,24 @@ constexpr int NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT = static_cast<int>(0x80551
 constexpr int NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED = static_cast<int>(0x8055161au);
 constexpr int NP_TROPHY_ERROR_TITLE_CONF_NOT_INSTALLED = static_cast<int>(0x80551626u);
 constexpr int NP_TROPHY_INVALID_ID = -1;
-constexpr int NP_TROPHY_NUM_MAX = 128;
+
+constexpr int NP_TROPHY_GRADE_UNKNOWN = 0;
+constexpr int NP_TROPHY_BASE_GAME_GROUP_ID = -1;
 constexpr std::uint32_t TrpMagic = 0xdca24d00u;
 constexpr std::size_t TrpHeaderBytes = 0x60;
 constexpr std::size_t TrpEntryBytes = 0x40;
 
-struct TrophyFlagArray {
-    std::uint32_t bits[NP_TROPHY_NUM_MAX / 32];
-};
+static_assert(sizeof(GameDetails) == 0x4a0);
+
+static_assert(sizeof(GameData) == 0x20);
+
+static_assert(sizeof(GroupDetails) == 0x4a0);
+
+static_assert(sizeof(GroupData) == 0x28);
+
+static_assert(sizeof(TrophyDetails) == 0x498);
+
+static_assert(sizeof(TrophyData) == 0x18);
 
 struct TrpEntry {
     std::uint64_t offset;
@@ -112,6 +123,21 @@ int Lookup(int contextId, int handle, Context*& context) {
     if (!g_handles.contains(handle)) return NP_TROPHY_ERROR_INVALID_HANDLE;
     context = &found->second;
     return 0;
+}
+
+int Groups(const Context& context) {
+    int groups = 0;
+    for (int id = 0; id < NP_TROPHY_NUM_MAX; ++id) {
+        char icon[16];
+        std::snprintf(icon, sizeof(icon), "GR%03d.PNG", id);
+        if (!context.entries.contains(icon)) break;
+        groups = id + 1;
+    }
+    return groups;
+}
+
+std::uint32_t Progress(const Context& context) {
+    return context.trophies == 0 ? 0u : static_cast<std::uint32_t>(context.unlocked.size() * 100 / static_cast<std::size_t>(context.trophies));
 }
 
 int CopyIcon(const Context& context, const std::string& name, void* buffer, std::uint64_t* size) {
@@ -250,18 +276,71 @@ int APS5_VABI sceNpTrophyGetTrophyIcon(int contextId, int handle, int trophyId, 
     return CopyIcon(*context, icon, buffer, size);
 }
 
-int APS5_VABI sceNpTrophyGetGameInfo() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* details, GameData* data) {
+    if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    if ((details && details->size != sizeof(GameDetails)) || (data && data->size != sizeof(GameData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(g_mutex);
+    Context* context = nullptr;
+    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
+    if (details) {
+        std::memset(reinterpret_cast<std::uint8_t*>(details) + sizeof(details->size), 0, sizeof(GameDetails) - sizeof(details->size));
+        details->numGroups = static_cast<std::uint32_t>(Groups(*context));
+        details->numTrophies = static_cast<std::uint32_t>(context->trophies);
+    }
+    if (data) {
+        std::memset(reinterpret_cast<std::uint8_t*>(data) + sizeof(data->size), 0, sizeof(GameData) - sizeof(data->size));
+        data->unlockedTrophies = static_cast<std::uint32_t>(context->unlocked.size());
+        data->progressPercentage = Progress(*context);
+    }
     return 0;
 }
 
-int APS5_VABI sceNpTrophyGetGroupInfo() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, GroupDetails* details, GroupData* data) {
+    if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    if ((details && details->size != sizeof(GroupDetails)) || (data && data->size != sizeof(GroupData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(g_mutex);
+    Context* context = nullptr;
+    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
+    if (groupId != NP_TROPHY_BASE_GAME_GROUP_ID) {
+        if (groupId < 0 || groupId >= Groups(*context)) return NP_TROPHY_ERROR_INVALID_GROUP_ID;
+        NotImplemented_nid_no_patch(__func__);
+    }
+    if (details) {
+        std::memset(reinterpret_cast<std::uint8_t*>(details) + sizeof(details->size), 0, sizeof(GroupDetails) - sizeof(details->size));
+        details->groupId = groupId;
+        details->numTrophies = static_cast<std::uint32_t>(context->trophies);
+    }
+    if (data) {
+        std::memset(reinterpret_cast<std::uint8_t*>(data) + sizeof(data->size), 0, sizeof(GroupData) - sizeof(data->size));
+        data->groupId = groupId;
+        data->unlockedTrophies = static_cast<std::uint32_t>(context->unlocked.size());
+        data->progressPercentage = Progress(*context);
+    }
     return 0;
 }
 
-int APS5_VABI sceNpTrophyGetTrophyInfo() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, TrophyDetails* details, TrophyData* data) {
+    if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    if ((details && details->size != sizeof(TrophyDetails)) || (data && data->size != sizeof(TrophyData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(g_mutex);
+    Context* context = nullptr;
+    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
+    if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    if (Groups(*context) != 0) NotImplemented_nid_no_patch(__func__);
+    if (details) {
+        std::memset(reinterpret_cast<std::uint8_t*>(details) + sizeof(details->size), 0, sizeof(TrophyDetails) - sizeof(details->size));
+        details->trophyId = trophyId;
+        details->trophyGrade = NP_TROPHY_GRADE_UNKNOWN;
+        details->groupId = NP_TROPHY_BASE_GAME_GROUP_ID;
+    }
+    if (data) {
+        std::memset(reinterpret_cast<std::uint8_t*>(data) + sizeof(data->size), 0, sizeof(TrophyData) - sizeof(data->size));
+        data->trophyId = trophyId;
+        data->unlocked = context->unlocked.contains(trophyId);
+    }
     return 0;
 }
 

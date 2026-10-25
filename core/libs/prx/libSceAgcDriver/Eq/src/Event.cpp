@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,7 +22,7 @@ struct Registration {
     std::uintptr_t ident;
 };
 
-std::mutex g_mutex;
+AgcDriver::Mutex g_mutex;
 std::vector<Registration> g_registrations;
 
 int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uintptr_t ident, void* udata, const char* caller) {

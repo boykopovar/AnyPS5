@@ -1,12 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-extern "C" {
-int APS5_VABI execvp_nid_postfix(const char*, char* const*);
-int APS5_VABI execv_nid_postfix(const char*, char* const*);
-int APS5_VABI execve_nid_postfix(const char*, char* const*, char* const*);
-}
+
 template <typename TCall> static bool Throws(TCall call, const std::string& message) {
     try {
         call();

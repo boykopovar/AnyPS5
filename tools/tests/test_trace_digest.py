@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +47,25 @@ STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll
 
 
 class TraceDigestTests(unittest.TestCase):
+    def test_cli_rejects_invalid_event_container_shapes_without_partial_output(self):
+        cases = [(value, "trace must be an event array or object") for value in (None, True, 7, "trace")]
+        cases += [({"traceEvents": value}, "traceEvents must be an array")
+                  for value in (None, False, 0, "", {}, "events")]
+        cases += [([value], "trace event 0 must be an object") for value in (None, True, 7, "event", [])]
+        cases.append(({"traceEvents": [{}, None]}, "trace event 1 must be an object"))
+        for document, message in cases:
+            for compressed in (False, True):
+                with self.subTest(document=document, compressed=compressed):
+                    path = Path(self.directory.name) / ("invalid.json.gz" if compressed else "invalid.json")
+                    data = json.dumps(document).encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAIL: " + message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_reports_unreadable_inputs_without_partial_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -123,6 +143,8 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(empty_dict.presents, [])
         empty_list = trace_digest.Trace([])
         self.assertEqual(empty_list.presents, [])
+        empty_events = trace_digest.Trace({"traceEvents": []})
+        self.assertEqual(empty_events.presents, [])
 
     def result(self):
         return trace_digest.digest(trace_digest.load_trace(self.trace), trace_digest.load_summary(None, self.trace),
@@ -630,7 +652,71 @@ class IntervalDigestTests(unittest.TestCase):
                  for index, commit in enumerate(("a", "a", "b", "b", "a"))]
         result = trace_digest.digest_intervals(lines)
         self.assertEqual(result["identity_changed_at"], [2, 4])
-        self.assertIn("commit, environment, GPU, driver or OS changed at interval 3, 5", trace_digest.markdown_intervals(result).splitlines())
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 3, 5", trace_digest.markdown_intervals(result).splitlines())
+
+    def test_machine_and_title_identity_fields_are_retained_and_compared(self):
+        metadata = {"cpu": "CPU A", "cpu_threads": 16, "memory_mib": 32768,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": "01.000.000"}
+        first = interval_line(0.0, 30.0, 20.0, 5.0, **metadata)
+        for key, value in (("cpu", "CPU B"), ("cpu_threads", 32), ("memory_mib", 65536),
+                           ("title_id", "PPSA00002"), ("title", "Title Two"), ("content_version", "02.000.000")):
+            with self.subTest(key=key):
+                changed = dict(first, **{key: value})
+                result = trace_digest.digest_intervals([first, first, changed, changed, first])
+                self.assertEqual({key: result["identity"].get(key) for key in metadata}, metadata)
+                self.assertEqual(result["identity_changed_at"], [2, 4])
+                self.assertIn("changed at interval 3, 5", trace_digest.markdown_intervals(result))
+
+    def test_optional_identity_appearance_disappearance_and_return(self):
+        absent = interval_line(0.0, 30.0, 20.0, 5.0)
+        for key, value in (("cpu", "CPU A"), ("cpu_threads", 0), ("memory_mib", 0),
+                           ("title_id", "PPSA00001"), ("title", "Title One"), ("content_version", "")):
+            with self.subTest(key=key, value=value):
+                present = dict(absent, **{key: value})
+                result = trace_digest.digest_intervals([absent, present, present, absent, present])
+                self.assertEqual(result["identity_changed_at"], [1, 3, 4])
+                self.assertIn(key, result["identity"])
+                self.assertIsNone(result["identity"][key])
+                self.assertIn("changed at interval 2, 4, 5", trace_digest.markdown_intervals(result))
+
+    def test_stable_or_absent_optional_identity_does_not_report_changes(self):
+        absent = interval_line(0.0, 30.0, 20.0, 5.0)
+        metadata = {"cpu": "CPU A", "cpu_threads": 0, "memory_mib": 0,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": ""}
+        for line in (absent, dict(absent, **metadata)):
+            with self.subTest(line=line):
+                result = trace_digest.digest_intervals([line, line])
+                self.assertEqual(result["identity_changed_at"], [])
+                self.assertNotIn("changed at interval", trace_digest.markdown_intervals(result))
+
+    def test_resolution_changes_are_reported(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        result = trace_digest.digest_intervals([first, dict(first, resolution="1280x720")])
+        self.assertEqual(result["identity_changed_at"], [1])
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 2",
+                      trace_digest.markdown_intervals(result))
+
+    def test_cli_retains_machine_and_title_identity_and_reports_changes(self):
+        metadata = {"cpu": "CPU A", "cpu_threads": 16, "memory_mib": 32768,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": "01.000.000"}
+        first = interval_line(0.0, 30.0, 20.0, 5.0, **metadata)
+        second = interval_line(30.0, 60.0, 40.0, 10.0, **dict(metadata, content_version="02.000.000"))
+        self.path.write_text("\n".join(json.dumps(line) for line in (first, second)) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual({key: report["identity"].get(key) for key in metadata}, metadata)
+        self.assertEqual(report["identity_changed_at"], [1])
+        without_metadata = [{key: value for key, value in line.items() if key not in metadata} for line in (first, second)]
+        unchanged_metrics = trace_digest.digest_intervals(without_metadata)
+        self.assertEqual(report["intervals"], unchanged_metrics["intervals"])
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 2", result.stdout)
+        expected = trace_digest.markdown_intervals(unchanged_metrics)
+        self.assertEqual(result.stdout[result.stdout.index("| # |"):], expected[expected.index("| # |"):])
 
     def test_sparkline_scales_to_the_largest_value(self):
         self.assertEqual(trace_digest.sparkline([0.0, 5.0, 10.0]), ".+@")
@@ -722,6 +808,33 @@ class IntervalDigestTests(unittest.TestCase):
             summary_file.write_bytes(b"\xef\xbb\xbf" + json.dumps(SUMMARY).encode("utf-8") + b"\n")
             loaded = trace_digest.load_summary(str(summary_file), SUMMARY["trace"])
             self.assertEqual(loaded["commit"], SUMMARY["commit"])
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(trace_digest.sys, "stdout", out), mock.patch.object(trace_digest.sys, "stderr", err):
+            try:
+                trace_digest.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

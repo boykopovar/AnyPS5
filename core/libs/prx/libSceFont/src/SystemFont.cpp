@@ -154,8 +154,12 @@ std::vector<Font::SystemFontFile> Font::SystemFontCandidates(std::uint32_t fontS
 }
 
 std::filesystem::path Font::SystemFontDirectory() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SYSTEM_FONTS");
+#else
     const char* configured = std::getenv("ANYPS5_SYSTEM_FONTS");
-    if (!configured || configured[0] == '\0') return ExecutableDirectory() / "anyps5-fonts";
+#endif
+    if (!configured || configured[0] == 0) return ExecutableDirectory() / "anyps5-fonts";
     const std::filesystem::path directory(configured);
     std::error_code error;
     if (!std::filesystem::is_directory(directory, error)) throw std::runtime_error("libSceFont: ANYPS5_SYSTEM_FONTS is not a directory: " + directory.string());
