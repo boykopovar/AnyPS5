@@ -2,13 +2,10 @@
 #include <cstddef>
 #include <cstring>
 #include <new>
+#include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t size);
-void APS5_VABI free_nid_postfix(void* pointer);
-}
 
 namespace {
 struct Pkey {
