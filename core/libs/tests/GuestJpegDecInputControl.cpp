@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libSceJpegDec/libSceJpegDec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
 #include <algorithm>
@@ -8,15 +9,6 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceJpegDecQueryMemorySize(const JpegDecCreateParam*);
-std::int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI sceJpegDecDelete(void*);
-std::int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam*, JpegDecImageInfo*);
-std::int32_t APS5_VABI sceJpegDecDecode(void*, const JpegDecDecodeParam*, JpegDecImageInfo*);
-std::int32_t APS5_VABI sceJpegDecDecodeWithInputControl(void*, const JpegDecInputControlParam*, JpegDecImageInfo*);
-}
 
 namespace {
 
