@@ -431,7 +431,7 @@ int APS5_VABI EVP_aes_256_cbc_nid_postfix(void);
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_cfb8_nid_postfix(void);
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_ctr_nid_postfix(void);
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_gcm_nid_postfix(void);
-int APS5_VABI EVP_cleanup_nid_postfix(void);
+void APS5_VABI EVP_cleanup_nid_postfix(void);
 int APS5_VABI EVP_md5_nid_postfix(void);
 int APS5_VABI EVP_sha256_nid_postfix(void);
 int APS5_VABI EVP_sha384_nid_postfix(void);

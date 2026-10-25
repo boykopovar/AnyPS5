@@ -1062,6 +1062,24 @@ static void TestAesGcmTls() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+static void TestEvpCleanup() {
+    const auto* cipher = EVP_aes_128_ctr_nid_postfix();
+    EVP_cleanup_nid_postfix();
+    EVP_cleanup_nid_postfix();
+    Require(EVP_aes_128_ctr_nid_postfix() == cipher);
+    const auto key = Hex(Sp80038aKey128);
+    const auto counter = Hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172a");
+    unsigned char context[ContextBytes] {};
+    unsigned char out[16] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), counter.data()) == 1);
+    EVP_cleanup_nid_postfix();
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 16) == 1 && written == 16);
+    Require(Bytes(out, out + 16) == Hex("874d6191b620e3261bef6864990db6ce"));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1083,5 +1101,6 @@ int main() {
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
+    TestEvpCleanup();
     return 0;
 }

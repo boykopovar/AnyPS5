@@ -321,4 +321,7 @@ int APS5_VABI EVP_CipherFinal_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned
     return ctx->encrypt ? EncryptFinal(ctx, out, outl, __func__) : DecryptFinal(ctx, out, outl, __func__);
 }
 
+void APS5_VABI EVP_cleanup_nid_postfix(void) {
+}
+
 }
