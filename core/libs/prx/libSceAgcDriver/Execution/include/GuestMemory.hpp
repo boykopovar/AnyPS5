@@ -47,11 +47,12 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
 // `out` (Equal), or Unmapped as CompareMapped answers it (the dispatch-cache validation's masked
 // re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
-void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
+bool WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
-// Stores the parts of `current` that differ from `original` (the guest bytes the GPU started from), so
-// guest writes made meanwhile to untouched bytes survive. Compares in 256-byte blocks.
-void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
+// Stores the bytes of `current` that differ from `original` (the guest bytes the GPU started from) where
+// the guest still holds `original`, so guest writes made meanwhile survive. Returns true when such a
+// write left guest bytes that differ from `current`.
+bool WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 
 // Write tracking. The guest arena is reserved with page write watching, so CollectWrites learns which
 // pages of a range the CPU wrote since they were last collected, stamps their 64 KiB blocks with a new

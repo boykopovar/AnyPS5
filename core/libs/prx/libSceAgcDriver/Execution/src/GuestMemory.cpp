@@ -2657,23 +2657,22 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
     return queried ? outcome : Compare::Unmapped;
 }
 
-void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+bool WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
-    if (Accessible(reinterpret_cast<const void*>(address), current.size(), true)) {
-        WriteChanged(address, current, original);
-        return;
-    }
+    if (Accessible(reinterpret_cast<const void*>(address), current.size(), true)) return WriteChanged(address, current, original);
+    bool kept = false;
     for (const auto& [begin, end] : CommittedRanges(address, current.size(), true)) {
         const auto offset = static_cast<std::size_t>(begin - address);
         const auto length = static_cast<std::size_t>(end - begin);
-        WriteChanged(begin, current.subspan(offset, length), original.subspan(offset, length));
+        kept = WriteChanged(begin, current.subspan(offset, length), original.subspan(offset, length)) || kept;
     }
+    return kept;
 }
 
-void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+bool WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
-    if (current.empty()) return;
+    if (current.empty()) return false;
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
     const ReadSiteScope site(ReadSite::Store);
@@ -2682,6 +2681,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     auto* destination = reinterpret_cast<std::byte*>(address);
     CheckRange(destination, current.size(), 1, true);
     const auto size = current.size();
+    bool kept = false;
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
     storeOwn(address, size, [&] {
         std::size_t firstChanged = size;
@@ -2693,6 +2693,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
             const auto held = _mm_loadu_si128(reinterpret_cast<const __m128i*>(destination + at));
             const auto store = _mm_andnot_si128(_mm_cmpeq_epi8(bytes, uploaded), _mm_cmpeq_epi8(held, uploaded));
             const auto changed = static_cast<std::uint32_t>(_mm_movemask_epi8(store));
+            kept = kept || _mm_movemask_epi8(_mm_or_si128(store, _mm_cmpeq_epi8(held, bytes))) != 0xffff;
             if (changed == 0) continue;
             if (changed == 0xffffu) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
             else _mm_maskmoveu_si128(bytes, store, reinterpret_cast<char*>(destination + at));
@@ -2701,13 +2702,17 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         }
         _mm_sfence();
         for (; at < size; ++at) {
-            if (current[at] == original[at] || static_cast<std::byte>(destination[at]) != original[at]) continue;
+            if (current[at] == original[at] || static_cast<std::byte>(destination[at]) != original[at]) {
+                kept = kept || static_cast<std::byte>(destination[at]) != current[at];
+                continue;
+            }
             destination[at] = current[at];
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
+    return kept;
 }
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {

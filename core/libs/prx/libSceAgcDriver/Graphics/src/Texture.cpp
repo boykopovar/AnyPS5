@@ -6316,7 +6316,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     for (const auto& [from, to] : stores) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
         const auto length = static_cast<std::size_t>(to - from);
-        GuestMemory::WriteChangedCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length));
+        if (GuestMemory::WriteChangedCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length))) {
+            const auto last = std::min<std::uint32_t>(trackedLayers - 1, static_cast<std::uint32_t>((to - 1 - descriptor.baseAddress) / trackedLayerBytes));
+            for (auto layer = static_cast<std::uint32_t>(offset / trackedLayerBytes); layer <= last; ++layer) skippedLayer[layer] = layers[layer] || skippedLayer[layer];
+        }
         std::memcpy(original.data() + offset, current.data() + offset, length);
     }
     // The texels now hold the whole image, so later reads must see them rather than a fast clear
