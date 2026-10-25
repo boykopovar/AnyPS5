@@ -13,8 +13,6 @@
 
 using namespace FreeType;
 
-extern "C" void APS5_VABI FT_Outline_Get_CBox_nid_postfix(const GuestOutline*, GuestBBox*);
-
 namespace {
 
 template <typename TTarget, typename TSource> TTarget Count(TSource value, const char* function) {
