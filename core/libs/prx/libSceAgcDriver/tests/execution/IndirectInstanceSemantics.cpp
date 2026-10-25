@@ -124,13 +124,18 @@ std::array<std::uint32_t, Output.size()> Draw(AgcDriver::VulkanDevice& device, s
         ordinary.graphics->instanceInputSgpr = -1;
         auto routed = request;
         routed.graphics->instanceInputSgpr = 11;
+        auto noGraphics = ordinary;
+        noGraphics.graphics.reset();
         for (const auto build : {&ShaderRecompiler::RecompileCacheKey::Build, &ShaderRecompiler::RecompileCacheKey::BuildInterface}) {
-            std::vector<std::uint64_t> key, normalKey, routedKey;
+            std::vector<std::uint64_t> key, normalKey, routedKey, noGraphicsKey;
             build(request, key);
             build(ordinary, normalKey);
             build(routed, routedKey);
+            build(noGraphics, noGraphicsKey);
+            Require(normalKey == noGraphicsKey && key.size() == normalKey.size() + 1u, "ordinary instance mode added a shader cache key word");
             Require(key != normalKey && key != routedKey, "the dynamic instance input and SGPR route did not enter the shader cache key");
         }
+        Require(ShaderRecompiler::RecompileCacheKey::ContextHash(ordinary) == ShaderRecompiler::RecompileCacheKey::ContextHash(noGraphics), "ordinary instance mode changed the source memo key");
         Require(ShaderRecompiler::RecompileCacheKey::ContextHash(request) != ShaderRecompiler::RecompileCacheKey::ContextHash(ordinary) &&
             ShaderRecompiler::RecompileCacheKey::ContextHash(request) != ShaderRecompiler::RecompileCacheKey::ContextHash(routed), "the source memo did not distinguish the instance input route");
         const ShaderRecompiler::RequestSerializer serializer;
