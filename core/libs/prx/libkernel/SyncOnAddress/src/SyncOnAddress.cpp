@@ -644,7 +644,7 @@ void ClearRwlockBits(UserRwlock* rwlock, std::uint32_t bits) {
     std::atomic_ref<std::uint32_t>(rwlock->state).fetch_and(~bits);
 }
 
-int RwlockLock(UserRwlock* rwlock, bool writer, const void* sizeArgument, const void* timeArgument, const void* caller) {
+int RwlockLock(UserRwlock* rwlock, bool writer, std::uint64_t operationFlags, const void* sizeArgument, const void* timeArgument, const void* caller) {
     if (const int error = CheckRwlock(rwlock); error != 0) {
         return error;
     }
@@ -655,7 +655,7 @@ int RwlockLock(UserRwlock* rwlock, bool writer, const void* sizeArgument, const 
     std::atomic_ref<std::uint32_t> state(rwlock->state);
     std::atomic_ref<std::uint32_t> blocked(writer ? rwlock->blockedWriters : rwlock->blockedReaders);
     const std::uint32_t waiterBit = writer ? URWLOCK_WRITE_WAITERS : URWLOCK_READ_WAITERS;
-    const bool preferReader = (std::atomic_ref<std::uint32_t>(rwlock->flags).load() & URWLOCK_PREFER_READER) != 0;
+    const bool preferReader = ((std::atomic_ref<std::uint32_t>(rwlock->flags).load() | operationFlags) & URWLOCK_PREFER_READER) != 0;
     const auto key = reinterpret_cast<std::uintptr_t>(writer ? &rwlock->blockedWriters : &rwlock->state);
     for (;;) {
         int error = 0;
@@ -811,7 +811,7 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
             break;
         case UMTX_OP_RW_RDLOCK:
         case UMTX_OP_RW_WRLOCK:
-            error = RwlockLock(static_cast<UserRwlock*>(object), operation == UMTX_OP_RW_WRLOCK, sizeArgument, timeArgument, caller);
+            error = RwlockLock(static_cast<UserRwlock*>(object), operation == UMTX_OP_RW_WRLOCK, value, sizeArgument, timeArgument, caller);
             break;
         case UMTX_OP_RW_UNLOCK:
             error = RwlockUnlock(static_cast<UserRwlock*>(object));
