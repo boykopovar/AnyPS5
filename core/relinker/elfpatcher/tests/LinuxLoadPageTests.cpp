@@ -162,6 +162,43 @@ void ZeroFileBytesStayInPlace() {
     Require(OutputOffset(output, 0x2c20) == 0x2c20, "a segment whose page already reads right was moved");
 }
 
+void IncongruentSegmentAtPageStart() {
+    auto source = Fixture(0x2000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1010, std::uint8_t{0x33});
+    std::fill(source.begin() + 0x1010, source.begin() + 0x1110, std::uint8_t{0xAA});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1010, 0x1000, 0x100, 0x100, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "segment at a page start with an offset inside a page");
+}
+
+void IncongruentSegmentInsideASharedPage() {
+    auto source = Fixture(0x2000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x1200, source.begin() + 0x1210, std::uint8_t{0x33});
+    std::fill(source.begin() + 0x1210, source.begin() + 0x1310, std::uint8_t{0x5A});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x100, 0x220, 6),
+        Load(0x1210, 0x1220, 0x100, 0x100, 4),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "segment in a shared page with an offset at another place in its page");
+}
+
+void IncongruentOffsetBelowThePagePrefix() {
+    auto source = Fixture(0x1000);
+    std::fill(source.begin() + 0x100, source.begin() + 0x180, std::uint8_t{0xBB});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x100, 0x2300, 0x80, 0x80, 4),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "segment whose offset lies below its page prefix");
+}
+
 }
 
 int main() {
@@ -169,6 +206,9 @@ int main() {
         ZeroFillBelowTheNextSegment();
         DataAndZeroFillBelowTheNextSegment();
         ZeroFileBytesStayInPlace();
+        IncongruentSegmentAtPageStart();
+        IncongruentSegmentInsideASharedPage();
+        IncongruentOffsetBelowThePagePrefix();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

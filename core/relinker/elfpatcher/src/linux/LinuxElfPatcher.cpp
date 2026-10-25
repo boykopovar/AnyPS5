@@ -115,7 +115,8 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
-        if (prefix == 0 || load.FileSize == 0 || load.Offset % kDefaultLoadAlignment != prefix)
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (load.FileSize == 0 || (congruent && prefix == 0))
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -130,7 +131,7 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
             }
         }
         const auto mapped = load.Offset - prefix;
-        bool differs = false;
+        bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
             differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
         if (!differs)
