@@ -110,6 +110,8 @@ void Writable(Mapping& mapping) {
         Require(Convert(operation, destination, 8, status, WithSub(operation) ? status : nullptr, status) == destination,
                 "aliased scalar return");
         Require(*status == (Wide(operation) ? 3 : 5), "length substitution and error alias order");
+        Require(Wide(operation) ? static_cast<char16_t*>(destination)[3] == 0x5555 : static_cast<char*>(destination)[5] == 0x55,
+                "positive aliased status preserves terminator canary");
         mapping.Reset();
         Require(Convert(operation, nullptr, 0, mapping.Length(), mapping.Substitutions(), mapping.Error()) == nullptr,
                 "null preflight return");
@@ -117,6 +119,84 @@ void Writable(Mapping& mapping) {
                 "mapped null preflight output");
         Require(*mapping.Substitutions() == (WithSub(operation) ? 0 : 99), "mapped preflight substitution output");
     }
+}
+
+enum class AliasInput { Valid, Replacing, Empty };
+
+void* AliasConversion(int operation, AliasInput input, void* destination, std::int32_t capacity,
+                      std::int32_t* length, std::int32_t* substitutions, std::int32_t* error) {
+    const char16_t malformed[] = {u'A', 0xd800, u'B', 0};
+    const char* source8 = input == AliasInput::Empty ? "" : input == AliasInput::Replacing ? "A\x80" "B" : "abc";
+    const char16_t* source16 = input == AliasInput::Empty ? u"" : input == AliasInput::Replacing ? malformed : u"abc";
+    switch (operation) {
+        case 0: return u_strFromUTF8_nid_postfix(static_cast<char16_t*>(destination), capacity, length, source8, -1, error);
+        case 1: return u_strToUTF8_nid_postfix(static_cast<char*>(destination), capacity, length, source16, -1, error);
+        case 2: return u_strFromUTF8WithSub_nid_postfix(static_cast<char16_t*>(destination), capacity, length, source8, -1, '?', substitutions, error);
+        case 3: return u_strToUTF8WithSub_nid_postfix(static_cast<char*>(destination), capacity, length, source16, -1, '?', substitutions, error);
+        default: return u_strFromUTF8Lenient_nid_postfix(static_cast<char16_t*>(destination), capacity, length, source8, -1, error);
+    }
+}
+
+void ScalarAliases(Mapping& mapping) {
+    std::size_t cases = 0;
+    for (int operation = 0; operation < 5; ++operation) {
+        for (const auto input : {AliasInput::Valid, AliasInput::Replacing, AliasInput::Empty}) {
+            if (input == AliasInput::Replacing && !WithSub(operation)) continue;
+            const std::int32_t count = input == AliasInput::Empty ? 0 : 3;
+            const std::int32_t replacements = input == AliasInput::Replacing ? 1 : 0;
+            const std::vector<std::int32_t> capacities = count == 0 ? std::vector<std::int32_t>{0, 1, 2} :
+                std::vector<std::int32_t>{0, 2, 3, 4};
+            for (int alias = 0; alias < (WithSub(operation) ? 4 : 1); ++alias) {
+                for (const std::int32_t initial : {0, -124, -127, 10}) {
+                    for (const auto capacity : capacities) {
+                        for (const bool nullDestination : {false, true}) {
+                            if (nullDestination && capacity != 0) continue;
+                            mapping.Reset();
+                            *mapping.Error() = initial;
+                            auto* length = alias == 0 || alias == 3 ? mapping.Error() : mapping.Length();
+                            auto* substitutions = alias == 1 || alias == 3 ? mapping.Error() :
+                                alias == 2 ? mapping.Length() : mapping.Substitutions();
+                            void* destination = nullDestination ? nullptr : mapping.Destination();
+                            const std::vector<char> before(mapping.Data(), mapping.Data() + Bytes);
+                            auto* result = AliasConversion(operation, input, destination, capacity, length, substitutions, mapping.Error());
+                            ++cases;
+                            if (initial > 0) {
+                                Require(result == nullptr && std::memcmp(before.data(), mapping.view, Bytes) == 0,
+                                        "latched aliased error preserves all output bytes");
+                                continue;
+                            }
+                            Require(result == destination, "aliased positive completion retains destination return");
+                            auto status = length == mapping.Error() ? count : substitutions == mapping.Error() ? replacements : initial;
+                            const bool terminate = status <= 0 && count < capacity;
+                            if (status <= 0) {
+                                if (count < capacity) {
+                                    if (status == -124) status = 0;
+                                } else status = count == capacity ? -124 : 15;
+                            }
+                            Require(*mapping.Error() == status, "aliased scalar status preserves ICU success gate");
+                            Require(*length == (length == mapping.Error() ? status : count), "aliased destination length store order");
+                            if (WithSub(operation)) {
+                                Require(*substitutions == (substitutions == mapping.Error() ? status : substitutions == length ? count : replacements),
+                                        "aliased substitution store precedes length and termination");
+                            }
+                            const char* expected = input == AliasInput::Replacing ? "A?B" : "abc";
+                            for (std::int32_t unit = 0; unit < 9; ++unit) {
+                                const auto actual = Wide(operation) ? static_cast<char16_t*>(mapping.Destination())[unit] :
+                                    static_cast<std::uint8_t*>(mapping.Destination())[unit];
+                                const auto canary = Wide(operation) ? 0x5555 : 0x55;
+                                const auto wanted = unit < count && unit < capacity ? expected[unit] :
+                                    unit == count && terminate ? 0 : canary;
+                                Require(actual == wanted, "aliased completion preserves exact prefix and terminator canaries");
+                            }
+                            Require(static_cast<char*>(mapping.Destination())[-1] == 0x55, "aliased output prefix canary");
+                            Require(std::memcmp(mapping.view, mapping.twin, Bytes) == 0, "shared alias sees scalar-alias completion");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::printf("ICU UTF scalar alias cases: %zu\n", cases);
 }
 
 void NoWritePaths(Mapping& mapping) {
@@ -147,15 +227,18 @@ void NoWritePaths(Mapping& mapping) {
                 "negative capacity updates only error");
         for (std::size_t page = 0; page < 4; ++page) mapping.Protect(page, 3);
     }
-    mapping.Reset();
-    mapping.Protect(0, 1);
-    mapping.Protect(1, 1);
-    Require(Convert(4, mapping.Destination(), 2, mapping.Length(), mapping.Substitutions(), mapping.Error(), true) == nullptr,
-            "lenient overflow does not access source or read-only destination");
-    Require(*mapping.Error() == 15 && *mapping.Length() == 5 && *mapping.Substitutions() == 99,
-            "lenient overflow output contract");
-    mapping.Protect(0, 3);
-    mapping.Protect(1, 3);
+    for (const bool aliasLength : {false, true}) {
+        mapping.Reset();
+        mapping.Protect(0, 1);
+        mapping.Protect(1, 1);
+        auto* length = aliasLength ? mapping.Error() : mapping.Length();
+        Require(Convert(4, mapping.Destination(), 2, length, mapping.Substitutions(), mapping.Error(), true) == nullptr,
+                "lenient overflow does not access source or read-only destination");
+        Require(*mapping.Error() == 15 && *mapping.Length() == (aliasLength ? 77 : 5) && *mapping.Substitutions() == 99,
+                "lenient overflow preserves length-before-error alias order");
+        mapping.Protect(0, 3);
+        mapping.Protect(1, 3);
+    }
 }
 
 #ifdef _WIN32
@@ -201,6 +284,7 @@ void RejectedWrites(Mapping& mapping) {
 int main() {
     Mapping mapping;
     Writable(mapping);
+    ScalarAliases(mapping);
     NoWritePaths(mapping);
 #ifdef _WIN32
     RejectedWrites(mapping);

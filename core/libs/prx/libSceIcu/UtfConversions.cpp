@@ -62,6 +62,7 @@ template<class T>
 void Finish(T* destination, std::int32_t capacity, std::int64_t count, std::int32_t* length, std::int32_t* error) {
     if (count > std::numeric_limits<std::int32_t>::max()) NotImplemented_nid_no_patch(__func__);
     if (length) *length = static_cast<std::int32_t>(count);
+    if (*error > 0) return;
     if (count < capacity) {
         destination[count] = 0;
         if (*error == NotTerminated) *error = 0;
