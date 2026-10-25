@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -12,6 +13,26 @@ constexpr std::int32_t InvalidCharacter = 10;
 constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t NotTerminated = -124;
 
+template<class T>
+class OutputAccess {
+public:
+    OutputAccess(T* destination, std::int32_t capacity, std::int32_t* length,
+                 std::int32_t* substitutions, std::int32_t* error)
+        : errorAccess(error, sizeof(*error)),
+          lengthAccess(length, length ? sizeof(*length) : 0),
+          substitutionsAccess(substitutions, substitutions ? sizeof(*substitutions) : 0),
+          destinationAccess(capacity > 0 ? destination : nullptr, static_cast<std::size_t>(capacity) * sizeof(T)) {
+        if (!errorAccess.Open() || !lengthAccess.Open() || !substitutionsAccess.Open() || !destinationAccess.Open())
+            NotImplemented_nid_no_patch(__func__);
+    }
+
+private:
+    GuestArena::HostWrite errorAccess;
+    GuestArena::HostWrite lengthAccess;
+    GuestArena::HostWrite substitutionsAccess;
+    GuestArena::HostWrite destinationAccess;
+};
+
 bool Surrogate(std::int32_t value) { return value >= 0xd800 && value <= 0xdfff; }
 
 template<class TSource, class TDestination>
@@ -21,6 +42,8 @@ bool Validate(TDestination* destination, std::int32_t capacity, const TSource* s
     if (*error > 0) return false;
     if ((!source && length != 0) || length < -1 || capacity < 0 || (!destination && capacity > 0) ||
         substitution > 0x10ffff || Surrogate(substitution)) {
+        const GuestArena::HostWrite access(error, sizeof(*error));
+        if (!access.Open()) NotImplemented_nid_no_patch(__func__);
         *error = IllegalArgument;
         return false;
     }
@@ -72,6 +95,7 @@ char16_t* FromUtf8(char16_t* destination, std::int32_t capacity, std::int32_t* d
                    const char* source, std::int32_t sourceLength, std::int32_t substitution,
                    std::int32_t* substitutions, std::int32_t* error) {
     if (!Validate(destination, capacity, source, sourceLength, substitution, error)) return nullptr;
+    const OutputAccess access(destination, capacity, destinationLength, substitutions, error);
     if (substitutions) *substitutions = 0;
     const auto length = Length(source, sourceLength);
     std::int64_t count = 0;
@@ -102,6 +126,7 @@ char* ToUtf8(char* destination, std::int32_t capacity, std::int32_t* destination
              const char16_t* source, std::int32_t sourceLength, std::int32_t substitution,
              std::int32_t* substitutions, std::int32_t* error) {
     if (!Validate(destination, capacity, source, sourceLength, substitution, error)) return nullptr;
+    const OutputAccess access(destination, capacity, destinationLength, substitutions, error);
     if (substitutions) *substitutions = 0;
     const auto length = Length(source, sourceLength);
     std::int64_t count = 0;
@@ -168,10 +193,12 @@ char16_t* APS5_VABI u_strFromUTF8Lenient_nid_postfix(char16_t* destination, std:
     const char* source, std::int32_t sourceLength, std::int32_t* error) {
     if (!Validate(destination, capacity, source, sourceLength, -1, error)) return nullptr;
     if (sourceLength >= 0 && capacity < sourceLength) {
+        const OutputAccess<char16_t> access(nullptr, 0, destinationLength, nullptr, error);
         if (destinationLength) *destinationLength = sourceLength;
         *error = BufferOverflow;
         return nullptr;
     }
+    const OutputAccess access(destination, capacity, destinationLength, nullptr, error);
     const auto length = Length(source, sourceLength);
     std::int64_t count = 0;
     const auto emit = [&](char16_t unit) {
