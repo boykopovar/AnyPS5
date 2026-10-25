@@ -10,6 +10,22 @@ namespace {
 constexpr int DuplicateDescriptor = 0;
 constexpr int GetDescriptorFlags = 1;
 constexpr int SetDescriptorFlags = 2;
+constexpr int GetStatusFlags = 3;
+constexpr int SetStatusFlags = 4;
+constexpr int GetLock = 11;
+constexpr int ReadAhead = 15;
+constexpr int Nonblocking = 4;
+constexpr std::uint64_t NonblockingRequest = 0x8004667e;
+constexpr std::uint64_t ReadableRequest = 0x4004667f;
+
+struct GuestLock {
+    std::int64_t start;
+    std::int64_t length;
+    std::int32_t pid;
+    std::int16_t type;
+    std::int16_t whence;
+    std::int32_t system;
+};
 constexpr int Duplicate2Descriptor = 10;
 constexpr int DuplicateDescriptorCloseOnExec = 17;
 constexpr int Duplicate2DescriptorCloseOnExec = 18;
@@ -88,7 +104,7 @@ int main() {
     Require(fcntl_nid_postfix(pipeDescriptors[0], GetDescriptorFlags) == 0, "F_DUP2FD onto a pipe must clear FD_CLOEXEC");
     Require(fcntl_nid_postfix(plain, SetDescriptorFlags, 0) == 0, "F_SETFD 0 must clear FD_CLOEXEC");
     Require(fcntl_nid_postfix(plain, Duplicate2DescriptorCloseOnExec, pipeDescriptors[1]) == pipeDescriptors[1], "F_DUP2FD_CLOEXEC onto a pipe must return the target");
-    Require(fcntl_nid_postfix(pipeDescriptors[1], GetDescriptorFlags) == CloseOnExec, "F_DUP2FD_CLOEXEC onto a pipe must set FD_CLOEXEC");
+    Require(fcntl_nid_postfix(pipeDescriptors[1], GetDescriptorFlags) == CloseOnExec, "F_DUP2FD_CLOEXEC must set FD_CLOEXEC");
     Require(close_nid_postfix(pipeDescriptors[0]) == 0 && close_nid_postfix(pipeDescriptors[1]) == 0, "close failed");
 
     const int marked = socket_nid_postfix(2, Stream | SocketCloseOnExec, 0);
@@ -97,5 +113,23 @@ int main() {
     const int reused = socket_nid_postfix(2, Stream, 0);
     Require(reused >= 0 && fcntl_nid_postfix(reused, GetDescriptorFlags) == 0, "the flag of a closed socket must not reach the next socket");
     Require(close_nid_postfix(reused) == 0 && close_nid_postfix(plain) == 0, "close failed");
+
+    const int sock = socket_nid_postfix(2, Stream, 0);
+    Require(sock >= 0, "socket failed");
+    Require((fcntl_nid_postfix(sock, GetStatusFlags) & 3) == 2, "a socket must report O_RDWR (2)");
+    int queued = -1;
+    Require(ioctl_nid_postfix(sock, ReadableRequest, &queued) == 0 && queued == 0, "FIONREAD on an empty socket must report 0");
+    GuestLock lock{};
+    lock.type = 1;
+    Require(fcntl_nid_postfix(sock, GetLock, reinterpret_cast<std::intptr_t>(&lock)) == -1 && *__error_nid_postfix() == GuestEinval, "F_GETLK on a socket must fail with EINVAL");
+    Require(fcntl_nid_postfix(sock, ReadAhead, 0) == -1 && *__error_nid_postfix() == GuestEinval, "F_RDAHEAD on a socket must fail with EINVAL");
+    Require(fcntl_nid_postfix(sock, SetStatusFlags, Nonblocking) == 0, "F_SETFL with O_NONBLOCK on a socket must succeed");
+    Require((fcntl_nid_postfix(sock, GetStatusFlags) & Nonblocking) == Nonblocking, "O_NONBLOCK flag must be reflected in GetStatusFlags");
+    Require(fcntl_nid_postfix(sock, SetStatusFlags, 0) == 0, "clearing O_NONBLOCK must succeed");
+    Require((fcntl_nid_postfix(sock, GetStatusFlags) & Nonblocking) == 0, "clearing O_NONBLOCK must be reflected in GetStatusFlags");
+    int enable = 1;
+    Require(ioctl_nid_postfix(sock, NonblockingRequest, &enable) == 0, "FIONBIO on a socket must succeed");
+    Require((fcntl_nid_postfix(sock, GetStatusFlags) & Nonblocking) == Nonblocking, "FIONBIO must set O_NONBLOCK");
+    Require(close_nid_postfix(sock) == 0, "close failed");
     return 0;
 }

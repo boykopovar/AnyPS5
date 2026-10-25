@@ -147,6 +147,7 @@ const char* KindName(Kind kind) {
 #ifdef _WIN32
 std::optional<Kind> Classify(int fd, const char* function) {
     if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd)) return std::nullopt;
+    if (GuestSockets::IsOpen(fd)) return Kind::Socket;
     if (File::IsDirectoryDescriptor(fd)) return Kind::Directory;
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
     if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
@@ -219,6 +220,12 @@ int Readable(int fd, Kind kind, const char* function) {
         if (size < 0 || offset < 0)
             throw std::runtime_error(std::string(function) + ": cannot read the size and offset of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
         return static_cast<int>(size - offset);
+    }
+    if (kind == Kind::Socket) {
+        std::int64_t data = 0;
+        bool eof = false;
+        GuestSockets::Ready(fd, false, &data, &eof);
+        return static_cast<int>(std::min<std::int64_t>(data, std::numeric_limits<int>::max()));
     }
     if (AccessMode(fd, function) == WriteOnly) return 0;
     DWORD available = 0;
@@ -514,8 +521,9 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
             SetCloseOnExec(fd, (argument & CloseOnExec) != 0);
             return 0;
         case GetStatusFlags: {
-            if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int access = CreatedByPipe(fd) ? ReadWrite : AccessMode(fd, "fcntl");
+            const auto kind = Classify(fd, "fcntl");
+            if (!kind) return Fail(GuestEbadf);
+            const int access = (CreatedByPipe(fd) || *kind == Kind::Socket) ? ReadWrite : AccessMode(fd, "fcntl");
             return access | CurrentStatus(fd);
         }
         case SetStatusFlags: {
