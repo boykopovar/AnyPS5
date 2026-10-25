@@ -104,6 +104,7 @@ int main(int argc, char** argv) {
         Require(query((root / "missing").string().c_str(), &out.value) == -1 && *error() == 2);
         for (const auto byte : std::as_bytes(std::span(&out.value, 1))) Require(byte == std::byte{0xa5});
         Require(query(nullptr, &out.value) == -1 && *error() == 14);
+        Require(query(reinterpret_cast<const char*>(1), &out.value) == -1 && *error() == 14);
         Require(query("", &out.value) == -1 && *error() == 2);
         Require(query((root / "data" / "child").string().c_str(), &out.value) == -1 && *error() == 20);
         Require(query(path.c_str(), nullptr) == -1 && *error() == 14);
@@ -151,6 +152,7 @@ int main(int argc, char** argv) {
         Require(update(-1, "data", times) == -1 && *error() == 9);
         Require(update(file, "data", times) == -1 && *error() == 20);
         Require(update(base, nullptr, times) == -1 && *error() == 14);
+        Require(update(base, reinterpret_cast<const char*>(1), times) == -1 && *error() == 14);
         Require(update(base, "", times) == -1 && *error() == 2);
         Require(update(base, "missing", times) == -1 && *error() == 2);
         KernelTimeval invalid[2]{{0, -1}, {0, 0}};
