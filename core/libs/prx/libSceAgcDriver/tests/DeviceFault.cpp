@@ -13,6 +13,7 @@ void Require(bool condition, const char* message) {
 
 int faultCalls = 0;
 bool faultFails = false;
+int incompleteAnswers = 0;
 
 VKAPI_ATTR VkResult VKAPI_CALL MockFaultInfo(VkDevice, VkDeviceFaultCountsEXT* counts, VkDeviceFaultInfoEXT* info) {
     ++faultCalls;
@@ -22,6 +23,12 @@ VKAPI_ATTR VkResult VKAPI_CALL MockFaultInfo(VkDevice, VkDeviceFaultCountsEXT* c
         counts->vendorInfoCount = 1;
         counts->vendorBinarySize = 4096;
         return VK_SUCCESS;
+    }
+    if (incompleteAnswers > 0) {
+        --incompleteAnswers;
+        counts->addressInfoCount = 1;
+        counts->vendorInfoCount = 0;
+        return VK_INCOMPLETE;
     }
     Require(counts->vendorBinarySize == 0, "the vendor binary was requested");
     Require(counts->addressInfoCount == 2 && info->pAddressInfos != nullptr, "the address array was not passed");
@@ -89,6 +96,21 @@ void FaultInfo() {
     Require(lines[1] == "[device-fault] read invalid at 0x1234000 (precision 0xfff)", "the read fault line changed");
     Require(lines[2] == "[device-fault] instruction pointer fault at 0xabcd (precision 0x3)", "the instruction pointer line changed");
     Require(lines[3] == "[device-fault] vendor: " + std::string(VK_MAX_DESCRIPTION_SIZE, 'v') + " (code 0x77, data 0x88)", "an unterminated vendor description was not bounded");
+}
+
+void FaultInfoIncomplete() {
+    faultCalls = 0;
+    faultFails = false;
+    incompleteAnswers = 1;
+    const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr);
+    Require(faultCalls == 4, "a VK_INCOMPLETE answer was not followed by another count and data query");
+    Require(lines.size() == 4 && lines[0] == "[device-fault] result 0: page fault", "the retried report does not carry the fault description");
+    Require(lines[1] == "[device-fault] read invalid at 0x1234000 (precision 0xfff)" && lines[3] == "[device-fault] vendor: " + std::string(VK_MAX_DESCRIPTION_SIZE, 'v') + " (code 0x77, data 0x88)", "the retried report lost an address or vendor line");
+    faultCalls = 0;
+    incompleteAnswers = 8;
+    const auto capped = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr);
+    Require(faultCalls == 8, "a permanently incomplete query did not stop after four attempts");
+    Require(!capped.empty() && capped[0].starts_with("[device-fault] result ") && capped[0] != "[device-fault] result 0: ", "the last incomplete attempt was not reported");
 }
 
 void FaultInfoFails() {
@@ -160,6 +182,7 @@ int main() {
     try {
         Diagnostics();
         FaultInfo();
+        FaultInfoIncomplete();
         FaultInfoFails();
         Checkpoints();
         Nothing();
