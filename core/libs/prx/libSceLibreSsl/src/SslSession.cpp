@@ -1,32 +1,8 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslCertKey {
-    void* x509;
-    void* privatekey;
-    const void* digest;
-};
-
-struct LibreSslCert {
-    LibreSslCertKey* key;
-    unsigned char rest[248];
-};
-
-struct LibreSslSession {
-    unsigned char beforeCipher[168];
-    const void* cipher;
-    unsigned char rest[56];
-};
-
-struct LibreSslSessionConnection {
-    unsigned char beforeCert[80];
-    LibreSslCert* cert;
-    unsigned char beforeSession[40];
-    LibreSslSession* session;
-    unsigned char rest[96];
-};
 
 static_assert(sizeof(LibreSslCertKey) == 24);
 static_assert(offsetof(LibreSslCertKey, privatekey) == 8);
