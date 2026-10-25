@@ -3,6 +3,7 @@
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace Relinker {
 
@@ -42,12 +43,15 @@ bool OnlyPadding(std::span<const std::uint8_t> code, std::size_t from, std::size
 }
 
 std::size_t TableEntries(std::span<const std::uint8_t> code, std::size_t table, std::size_t end, std::size_t firstTable, const std::vector<bool>& instructionStarts) {
+    if (table >= end) return 0;
+    const auto maxEntries = (end - table) / 4;
     std::size_t entries = 0;
-    while (table + (entries + 1) * 4 <= end) {
+    while (entries < maxEntries) {
         std::int32_t relative = 0;
         std::memcpy(&relative, code.data() + table + entries * 4, sizeof(relative));
+        if (table > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) || (relative > 0 && table > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - relative))) break;
         const auto destination = static_cast<std::int64_t>(table) + relative;
-        if (destination < 0 || destination >= static_cast<std::int64_t>(firstTable) || !instructionStarts[static_cast<std::size_t>(destination)]) break;
+        if (destination < 0 || destination >= static_cast<std::int64_t>(firstTable) || destination >= static_cast<std::int64_t>(instructionStarts.size()) || !instructionStarts[static_cast<std::size_t>(destination)]) break;
         ++entries;
     }
     return entries;

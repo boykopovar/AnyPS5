@@ -307,6 +307,15 @@ void CheckRelativeJumpTables() {
     std::memcpy(invalidTarget.data() + tableOffset, invalidTargets, sizeof(invalidTargets));
     Require(Relinker::FindTrailingRelativeJumpTable(invalidTarget) == invalidTarget.size(), "Table with non-instruction targets was accepted");
 
+    Bytes overflowDisplacement = text;
+    const std::int32_t overflowTargets[]{std::numeric_limits<std::int32_t>::max(), std::numeric_limits<std::int32_t>::max()};
+    std::memcpy(overflowDisplacement.data() + tableOffset, overflowTargets, sizeof(overflowTargets));
+    Require(Relinker::FindTrailingRelativeJumpTable(overflowDisplacement) == overflowDisplacement.size(), "Table with overflowing displacement was accepted");
+
+    Bytes truncatedTable = text;
+    truncatedTable.resize(tableOffset + 3);
+    Require(Relinker::FindTrailingRelativeJumpTable(truncatedTable) == truncatedTable.size(), "Truncated table was accepted");
+
     Bytes nonPadding = text;
     nonPadding.back() = 0x55;
     Require(Relinker::FindTrailingRelativeJumpTable(nonPadding) == nonPadding.size(), "Table followed by non-padding bytes was accepted");
