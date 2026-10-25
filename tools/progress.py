@@ -520,6 +520,10 @@ def validate_snapshot(snapshot):
 
 
 def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     global PRX, OPCODES
     previous = PRX, OPCODES
     parser = argparse.ArgumentParser()
@@ -539,7 +543,7 @@ def main(argv=None):
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
                 except (OSError, ValueError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -579,6 +583,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     raise SystemExit(main())

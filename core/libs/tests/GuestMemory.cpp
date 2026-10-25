@@ -1776,7 +1776,7 @@ static void CheckSingleDirectMappingTracksWritesWithoutFaults() {
 #endif
 }
 
-static void CheckLargeResidentWritesStopFaulting() {
+static void CheckLargeResidentWritesDoNotFault() {
 #ifdef _WIN32
     constexpr std::size_t bytes = 0x200000;
     std::int64_t physical = 0;
@@ -1792,7 +1792,7 @@ static void CheckLargeResidentWritesStopFaulting() {
     Require(collect() == bytes / 4096);
     Require(collect() == 0 && collect() == 0);
     MEMORY_BASIC_INFORMATION memory{};
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READONLY);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     auto* data = static_cast<unsigned char*>(mapped);
     const auto path = std::filesystem::path("anyps5-resident-read-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -1820,7 +1820,7 @@ static void CheckLargeResidentWritesStopFaulting() {
         Require(collect() == 1 && collect() == 0);
     }
     for (unsigned int round = 0; round < 16; ++round) Require(collect() == 0);
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READONLY);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     const auto before = g_accessViolations;
     const auto handler = AddVectoredExceptionHandler(1, CountAccessViolations);
     Require(handler != nullptr);
@@ -1829,7 +1829,7 @@ static void CheckLargeResidentWritesStopFaulting() {
         Require(collect() == bytes / 4096 && collect() == 0);
     }
     Require(RemoveVectoredExceptionHandler(handler));
-    Require(g_accessViolations == before + 1);
+    Require(g_accessViolations == before);
     Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     Require(mprotect_nid_postfix(mapped, bytes, 1) == 0);
     Require(collect() == 0 && collect() == 0);
@@ -3393,7 +3393,7 @@ int main(int argc, char** argv) {
     CheckPinnedSharedPages();
     CheckFailedCollectKeepsWrites();
     CheckSingleDirectMappingTracksWritesWithoutFaults();
-    CheckLargeResidentWritesStopFaulting();
+    CheckLargeResidentWritesDoNotFault();
     CheckImportAccessDoesNotInventSharedWrites();
     CheckResidentCollectPreservesPartialWrites();
     CheckResidentCollectionDuringHostWrites();

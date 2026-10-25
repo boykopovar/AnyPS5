@@ -13,12 +13,22 @@ layout(push_constant) uniform Parameters {
     uint always;
 } parameters;
 
+uint differingBytes(uint difference) {
+    uint folded = difference | (difference >> 1u);
+    folded |= folded >> 2u;
+    folded |= folded >> 4u;
+    return (folded & 0x01010101u) * 0xffu;
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= parameters.count) return;
     uint value = parameters.result.words[index];
     uint before = parameters.snapshot.words[index];
     uint held = parameters.target.words[index];
-    if (parameters.always != 0u || (value != before && held == before)) parameters.target.words[index] = value;
-    else if (uint64_t(parameters.counter) != 0ul && held != before) atomicAdd(parameters.counter.words[0], 1u);
+    uint changed = differingBytes(value ^ before);
+    uint kept = differingBytes(held ^ before);
+    uint stored = parameters.always != 0u ? 0xffffffffu : changed & ~kept;
+    if (stored != 0u) parameters.target.words[index] = (held & ~stored) | (value & stored);
+    if (uint64_t(parameters.counter) != 0ul && (changed & kept) != 0u) atomicAdd(parameters.counter.words[0], 1u);
 }

@@ -1893,14 +1893,19 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     (void)priority;
-    if (!info || !batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch || !info->p_buffer || info->offset > info->size) return SCE_AJM_ERROR_INVALID_PARAMETER;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
-    const auto* end = cursor + info->offset;
+    auto remaining = info->offset;
     std::vector<AjmBuffer> buffers;
-    while (cursor < end) {
+    while (remaining != 0) {
+        if (remaining < sizeof(PackedJob)) NotImplemented_nid_no_patch("AJM batch contains a truncated private job header");
         PackedJob record;
         std::memcpy(&record, cursor, sizeof(record));
+        const std::size_t bufferCount = static_cast<std::size_t>(record.inputCount) + record.outputCount;
+        const std::size_t parameterBytes = (static_cast<std::size_t>(record.parameterSize) + 7u) & ~std::size_t{7};
+        const std::size_t requiredBytes = sizeof(PackedJob) + bufferCount * sizeof(AjmBuffer) + parameterBytes;
+        if (record.parameterSize > sizeof(JobHeader::parameters) || record.bytes < requiredBytes || record.bytes > remaining) NotImplemented_nid_no_patch("AJM batch contains an invalid private job size");
         JobHeader job{};
         job.kind = static_cast<JobKind>(record.kind);
         job.bytes = record.bytes;
@@ -1915,7 +1920,8 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
         if (!buffers.empty()) std::memcpy(buffers.data(), cursor + sizeof(record), buffers.size() * sizeof(AjmBuffer));
         if (record.parameterSize) std::memcpy(job.parameters, cursor + sizeof(record) + buffers.size() * sizeof(AjmBuffer), record.parameterSize);
         Execute(job, buffers.data(), buffers.data() + job.inputCount);
-        cursor += record.bytes;
+        remaining -= record.bytes;
+        if (remaining != 0) cursor += record.bytes;
     }
     if (error) std::memset(error, 0, sizeof(*error));
     const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);

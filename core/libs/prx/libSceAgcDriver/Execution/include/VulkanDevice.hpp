@@ -45,9 +45,11 @@ struct DeviceQueuePlan {
     bool sparseBinding = false;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     std::uint32_t sparseIndex = 0;
+    bool present = false;
+    std::uint32_t presentIndex = 0;
 };
 
-DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding);
+DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
 
 class VulkanDevice {
 public:
@@ -58,6 +60,8 @@ public:
     // Builds the pipeline of a journaled compute result ahead of its first dispatch (the journal
     // replay's hook, on its threads): false when the device already holds a pipeline for the module.
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
+    bool HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
+    void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     // Starts the journal replay if the device has not (a headless device starts it at its first
     // draw or dispatch) and joins it (tests; the teardown joins it anyway).
     void WaitForPipelineJournalReplay();
@@ -226,7 +230,7 @@ public:
     bool ProvokingVertexLast() const;
     bool GraphicsPipelineLibraries() const;
     // A presentation is a few steps so the presenter holds GuestMemory::GpuMutex only while it
-    // touches the queue. Presentations are slots (FlipInFlight() + 1, each with its own command
+    // touches the main queue. Presentations are slots (FlipInFlight() + 1, each with its own command
     // buffer, fence, kept resident image and dump buffer): RetirePresents(keep) (no mutex) retires
     // the slots whose fence signaled, oldest first, and waits for the oldest ones until at most
     // `keep` are in flight (the only CPU wait of the flip path; it returns the time spent waiting);
@@ -235,7 +239,9 @@ public:
     // PresentClear/PresentDisplayBuffer record and submit the frame into the next slot (under the
     // mutex; the blit follows the frame's batches in queue order, so the displayed image is always
     // complete) and return whether one was submitted; QueuePresent hands the image to the swapchain
-    // (under the mutex). FinishPresent = RetirePresents(0): the render fence wait of the
+    // (on the device's presentation queue under that queue's mutex, with the GPU mutex released,
+    // when the presentation family had a free queue; otherwise on the main queue under the GPU
+    // mutex). FinishPresent = RetirePresents(0): the render fence wait of the
     // synchronous paths (APS5_FLIP_INFLIGHT=0, APS5_SYNC_FLIP, PresentPixels). AcquireImage returns
     // false when the swapchain is out of date (the frame is dropped; the next Resize recreates it);
     // a present without a prior AcquireImage acquires itself, one whose slot is in flight waits for
@@ -258,6 +264,7 @@ public:
     bool PresentDisplayBuffer(const DisplayBuffer& buffer);
     double FinishPresent();
     void QueuePresent();
+    bool PresentsOnOwnQueue() const;
     // At the flip packet (under the mutex): the recorder's submissions so far and, under
     // APS5_PROFILE_DRAW, how many in flight have not signaled (the frame record's batches_at_flip).
     void FlipBatches(std::uint64_t& submissions, std::uint64_t& unsignaled) const;

@@ -23,6 +23,7 @@ int APS5_VABI __wrap_symlink();
 int APS5_VABI clock_gettime_np();
 int APS5_VABI getenv_np();
 int APS5_VABI scePosixForWebKit_gethostbyname_r();
+int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name);
 int APS5_VABI mmap_np();
 int APS5_VABI msetname();
 int APS5_VABI pthread_setschedparam_np();

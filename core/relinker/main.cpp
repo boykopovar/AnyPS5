@@ -45,11 +45,12 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     input.Executable = fileReader.Read(inputPath);
     input.InputPath = std::filesystem::absolute(Io::NativePath(inputPath)).lexically_normal();
     input.OutputPath = Io::NativePath(absPath);
+    Cli::NativeModules modules;
     if (!args.skipSceModule) {
-        auto modules = Cli::ReadModules(std::filesystem::absolute(Io::NativePath(args.inputPath)).lexically_normal(), Io::NativePath(args.sceModulePath), args.excludedSceModules, args.moduleDirectories);
-        input.ModuleRoot = std::move(modules.Root);
+        modules = Cli::ReadModules(std::filesystem::absolute(Io::NativePath(args.inputPath)).lexically_normal(), Io::NativePath(args.sceModulePath), args.excludedSceModules, args.moduleDirectories);
+        input.ModuleRoot = modules.Root;
         input.Modules = std::move(modules.Modules);
-        input.RuntimeDirectories = std::move(modules.RuntimeDirectories);
+        input.RuntimeDirectories = modules.RuntimeDirectories;
     }
     const auto iconPath = Io::NativePath(args.inputPath).parent_path() / "sce_sys" / "icon0.png";
     if (args.toWindows && std::filesystem::exists(iconPath)) input.Icon = fileReader.Read(Io::Utf8Path(iconPath));
@@ -76,6 +77,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     progress.IncludeFile(Io::Utf8Path(input.OutputPath));
     for (const auto& module : input.Modules) progress.IncludeFile(Io::Utf8Path(module.Path));
     auto converted = Relinker::Conversion(progress).Convert(std::move(input), options);
+    if (!args.skipSceModule) Cli::ReportUnconvertedNeeded(modules, converted.Analysis.DynamicSection.NeededLibraries, args.toWindows, std::cout);
     return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics), std::move(converted.AppliedPatches), converted.LinuxBase};
 }
 

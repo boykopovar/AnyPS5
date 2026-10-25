@@ -39,7 +39,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     report(0);
     diagnostics.clear();
-    WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase ? *fixedBase - LoadRva : ImageBase);
+    WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase.value_or(ExecutableBase) - LoadRva);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     report(500);
@@ -111,7 +111,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     }
     directories[2] = icon ? WindowsIconResourceBuilder().Build(*icon, iconName, sections, nextRva) : PeDirectory{};
     report(9500);
-    auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, fixedBase ? std::optional<std::uint64_t>(image.GetImageBase()) : std::nullopt, false);
+    auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, image.GetImageBase(), fixedBase.has_value(), false);
     report(10000);
     return result;
 }

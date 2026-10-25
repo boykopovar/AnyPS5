@@ -11,6 +11,7 @@ int APS5_VABI FT_Done_FreeType_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI FT_New_Face_nid_postfix(FreeType::GuestLibrary* library, const char* filepathname, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, const unsigned char* fileBase, std::int64_t fileSize, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_Done_Face_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Select_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t strikeIndex);
 int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t pixelWidth, std::uint32_t pixelHeight);
 int APS5_VABI FT_Set_Char_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t charWidth, std::int64_t charHeight, std::uint32_t horizontalResolution, std::uint32_t verticalResolution);
 std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode);
@@ -22,6 +23,8 @@ int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(FreeType::GuestFace
 int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid);
 int APS5_VABI FT_Load_Char_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charCode, std::int32_t loadFlags);
 int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(FreeType::GuestOutline* outline);
+int APS5_VABI FT_Outline_Copy_nid_postfix(const FreeType::GuestOutline* source, FreeType::GuestOutline* target);
+int APS5_VABI FT_Outline_Decompose_nid_postfix(FreeType::GuestOutline* outline, const FreeType::GuestOutlineFuncs* functions, void* user);
 int APS5_VABI FT_Render_Glyph_nid_postfix(FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode);
 int APS5_VABI FT_Select_Charmap_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t encoding);
 int APS5_VABI FT_Set_Charmap_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestCharMapRec* charmap);

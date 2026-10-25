@@ -189,11 +189,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto [found, inserted] = exports.emplace(name, image.Symbols.size());
             if (name.empty() || (!inserted && (!windows || !IdenticalOrdinaryFunctionExport(image.Symbols[found->second], symbol)))) fail("Duplicate or empty export after stripping #: " + name);
         }
+        if (section >= 0xff00 && (section != AbsoluteSection || (info & 15) == 6)) fail("Unsupported special symbol section: " + name);
         if ((info & 15) == 6 && section != 0 && (tls == nullptr || value > tls->MemorySize || size > tls->MemorySize - value)) fail("TLS symbol exceeds TLS segment: " + name);
-        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) {
-            if (section >= 0xff00) fail("Unsupported special symbol section: " + name);
-            mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
-        }
+        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);

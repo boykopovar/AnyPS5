@@ -51,6 +51,14 @@ void ClearDescriptor(void* set, int descriptor) {
     if (set != nullptr) static_cast<std::uint64_t*>(set)[descriptor / 64] &= ~(std::uint64_t{1} << (descriptor % 64));
 }
 
+void ClearDescriptorsFrom(int nfds, void* readfds, void* writefds, void* exceptfds) {
+    if (nfds % 64 == 0) return;
+    const std::uint64_t kept = (std::uint64_t{1} << (nfds % 64)) - 1;
+    for (void* set : {readfds, writefds, exceptfds}) {
+        if (set != nullptr) static_cast<std::uint64_t*>(set)[nfds / 64] &= kept;
+    }
+}
+
 struct PollGroup {
     KernelSocketPoll::Poller poll;
     std::vector<KernelSocketPoll::Entry> entries;
@@ -311,6 +319,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
                 if ((entry.revents & (KernelSocketPoll::Writable | KernelSocketPoll::Error)) == 0) ClearDescriptor(writefds, entry.descriptor);
                 if ((entry.revents & KernelSocketPoll::Urgent) == 0) ClearDescriptor(exceptfds, entry.descriptor);
             }
+            ClearDescriptorsFrom(nfds, readfds, writefds, exceptfds);
             return ready;
         }
         if (limit != nullptr && std::chrono::steady_clock::now() >= deadline) {
@@ -319,6 +328,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
                 ClearDescriptor(writefds, entry.descriptor);
                 ClearDescriptor(exceptfds, entry.descriptor);
             }
+            ClearDescriptorsFrom(nfds, readfds, writefds, exceptfds);
             return 0;
         }
     }

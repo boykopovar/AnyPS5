@@ -86,6 +86,34 @@ static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
 }
 
+template<typename TBody>
+static std::string CaptureStdout(TBody body) {
+    std::fflush(stdout);
+    std::FILE* capture = std::tmpfile();
+    Require(capture != nullptr);
+#ifdef _WIN32
+    const int saved = _dup(_fileno(stdout));
+    Require(saved >= 0 && _dup2(_fileno(capture), _fileno(stdout)) == 0);
+#else
+    const int saved = dup(fileno(stdout));
+    Require(saved >= 0 && dup2(fileno(capture), fileno(stdout)) >= 0);
+#endif
+    body();
+    std::fflush(stdout);
+#ifdef _WIN32
+    Require(_dup2(saved, _fileno(stdout)) == 0);
+    _close(saved);
+#else
+    Require(dup2(saved, fileno(stdout)) >= 0);
+    close(saved);
+#endif
+    std::string text;
+    std::rewind(capture);
+    for (int character = std::fgetc(capture); character != EOF; character = std::fgetc(capture)) text.push_back(static_cast<char>(character));
+    std::fclose(capture);
+    return text;
+}
+
 static void CheckSocketHostErrors() {
     Require(Failed(sceNetSocket(nullptr, 2, 1, 17), 43));
 }
@@ -1041,14 +1069,17 @@ static void CheckSystemTime() {
 }
 
 static void CheckUsleep() {
-    Require(sceNetUsleep(0) == 0);
+    Require(CaptureStdout([] { Require(sceNetUsleep(0) == 0); }).empty());
     const auto start = std::chrono::steady_clock::now();
     Require(sceNetUsleep(2000) == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::microseconds(2000));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(-1), 22));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    const std::string printed = CaptureStdout([] {
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(-1), 22));
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    });
+    Require(printed == "[LIBNET] usleep -1\n[LIBNET] usleep -2147483648\n");
 }
 
 static void CheckEpollIdent() {
@@ -1075,6 +1106,39 @@ static void CheckEpollIdent() {
     Require(ready.data.u64 == 0x1122334455667788);
     Require(sceNetEpollDestroy(epoll) == 0);
     Require(sceNetSocketClose(sender) == 0 && sceNetSocketClose(receiver) == 0);
+}
+
+static void CheckEpollClosedStream() {
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    const int listener = sceNetSocket("closed-stream-listener", 2, 1, 6);
+    Require(listener >= 0);
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    const int client = sceNetSocket("closed-stream-client", 2, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, address.data(), address.size()) == 0);
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int epoll = sceNetEpollCreate("epoll-closed-stream", 0);
+    Require(epoll >= 0);
+    NetEpollEvent registration{};
+    registration.events = 1;
+    registration.ident = static_cast<std::uint64_t>(accepted);
+    Require(sceNetEpollControl(epoll, 1, accepted, &registration) == 0);
+    Require(sceNetSocketClose(client) == 0);
+    NetEpollEvent ready{};
+    Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1 && ready.events == 1);
+    char byte = 0;
+    Require(sceNetRecv(accepted, &byte, 1, 0) == 0);
+    registration.events = 3;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == 3);
+    Require(sceNetShutdown(accepted, 1) == 0);
+    registration.events = 1;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (1 | 16));
+    Require(sceNetEpollDestroy(epoll) == 0);
+    Require(sceNetSocketClose(accepted) == 0 && sceNetSocketClose(listener) == 0);
 }
 
 static void CheckTcpNoDelay() {
@@ -1127,6 +1191,13 @@ static bool HostIpv6LoopbackUnavailable() {
     close(hostSocket);
     return sent < 0 && (error == EADDRNOTAVAIL || error == ENETUNREACH || error == EHOSTUNREACH);
 #endif
+}
+
+static void CheckRejectedAddressText(const char* text) {
+    std::array<std::uint8_t, 16> address;
+    address.fill(0xa5);
+    Require(sceNetInetPton(28, text, address.data()) == 0);
+    Require(address[0] == 0xa5 && address[15] == 0xa5);
 }
 
 static void CheckLinkLocalAllNodesIpv6() {
@@ -1797,6 +1868,11 @@ int main() {
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
+    CheckAddressText(28, "::ffff:0.0.0.1");
+    CheckAddressText(28, "::ffff:0:102:304");
+    CheckAddressText(28, "fe80::5efe:102:304");
+    CheckRejectedAddressText("::01.2.3.4");
+    CheckRejectedAddressText("::ffff:01.2.3.4");
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckInetPtonWhitespace();
     CheckInetPtonExParts();
@@ -1804,6 +1880,7 @@ int main() {
     CheckUsleep();
     CheckSystemTime();
     CheckEpollIdent();
+    CheckEpollClosedStream();
     CheckTcpNoDelay();
     CheckLinkLocalAllNodesIpv6();
     CheckUnboundSocketName();
