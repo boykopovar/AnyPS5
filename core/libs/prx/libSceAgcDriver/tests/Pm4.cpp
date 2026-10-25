@@ -798,9 +798,8 @@ void testWriteChangedKeepsUntouchedBytes() {
     std::vector<std::byte> original(sizeof(guest)), current(sizeof(guest));
     current[3] = std::byte{7};
     guest[100] = 0x55;
-    const bool kept = AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original);
     check(guest[3] == 7 && guest[100] == 0x55, "write-back rolled back a byte the GPU did not change");
-    check(kept, "write-back did not report a guest byte that differs from the GPU's result");
 }
 
 void testWriteChangedStoresExactlyTheChangedRuns() {
@@ -817,14 +816,15 @@ void testWriteChangedStoresExactlyTheChangedRuns() {
         }
         i += length;
     }
-    for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(original[i]);
-    check(!AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original), "write-back reported kept guest bytes although the guest held only the upload");
+    for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(0xa0u ^ i);
+    AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original);
     for (std::size_t i = 0; i < sizeof(guest); ++i) {
-        check(guest[i] == static_cast<std::uint8_t>(current[i]), "write-back stored a byte the GPU did not change or missed one it did");
+        const auto expected = current[i] != original[i] ? static_cast<std::uint8_t>(current[i]) : static_cast<std::uint8_t>(0xa0u ^ i);
+        check(guest[i] == expected, "write-back stored a byte the GPU did not change or missed one it did");
     }
 }
 
-void testWriteChangedKeepsCpuWrites() {
+void testWriteChangedKeepingGuestKeepsCpuWrites() {
     alignas(256) static std::uint8_t guest[1024 + 13];
     std::vector<std::byte> original(sizeof(guest)), current(sizeof(guest));
     std::uint32_t seed = 777;
@@ -837,18 +837,14 @@ void testWriteChangedKeepsCpuWrites() {
         cpu[i] = kind % 2 == 1 ? static_cast<std::uint8_t>(static_cast<std::uint8_t>(original[i]) ^ (1u + next() % 255u)) : static_cast<std::uint8_t>(original[i]);
         guest[i] = cpu[i];
     }
-    check(AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original), "write-back did not report the CPU's bytes it kept");
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
     for (std::size_t i = 0; i < sizeof(guest); ++i) {
         const auto expected = cpu[i] != static_cast<std::uint8_t>(original[i]) ? cpu[i] : static_cast<std::uint8_t>(current[i]);
         check(guest[i] == expected, "write-back overwrote a byte the CPU changed since the upload, or skipped one it did not");
     }
-    for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(i == sizeof(guest) - 1 ? current[i] : original[i]);
-    check(!AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original), "write-back reported a CPU byte that equals the GPU's result as kept");
     for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(original[i]);
-    auto late = static_cast<std::uint8_t>(static_cast<std::uint8_t>(original[sizeof(guest) - 1]) ^ 0x80u);
-    if (late == static_cast<std::uint8_t>(current[sizeof(guest) - 1])) late ^= 0x40u;
-    guest[sizeof(guest) - 1] = late;
-    check(AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original), "write-back did not report a kept CPU byte past its last 16-byte block");
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    for (std::size_t i = 0; i < sizeof(guest); ++i) check(guest[i] == static_cast<std::uint8_t>(current[i]), "write-back skipped a changed byte although the guest still held the upload");
 }
 
 void testEventWrite() {
@@ -2076,7 +2072,7 @@ int main(int argc, char** argv) {
         testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();
-        testWriteChangedKeepsCpuWrites();
+        testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
         testRegisterFile();
         testContextAndBases();

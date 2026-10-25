@@ -5781,10 +5781,12 @@ void GuestBufferMemory::MarkDirectWrites() const {
 
 namespace {
 
-void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+using ChangedStore = void (*)(std::uint64_t, std::span<const std::byte>, std::span<const std::byte>);
+
+void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, ChangedStore store) {
     const auto writable = GuestMemory::DescribeCommitted(address, current.size(), true);
     if (writable.whole) {
-        GuestMemory::WriteChanged(address, current, original);
+        store(address, current, original);
         return;
     }
     const auto unchanged = [&](std::uint64_t from, std::uint64_t to) {
@@ -5799,7 +5801,7 @@ void storeChanged(std::uint64_t address, std::span<const std::byte> current, std
         if (cursor < first) unchanged(cursor, first);
         const auto at = static_cast<std::size_t>(first - address);
         const auto length = static_cast<std::size_t>(last - first);
-        GuestMemory::WriteChanged(first, current.subspan(at, length), original.subspan(at, length));
+        store(first, current.subspan(at, length), original.subspan(at, length));
         cursor = last;
     }
     if (cursor < address + current.size()) unchanged(cursor, address + current.size());
@@ -5858,7 +5860,8 @@ void GuestBufferMemory::WriteBack() {
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
-    // bytes the shader never touched. Only runs that differ from the uploaded copy are stored.
+    // bytes the shader never touched. Only runs that differ from the uploaded copy are stored, and a
+    // host copy leaves the bytes the CPU changed since its upload as they are.
     for (const auto& [begin, end] : merged) {
         const auto* found = owner(begin, end);
         Require(found != nullptr, "write-back range has no GPU owner");
@@ -5886,7 +5889,7 @@ void GuestBufferMemory::WriteBack() {
                 if (mirror.resident == nullptr) {
                     const auto current = mirror.buffer->Bytes().subspan(offset, length);
                     if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                    else storeChanged(begin, current, reference->second);
+                    else storeChanged(begin, current, reference->second, GuestMemory::WriteChanged);
                     continue;
                 }
                 std::vector<std::byte> current(length);
@@ -5898,7 +5901,7 @@ void GuestBufferMemory::WriteBack() {
                 }
                 mirror.resident->Store(begin, current);
                 if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                else storeChanged(begin, current, reference->second);
+                else storeChanged(begin, current, reference->second, GuestMemory::WriteChanged);
                 continue;
             }
             const auto current = mirror.buffer->Bytes().subspan(offset, length);
@@ -5934,7 +5937,7 @@ void GuestBufferMemory::WriteBack() {
         if (!region.sparse) {
             const auto first = static_cast<std::size_t>(begin - region.begin);
             const auto length = static_cast<std::size_t>(end - begin);
-            storeChanged(begin, region.buffer->Bytes().subspan(first, length), std::span<const std::byte>(region.uploaded).subspan(first, length));
+            storeChanged(begin, region.buffer->Bytes().subspan(first, length), std::span<const std::byte>(region.uploaded).subspan(first, length), GuestMemory::WriteChangedKeepingGuest);
             continue;
         }
         std::size_t packed = 0;
@@ -5943,7 +5946,7 @@ void GuestBufferMemory::WriteBack() {
             const auto to = std::min(last, end);
             if (from < to) {
                 const auto length = static_cast<std::size_t>(to - from);
-                storeChanged(from, region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length), std::span<const std::byte>(region.uploaded).subspan(packed + static_cast<std::size_t>(from - first), length));
+                storeChanged(from, region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length), std::span<const std::byte>(region.uploaded).subspan(packed + static_cast<std::size_t>(from - first), length), GuestMemory::WriteChangedKeepingGuest);
             }
             packed += static_cast<std::size_t>(last - first);
         }
