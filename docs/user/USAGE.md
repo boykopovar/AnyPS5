@@ -357,6 +357,13 @@ most called traced imports (1 calls in total):
              1 libkernel.prx k+AXqu2-eBc
 ```
 
+To list every import a title calls during a run that ends without a crash, also set `APS5_TRACE_CALLS_FILE` to a file path. Every 10 seconds the file is rewritten with one line per import called so far, most called first: the number of calls, the library and the import name. It survives a run that is killed, up to its last rewrite.
+
+```
+245557 libc.prx gQX+4GDQjpM#guest
+3866 libSceAgc.prx 57labkp+rSQ
+```
+
 Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/relinker.md) technical debt.
 
 ### Performance overlay
@@ -443,3 +450,13 @@ Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol nam
 Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
+
+## Patching imports of native applications
+
+`nid_patcher --exec <file> [file2 ...]` patches imports in place and preserves the application's exports. It detects PE, ELF64 and Mach-O64 from file contents. No library name is required. Build a separate executable for each target platform.
+
+By default, imports use the library export naming rules: `_nid_no_patch` and `SDL_*` stay unchanged; `_nid_no_patch_cut` is removed without hashing; `_nid_postfix` and numeric `_nid_disambig` suffixes are removed before computing the NID. When both `foo` and `foo_nid_postfix` are imported, `foo` stays unchanged. These rules also apply to host imports unless they are explicitly preserved.
+
+`nid_patcher --exec --only-sce <file>` restricts renaming to names starting with `sce` (case-insensitive) or ending with `_nid_postfix`. Both modes accept `--preserve-exports <unpatched-library>` or `--preserve-export-list <export-list>` for explicit exclusions. The existing `nid_patcher <library_name> <file>` mode is unchanged.
+
+Unsupported layouts fail before the input file is written.

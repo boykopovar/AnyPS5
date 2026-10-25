@@ -1012,7 +1012,7 @@ void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad);
 void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread);
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code);
 int APS5_VABI _Thrd_detach_nid_postfix(void* thread);
-int APS5_VABI _Thrd_id_nid_postfix(void);
+void* APS5_VABI _Thrd_id_nid_postfix(void);
 void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void));
 int APS5_VABI _Tss_create_nid_postfix(int* key, void (APS5_VABI* destructor)(void*));
 int APS5_VABI _Tss_delete_nid_postfix(int key);

@@ -272,8 +272,10 @@ int main() {
     void* eucJp = sceCesUcsProfileInitEucJpCp51932(eucJpSheet);
     Require(eucKr == eucKrSheet && uhc == uhcSheet && big5 == big5Sheet && eucJp == eucJpSheet);
 
-    RequireTable(sceCesEucKrToUtf8, eucKr, 0x01FF720E36F4AD67ull, 8226);
-    RequireTable(sceCesUhcToUtf8, uhc, 0x3B861A7E911985ABull, 17048);
+    RequireTable(sceCesEucKrToUtf8, eucKr, 0x18F4D7FD5B554273ull, 8227);
+    RequireTable(sceCesUhcToUtf8, uhc, 0x33B12AA5FAB04C43ull, 17049);
+    RequireScalar(sceCesEucKrToUtf8, eucKr, "\xA2\xE8", "\xE3\x89\xBE");
+    RequireScalar(sceCesUhcToUtf8, uhc, "\xA2\xE8", "\xE3\x89\xBE");
     RequireTable(sceCesBig5ToUtf8, big5, 0xE4D0D6A8019F35D9ull, 13503);
 
     RequireScalar(sceCesEucKrToUtf8, eucKr, "\xB0\xA1", "\xEA\xB0\x80");
