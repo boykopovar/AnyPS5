@@ -835,6 +835,91 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
+void copiedWriteBackTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    recorder.Sync();
+    alignas(4096) static std::uint32_t block[1024];
+    std::memset(block, 0, sizeof(block));
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, 1024, 0x31000000u};
+    binding.bufferWritten = {true};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        std::shared_ptr<ShaderResources> layoutOwner;
+        ~Release() {
+            recorder.Sync();
+            if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+            if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+        }
+    } release{context, recorder};
+    release.layoutOwner = std::make_shared<ShaderResources>(context, compute);
+    Require(release.layoutOwner->HasCopiedWrites(), "the written buffer did not take the copied path");
+    const auto setLayout = release.layoutOwner->Layout();
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &setLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "copied write-back pipeline layout");
+    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
+    moduleInfo.pCode = BUFFER_UPDATE_SPV;
+    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "copied write-back shader module");
+    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
+    pipelineInfo.layout = release.layout;
+    Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &release.pipeline), "copied write-back pipeline");
+    const auto run = [&](std::uint32_t delta) {
+        auto copied = std::make_shared<ShaderResources>(context, compute);
+        Require(copied->HasCopiedWrites(), "a use of the written buffer did not take the copied path");
+        const auto commands = recorder.Commands();
+        recorder.Keep(copied);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.pipeline);
+        copied->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.layout);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, release.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(delta), &delta);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        copied->MarkGpuWrites(recorder);
+        recorder.Sync();
+        return copied;
+    };
+    block[0] = 0x10;
+    block[1] = 0x20;
+    const auto first = run(1);
+    block[0] = 0x70;
+    block[1] = 0x25;
+    first->WriteBackBuffers();
+    Require(block[0] == 0x70, "a copied write-back stored the shader's dword over the one the CPU wrote after the upload");
+    Require(block[1] == 0x25, "a copied write-back rolled back a dword the shader never touched");
+    const auto second = run(2);
+    second->WriteBackBuffers();
+    Require(block[0] == 0x72, "the next use of the copied buffer did not read the dword the CPU wrote");
+    block[0] = 0x10;
+    const auto third = run(1);
+    block[0] = 0x00aa0010u;
+    third->WriteBackBuffers();
+    Require(block[0] == 0x00aa0011u, "a copied write-back did not merge the shader's byte with the CPU's byte of the same dword");
+    std::cout << "Copied write-backs keep the bytes the CPU wrote after the upload\n";
+}
+
 void changedCopyTests(const Device& device, Recorder& recorder) {
     Require(recorder.Idle(), "the changed copy test needs an idle recorder");
     constexpr std::uint32_t words = 70000;
@@ -11674,6 +11759,10 @@ int main(int argc, char** argv) {
             copiedDirectOrderingTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--copied-write-back-only") {
+            copiedWriteBackTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-write-snapshot-only") {
             pendingWriteSnapshotTests(device, recorder);
             return 0;
@@ -12034,6 +12123,7 @@ int main(int argc, char** argv) {
         shadowedKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         copiedDirectOrderingTests(device, recorder);
+        copiedWriteBackTests(device, recorder);
         gpu.unlock();
         hostImportUnmapTests(device, recorder);
         drawSnapshotPatchTests(device);
