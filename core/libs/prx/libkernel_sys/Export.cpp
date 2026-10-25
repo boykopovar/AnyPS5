@@ -945,4 +945,8 @@ int APS5_VABI sceKernelGetProcessType(int pid) {
     return 0;
 }
 
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
+    return pwrite_nid_disambig1_nid_postfix(d, buf, nbytes, offset);
+}
+
 }

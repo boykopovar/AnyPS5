@@ -1168,6 +1168,22 @@ int main() {
 #endif
         Require(!std::filesystem::exists(std::filesystem::symlink_status(throughLink)));
     }
+    const auto pwritePath = root / "pwrite.txt";
+    const int writable = sceKernelOpen(pwritePath.string().c_str(), SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0644);
+    Require(writable >= 0);
+    Require(pwrite_nid_postfix(writable, nullptr, 0, 0) == 0);
+    Require(pwrite_nid_postfix(writable, nullptr, 1, 0) == -1 && Error() == 14);
+    char pwriteByte = 'Z';
+    Require(pwrite_nid_postfix(writable, &pwriteByte, 1, -1) == -1 && Error() == 22);
+    Require(pwrite_nid_postfix(9999, &pwriteByte, 1, 0) == -1 && Error() == 9);
+    Require(pwrite_nid_postfix(writable, "test", 4, 0) == 4);
+    char readBack[5]{};
+    Require(pread_nid_postfix(writable, readBack, 4, 0) == 4 && std::memcmp(readBack, "test", 4) == 0);
+    Require(sceKernelClose(writable) == 0);
+    const int readOnly = sceKernelOpen(pwritePath.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(readOnly >= 0);
+    Require(pwrite_nid_postfix(readOnly, "x", 1, 0) == -1 && Error() == 9);
+    Require(sceKernelClose(readOnly) == 0);
     RemoveTree(root);
     return 0;
 }
