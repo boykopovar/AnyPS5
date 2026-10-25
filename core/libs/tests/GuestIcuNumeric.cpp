@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -39,7 +40,7 @@ bool Rejects(F call) {
 
 void Classification() {
     const double infinity = std::numeric_limits<double>::infinity();
-    for (const std::uint64_t bits : {NaNBits, 0x7ff0000000000001ull, 0x7fffffffffffffffull, 0xfff8000000000000ull, 0xfff0000000000001ull}) {
+    for (const std::uint64_t bits : std::array<std::uint64_t, 5>{NaNBits, 0x7ff0000000000001ull, 0x7fffffffffffffffull, 0xfff8000000000000ull, 0xfff0000000000001ull}) {
         Require(uprv_isNaN_nid_postfix(FromBits(bits)) == 1, "NaN patterns are NaN");
         Require(uprv_isInfinite_nid_postfix(FromBits(bits)) == 0, "NaN patterns are not infinite");
         Require(uprv_isPositiveInfinity_nid_postfix(FromBits(bits)) == 0 && uprv_isNegativeInfinity_nid_postfix(FromBits(bits)) == 0, "NaN has no infinite sign");
