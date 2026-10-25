@@ -2,7 +2,6 @@
 
 extern "C" {
 
-
 int APS5_VABI wait4_nid_postfix(int pid, int* status, int options, void*) {
     return waitpid_nid_postfix(pid, status, options);
 }
