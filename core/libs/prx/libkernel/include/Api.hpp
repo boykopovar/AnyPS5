@@ -16,6 +16,11 @@ struct KernelIovec {
     std::size_t length;
 };
 
+struct KernelTlsIndex {
+    std::uint64_t module;
+    std::uint64_t offset;
+};
+
 using GuestHandler = void (APS5_VABI *)(int);
 
 struct GuestItimerspec {
@@ -143,7 +148,7 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t setPatt
 
 extern "C" {
 
-int APS5_VABI __tls_get_addr_nid_postfix(void);
+void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index);
 int APS5_VABI physhm_open_nid_postfix(void);
 int APS5_VABI physhm_unlink_nid_postfix(void);
 int APS5_VABI sceKernelUnknown03(void);
@@ -770,6 +775,7 @@ unsigned int APS5_VABI sceKernelSleep(unsigned int seconds);
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status);
 
 [[gnu::returns_twice]] int APS5_VABI getcontext_nid_postfix(UserUcontext* context);
+[[gnu::returns_twice]] int APS5_VABI swapcontext_nid_postfix(UserUcontext* oucp, const UserUcontext* ucp);
 
 [[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
 [[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);

@@ -63,6 +63,58 @@ class PatchAdvisorTests(unittest.TestCase):
                                                  str(self.input)])
         self.assertFalse((self.root / "relinker-patches.toml").exists())
 
+    def test_relinker_output_is_utf8_independent_of_host_encoding(self):
+        actual_run = subprocess.run
+        for diagnostic in ("caf\u00e9 \u65e5\u672c\u8a9e".encode(), b"invalid byte \xff"):
+            for status in (0, 2):
+                with self.subTest(diagnostic=diagnostic, status=status):
+                    stdout = VERIFIED.encode() + diagnostic + b"\n"
+                    stderr = diagnostic + b"\n"
+                    captured = []
+                    output, errors = io.StringIO(), io.StringIO()
+
+                    def verify(command, **options):
+                        script = f"import os; os.write(1, {stdout!r}); os.write(2, {stderr!r}); raise SystemExit({status})"
+                        options.setdefault("encoding", "ascii")
+                        result = actual_run([sys.executable, "-c", script], **options)
+                        captured.append(result)
+                        return result
+
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), \
+                            patch.object(suggest_patches.subprocess, "run", side_effect=verify):
+                        self.assertEqual(self.advise(), status)
+                    self.assertEqual(captured[0].stdout, stdout.decode("utf-8", errors="replace"))
+                    self.assertEqual(captured[0].stderr, stderr.decode("utf-8", errors="replace"))
+                    if status == 2:
+                        self.assertIn("relinker error (exit 2)", output.getvalue())
+                        self.assertIn((stdout + stderr).decode("utf-8", errors="replace").strip(), output.getvalue())
+                        self.assertIn("No recommendation: relinker errors occurred", errors.getvalue())
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_output_streams_use_utf8(self, run):
+        catalog = self.root / "caf\u00e9"
+        self.catalog.rename(catalog)
+        self.catalog = catalog
+        self.param = self.root / "caf\u00e9.json"
+        self.param.write_text(json.dumps({"titleId": "TEST00001", "contentVersion": "01.000.000"}))
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        self.addCleanup(stdout.close)
+        self.addCleanup(stderr.close)
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        with patch.object(suggest_patches.sys, "stdout", stdout), patch.object(suggest_patches.sys, "stderr", stderr):
+            self.assertEqual(self.advise(), 0)
+            stdout.flush()
+            self.assertIn(b"Recommended:", stdout.buffer.getvalue())
+            self.assertIn(str(self.catalog).encode("utf-8"), stdout.buffer.getvalue())
+            self.param.unlink()
+            self.assertEqual(self.advise(), 2)
+            stderr.flush()
+            self.assertIn(self.param.name.encode("utf-8"), stderr.buffer.getvalue())
+            for stream in (stdout, stderr):
+                self.assertEqual(stream.encoding, "utf-8")
+                self.assertEqual(stream.errors, "backslashreplace")
+
     @patch.object(suggest_patches.subprocess, "run")
     def test_changed_module_is_not_sent_to_relinker(self, run):
         self.module.write_bytes(b"module version two")

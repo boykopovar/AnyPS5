@@ -656,7 +656,9 @@ int APS5_VABI sceSslInit_nid_postfix(std::uint64_t poolSize) {
 int APS5_VABI sceSslTerm_nid_postfix(int sslCtxId) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (!state.contexts.erase(sslCtxId)) return ErrorInvalidId;
+    if (!state.contexts.contains(sslCtxId)) return ErrorInvalidId;
+    std::erase_if(state.connections, [sslCtxId](const auto& entry) { return entry.second.context == sslCtxId; });
+    state.contexts.erase(sslCtxId);
     return 0;
 }
 
@@ -1349,6 +1351,11 @@ int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen) {
 }
 
 int APS5_VABI sceSslSetSslVersion() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslSetServerName() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -166,6 +166,15 @@ class CheckMainSyncTests(unittest.TestCase):
         result = run_tool(self.repo.path, "--head", "island")
         self.assertEqual(result.returncode, 2)
         self.assertIn("no common ancestor", result.stderr)
+        result = run_tool(self.repo.path, "--head", "missing")
+        expected = subprocess.run(
+            ["git", "-C", str(self.repo.path), "merge-base", "main", "missing"],
+            capture_output=True,
+            encoding="utf-8",
+        ).stderr.strip()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"git merge-base failed: {expected}", result.stderr)
+        self.assertNotIn("no common ancestor", result.stderr)
 
     def check_unicode_output(self, conflict):
         name = "sp ace \u00e9 \u6e2c \U0001f680.txt"

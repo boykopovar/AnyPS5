@@ -652,7 +652,71 @@ class IntervalDigestTests(unittest.TestCase):
                  for index, commit in enumerate(("a", "a", "b", "b", "a"))]
         result = trace_digest.digest_intervals(lines)
         self.assertEqual(result["identity_changed_at"], [2, 4])
-        self.assertIn("commit, environment, GPU, driver or OS changed at interval 3, 5", trace_digest.markdown_intervals(result).splitlines())
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 3, 5", trace_digest.markdown_intervals(result).splitlines())
+
+    def test_machine_and_title_identity_fields_are_retained_and_compared(self):
+        metadata = {"cpu": "CPU A", "cpu_threads": 16, "memory_mib": 32768,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": "01.000.000"}
+        first = interval_line(0.0, 30.0, 20.0, 5.0, **metadata)
+        for key, value in (("cpu", "CPU B"), ("cpu_threads", 32), ("memory_mib", 65536),
+                           ("title_id", "PPSA00002"), ("title", "Title Two"), ("content_version", "02.000.000")):
+            with self.subTest(key=key):
+                changed = dict(first, **{key: value})
+                result = trace_digest.digest_intervals([first, first, changed, changed, first])
+                self.assertEqual({key: result["identity"].get(key) for key in metadata}, metadata)
+                self.assertEqual(result["identity_changed_at"], [2, 4])
+                self.assertIn("changed at interval 3, 5", trace_digest.markdown_intervals(result))
+
+    def test_optional_identity_appearance_disappearance_and_return(self):
+        absent = interval_line(0.0, 30.0, 20.0, 5.0)
+        for key, value in (("cpu", "CPU A"), ("cpu_threads", 0), ("memory_mib", 0),
+                           ("title_id", "PPSA00001"), ("title", "Title One"), ("content_version", "")):
+            with self.subTest(key=key, value=value):
+                present = dict(absent, **{key: value})
+                result = trace_digest.digest_intervals([absent, present, present, absent, present])
+                self.assertEqual(result["identity_changed_at"], [1, 3, 4])
+                self.assertIn(key, result["identity"])
+                self.assertIsNone(result["identity"][key])
+                self.assertIn("changed at interval 2, 4, 5", trace_digest.markdown_intervals(result))
+
+    def test_stable_or_absent_optional_identity_does_not_report_changes(self):
+        absent = interval_line(0.0, 30.0, 20.0, 5.0)
+        metadata = {"cpu": "CPU A", "cpu_threads": 0, "memory_mib": 0,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": ""}
+        for line in (absent, dict(absent, **metadata)):
+            with self.subTest(line=line):
+                result = trace_digest.digest_intervals([line, line])
+                self.assertEqual(result["identity_changed_at"], [])
+                self.assertNotIn("changed at interval", trace_digest.markdown_intervals(result))
+
+    def test_resolution_changes_are_reported(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        result = trace_digest.digest_intervals([first, dict(first, resolution="1280x720")])
+        self.assertEqual(result["identity_changed_at"], [1])
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 2",
+                      trace_digest.markdown_intervals(result))
+
+    def test_cli_retains_machine_and_title_identity_and_reports_changes(self):
+        metadata = {"cpu": "CPU A", "cpu_threads": 16, "memory_mib": 32768,
+                    "title_id": "PPSA00001", "title": "Title One", "content_version": "01.000.000"}
+        first = interval_line(0.0, 30.0, 20.0, 5.0, **metadata)
+        second = interval_line(30.0, 60.0, 40.0, 10.0, **dict(metadata, content_version="02.000.000"))
+        self.path.write_text("\n".join(json.dumps(line) for line in (first, second)) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual({key: report["identity"].get(key) for key in metadata}, metadata)
+        self.assertEqual(report["identity_changed_at"], [1])
+        without_metadata = [{key: value for key, value in line.items() if key not in metadata} for line in (first, second)]
+        unchanged_metrics = trace_digest.digest_intervals(without_metadata)
+        self.assertEqual(report["intervals"], unchanged_metrics["intervals"])
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("build, environment, host, resolution or title metadata changed at interval 2", result.stdout)
+        expected = trace_digest.markdown_intervals(unchanged_metrics)
+        self.assertEqual(result.stdout[result.stdout.index("| # |"):], expected[expected.index("| # |"):])
 
     def test_sparkline_scales_to_the_largest_value(self):
         self.assertEqual(trace_digest.sparkline([0.0, 5.0, 10.0]), ".+@")

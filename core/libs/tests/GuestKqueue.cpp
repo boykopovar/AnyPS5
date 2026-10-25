@@ -1196,6 +1196,102 @@ static void DeniedParentWatch() {
     Require(std::filesystem::remove_all(path) == 2);
 }
 #endif
+
+#ifdef __linux__
+static std::size_t InotifyWatchCount() {
+    std::size_t count = 0;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd", error)) {
+        std::error_code linkError;
+        const auto target = std::filesystem::read_symlink(entry.path(), linkError);
+        if (!linkError && target.string().find("inotify") != std::string::npos) ++count;
+    }
+    return count;
+}
+#endif
+
+static void VnodeOneshotWatchStops() {
+    const auto path = TemporaryName("oneshot");
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(file);
+#ifdef __linux__
+    auto watchesBefore = InotifyWatchCount();
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto settled = InotifyWatchCount();
+        if (settled == watchesBefore) break;
+        watchesBefore = settled;
+    }
+#endif
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvOneshot, NoteDelete | NoteWrite, 0, &marker)) == 0);
+    Require(write_nid_postfix(file, "abc", 3) == 3);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == ident && events[0].filter == EvfiltVnode && (events[0].flags & EvOneshot) != 0 && events[0].udata == &marker);
+    Require(write_nid_postfix(file, "def", 3) == 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(ident, EvfiltVnode, EvDelete)), GuestEnoent);
+#ifdef __linux__
+    for (int attempt = 0; attempt < 100 && InotifyWatchCount() > watchesBefore; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(InotifyWatchCount() <= watchesBefore);
+#endif
+    Require(close_nid_postfix(file) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(std::filesystem::remove(path));
+}
+
+static void TimerDisableEnableRearm() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 50000, &marker)) == 0);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDisable, 0, 0, &marker)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvEnable, 0, 0, &marker)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == 1 && events[0].filter == EvfiltTimer && events[0].udata == &marker);
+    Require(events[0].data >= 2 && events[0].data <= 6);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].data >= 1 && events[0].data <= 2);
+    Require(Throws([kq] { Apply(kq, Change(1, EvfiltTimer, EvAdd | EvEnable)); }));
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void PeriodicTimerFiresTwice() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 50000)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(Wait(kq, events, 4) == 1);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+#ifdef _WIN32
+static void RecycleBinDeleteWatchedFile() {
+    const auto directory = TemporaryName("deleted");
+    std::filesystem::create_directories(directory + "\\$Extend\\$Deleted");
+    const auto path = directory + "\\watched";
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(file);
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteDelete | NoteRename)) == 0);
+    Require(sceKernelRename(path.c_str(), (directory + "\\$Extend\\$Deleted\\moved").c_str()) == SceOk);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == ident && (events[0].fflags & NoteDelete) != 0);
+    Require(close_nid_postfix(file) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    std::filesystem::remove_all(directory);
+}
+#endif
+
 static void Timeout() {
     const int kq = kqueue_nid_postfix();
     KernelEvent event{};
@@ -1296,6 +1392,12 @@ int main() {
     FileWatch();
 #ifndef _WIN32
     RenameAndDeleteWatchedFile();
+    VnodeOneshotWatchStops();
+    PeriodicTimerFiresTwice();
+    TimerDisableEnableRearm();
+#endif
+#ifdef _WIN32
+    RecycleBinDeleteWatchedFile();
 #endif
 #if !defined(_WIN32) && !defined(__APPLE__)
     MoveDirectoryEntries();

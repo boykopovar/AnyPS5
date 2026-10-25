@@ -1,4 +1,5 @@
 #include "prx/libScePsml_debug/include/Api.hpp"
+#include "prx/libkernel/libkernel.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -17,6 +18,8 @@ namespace {
 constexpr std::int32_t SCE_PSML_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x8A810001);
 constexpr std::int32_t SCE_PSML_ERROR_INVALID_ARGUMENT = static_cast<std::int32_t>(0x8A810005);
 constexpr std::int32_t SCE_PSML_ERROR_NULL_OUTPUT = static_cast<std::int32_t>(0x8A810009);
+constexpr std::int32_t Mfsr2ErrorNotInitialized = static_cast<std::int32_t>(0x8A8A0001);
+constexpr std::int32_t Mfsr2ErrorUnsupportedConsole = static_cast<std::int32_t>(0x8A8A0012);
 constexpr std::uint64_t MfsrBlockBytes = 0x200000;
 constexpr std::uint64_t MfsrBlockCount = 4;
 constexpr std::uint32_t MfsrDispatchPacketDwords = 0x600;
@@ -268,49 +271,57 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900(void* context, void* 
  return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsr2ReleaseSharedResources(void* sharedResources) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseSharedResources(void* sharedResources) {
+ (void)sharedResources;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement(MfsrRequirement* requirement, const Mfsr2SharedResourcesParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement(MfsrRequirement* requirement, const Mfsr2SharedResourcesParam* param) {
+ (void)requirement;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetContextInitRequirement(MfsrRequirement* requirement, const Mfsr2ContextParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetContextInitRequirement(MfsrRequirement* requirement, const Mfsr2ContextParam* param) {
+ (void)requirement;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2ReleaseContext(void* context) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2ReleaseContext(void* context) {
+ (void)context;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords(void* context, std::uint32_t* packetSizeInDwords) {
+ (void)context;
+ (void)packetSizeInDwords;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2CreateSharedResources(void** sharedResources, const Mfsr2SharedResourcesParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2CreateSharedResources(void** sharedResources, const Mfsr2SharedResourcesParam* param) {
+ (void)sharedResources;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2GetDispatchPackets(void* context, const MfsrCommandBuffer* commandBuffer, const Mfsr2DispatchParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPackets(void* context, const MfsrCommandBuffer* commandBuffer, const Mfsr2DispatchParam* param) {
+ (void)context;
+ (void)commandBuffer;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2CreateContext(void** context, const Mfsr2ContextParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2CreateContext(void** context, const Mfsr2ContextParam* param) {
+ (void)context;
+ (void)param;
+ return Mfsr2ErrorNotInitialized;
 }
 
-int APS5_VABI scePsmlMfsr2Init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI scePsmlMfsr2Init() {
+ if (sceKernelIsTrinityMode() == 0) return Mfsr2ErrorUnsupportedConsole;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI scePsmlMfsrEnableSpecularAA() {
