@@ -5385,11 +5385,11 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     }
     std::vector<Region*> shadowed;
     for (auto* region : copies) {
-        if (!changedCopyBacks(context) || region->buffer->DeviceAddress() == 0) {
+        const auto bytes = static_cast<std::size_t>(region->end - region->begin);
+        if (!changedCopyBacks(context) || region->buffer->DeviceAddress() == 0 || !WritesOverlap(region->begin, bytes)) {
             region->shadowCopy = nullptr;
             continue;
         }
-        const auto bytes = static_cast<std::size_t>(region->end - region->begin);
         if (region->shadowCopy == nullptr) region->shadowCopy = stagingBuffer(context, bytes, gpuCopyUsage(context, true));
         if (region->shadowCopy == nullptr || region->shadowCopy->DeviceAddress() == 0) {
             region->shadowCopy = nullptr;
