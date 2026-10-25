@@ -53,12 +53,9 @@ std::uint32_t CreateInterpolantValueSplitF16(std::uint32_t psWord, const ShaderS
         : CreateInterpolantValue(psWord, gsSemantic);
 }
 
-std::uint32_t UpdateInterpolantValue(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
-    const std::uint32_t f16 = (psWord >> 20u) & 0x3u;
-    if (f16 != 0 && f16 != InterpolantF16HiOnly && ((psWord >> 28u) & 0x3u) != ((psWord >> 30u) & 0x3u)) {
-        throw std::runtime_error(std::string(__func__) + ": DEFAULT_VAL of an f16 input with different low and high defaults is unknown");
-    }
-    return CreateInterpolantValueSplitF16(psWord, gsSemantic);
+std::uint32_t CreateInterpolantValueFlatDefault(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
+    const std::uint32_t value = CreateInterpolantValue(psWord, gsSemantic);
+    return ((psWord & 0x00700000u) == 0x00400000u) ? (value | 0x00000020u) : value;
 }
 
 int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps, CreateInterpolantValueFn createValue, bool fillIdentityTail) {
@@ -132,7 +129,15 @@ int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const S
 }
 
 int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
-    return CreateInterpolantMapping(__func__, regs, gs, ps, UpdateInterpolantValue, false);
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, false);
+}
+
+int APS5_VABI sceAgcCreateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueFlatDefault, true);
+}
+
+int APS5_VABI sceAgcUpdateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueFlatDefault, false);
 }
 
 }

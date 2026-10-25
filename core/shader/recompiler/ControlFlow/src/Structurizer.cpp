@@ -2335,7 +2335,8 @@ void Structurizer::canonicalizeNaturalLoops(ControlFlowGraph& graph, bool routeL
             });
             const auto& header = graph.FindBlock(loop.headerBlock);
             const bool semanticSelfLoop = latches.size() == 1u && latches.front() == header.id && header.instructionBegin != header.instructionEnd;
-            if (latches.size() <= 1u && !latchInInnerLoop && !semanticSelfLoop) {
+            const bool semanticLatch = latches.size() == 1u && graph.FindBlock(latches.front()).instructionBegin != graph.FindBlock(latches.front()).instructionEnd && graph.FindBlock(latches.front()).predecessors.size() == 1u;
+            if (latches.size() <= 1u && !latchInInnerLoop && !semanticSelfLoop && !semanticLatch) {
                 continue;
             }
 

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
@@ -30,9 +31,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 
 static_assert(sizeof(Packet) == 16);
 static_assert(offsetof(Packet, addr) == 0);
@@ -593,8 +591,7 @@ void testSmallCopyBehindPendingSource() {
     waitFor(&copied, 1, "the label after a small copy behind a pending source never landed");
     AgcDriverWaitIdle_nid_postfix();
     check(std::equal(destination, destination + smallWords, produced), "a small copy did not see the GPU copy into its source before it");
-    if (std::getenv("APS5_COPY_SYNC") != nullptr) check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy that has to wait for a completion store over its source went through the GPU copy");
-    else check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before + 1, "a small copy whose source the GPU still stores into was not recorded on the GPU");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy queued behind the pipeline write into its source was recorded inline");
     std::fill(destination, destination + smallWords, 0u);
     const auto settled = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
     submit(0, commands(memoryCopy(destination, produced, smallBytes), writeData(&settledCopied, 1)));

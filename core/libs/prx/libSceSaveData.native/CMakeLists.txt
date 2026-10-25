@@ -16,6 +16,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_savedata_delete_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataDelete.cpp)
     target_include_directories(guest_savedata_delete_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_savedata_delete_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_delete_tests)
     add_test(NAME guest_savedata_delete COMMAND guest_savedata_delete_tests)
     if(WIN32)
         set_tests_properties(guest_savedata_delete PROPERTIES ENVIRONMENT_MODIFICATION

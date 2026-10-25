@@ -1,3 +1,4 @@
+#include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -25,11 +26,6 @@ static constexpr int32_t SKU_FLAG_FULL = 3;
 static constexpr char TEMPORARY_MOUNT_POINT[] = "/temp0";
 static constexpr char DOWNLOAD_MOUNT_POINT[] = "/download0";
 static constexpr uint32_t TEMPORARY_DATA_OPTION_FORMAT = 1;
-
-struct AppContentAddcontInfo {
-    NpUnifiedEntitlementLabel entitlement_label;
-    uint32_t status;
-};
 
 namespace {
 
@@ -209,7 +205,6 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
     return 0;
 }
 
-
 int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
@@ -293,9 +288,12 @@ int APS5_VABI sceAppContentGetDownloadedStoreCountry(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetEntitlementKey(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !key) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
 int APS5_VABI sceAppContentGetPftFlag(void) {
@@ -313,9 +311,8 @@ int APS5_VABI sceAppContentRequestPatchInstall(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentTemporaryDataMount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint) {
+    return sceAppContentTemporaryDataMount2(TEMPORARY_DATA_OPTION_FORMAT, mountPoint);
 }
 
 }

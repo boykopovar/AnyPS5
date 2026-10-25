@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
@@ -21,6 +22,61 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+bool& submitsQueue0() {
+    struct SubmitsQueue0Storage {};
+    return HostThreadLocal<bool, SubmitsQueue0Storage>();
+}
+
+std::uint64_t& flipSubmissionsOfThread() {
+    struct FlipSubmissionsStorage {};
+    return HostThreadLocal<std::uint64_t, FlipSubmissionsStorage>();
+}
+
+bool progressEligible(const Submission& submission) {
+    if (submission.queue != 0 || !submission.flips.empty()
+        || !submission.renderingWaits.empty() || !submission.conditionalEnds.empty()) return false;
+    bool terminalRelease = false;
+    std::optional<Pm4::LabelWrite> knownWrite;
+    for (std::size_t at = 0; at < submission.commands.size();) {
+        const auto packet = std::span(submission.commands).subspan(at);
+        const auto count = Pm4::PacketWords(packet[0]);
+        if (count == 0 || count > packet.size()) return false;
+        const auto opcode = (packet[0] >> 8u) & 0xffu;
+        const bool type3 = (packet[0] >> 30u) == 3;
+        if (type3 && (opcode == 0x3c || opcode == 0x93)) {
+            if (!knownWrite || Pm4::Predicated(packet[0]) || ((packet[1] >> 4u) & 3u) != 1u) return false;
+            const auto wait = Pm4::DecodeWait(packet.first(count));
+            const auto bytes = knownWrite->Bytes();
+            if (wait.address < knownWrite->address) return false;
+            const auto offset = wait.address - knownWrite->address;
+            if (offset > bytes.size() || wait.bytes > bytes.size() - offset) return false;
+            std::uint64_t value = 0;
+            std::memcpy(&value, bytes.data() + offset, wait.bytes);
+            if (!Pm4::WaitComparesValue(packet.first(count), value)) return false;
+            terminalRelease = false;
+            at += count;
+            continue;
+        }
+        if (type3 && opcode == 0x59 && submission.rewindTail != nullptr && at + count == submission.commands.size()) {
+            at += count;
+            continue;
+        }
+        if (!Pm4::FillerPacket(packet[0]) && !(type3 && opcode == 0x10) && !Pm4::IsTagMarker(packet.first(count))) {
+            if (type3 && (opcode == 0x49 || opcode == 0x37)) {
+                const auto write = Pm4::DecodeLabelWrite(packet.first(count));
+                terminalRelease = opcode == 0x49 && write.has_value();
+                if (write && !Pm4::Predicated(packet[0]) && (opcode == 0x37 || (packet[2] >> 29u) < 3)) knownWrite = *write;
+                else if (opcode != 0x49 || (packet[2] >> 29u) != 0) knownWrite.reset();
+            } else {
+                terminalRelease = false;
+                if (!type3 || (opcode != 0x42 && opcode != 0x58)) knownWrite.reset();
+            }
+        }
+        at += count;
+    }
+    return terminalRelease;
+}
+
 std::uint64_t captureTime() {
     return static_cast<std::uint64_t>(std::llround(TraceMs() * 1000.0));
 }
@@ -38,11 +94,10 @@ bool EopRelease(std::span<const std::uint32_t> words) {
     return words.size() >= 8 && (words[0] >> 30u) == 3u && Pm4::PacketWords(words[0]) == 8u && ((words[0] >> 8u) & 0xffu) == 0x49u && ((words[2] >> 24u) & 7u) == 2u;
 }
 
-bool& submitsQueue0() {
-    struct SubmitsQueue0Storage {};
-    return HostThreadLocal<bool, SubmitsQueue0Storage>();
 }
 
+std::uint64_t Driver::FlipSubmissions() const {
+    return flipSubmissionsOfThread();
 }
 
 std::deque<const std::uint32_t*>& Driver::releasedTails() {
@@ -282,6 +337,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
             checkStopping();
             noteAwaitingTitle(stalled.queue, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1));
             stall.Check("REWIND at", reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1));
+            if (stalled.queue == 0 && completionsPending()) reapCompletionLabels();
             PollSleep();
         }
     }
@@ -366,6 +422,10 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const auto validated = profile ? std::chrono::steady_clock::now() : start;
     auto* const capture = SubmissionCapture::Active();
     auto captured = capture != nullptr ? SubmissionCapture::Prepare(queue, SubmissionKind::Submit, submission.commands, submission.conditionalEnds) : CapturedSubmission{};
+    static const bool progressEnabled = std::getenv("APS5_SUBMIT_PROGRESS") != nullptr;
+    const auto progress = progressEnabled && progressEligible(submission) ? std::make_shared<SubmissionProgress>() : nullptr;
+    submission.progress = progress;
+    const auto progressDeadline = progress ? std::chrono::steady_clock::now() + std::chrono::milliseconds(2) : std::chrono::steady_clock::time_point{};
     {
         std::unique_lock lock(mutex);
         rethrowFailure();
@@ -401,11 +461,31 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
         }
+        if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
         ++accepted;
     }
     changed.notify_all();
     if (capture != nullptr) writeCaptured(*this, *capture, captured);
+    if (progress) {
+        PerformanceTimer timing("Driver.SubmitProgress");
+        const auto [localDevice, epoch] = progress->WaitUntil(progressDeadline);
+        const auto now = std::chrono::steady_clock::now();
+        bool gpuReady = false;
+        if (localDevice && epoch != 0 && now < progressDeadline) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(progressDeadline - now).count();
+            gpuReady = localDevice->WaitRecordedFor(epoch, static_cast<std::uint64_t>(remaining));
+        }
+        if (profile) {
+            static std::atomic<std::uint64_t> eligible{0}, ready{0}, expired{0};
+            if (gpuReady) ready.fetch_add(1, std::memory_order_relaxed);
+            else expired.fetch_add(1, std::memory_order_relaxed);
+            const auto count = eligible.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (count % 1000 == 0) AgcDriver::ProfilePrint_nid_no_patch("[submit-progress] %llu eligible terminal releases, %llu GPU-ready returns, %llu expired or unsupported\n",
+                static_cast<unsigned long long>(count), static_cast<unsigned long long>(ready.load()), static_cast<unsigned long long>(expired.load()));
+        }
+        CheckFailure();
+    }
 }
 
 void Driver::SuspendPoint() {
@@ -465,7 +545,18 @@ bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
+void Driver::noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet) {
+    const auto fields = Pm4::DecodeWait(packet);
+    auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+    slot.reference.store(fields.reference, std::memory_order_relaxed);
+    slot.mask.store(fields.mask, std::memory_order_relaxed);
+    slot.shape.store(static_cast<std::uint64_t>(fields.function) | static_cast<std::uint64_t>(fields.bytes) << 32u, std::memory_order_relaxed);
+}
+
 void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked) {
+    auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+    if (!blocked) slot.shape.store(0, std::memory_order_relaxed);
+    slot.address.store(blocked ? awaited : 0, std::memory_order_release);
     if (blocked) {
         if (runningWorkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             idleEpoch.fetch_add(1, std::memory_order_release);

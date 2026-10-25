@@ -1,18 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cfenv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-
-extern "C" {
-double APS5_VABI fmin_nid_postfix(double, double);
-float APS5_VABI fminf_nid_postfix(float, float);
-long double APS5_VABI fminl_nid_postfix(long double, long double);
-double APS5_VABI fmax_nid_postfix(double, double);
-float APS5_VABI fmaxf_nid_postfix(float, float);
-long double APS5_VABI fmaxl_nid_postfix(long double, long double);
-}
 
 static void Check(bool condition, const char* name, int line) {
     if (!condition) {

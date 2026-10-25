@@ -1,23 +1,10 @@
+#include "prx/libSceNpGameIntent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpGameIntentInitParamInit(NpGameIntentInitParam* param);
-int APS5_VABI sceNpGameIntentInfoInit(NpGameIntentInfo* info);
-int APS5_VABI sceNpGameIntentInitialize(const void* initParam);
-int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo);
-int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize);
-int APS5_VABI sceNpGameIntentVshInitialize(void);
-int APS5_VABI sceNpGameIntentVshTerminate(void);
-int APS5_VABI sceNpGameIntentTerminate(void);
-int APS5_VABI sceNpAppLauncherInitialize(const void* initParam);
-int APS5_VABI sceNpAppLauncherLaunchApp(void);
-int APS5_VABI sceNpAppLauncherTerminate(void);
-}
 
 static void Require(bool value, const char* what) {
     if (value) return;

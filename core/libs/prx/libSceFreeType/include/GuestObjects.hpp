@@ -19,18 +19,25 @@ struct GuestLibrary {
     std::list<std::unique_ptr<GuestFace>> faces;
 };
 
+void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
     GuestSizeRec size{};
     GuestLibrary* library = nullptr;
     FT_Face host = nullptr;
+    bool finalized = false;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+
+    ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
+
+void RegisterBitmap_nid_no_patch(GuestFace& face);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);

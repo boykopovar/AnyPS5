@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -11,8 +12,7 @@ struct Object { const void* vtable; };
 extern "C" {
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
 extern const unsigned char _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix[];
-void* APS5_VABI __dynamic_cast_nid_postfix(const void*, const void*, const void*, std::ptrdiff_t);
-LibcException::Header* APS5_VABI __cxa_init_primary_exception_nid_postfix(void*, std::type_info*, void (*)(void*));
+
 }
 
 namespace {
@@ -32,14 +32,15 @@ const Vtable DerivedVtable{0, &DerivedType, nullptr};
 int main() {
     const Object derived{&DerivedVtable.first};
     const Object base{&BaseVtable.first};
-    Require(__dynamic_cast_nid_postfix(&derived, &BaseType, &DerivedType, 0) == &derived);
-    Require(__dynamic_cast_nid_postfix(&derived, &BaseType, &OtherType, 0) == nullptr);
-    Require(__dynamic_cast_nid_postfix(&base, &BaseType, &DerivedType, 0) == nullptr);
-    Require(__dynamic_cast_nid_postfix(nullptr, &BaseType, &DerivedType, 0) == nullptr);
+    Require(__dynamic_cast_nid_postfix(&derived, reinterpret_cast<const __cxxabiv1::__class_type_info*>(&BaseType), reinterpret_cast<const __cxxabiv1::__class_type_info*>(&DerivedType), 0) == &derived);
+    Require(__dynamic_cast_nid_postfix(&derived, reinterpret_cast<const __cxxabiv1::__class_type_info*>(&BaseType), reinterpret_cast<const __cxxabiv1::__class_type_info*>(&OtherType), 0) == nullptr);
+    Require(__dynamic_cast_nid_postfix(&base, reinterpret_cast<const __cxxabiv1::__class_type_info*>(&BaseType), reinterpret_cast<const __cxxabiv1::__class_type_info*>(&DerivedType), 0) == nullptr);
+    Require(__dynamic_cast_nid_postfix(nullptr, reinterpret_cast<const __cxxabiv1::__class_type_info*>(&BaseType), reinterpret_cast<const __cxxabiv1::__class_type_info*>(&DerivedType), 0) == nullptr);
     void* object = __cxa_allocate_exception_nid_postfix(16);
     auto* type = reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(&DerivedType));
     LibcException::Header* header = __cxa_init_primary_exception_nid_postfix(object, type, Destroy);
     Require(header == LibcException::FromObject(object));
     Require(header->type == type && header->destructor == Destroy && header->adjusted == object);
     __cxa_free_exception_nid_postfix(object);
+
 }

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -7,9 +8,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-
-using Int128 = __int128;
-using Uint128 = unsigned __int128;
 
 constexpr std::uint32_t DefaultMxcsr = 0x1f80;
 

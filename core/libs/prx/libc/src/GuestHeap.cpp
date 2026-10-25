@@ -280,6 +280,12 @@ void* allocate(GuestAllocations::Mutation& mutation, std::size_t alignment, std:
     return pointer;
 }
 
+void* emptyInPlace(GuestAllocations::Mutation& mutation, void* pointer, bool gpu) {
+    mutation.Remove(pointer);
+    mutation.Add(pointer, 0, true, true, gpu);
+    return pointer;
+}
+
 void free(GuestAllocations::Mutation& mutation, void* pointer) {
     mutation.Remove(pointer);
     const auto blockBytes = reinterpret_cast<std::size_t*>(pointer)[-1];
@@ -307,10 +313,7 @@ void* GuestHeapReallocate_nid_postfix(void* pointer, std::size_t bytes) {
     GuestAllocations::Mutation mutation;
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);
-    if (bytes == 0) {
-        free(mutation, pointer);
-        return nullptr;
-    }
+    if (bytes == 0) return emptyInPlace(mutation, pointer, range.gpu);
     void* result = allocate(mutation, MinimumAlignment, bytes, range.gpu);
     std::memcpy(result, pointer, std::min(bytes, range.bytes));
     free(mutation, pointer);
@@ -323,8 +326,10 @@ void* GuestHeapRealign_nid_postfix(void* pointer, std::size_t bytes, std::size_t
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);
     if (bytes == 0) {
-        free(mutation, pointer);
-        return nullptr;
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest heap alignment");
+        if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0)
+            throw std::invalid_argument("reallocalign to 0 bytes with an alignment the block does not have is not measured on the console");
+        return emptyInPlace(mutation, pointer, range.gpu);
     }
     void* result = allocate(mutation, alignment, bytes, range.gpu);
     std::memcpy(result, pointer, std::min(bytes, range.bytes));

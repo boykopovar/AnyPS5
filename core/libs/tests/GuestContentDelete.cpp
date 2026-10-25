@@ -1,13 +1,9 @@
+#include "prx/libSceContentDelete/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-
-extern "C" int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* initParam);
-extern "C" int APS5_VABI sceContentDeleteTerminate(void);
-extern "C" int APS5_VABI sceContentDeleteById(std::int64_t contentId);
-extern "C" int APS5_VABI sceContentDeleteByPath(const char* contentPath);
 
 namespace {
 
