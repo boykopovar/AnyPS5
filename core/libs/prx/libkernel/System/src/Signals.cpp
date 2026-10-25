@@ -58,7 +58,6 @@ constexpr int GuestEagain = 35;
 constexpr std::int32_t GuestSiUser = 0x10001;
 constexpr std::int32_t GuestSiKernel = 0x10006;
 constexpr std::int32_t GuestSiLwp = 0x10007;
-thread_local std::int32_t sendCode = GuestSiLwp;
 struct GuestSiginfo {
     std::int32_t signo;
     std::int32_t error;
@@ -122,7 +121,7 @@ PendingSignals& Pending() {
     return *state;
 }
 
-void MarkPending(int guest, std::int32_t code = sendCode) {
+void MarkPending(int guest, std::int32_t code) {
     auto& pending = Pending();
     {
         // under the same lock the waits check the set with: without it a signal raised
@@ -220,7 +219,7 @@ void Dispatch(int native) {
     std::signal(native, Dispatch);
 #endif
     if (SignalBlocked(guest)) {
-        MarkPending(guest);
+        MarkPending(guest, GuestSiLwp);
         return;
     }
     const auto callback = handlers[guest].load();
@@ -618,14 +617,14 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
     return sigaction_nid_postfix(guest, action, previous);
 }
-int APS5_VABI raise_nid_postfix(int guest) {
+static int RaiseWithCode(int guest, std::int32_t code) {
     if (guest == 0) return 0;
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
-        MarkPending(guest);
+        MarkPending(guest, code);
         return 0;
     }
     if (action.handler == 0 && IgnoredByDefault(guest)) return 0;
@@ -641,16 +640,15 @@ int APS5_VABI raise_nid_postfix(int guest) {
     DeliverUnblockedPending();
     return 0;
 }
+int APS5_VABI raise_nid_postfix(int guest) {
+    return RaiseWithCode(guest, GuestSiLwp);
+}
 int APS5_VABI kill_nid_postfix(int pid, int guest) {
     if (guest < 0 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const int self = getpid_nid_postfix();
     if (pid != self && pid != 0 && pid != -self) { *__error_nid_postfix() = 3; return -1; }
     if (guest == 0) return 0;
-    struct SentByKill {
-        SentByKill() { sendCode = GuestSiUser; }
-        ~SentByKill() { sendCode = GuestSiLwp; }
-    } sentByKill;
-    return raise_nid_postfix(guest);
+    return RaiseWithCode(guest, GuestSiUser);
 }
 int APS5_VABI killpg_nid_postfix(int pgrp, int guest) {
     if (pgrp < 0) { *__error_nid_postfix() = 22; return -1; }
@@ -662,7 +660,7 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
-    if (Disposition(guest).handler != 1) MarkPending(guest);
+    if (Disposition(guest).handler != 1) MarkPending(guest, GuestSiLwp);
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {

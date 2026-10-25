@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <csetjmp>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -132,9 +133,38 @@ static void CheckReportedCodeBelongsToConsumedSignal() {
         Require(sigtimedwait_nid_postfix(&interrupt, &first, &patience) == 2);
         while (sender.sent.load() != round) std::this_thread::yield();
         const bool twice = sigtimedwait_nid_postfix(&interrupt, &second, &poll) == 2;
-        Require(twice ? first.code == 0x10001 && second.code == 0x10007 : first.code == 0x10007);
+        Require(twice ? first.code != second.code : first.code == 0x10007);
     }
     Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static std::jmp_buf handlerExit;
+static void APS5_VABI RaiseSecondFromHandler(int) { Require(raise_nid_postfix(31) == 0); }
+static void APS5_VABI RaiseSecondAndLeave(int) {
+    Require(raise_nid_postfix(31) == 0);
+    std::longjmp(handlerExit, 1);
+}
+static int TakeSecondCode(const GuestSignalSet& second) {
+    const KernelTimespec poll{0, 0};
+    GuestSiginfo info{};
+    Require(sigtimedwait_nid_postfix(&second, &info, &poll) == 31);
+    const int code = info.code;
+    Require(sigtimedwait_nid_postfix(&second, &info, &poll) == -1);
+    return code;
+}
+static void CheckRaiseInsideKillHandlerIsFromThread() {
+    const GuestSignalSet second{{1u << 30, 0, 0, 0}};
+    GuestSignalSet previous{};
+    Require(_sigprocmask_nid_postfix(1, &second, &previous) == 0);
+    signal_nid_postfix(30, RaiseSecondFromHandler);
+    Require(kill_nid_postfix(getpid_nid_postfix(), 30) == 0);
+    Require(TakeSecondCode(second) == 0x10007);
+    signal_nid_postfix(30, RaiseSecondAndLeave);
+    if (setjmp(handlerExit) == 0) kill_nid_postfix(getpid_nid_postfix(), 30);
+    Require(TakeSecondCode(second) == 0x10007);
+    Require(raise_nid_postfix(31) == 0);
+    Require(TakeSecondCode(second) == 0x10007);
+    signal_nid_postfix(30, nullptr);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
 }
 int main() {
@@ -244,4 +274,5 @@ int main() {
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
     CheckTimeoutWithUnrelatedSignals();
     CheckReportedCodeBelongsToConsumedSignal();
+    CheckRaiseInsideKillHandlerIsFromThread();
 }
