@@ -67,6 +67,7 @@ void CheckErrors() {
     Require(sceHttpGetCookie(1, "http://a.test/", nullptr, &required, 0) == InvalidId, "reading before init");
     Require(sceHttpSetCookieMaxNum(1, 1) == InvalidId, "a limit before init");
     Require(sceHttpGetCookieStats(1, &stats) == InvalidId, "stats before init");
+    Require(sceHttpCookieFlush(1) == InvalidId && sceHttpCookieFlush(0) == InvalidId, "flushing before init");
     const int context = Init();
     Require(AddResult(context + 1000, "http://a.test/", "a=1") == InvalidId, "an unknown context");
     Require(sceHttpSetCookieMaxNumPerDomain(context + 1000, 1) == InvalidId, "a limit on an unknown context");
@@ -89,6 +90,7 @@ void CheckErrors() {
     Require(sceHttpGetCookie(context, "http://a.test/", partial, &required, 6) == OutOfSize && std::strcmp(partial, "b=2") == 0, "the cookies that fit are written");
     Require(sceHttpTerm_nid_postfix(context) == 0, "term");
     Require(sceHttpGetCookieStats(context, &stats) == InvalidId, "stats after term");
+    Require(sceHttpCookieFlush(context) == InvalidId, "flushing after term");
 }
 
 void CheckMatching(int context) {
@@ -154,6 +156,17 @@ void CheckDomains(int context) {
     Add(context, "http://www.d.co.uk/", "d=1; Domain=d.co.uk");
     Require(Get(context, "http://d.com/") == "a=1" && Get(context, "http://e.org/") == "b=1", "two labels under a generic domain");
     Require(Get(context, "http://x.d.test/") == "c=1" && Get(context, "http://d.co.uk/") == "d=1", "three labels elsewhere");
+    Add(context, "http://x.www.m.com/", "m=1; Domain=m.com");
+    Add(context, "http://x.www.m.com/", "host=1");
+    Add(context, "http://x.www.m.com/", "w=1; Domain=www.m.com");
+    Add(context, "http://x.www.m.com/", "m2=1; Domain=.m.com");
+    Require(Get(context, "http://x.www.m.com/") == "host=1; w=1; m2=1; m=1", "the most specific domain comes first");
+    Add(context, "http://x.www.m.com/deep/", "deep=1; Domain=m.com");
+    Require(Get(context, "http://x.www.m.com/deep/").starts_with("deep=1; host=1"), "a longer path still comes first");
+    const std::uint64_t before = Stats(context).usedBytes;
+    Add(context, "http://www.z.com/", "a=1; Domain=z.com");
+    Add(context, "http://www.z.com/", "b=1");
+    Require(Stats(context).usedBytes == before + 13 + 17, "the stats size counts the domain without its dot");
 }
 
 void CheckLimits(int context) {
@@ -161,6 +174,7 @@ void CheckLimits(int context) {
     const HttpCookieStats one = Stats(context);
     Require(one.usedBytes == 14 && one.cookieCount == 1 && one.peakUsedBytes == 14 && one.peakCookieCount == 1 && one.evictedCookieCount == 0, "a cookie counts its domain and path");
     Require(sceHttpSetCookieMaxNum(context, 0) == 0 && Stats(context).cookieCount == 0 && Stats(context).evictedCookieCount == 0, "a setter empties the store without evicting");
+    Require(Stats(context).peakUsedBytes == 14 && Stats(context).peakCookieCount == 1, "a setter keeps the peaks");
     Require(sceHttpSetCookieMaxNum(context, 3000) == 0, "the total limit back to its default");
     const std::string fits = "n=" + std::string(4095, 'v');
     const std::string over = "n=" + std::string(4096, 'v');
@@ -168,14 +182,28 @@ void CheckLimits(int context) {
     Require(AddResult(context, "http://l.test/", over.c_str()) == OutOfSize, "the default size limit is 4096");
     Require(sceHttpSetCookieMaxSize(context, 0) == 0 && AddResult(context, "http://l.test/", "a=1") == OutOfSize, "a size limit of 0 refuses every cookie");
     Require(sceHttpSetCookieMaxSize(context, 4096) == 0, "the size limit back to its default");
+    Require(sceHttpAddCookie(context, "http://h.test/", (fits + "; Path=/" + std::string(504, 'p')).c_str(), fits.size() + 512) == 0, "a stored size of 4612 fits");
+    Require(AddResult(context, "http://h.test/", (fits + "; Path=/" + std::string(505, 'p')).c_str()) == OutOfSize, "a stored size over the size limit plus 516");
+    Require(sceHttpSetCookieMaxSize(context, 10) == 0 && AddResult(context, "http://h.test/", ("a=; Path=/" + std::string(999, 'p')).c_str()) == OutOfSize, "a long path refuses even an empty cookie");
+    Require(sceHttpSetCookieMaxSize(context, 4096) == 0, "the size limit back again");
+    for (int index = 0; index < 410; ++index) {
+        const std::string host = "http://h" + std::to_string(100 + index / 50) + ".test/";
+        const std::string name = "c" + std::to_string(100 + index);
+        Add(context, host.c_str(), (name + "=" + std::string(index == 409 ? 101 : 181, 'v')).c_str());
+    }
+    Require(Stats(context).usedBytes == 81920 && Stats(context).cookieCount == 410 && Stats(context).evictedCookieCount == 0, "81920 bytes fit by default");
+    Add(context, "http://h200.test/", "x=1");
+    Require(Stats(context).cookieCount == 401 && Stats(context).evictedCookieCount == 10 && Missing(context, "http://h100.test/") == false, "past 81920 bytes the 10 oldest go");
+    Require(Get(context, "http://h200.test/") == "x=1" && Get(context, "http://h100.test/").find("c109=") == std::string::npos && Get(context, "http://h100.test/").find("c110=") != std::string::npos, "the new cookie stays");
+    Require(sceHttpSetCookieMaxNumPerDomain(context, 50) == 0, "a fresh store");
     for (int index = 0; index <= 50; ++index) Add(context, "http://m.test/", ("c" + std::to_string(index) + "=1").c_str());
-    Require(Stats(context).cookieCount == 50 && Stats(context).evictedCookieCount == 1, "the default per-domain limit is 50");
+    Require(Stats(context).cookieCount == 50 && Stats(context).evictedCookieCount == 11, "the default per-domain limit is 50");
     Require(Get(context, "http://m.test/").find("c0=1") == std::string::npos, "the oldest cookie of the domain goes");
     Require(sceHttpSetCookieMaxNumPerDomain(context, 50) == 0, "the per-domain limit stays at its default");
     for (int host = 0; host < 61; ++host) {
         for (int index = 0; index < 50 && host * 50 + index <= 3000; ++index) Add(context, ("http://h" + std::to_string(host) + ".test/").c_str(), ("c" + std::to_string(index) + "=1").c_str());
     }
-    Require(Stats(context).cookieCount == 2991 && Stats(context).evictedCookieCount == 11, "over 3000 cookies the 10 oldest go");
+    Require(Stats(context).cookieCount == 2991 && Stats(context).evictedCookieCount == 21, "over 3000 cookies the 10 oldest go");
     Require(Get(context, "http://h0.test/").find("c9=1") == std::string::npos && Get(context, "http://h0.test/").find("c10=1") != std::string::npos, "the evicted cookies are the oldest");
     Require(sceHttpSetCookieMaxNumPerDomain(context, 2) == 0, "per-domain limit");
     Add(context, "http://n.test/", "a=1");
@@ -187,10 +215,15 @@ void CheckLimits(int context) {
     Add(context, "http://n.test/", "d=1");
     Require(Get(context, "http://n.test/") == "b=2; d=1", "a replaced cookie counts as new");
     Require(sceHttpSetCookieTotalMaxSize(context, 30) == 0, "total size limit");
+    const std::uint32_t removed = Stats(context).evictedCookieCount;
     Add(context, "http://t.test/", "a=1");
     Add(context, "http://u.test/", "b=1");
     Add(context, "http://v.test/", "c=1");
-    Require(Missing(context, "http://t.test/") && Get(context, "http://v.test/") == "c=1" && Stats(context).usedBytes == 28, "the total size evicts the oldest");
+    Require(Missing(context, "http://t.test/") && Missing(context, "http://u.test/") && Stats(context).usedBytes == 14 && Stats(context).evictedCookieCount == removed + 2, "fewer than 10 older cookies all go");
+    Require(sceHttpSetCookieMaxNumPerDomain(context, 50) == 0 && sceHttpSetCookieTotalMaxSize(context, 100) == 0, "a total size of 100");
+    for (int index = 1; index <= 7; ++index) Add(context, "http://t.test/", ("c" + std::to_string(index) + "=1").c_str());
+    Require(Get(context, "http://t.test/") == "c7=1" && Stats(context).evictedCookieCount == removed + 8, "the seventh 15-byte cookie removes the six older ones");
+    Require(sceHttpCookieFlush(context) == 0 && Stats(context).peakCookieCount == 3000, "flush keeps the peaks");
 }
 
 }
