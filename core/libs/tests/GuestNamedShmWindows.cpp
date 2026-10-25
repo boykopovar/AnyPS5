@@ -223,6 +223,12 @@ void Run() {
     Require(original >= 0 && *__error_nid_postfix() == 73, "exclusive creation failed or changed guest errno");
     VerifyUntrackedDescriptor(original);
     Require(ftruncate_nid_postfix(original, 64) == 0, "sizing the named object failed");
+    const int reopened = shm_open_nid_postfix(name.c_str(), ReadWrite, 0);
+    Require(reopened >= 0 && File::IsSharedMemoryDescriptor_nid_no_patch(reopened), "reopened named descriptor is not tracked");
+    Require(pwrite_nid_disambig1_nid_postfix(reopened, "x", 1, 64) == 0, "positioned write at the named-object boundary extended it");
+    struct _stat64 bounded{};
+    Require(::_fstat64(reopened, &bounded) == 0 && bounded.st_size == 64, "positioned write changed the named-object size");
+    Require(close_nid_postfix(reopened) == 0, "closing reopened named descriptor failed");
     VerifyConcurrentDescriptorReuse(name);
     const char originalBytes[] = "original";
     Require(pwrite_nid_disambig1_nid_postfix(original, originalBytes, sizeof(originalBytes), 0) == sizeof(originalBytes),
