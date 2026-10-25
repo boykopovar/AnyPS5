@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp)
+add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ocsp.cpp)
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
@@ -75,6 +75,32 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_error PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_error PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_ocsp_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslOcsp.cpp)
+    target_include_directories(guest_libressl_ocsp_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ocsp_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ocsp_tests)
+    add_test(NAME guest_libressl_ocsp COMMAND guest_libressl_ocsp_tests)
+    set_tests_properties(guest_libressl_ocsp PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ocsp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Cipher.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_cipher_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslCipher.cpp)
+    target_include_directories(guest_libressl_cipher_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_cipher_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_cipher_tests)
+    add_test(NAME guest_libressl_cipher COMMAND guest_libressl_cipher_tests)
+    set_tests_properties(guest_libressl_cipher PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_cipher PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()

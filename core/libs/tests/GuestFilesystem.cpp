@@ -255,6 +255,7 @@ static void TestRelinkedModuleNames() {
     const auto relinked = original + ".guest.prx";
     FileStat status{};
     Require(sceKernelStat(original.c_str(), &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix(original.c_str(), &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelCheckReachability(original.c_str()) == static_cast<int>(0x80020002u));
     Require(sceKernelOpen(original.c_str(), 0, 0) == static_cast<int>(0x80020002u));
     const auto missing = (root / "missing-content.pak").string();
@@ -267,6 +268,7 @@ static void TestRelinkedModuleNames() {
     { std::ofstream file(relinked); file << "relinked"; }
     Require(sceKernelStat(original.c_str(), &status) == 0 && status.st_size == 8);
     Require(stat_nid_postfix(original.c_str(), &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix(original.c_str(), &status) == 0 && status.st_size == 8);
     Require(sceKernelCheckReachability(original.c_str()) == 0);
     const int opened = sceKernelOpen(original.c_str(), 0, 0);
     Require(opened >= 0 && sceKernelClose(opened) == 0);
@@ -650,6 +652,27 @@ int main() {
     Require(close_nid_postfix(flaggedKqueue) == 0);
     const int flaggedRoot = sceKernelOpen(root.string().c_str(), 0x20000, 0);
     Require(flaggedRoot >= 0 && fchflags_nid_postfix(flaggedRoot, 0) == 0 && sceKernelClose(flaggedRoot) == 0);
+    const auto exclusiveLink = root / "exclusive.link";
+    const auto exclusiveTarget = root / "exclusive-target.txt";
+#ifdef _WIN32
+    const bool exclusiveLinked = CreateSymbolicLinkW(exclusiveLink.wstring().c_str(), L"exclusive-target.txt",
+        SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
+    std::error_code exclusiveLinkError;
+    std::filesystem::create_symlink("exclusive-target.txt", exclusiveLink, exclusiveLinkError);
+    const bool exclusiveLinked = !exclusiveLinkError;
+#endif
+    if (exclusiveLinked) {
+        Require(open_nid_postfix(exclusiveLink.string().c_str(), 0xa01, 0644) == -1 && *__error_nid_postfix() == 17);
+        Require(sceKernelOpen(exclusiveLink.string().c_str(), 0xa01, 0644) == static_cast<int>(0x80020011u));
+        Require(!std::filesystem::exists(exclusiveTarget));
+        const int exclusiveCreated = open_nid_postfix(exclusiveLink.string().c_str(), 0x201, 0644);
+        Require(exclusiveCreated >= 0 && close_nid_postfix(exclusiveCreated) == 0 && std::filesystem::is_regular_file(exclusiveTarget));
+        Require(open_nid_postfix(exclusiveLink.string().c_str(), 0xa01, 0644) == -1 && *__error_nid_postfix() == 17);
+        Require(unlink_nid_postfix(exclusiveLink.string().c_str()) == 0 && unlink_nid_postfix(exclusiveTarget.string().c_str()) == 0);
+    } else {
+        std::fprintf(stderr, "symbolic links unavailable: the O_EXCL link cases not tested\n");
+    }
     int flaggedPipe[2];
     Require(pipe_nid_postfix(flaggedPipe) == 0);
     Require(fchflags_nid_postfix(flaggedPipe[0], 0) == -1 && *__error_nid_postfix() == 22);
@@ -847,6 +870,37 @@ int main() {
     };
     Require(sceKernelFchmod(descriptor, 0400) == 0 && !ownerWrite());
     Require(fchmod_nid_postfix(descriptor, 0600) == 0 && ownerWrite());
+    const auto sizedLink = sized.parent_path() / "sized.link";
+    const auto missingLink = sized.parent_path() / "missing.link";
+    const auto loopLink = sized.parent_path() / "loop.link";
+#ifdef _WIN32
+    const DWORD linkFlags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    const bool chmodLinked = CreateSymbolicLinkW(sizedLink.wstring().c_str(), sized.filename().wstring().c_str(), linkFlags) &&
+        CreateSymbolicLinkW(missingLink.wstring().c_str(), L"missing.bin", linkFlags) &&
+        CreateSymbolicLinkW(loopLink.wstring().c_str(), L"loop.link", linkFlags);
+#else
+    std::error_code chmodLinkError;
+    std::filesystem::create_symlink(sized.filename(), sizedLink, chmodLinkError);
+    if (!chmodLinkError) std::filesystem::create_symlink("missing.bin", missingLink, chmodLinkError);
+    if (!chmodLinkError) std::filesystem::create_symlink("loop.link", loopLink, chmodLinkError);
+    const bool chmodLinked = !chmodLinkError;
+#endif
+    if (chmodLinked) {
+        Require(chmod_nid_postfix(sizedLink.string().c_str(), 0400) == 0 && !ownerWrite());
+#ifdef _WIN32
+        Require((GetFileAttributesW(sizedLink.wstring().c_str()) & FILE_ATTRIBUTE_READONLY) == 0);
+#endif
+        Require(chmod_nid_postfix(sizedLink.string().c_str(), 0600) == 0 && ownerWrite());
+        Require(chmod_nid_postfix(missingLink.string().c_str(), 0600) == -1 && *__error_nid_postfix() == 2);
+#ifdef _WIN32
+        Require(chmod_nid_postfix(loopLink.string().c_str(), 0600) == -1 && *__error_nid_postfix() == 62);
+#endif
+    } else {
+        std::fprintf(stderr, "symbolic links unavailable: the chmod link cases not tested\n");
+    }
+    unlink_nid_postfix(sizedLink.string().c_str());
+    unlink_nid_postfix(missingLink.string().c_str());
+    unlink_nid_postfix(loopLink.string().c_str());
     Require(sceKernelFtruncate(descriptor, 3) == 0);
     FileStat times{};
     const KernelTimeval past[2]{{1000000000, 0}, {1000000000, 500000}};
@@ -884,6 +938,8 @@ int main() {
         Require(fsync_nid_postfix(end) == -1 && *__error_nid_postfix() == 22);
         Require(fdatasync_nid_postfix(end) == -1 && *__error_nid_postfix() == 22);
         Require(sceKernelFsync(end) == static_cast<int>(0x80020016u) && sceKernelFdatasync(end) == static_cast<int>(0x80020016u));
+        Require(fchmod_nid_postfix(end, 0600) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelFchmod(end, 0600) == static_cast<int>(0x80020016u));
     }
     Require(close_nid_postfix(syncPipe[0]) == 0 && close_nid_postfix(syncPipe[1]) == 0);
     Require(close_nid_postfix(socket) == 0);

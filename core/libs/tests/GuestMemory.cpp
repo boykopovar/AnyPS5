@@ -1776,7 +1776,7 @@ static void CheckSingleDirectMappingTracksWritesWithoutFaults() {
 #endif
 }
 
-static void CheckLargeResidentWritesStopFaulting() {
+static void CheckLargeResidentWritesDoNotFault() {
 #ifdef _WIN32
     constexpr std::size_t bytes = 0x200000;
     std::int64_t physical = 0;
@@ -1792,7 +1792,7 @@ static void CheckLargeResidentWritesStopFaulting() {
     Require(collect() == bytes / 4096);
     Require(collect() == 0 && collect() == 0);
     MEMORY_BASIC_INFORMATION memory{};
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READONLY);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     auto* data = static_cast<unsigned char*>(mapped);
     const auto path = std::filesystem::path("anyps5-resident-read-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -1820,7 +1820,7 @@ static void CheckLargeResidentWritesStopFaulting() {
         Require(collect() == 1 && collect() == 0);
     }
     for (unsigned int round = 0; round < 16; ++round) Require(collect() == 0);
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READONLY);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     const auto before = g_accessViolations;
     const auto handler = AddVectoredExceptionHandler(1, CountAccessViolations);
     Require(handler != nullptr);
@@ -1829,7 +1829,7 @@ static void CheckLargeResidentWritesStopFaulting() {
         Require(collect() == bytes / 4096 && collect() == 0);
     }
     Require(RemoveVectoredExceptionHandler(handler));
-    Require(g_accessViolations == before + 1);
+    Require(g_accessViolations == before);
     Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     Require(mprotect_nid_postfix(mapped, bytes, 1) == 0);
     Require(collect() == 0 && collect() == 0);
@@ -2143,30 +2143,30 @@ static void CheckRemappedDirectMemoryIsChargedOnce() {
 #ifdef _WIN32
     constexpr std::size_t bytes = 0x10000000;
     const auto committed = [] {
-        PERFORMANCE_INFORMATION info{};
-        info.cb = sizeof(info);
-        Require(K32GetPerformanceInfo(&info, sizeof(info)) != 0);
-        return static_cast<std::int64_t>(info.CommitTotal) * static_cast<std::int64_t>(info.PageSize);
+        struct {
+            PROCESS_MEMORY_COUNTERS_EX counters;
+            SIZE_T privateWorkingSetSize;
+            ULONG64 sharedCommitUsage;
+        } info{};
+        info.counters.cb = sizeof(info);
+        Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&info), sizeof(info)) != 0);
+        return static_cast<std::int64_t>(info.counters.PrivateUsage) + static_cast<std::int64_t>(info.sharedCommitUsage);
     };
-    bool once = false;
-    for (int attempt = 0; attempt < 3 && !once; ++attempt) {
-        const auto before = committed();
-        std::int64_t phys = 0;
-        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &phys) == 0);
-        void* mapped = nullptr;
-        Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, phys, 0) == 0);
-        RequireResidentMapping(mapped);
-        std::memset(mapped, 0xa5, bytes);
-        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), bytes) == 0);
-        void* again = nullptr;
-        Require(sceKernelMapDirectMemory(&again, bytes, 3, 0, phys, 0) == 0);
-        const auto* data = static_cast<const unsigned char*>(again);
-        Require(data[0] == 0xa5 && data[bytes / 2] == 0xa5 && data[bytes - 1] == 0xa5);
-        once = committed() - before < static_cast<std::int64_t>(bytes + bytes / 2);
-        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), bytes) == 0);
-        Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
-    }
-    Require(once);
+    const auto before = committed();
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, phys, 0) == 0);
+    RequireResidentMapping(mapped);
+    std::memset(mapped, 0xa5, bytes);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), bytes) == 0);
+    void* again = nullptr;
+    Require(sceKernelMapDirectMemory(&again, bytes, 3, 0, phys, 0) == 0);
+    const auto* data = static_cast<const unsigned char*>(again);
+    Require(data[0] == 0xa5 && data[bytes / 2] == 0xa5 && data[bytes - 1] == 0xa5);
+    Require(committed() - before < static_cast<std::int64_t>(bytes + bytes / 2));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
 #endif
 }
 
@@ -3393,7 +3393,7 @@ int main(int argc, char** argv) {
     CheckPinnedSharedPages();
     CheckFailedCollectKeepsWrites();
     CheckSingleDirectMappingTracksWritesWithoutFaults();
-    CheckLargeResidentWritesStopFaulting();
+    CheckLargeResidentWritesDoNotFault();
     CheckImportAccessDoesNotInventSharedWrites();
     CheckResidentCollectPreservesPartialWrites();
     CheckResidentCollectionDuringHostWrites();

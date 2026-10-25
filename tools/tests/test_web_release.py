@@ -226,6 +226,27 @@ class WebReleaseTests(unittest.TestCase):
             build_web.main()
         self.assertEqual((self.output / "native/relinker_wasm.mjs").read_bytes(), self.contents["native/relinker_wasm.mjs"])
 
+    def test_invalid_zip_reports_cli_error_and_preserves_previous_site(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+            with self.subTest(asset=name):
+                self.requests.clear()
+                original = self.responses[f"https://example.test/{name}"]
+                self.set_asset(name, original[:-22])
+                errors = io.StringIO()
+                try:
+                    with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors):
+                        with self.assertRaises(SystemExit) as error:
+                            build_web.main(["--build", str(self.build), "--release"])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn(f"error: Invalid release archive {name}: File is not a zip file", errors.getvalue())
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertEqual(self.snapshot(), previous)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+                finally:
+                    self.set_asset(name, original)
+
     def test_local_build_still_copies_sources_without_network(self):
         source = self.root / "source/demo/web"
         source.mkdir(parents=True)

@@ -48,11 +48,27 @@ timespec XtimeDeadline(const Xtime& time, const char* function) {
     return {static_cast<time_t>(seconds), static_cast<long>(nanos)};
 }
 
+std::chrono::system_clock::time_point XtimePoint(const Xtime& time, const char* function) {
+    const auto deadline = XtimeDeadline(time, function);
+    constexpr auto maxDuration = std::chrono::system_clock::duration::max();
+    constexpr auto minDuration = std::chrono::system_clock::duration::min();
+    constexpr auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
+    constexpr auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
+    constexpr auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
+    if (deadline.tv_sec > maxSeconds || (deadline.tv_sec == maxSeconds && deadline.tv_nsec > maxNanos) ||
+        deadline.tv_sec < minSeconds)
+        throw std::overflow_error(std::string(function) + ": xtime seconds overflow");
+    return std::chrono::system_clock::time_point(
+        std::chrono::seconds(deadline.tv_sec) +
+        std::chrono::ceil<std::chrono::system_clock::duration>(std::chrono::nanoseconds(deadline.tv_nsec)));
+}
+
 constexpr int threadSuccess = 0;
 constexpr int threadNomem = 1;
 constexpr int threadTimedout = 2;
 constexpr int threadBusy = 3;
 constexpr int threadError = 4;
+constexpr int threadTimedlockError = 5;
 
 constexpr int mutexRecursive = 0x100;
 
@@ -72,14 +88,61 @@ struct DinkumwareNativeMutex {
     void lock() { EnterCriticalSection(&value); }
     void unlock() { LeaveCriticalSection(&value); }
     bool try_lock() { return TryEnterCriticalSection(&value) != FALSE; }
+
+    template<class Clock, class Duration>
+    bool try_lock_until(const std::chrono::time_point<Clock, Duration>& deadline) {
+        if (try_lock())
+            return true;
+        for (;;) {
+            const auto now = Clock::now();
+            if (now >= deadline)
+                return false;
+            const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+            Sleep(static_cast<DWORD>(std::min<std::int64_t>(remaining, 1)));
+            if (try_lock()) {
+                if (Clock::now() <= deadline)
+                    return true;
+                unlock();
+                return false;
+            }
+        }
+    }
 };
 
 struct DinkumwareNativeCondition {
     CONDITION_VARIABLE value = CONDITION_VARIABLE_INIT;
+
+    void notify_one() { WakeConditionVariable(&value); }
+    void notify_all() { WakeAllConditionVariable(&value); }
+
+    void wait(std::unique_lock<DinkumwareNativeMutex>& lock) {
+        if (SleepConditionVariableCS(&value, &lock.mutex()->value, INFINITE) == FALSE)
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Cnd_wait: condition wait failed");
+    }
+
+    template<class Clock, class Duration>
+    std::cv_status wait_until(std::unique_lock<DinkumwareNativeMutex>& lock,
+                              const std::chrono::time_point<Clock, Duration>& deadline) {
+        for (;;) {
+            const auto now = Clock::now();
+            if (now >= deadline)
+                return std::cv_status::timeout;
+            const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+            const auto largest = static_cast<std::int64_t>(std::numeric_limits<DWORD>::max() - 1U);
+            const auto milliseconds = static_cast<DWORD>(std::min<std::int64_t>(remaining, largest));
+            if (SleepConditionVariableCS(&value, &lock.mutex()->value, milliseconds) != FALSE)
+                return std::cv_status::no_timeout;
+            const DWORD error = GetLastError();
+            if (error != ERROR_TIMEOUT)
+                throw std::system_error(static_cast<int>(error), std::system_category(), "_Cnd_timedwait: condition wait failed");
+            if (Clock::now() >= deadline)
+                return std::cv_status::timeout;
+        }
+    }
 };
 #else
-using DinkumwareNativeMutex = std::mutex;
-using DinkumwareNativeCondition = std::condition_variable;
+using DinkumwareNativeMutex = std::timed_mutex;
+using DinkumwareNativeCondition = std::condition_variable_any;
 #endif
 
 struct DinkumwareMutex {
@@ -94,32 +157,6 @@ struct DinkumwareCondition {
     std::uint64_t tag = conditionTag;
     DinkumwareNativeCondition native;
 };
-
-#ifdef _WIN32
-DWORD WaitMillisecondsUntil(std::chrono::system_clock::time_point deadline) {
-    const auto now = std::chrono::system_clock::now();
-    if (now >= deadline)
-        return 0;
-    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
-    constexpr auto largest = static_cast<std::int64_t>(std::numeric_limits<DWORD>::max() - 1U);
-    return static_cast<DWORD>(std::min<std::int64_t>(remaining, largest));
-}
-
-bool WaitUntil(DinkumwareCondition* condition, DinkumwareMutex* mutex, std::chrono::system_clock::time_point deadline) {
-    for (;;) {
-        const DWORD milliseconds = WaitMillisecondsUntil(deadline);
-        if (milliseconds == 0)
-            return false;
-        if (SleepConditionVariableCS(&condition->native.value, &mutex->native.value, milliseconds) != FALSE)
-            return true;
-        const DWORD error = GetLastError();
-        if (error != ERROR_TIMEOUT)
-            throw std::system_error(static_cast<int>(error), std::system_category(), "_Cnd_timedwait: condition wait failed");
-        if (std::chrono::system_clock::now() >= deadline)
-            return false;
-    }
-}
-#endif
 
 DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
     if (!handle)
@@ -219,6 +256,31 @@ int APS5_VABI _Mtx_trylock_nid_postfix(void** handle) {
     return threadSuccess;
 }
 
+int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    const auto deadline = XtimePoint(*target, "_Mtx_timedlock");
+    auto* mutex = ResolveMutex(handle, "_Mtx_timedlock");
+    const auto self = std::this_thread::get_id();
+    if (mutex->owner.load(std::memory_order_acquire) == self) {
+        if ((mutex->type & mutexRecursive) == 0)
+            return threadBusy;
+        if (mutex->count == std::numeric_limits<int>::max())
+            throw std::overflow_error("_Mtx_timedlock: recursive lock count overflow");
+        ++mutex->count;
+        return threadSuccess;
+    }
+    try {
+        if (!mutex->native.try_lock_until(deadline))
+            return threadTimedout;
+    } catch (const std::system_error&) {
+        return threadTimedlockError;
+    }
+    mutex->owner.store(self, std::memory_order_release);
+    mutex->count = 1;
+    return threadSuccess;
+}
+
 int APS5_VABI _Mtx_unlock_nid_postfix(void** handle) {
     auto* mutex = ResolveMutex(handle, "_Mtx_unlock");
     if (!IsOwnedByCaller(mutex))
@@ -267,12 +329,7 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
     mutex->owner.store(std::thread::id{}, std::memory_order_release);
     std::unique_lock lock(mutex->native, std::adopt_lock);
     try {
-#ifdef _WIN32
-        if (SleepConditionVariableCS(&condition->native.value, &mutex->native.value, INFINITE) == FALSE)
-            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Cnd_wait: condition wait failed");
-#else
         condition->native.wait(lock);
-#endif
     } catch (const std::system_error&) {
         lock.release();
         mutex->owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -288,15 +345,7 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHandle, const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadline = XtimeDeadline(*target, "_Cnd_timedwait");
-    constexpr auto maxDuration = std::chrono::system_clock::duration::max();
-    constexpr auto minDuration = std::chrono::system_clock::duration::min();
-    constexpr auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
-    constexpr auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
-    constexpr auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
-    if (deadline.tv_sec > maxSeconds || (deadline.tv_sec == maxSeconds && deadline.tv_nsec > maxNanos) ||
-        deadline.tv_sec < minSeconds)
-        throw std::overflow_error("_Cnd_timedwait: xtime seconds overflow");
+    const auto deadlineTime = XtimePoint(*target, "_Cnd_timedwait");
     auto* condition = ResolveCondition(conditionHandle, "_Cnd_timedwait");
     auto* mutex = ResolveMutex(mutexHandle, "_Cnd_timedwait");
     if (!IsOwnedByCaller(mutex))
@@ -308,14 +357,7 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
     std::unique_lock lock(mutex->native, std::adopt_lock);
     bool timeout = false;
     try {
-        const auto deadlineTime = std::chrono::system_clock::time_point(
-            std::chrono::seconds(deadline.tv_sec) +
-            std::chrono::ceil<std::chrono::system_clock::duration>(std::chrono::nanoseconds(deadline.tv_nsec)));
-#ifdef _WIN32
-        timeout = !WaitUntil(condition, mutex, deadlineTime);
-#else
         timeout = (condition->native.wait_until(lock, deadlineTime) == std::cv_status::timeout);
-#endif
     } catch (const std::system_error&) {
         lock.release();
         mutex->owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -329,20 +371,12 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
 }
 
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle) {
-#ifdef _WIN32
-    WakeAllConditionVariable(&ResolveCondition(handle, "_Cnd_broadcast")->native.value);
-#else
     ResolveCondition(handle, "_Cnd_broadcast")->native.notify_all();
-#endif
     return threadSuccess;
 }
 
 int SignalCondition_nid_no_patch(void** handle) {
-#ifdef _WIN32
-    WakeConditionVariable(&ResolveCondition(handle, "_Cnd_signal")->native.value);
-#else
     ResolveCondition(handle, "_Cnd_signal")->native.notify_one();
-#endif
     return threadSuccess;
 }
 
@@ -488,11 +522,6 @@ int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
     return detach(thread) == 0 ? threadSuccess : threadError;
 }
 
-int APS5_VABI _Thrd_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
     ThrowCppError_nid_no_patch(code);
 }
@@ -534,6 +563,10 @@ int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
 }
 
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
+    return ThreadForwards(__func__).self();
+}
+
+void* APS5_VABI _Thrd_id_nid_postfix(void) {
     return ThreadForwards(__func__).self();
 }
 

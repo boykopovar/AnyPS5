@@ -64,6 +64,52 @@ void ArgumentsAreCheckedBeforeTheDescriptor() {
     Require(Fails(sendto_nid_postfix(-1, "x", 1, 0, address.data(), address.size()), ErrorBadDescriptor), "sendto(-1) with a valid address must fail with EBADF (9)");
 }
 
+void LongAddressesAndOtherFamiliesFail() {
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    const int stream6 = socket_nid_postfix(28, Stream, 0);
+    const int datagram6 = socket_nid_postfix(28, Datagram, 0);
+    Require(datagram >= 0 && stream6 >= 0 && datagram6 >= 0, "socket failed");
+    std::array<std::uint8_t, 255> address{16, 2};
+    address[4] = 127;
+    address[7] = 1;
+    for (const std::uint32_t length : {17u, 28u, 255u}) {
+        Require(Fails(bind_nid_postfix(datagram, address.data(), length), ErrorInvalid), "bind with an AF_INET address longer than sockaddr_in must fail with EINVAL (22)");
+        Require(Fails(connect_nid_postfix(datagram, address.data(), length), ErrorInvalid), "connect with an AF_INET address longer than sockaddr_in must fail with EINVAL (22)");
+        Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, address.data(), length), ErrorInvalid), "sendto with an AF_INET address longer than sockaddr_in must fail with EINVAL (22)");
+    }
+    std::array<std::uint8_t, 64> v6{28, 28};
+    v6[23] = 1;
+    Require(Fails(bind_nid_postfix(stream6, v6.data(), 29), ErrorInvalid), "bind with an AF_INET6 address longer than sockaddr_in6 must fail with EINVAL (22)");
+    Require(Fails(connect_nid_postfix(stream6, v6.data(), 64), ErrorInvalid), "connect with an AF_INET6 address longer than sockaddr_in6 must fail with EINVAL (22)");
+    for (const std::uint8_t family : {std::uint8_t{28}, std::uint8_t{1}, std::uint8_t{0}}) {
+        address[1] = family;
+        Require(Fails(bind_nid_postfix(datagram, address.data(), 16), ErrorAddressFamilyNotSupported), "bind of another family on an AF_INET socket must fail with EAFNOSUPPORT (47)");
+    }
+    address[1] = 28;
+    Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, address.data(), 28), ErrorInvalid), "sendto checks the length before the family");
+    Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, address.data(), 16), ErrorAddressFamilyNotSupported), "sendto of another family fails with EAFNOSUPPORT (47)");
+    address[1] = 2;
+    Require(Fails(bind_nid_postfix(datagram6, address.data(), 16), ErrorInvalid), "an AF_INET6 socket checks the length before the family");
+    Require(Fails(connect_nid_postfix(datagram6, address.data(), 28), ErrorAddressFamilyNotSupported), "an AF_INET address of the AF_INET6 length fails with EAFNOSUPPORT (47)");
+    Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream6) == 0 && close_nid_postfix(datagram6) == 0, "close failed");
+}
+
+void ConnectedStreamSendtoIgnoresTheAddress() {
+    const int listener = socket_nid_postfix(2, Stream, 0);
+    const int client = socket_nid_postfix(2, Stream, 0);
+    Require(listener >= 0 && client >= 0, "socket failed");
+    auto address = Loopback();
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 1) == 0, "listen failed");
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0, "getsockname failed");
+    Require(connect_nid_postfix(client, address.data(), address.size()) == 0, "connect failed");
+    std::array<std::uint8_t, 17> padded{};
+    std::memcpy(padded.data(), address.data(), address.size());
+    Require(sendto_nid_postfix(client, "x", 1, 0, padded.data(), padded.size()) == 1, "tcp_usr_send ignores the address of a connected stream socket, so sendto must send");
+    Require(Fails(sendto_nid_postfix(client, "x", 1, 0, padded.data(), 1), ErrorInvalid), "getsockaddr still checks the length of a connected stream socket's address");
+    Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close failed");
+}
+
 void MismatchedAndUnknownFamiliesFail() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
@@ -71,12 +117,7 @@ void MismatchedAndUnknownFamiliesFail() {
     const int datagram6 = socket_nid_postfix(28, Datagram, 0);
     Require(stream >= 0 && datagram >= 0 && stream6 >= 0 && datagram6 >= 0, "socket failed");
     const auto address = Loopback();
-    std::array<std::uint8_t, 28> v6{28, 28};
-    v6[23] = 1;
-    Require(Fails(bind_nid_postfix(stream, v6.data(), v6.size()), ErrorInvalid), "bind with an address longer than sockaddr_in must fail with EINVAL (22)");
     Require(Fails(bind_nid_postfix(stream6, address.data(), address.size()), ErrorInvalid), "bind with an AF_INET address on an AF_INET6 socket must fail with EINVAL (22)");
-    Require(Fails(connect_nid_postfix(stream, v6.data(), v6.size()), ErrorInvalid), "connect with an address longer than sockaddr_in must fail with EINVAL (22)");
-    Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, v6.data(), v6.size()), ErrorAddressFamilyNotSupported), "sendto with an AF_INET6 address on an AF_INET socket must fail with EAFNOSUPPORT (47)");
     std::array<std::uint8_t, 16> unknownFamily{16, 99};
     Require(Fails(connect_nid_postfix(stream, unknownFamily.data(), unknownFamily.size()), ErrorAddressFamilyNotSupported), "connect with an unknown family must fail with EAFNOSUPPORT (47)");
     Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, unknownFamily.data(), unknownFamily.size()), ErrorAddressFamilyNotSupported), "sendto with an unknown family must fail with EAFNOSUPPORT (47)");
@@ -148,6 +189,8 @@ void LongMappedAddressesBindOnlyDualStackDatagramSockets() {
     Require(setsockopt_nid_postfix(datagram, 41, 27, &off, sizeof(off)) == 0, "clearing IPV6_V6ONLY failed");
     Require(bind_nid_postfix(datagram, mapped.data(), mapped.size()) == 0, "udp6_bind passes a long IPv4-mapped address to in_pcbbind without IPV6_V6ONLY, so bind must succeed");
     Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, mapped.data(), mapped.size()), ErrorInvalid), "udp6_send checks the length before the IPv4-mapped case, so sendto must fail with EINVAL (22)");
+    mapped[3] = 9;
+    Require(connect_nid_postfix(datagram, mapped.data(), mapped.size()) == 0, "udp6_connect passes a long IPv4-mapped address to in_pcbconnect without IPV6_V6ONLY, so connect must succeed");
     Require(close_nid_postfix(datagram) == 0, "close failed");
 }
 
@@ -156,6 +199,8 @@ void LongMappedAddressesBindOnlyDualStackDatagramSockets() {
 int main() {
     ShortAddressesAreInvalid();
     ArgumentsAreCheckedBeforeTheDescriptor();
+    LongAddressesAndOtherFamiliesFail();
+    ConnectedStreamSendtoIgnoresTheAddress();
     MismatchedAndUnknownFamiliesFail();
     FullAddressesStillWork();
     LongAddressesAreInvalid(2, Stream);

@@ -172,7 +172,7 @@ def build_pe_with_imports(dlls, names=()):
 def write_source(root, library, text):
     directory = Path(root) / library
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "Export.cpp").write_text(text)
+    (directory / "Export.cpp").write_text(text, encoding="utf-8")
 
 
 def write_registry(path, entries, encoding="utf-8"):
@@ -1308,6 +1308,27 @@ class ImportAuditTests(unittest.TestCase):
         self.assertNotIn(("libSceTwin.native.prx", twin), stubs)
         self.assertNotEqual(nid_names.compute_nid("printf"), nid_names.compute_nid("printf_nid_postfix"))
 
+    def test_source_stubs_decodes_source_with_utf8_bom(self):
+        source = self.work.source
+        write_source(source, "libSceBom", "\ufeff" + STUB_SOURCE.format(name="sceBomPending"))
+        stubs = import_audit.source_stubs(source)
+        self.assertEqual(stubs.get(("libSceBom.prx", nid_names.compute_nid("sceBomPending"))), "sceBomPending")
+
+    def test_source_stubs_passes_decoded_text_without_bom_to_alias_scanner(self):
+        source = self.work.source
+        write_source(source, "libSceBomAlias", "\ufeff" + 'APS5_EXPORT("AAAAAAAAAAA", sceBomAlias);\n' + STUB_SOURCE.format(name="sceBomAlias"))
+        seen = []
+        real = nid_names.source_aliases
+
+        def spy(text):
+            seen.append(text)
+            return real(text)
+
+        with patch.object(nid_names, "source_aliases", spy):
+            import_audit.source_stubs(source)
+        self.assertTrue(seen)
+        self.assertTrue(all(text.startswith("APS5_EXPORT(") for text in seen))
+
     def test_disambiguated_stubs_use_the_nid_of_their_symbol(self):
         source = self.work.source
         write_source(source, "libkernel", STUB_SOURCE.format(name="fstat_nid_disambig1_nid_postfix")
@@ -2273,6 +2294,33 @@ class StrictProviderTests(unittest.TestCase):
         registry = work.root / "registry.json"
         write_registry(registry, [("AAAAAAAAAAA", "libSceMissing.prx")])
         self.assertEqual(work.run(registry, "--strict-providers")[0], 1)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(import_audit.sys, "stdout", out), patch.object(import_audit.sys, "stderr", err):
+            try:
+                import_audit.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

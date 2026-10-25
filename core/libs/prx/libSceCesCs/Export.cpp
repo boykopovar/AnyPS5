@@ -931,6 +931,11 @@ bool isScalar(uint32_t code) {
     return code <= 0x10FFFF && (code < 0xD800 || code > 0xDFFF);
 }
 
+int scalarError(uint32_t code) {
+    if (code > 0x10FFFF) return CES_ERROR_INVALID_ENCODE;
+    return code >= 0xD800 && code <= 0xDFFF ? CES_ERROR_ILLEGAL_CODE : 0;
+}
+
 template<bool BigEndian>
 int decodeUtf16(const uint16_t* utf16, uint32_t utf16max, uint32_t& length, uint32_t& code) {
     code = loadUnit<uint16_t, BigEndian>(utf16);
@@ -1018,8 +1023,14 @@ int encodeProfiled(const void* profile, uint32_t code, uint8_t* target, uint32_t
 int scalarToProfiled(bool (*matches)(const void*), uint32_t code, const void* profile, uint8_t* target, uint32_t targetMax, uint32_t* targetSize) {
     if (!matches(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    if (!isScalar(code)) return CES_ERROR_INVALID_ENCODE;
-    return encodeProfiled(profile, code, target, targetMax, targetSize);
+    int result = scalarError(code);
+    uint8_t encoded[4];
+    uint32_t size = 0;
+    if (result == 0) result = encodeMbcs(profile, code, encoded, size);
+    if (result == 0 && targetMax < size) result = CES_ERROR_DST_BUFFER_END;
+    if (result == 0) std::memcpy(target, encoded, size);
+    if (targetSize) *targetSize = result == 0 || result == CES_ERROR_DST_BUFFER_END ? size : 0;
+    return result;
 }
 
 template<bool BigEndian>
@@ -1653,6 +1664,38 @@ int APS5_VABI sceCesMbcToUtf32be(const void* profile, const uint8_t* mbcBuffer, 
 
 int APS5_VABI sceCesMbcToUtf32le(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint32_t* utf32) {
     return profiledToUtf32<false>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf32);
+}
+
+int APS5_VABI sceCesUcs2ToMbc(uint16_t ucs2, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return scalarToProfiled(isMbcs, ucs2, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf8ToMbc(const uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf8Buffer, utf8Max, utf8Len, profile, mbcBuffer, mbcMax, mbcLen, decodeScalarUtf8);
+}
+
+int APS5_VABI sceCesUtf16ToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesUtf16beToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<true>);
+}
+
+int APS5_VABI sceCesUtf16leToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<false>);
+}
+
+int APS5_VABI sceCesUtf32ToMbc(uint32_t utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return scalarToProfiled(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf32beToMbc(const uint32_t* utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return utf32ToProfiled<true>(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf32leToMbc(const uint32_t* utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return utf32ToProfiled<false>(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
 }
 
 int APS5_VABI sceCesSbcToUcs2(const uint8_t* profile, uint8_t sbc, uint16_t* ucs2) {

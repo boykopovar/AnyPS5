@@ -1,6 +1,7 @@
 # libSceFreeType technical debt
 
 ### Unknown function info
+- [FT_Reference_Face](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signature, reference-counter limits and finalizer behavior are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Counter overflow and reentrant finalization have not been measured on the console.
 
 - [FT_Get_Sfnt_Name_Count, FT_Get_Sfnt_Name](../../../core/libs/prx/libSceFreeType/src/Names.cpp) (libSceFreeType) - console signatures, record layout and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftsnames.c) and assumes the public LP64 `FT_SfntName` layout (24 bytes, string pointer at 8, byte length at 16). Strings retain their original encoding, borrow native face storage and remain valid only while the face is alive
 
@@ -17,6 +18,8 @@
 - [FT_Bitmap_New, FT_Bitmap_Copy, FT_Bitmap_Convert, FT_Bitmap_Done](../../../core/libs/prx/libSceFreeType/src/Bitmap.cpp) (libSceFreeType) - console behaviour and error codes are unmeasured; these follow bundled FreeType 2.13.3. Copy and Convert throw when source and target share a non-null buffer; Convert also throws when they are the same object. Other overlapping storage remains forbidden by the native API contract
 
 - [FT_Request_Size](../../../core/libs/prx/libSceFreeType/src/SizeRequest.cpp) (libSceFreeType) - console signature, request layout and errors are unverified; the guest request follows the LP64 public headers of the bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/include/freetype/freetype.h). Host overflow behavior remains that of the bundled build. On Windows, native `FT_Long` is 32 bits; valid requests whose width or height exceeds that range throw before changing the size.
+
+- [FT_Select_Size](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signatures and errors are unverified; the LP64 guest adapter follows the bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Bitmap-strike selection and size metrics are checked against native FreeType with generated BDF fonts; other font drivers have not been exercised through this entry point.
 
 - [FT_New_Memory_Face, FT_Done_Face and FT_Done_FreeType](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signatures, errors and generic-finalizer ordering are unverified; they follow the bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/include/freetype/freetype.h) with LP64 guest arguments. Caller-owned font bytes must remain valid until the face is freed.
 

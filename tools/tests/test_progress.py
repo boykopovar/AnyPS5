@@ -622,5 +622,50 @@ class ProgressTests(unittest.TestCase):
                     self.assertIn("is not a source tree", stderr.getvalue())
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_compare_accepts_snapshots_with_utf8_bom(self):
+        def snapshot(names):
+            return {"libraries": progress.summarize([
+                        {"name": "libScePad", "label": "Pad", "done": len(names), "todo": 0,
+                         "done_names": names, "todo_names": [], "inert_names": []}]),
+                    "shaders": {"done": 0, "total": 0, "percent": 0, "groups": [], "extra": []}}
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.json"
+            head = Path(directory) / "head.json"
+            base.write_text("\ufeff" + json.dumps(snapshot([])), encoding="utf-8")
+            head.write_text("\ufeff" + json.dumps(snapshot(["Ready"])), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                code = progress.main(["--compare", str(base), str(head)])
+            self.assertEqual(code, 0)
+            self.assertIn("implemented", stdout.getvalue())
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(progress.sys, "stdout", out), patch.object(progress.sys, "stderr", err):
+            try:
+                progress.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
+
 if __name__ == "__main__":
     unittest.main()

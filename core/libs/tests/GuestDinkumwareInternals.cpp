@@ -63,6 +63,30 @@ void TestStoll() {
     Require(_Stoll_nid_postfix("9223372036854775808", &end, 10) == 9223372036854775807ll && *__error_nid_postfix() == RangeError, "_Stoll saturates");
 }
 
+void TestArithmetic() {
+    Require(_Divide_nid_postfix(3.0, 2.0) == 1.5, "_Divide quotient");
+    Require(std::isinf(_Divide_nid_postfix(1.0, 0.0)) && !std::signbit(_Divide_nid_postfix(1.0, 0.0)), "_Divide positive infinity");
+    Require(std::isinf(_Divide_nid_postfix(-1.0, 0.0)) && std::signbit(_Divide_nid_postfix(-1.0, 0.0)), "_Divide negative infinity");
+    Require(std::isnan(_Divide_nid_postfix(0.0, 0.0)), "_Divide invalid");
+    Require(_Divide_nid_postfix(-0.0, 2.0) == 0.0 && std::signbit(_Divide_nid_postfix(-0.0, 2.0)), "_Divide signed zero");
+    Require(_Divide_nid_postfix(1.0, INFINITY) == 0.0 && !std::signbit(_Divide_nid_postfix(1.0, INFINITY)), "_Divide finite by infinity");
+    Require(std::isnan(_Divide_nid_postfix(INFINITY, INFINITY)), "_Divide infinity by infinity");
+    Require(_Recip_nid_postfix(4.0) == 0.25, "_Recip quotient");
+    Require(_Recip_nid_postfix(-4.0) == -0.25, "_Recip negative quotient");
+    Require(std::isinf(_Recip_nid_postfix(-0.0)) && std::signbit(_Recip_nid_postfix(-0.0)), "_Recip signed infinity");
+    Require(_Recip_nid_postfix(INFINITY) == 0.0 && !std::signbit(_Recip_nid_postfix(INFINITY)), "_Recip infinity");
+    Require(std::isnan(_Recip_nid_postfix(NAN)), "_Recip NaN");
+    Require(_FDivide_nid_postfix(3.0f, 2.0f) == 1.5f, "_FDivide quotient");
+    Require(std::isinf(_FDivide_nid_postfix(-1.0f, 0.0f)) && std::signbit(_FDivide_nid_postfix(-1.0f, 0.0f)), "_FDivide negative infinity");
+    Require(std::isnan(_FDivide_nid_postfix(0.0f, 0.0f)), "_FDivide invalid");
+    Require(_FDivide_nid_postfix(-0.0f, 2.0f) == 0.0f && std::signbit(_FDivide_nid_postfix(-0.0f, 2.0f)), "_FDivide signed zero");
+    Require(_FRecip_nid_postfix(4.0f) == 0.25f, "_FRecip quotient");
+    Require(_FRecip_nid_postfix(-4.0f) == -0.25f, "_FRecip negative quotient");
+    Require(std::isinf(_FRecip_nid_postfix(-0.0f)) && std::signbit(_FRecip_nid_postfix(-0.0f)), "_FRecip signed infinity");
+    Require(_FRecip_nid_postfix(INFINITY) == 0.0f && !std::signbit(_FRecip_nid_postfix(INFINITY)), "_FRecip infinity");
+    Require(std::isnan(_FRecip_nid_postfix(NAN)), "_FRecip NaN");
+}
+
 void TestFloatErrors() {
     char* end = nullptr;
     int error = 99;
@@ -184,6 +208,7 @@ int main() {
     TestStoll();
     TestFloatErrors();
     TestIntegerErrors();
+    TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();
 }

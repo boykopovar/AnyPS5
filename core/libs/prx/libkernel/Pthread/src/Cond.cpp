@@ -153,7 +153,9 @@ int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
 }
 
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
+    constexpr KernelClockid realtime = 0, virtualTime = 1, profiling = 2, monotonic = 4;
     if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    if (clockId != realtime && clockId != virtualTime && clockId != profiling && clockId != monotonic) return SCE_KERNEL_ERROR_EINVAL;
     (*attr)->_clockid = static_cast<int>(clockId);
     return 0;
 }

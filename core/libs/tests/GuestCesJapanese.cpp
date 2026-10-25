@@ -15,6 +15,7 @@ static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<con
 constexpr int invalidParameter = static_cast<int>(0x805C0001);
 constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
+constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
 constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
 constexpr std::uint32_t jisX0208Cells = 6878;
@@ -65,7 +66,7 @@ static bool EncodeLeavesOutputs(int expected, const void* profile, std::uint16_t
     std::uint8_t mbcs[4] = {0xEE, 0xEE, 0xEE, 0xEE};
     std::uint32_t size = 77;
     const int result = sjis ? sceCesUcs2ToSJis(ucs2, profile, mbcs, sizeof(mbcs), &size) : sceCesUcs2ToEucJp(ucs2, profile, mbcs, sizeof(mbcs), &size);
-    return result == expected && size == 77 && mbcs[0] == 0xEE && mbcs[1] == 0xEE && mbcs[2] == 0xEE;
+    return result == expected && size == (expected == static_cast<int>(0x805C0001) ? 77u : 0u) && mbcs[0] == 0xEE && mbcs[1] == 0xEE && mbcs[2] == 0xEE;
 }
 
 static bool DecodeFails(int expected, const void* profile, const char* bytes, std::uint32_t size, bool sjis) {
@@ -166,7 +167,7 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
         Require(DecodeFails(srcBufferEnd, profile, "\xA4\xA2", 1, false));
         std::uint8_t mbcs[4] = {0xEE, 0xEE, 0xEE, 0xEE};
         std::uint32_t size = 77;
-        Require(sceCesUcs2ToEucJp(0x3042, profile, mbcs, 1, &size) == dstBufferEnd && size == 77 && mbcs[0] == 0xEE);
+        Require(sceCesUcs2ToEucJp(0x3042, profile, mbcs, 1, &size) == dstBufferEnd && size == 2 && mbcs[0] == 0xEE);
     }
     Require(EucToUcs2(cp51932, "\xA1\xC0", 2, ucs2) == 0 && ucs2 == 0xFF3C && EucEncodes(cp51932, 0xFF3C, "\xA1\xC0"));
     Require(EucToUcs2(cp51932, "\xA1\xC1", 2, ucs2) == 0 && ucs2 == 0xFF5E && EucToUcs2(cp51932, "\xAD\xA1", 2, ucs2) == 0 && ucs2 == 0x2460);
@@ -304,7 +305,7 @@ int main() {
     Require(sceCesUcs2ToSJis(0x3042, sjis, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\x82\xA0", 2) == 0);
     Require(sceCesUcs2ToSJis(0xFF71, sjis, mbcs, sizeof(mbcs), &produced) == 0 && produced == 1 && mbcs[0] == 0xB1);
     Require(sceCesUcs2ToSJis(0x3042, sjis, mbcs, 1, &produced) == dstBufferEnd);
-    Require(sceCesUcs2ToSJis(0xD800, sjis, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUcs2ToSJis(0xD800, sjis, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUcs2ToSJis(0x4E02, sjis, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToSJis(0x3042, euc, mbcs, sizeof(mbcs), &produced) == invalidParameter);
     Require(sceCesUcs2ToSJis(0x3042, sceCesRefersUcsProfileCp1252(), mbcs, sizeof(mbcs), &produced) == invalidParameter);

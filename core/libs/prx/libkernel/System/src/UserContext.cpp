@@ -70,47 +70,58 @@ std::uint32_t HostMxcsrMask() {
 
 extern "C" [[noreturn]] void APS5_VABI Aps5ContextRestore_nid_no_patch(const RegisterFrame* frame);
 
+#define APS5_CONTEXT_CAPTURE \
+    "    pushfq\n" \
+    "    push %rbp\n" \
+    "    mov %rsp, %rbp\n" \
+    "    sub $0x2a0, %rsp\n" \
+    "    and $-16, %rsp\n" \
+    "    mov %rax, 0x00(%rsp)\n" \
+    "    mov %rbx, 0x08(%rsp)\n" \
+    "    mov %rcx, 0x10(%rsp)\n" \
+    "    mov %rdx, 0x18(%rsp)\n" \
+    "    mov %rsi, 0x20(%rsp)\n" \
+    "    mov %rdi, 0x28(%rsp)\n" \
+    "    mov 0(%rbp), %rax\n" \
+    "    mov %rax, 0x30(%rsp)\n" \
+    "    lea 24(%rbp), %rax\n" \
+    "    mov %rax, 0x38(%rsp)\n" \
+    "    mov %r8, 0x40(%rsp)\n" \
+    "    mov %r9, 0x48(%rsp)\n" \
+    "    mov %r10, 0x50(%rsp)\n" \
+    "    mov %r11, 0x58(%rsp)\n" \
+    "    mov %r12, 0x60(%rsp)\n" \
+    "    mov %r13, 0x68(%rsp)\n" \
+    "    mov %r14, 0x70(%rsp)\n" \
+    "    mov %r15, 0x78(%rsp)\n" \
+    "    mov 16(%rbp), %rax\n" \
+    "    mov %rax, 0x80(%rsp)\n" \
+    "    mov 8(%rbp), %rax\n" \
+    "    mov %rax, 0x88(%rsp)\n" \
+    "    xor %eax, %eax\n" \
+    "    mov %cs, %ax\n" \
+    "    mov %rax, 0x90(%rsp)\n" \
+    "    mov %ss, %ax\n" \
+    "    mov %rax, 0x98(%rsp)\n" \
+    "    fxsave64 0xa0(%rsp)\n"
+
+#define APS5_CONTEXT_RETURN \
+    "    mov %rbp, %rsp\n" \
+    "    pop %rbp\n" \
+    "    lea 8(%rsp), %rsp\n" \
+    "    ret\n"
+
 asm(".text\n"
     APS5_ASM_FUNCTION("getcontext_nid_postfix")
-    "    pushfq\n"
-    "    push %rbp\n"
-    "    mov %rsp, %rbp\n"
-    "    sub $0x2a0, %rsp\n"
-    "    and $-16, %rsp\n"
-    "    mov %rax, 0x00(%rsp)\n"
-    "    mov %rbx, 0x08(%rsp)\n"
-    "    mov %rcx, 0x10(%rsp)\n"
-    "    mov %rdx, 0x18(%rsp)\n"
-    "    mov %rsi, 0x20(%rsp)\n"
-    "    mov %rdi, 0x28(%rsp)\n"
-    "    mov 0(%rbp), %rax\n"
-    "    mov %rax, 0x30(%rsp)\n"
-    "    lea 24(%rbp), %rax\n"
-    "    mov %rax, 0x38(%rsp)\n"
-    "    mov %r8, 0x40(%rsp)\n"
-    "    mov %r9, 0x48(%rsp)\n"
-    "    mov %r10, 0x50(%rsp)\n"
-    "    mov %r11, 0x58(%rsp)\n"
-    "    mov %r12, 0x60(%rsp)\n"
-    "    mov %r13, 0x68(%rsp)\n"
-    "    mov %r14, 0x70(%rsp)\n"
-    "    mov %r15, 0x78(%rsp)\n"
-    "    mov 16(%rbp), %rax\n"
-    "    mov %rax, 0x80(%rsp)\n"
-    "    mov 8(%rbp), %rax\n"
-    "    mov %rax, 0x88(%rsp)\n"
-    "    xor %eax, %eax\n"
-    "    mov %cs, %ax\n"
-    "    mov %rax, 0x90(%rsp)\n"
-    "    mov %ss, %ax\n"
-    "    mov %rax, 0x98(%rsp)\n"
-    "    fxsave64 0xa0(%rsp)\n"
+    APS5_CONTEXT_CAPTURE
     "    mov %rsp, %rsi\n"
     "    call " APS5_ASM_SYMBOL("Aps5GetcontextFinish_nid_no_patch") "\n"
-    "    mov %rbp, %rsp\n"
-    "    pop %rbp\n"
-    "    lea 8(%rsp), %rsp\n"
-    "    ret\n"
+    APS5_CONTEXT_RETURN
+    APS5_ASM_FUNCTION("swapcontext_nid_postfix")
+    APS5_CONTEXT_CAPTURE
+    "    mov %rsp, %rdx\n"
+    "    call " APS5_ASM_SYMBOL("Aps5SwapcontextFinish_nid_no_patch") "\n"
+    APS5_CONTEXT_RETURN
     APS5_ASM_FUNCTION("Aps5ContextRestore_nid_no_patch")
     "    mov %rdi, %r12\n"
     "    xor %eax, %eax\n"
@@ -215,6 +226,12 @@ int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
     sigprocmask_nid_postfix(GuestSigSetmask, context->sigmask, nullptr);
 
     Aps5ContextRestore_nid_no_patch(&frame);
+}
+
+int APS5_VABI Aps5SwapcontextFinish_nid_no_patch(UserUcontext* saved, const UserUcontext* next, const RegisterFrame* frame) {
+    if (saved == nullptr || next == nullptr) return Fail(GuestEinval);
+    Aps5GetcontextFinish_nid_no_patch(saved, frame);
+    return setcontext_nid_postfix(next);
 }
 
 }
