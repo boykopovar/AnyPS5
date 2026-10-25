@@ -3,7 +3,6 @@
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <initializer_list>
-#include <stdexcept>
 
 static constexpr int SCE_OK = 0;
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
@@ -26,6 +25,11 @@ int main() {
     Require(pthread_condattr_getpshared_nid_postfix(&unset, &sharing) == GuestEinval && sharing == -1);
     Require(scePthreadCondattrSetpshared(&unset, 0) == SceEinval);
     Require(scePthreadCondattrGetpshared(nullptr, &sharing) == SceEinval && sharing == -1);
+    Require(scePthreadCondattrGetpshared(&unset, &sharing) == SceEinval && sharing == -1);
+    Require(pthread_condattr_getpshared_nid_postfix(nullptr, nullptr) == GuestEinval);
+    Require(pthread_condattr_getpshared_nid_postfix(&unset, nullptr) == GuestEinval);
+    Require(scePthreadCondattrGetpshared(nullptr, nullptr) == SceEinval);
+    Require(scePthreadCondattrGetpshared(&unset, nullptr) == SceEinval);
 
     PthreadCondattr attr = nullptr;
     Require(scePthreadCondattrInit(&attr) == SCE_OK);
@@ -45,17 +49,13 @@ int main() {
     Require(pthread_condattr_setpshared_nid_postfix(&attr, 0) == 0);
     sharing = -1;
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
-    bool threw = false;
-    try {
-        pthread_condattr_getpshared_nid_postfix(&attr, nullptr);
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_condattr_getpshared_nid_postfix(&attr, nullptr) == GuestEinval);
+    Require(scePthreadCondattrGetpshared(&attr, nullptr) == SceEinval);
     Require(scePthreadCondattrDestroy(&attr) == SCE_OK && attr == nullptr);
     Require(scePthreadCondattrDestroy(&attr) == SceEinval);
     sharing = -1;
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == GuestEinval && sharing == -1);
+    Require(pthread_condattr_getpshared_nid_postfix(&attr, nullptr) == GuestEinval);
+    Require(scePthreadCondattrGetpshared(&attr, nullptr) == SceEinval);
     Require(pthread_condattr_setpshared_nid_postfix(&attr, 0) == GuestEinval);
 }

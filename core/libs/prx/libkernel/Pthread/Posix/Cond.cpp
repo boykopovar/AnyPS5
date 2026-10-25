@@ -75,8 +75,7 @@ int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int
 }
 
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if (!pshared) throw std::runtime_error("pthread_condattr_getpshared: null pshared");
+    if (!attr || !*attr || !pshared) return PosixThread::GUEST_EINVAL;
     *pshared = (*attr)->_pshared;
     return 0;
 }
