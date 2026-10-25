@@ -671,7 +671,7 @@ int main() {
     constexpr int invalidId = static_cast<int>(0x80431100);
     const auto flushCaches = [](int id, int expected) {
         Require(sceHttpAuthCacheFlush(id) == expected);
-        Require(sceHttpCookieFlush(id) == expected);
+        Require(sceHttpCookieFlush(id) == (expected == beforeInit ? invalidId : expected));
     };
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);

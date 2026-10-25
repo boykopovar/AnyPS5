@@ -149,7 +149,6 @@ int APS5_VABI sceHttpAuthCacheFlush(int httpCtxId) {
 
 int APS5_VABI sceHttpCookieFlush(int httpCtxId) {
     std::lock_guard lock(g_stateMutex);
-    if (g_contexts.empty()) return ERROR_BEFORE_INIT;
     if (!g_contexts.contains(httpCtxId)) return ERROR_INVALID_ID;
     ClearHttpCookieJar(httpCtxId);
     return 0;
