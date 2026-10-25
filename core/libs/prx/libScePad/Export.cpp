@@ -262,7 +262,7 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  const bool knownType = type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL || SystemRemote(userId, type);
  if (!unknownType && !knownType) return PAD_ERROR_INVALID_ARG;
  if (userId == PAD_USER_ID_INVALID) return PAD_ERROR_INVALID_USER_ID;
- if (unknownType) NotImplemented_nid_no_patch(__func__);
+ if (unknownType) return PAD_ERROR_INVALID_ARG;
  if (index != 0) return PAD_ERROR_INVALID_PORT_INDEX;
  if (type == PAD_PORT_TYPE_SPECIAL) {
   if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
