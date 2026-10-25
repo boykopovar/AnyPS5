@@ -1,14 +1,10 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <exception>
-
-extern "C" {
-void* APS5_VABI EVP_PKEY_new_nid_postfix(void);
-void APS5_VABI EVP_PKEY_free_nid_postfix(void* pkey);
-}
 
 namespace {
 void Require(bool condition, const char* message) {
