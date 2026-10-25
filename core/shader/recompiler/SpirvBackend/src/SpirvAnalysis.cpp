@@ -334,6 +334,17 @@ std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const
     return addresses;
 }
 
+bool IsSplittableBufferAtomic64(const IrValue* inst) {
+    switch (inst->Opcode()) {
+    case IrOpcode::BufferAtomicOr64:
+    case IrOpcode::BufferAtomicAnd64:
+    case IrOpcode::BufferAtomicXor64:
+        return !inst->HasUses();
+    default:
+        return false;
+    }
+}
+
 SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
     SpirvRequirements requirements {};
     for (const IrBlock* block : program.BlockOrder()) {
@@ -341,6 +352,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                if (!IsSplittableBufferAtomic64(inst)) requirements.bufferInt64AtomicsExact = true;
             }
             if (IsImageAtomic64Opcode(inst->Opcode())) {
                 requirements.imageInt64Atomics = true;
