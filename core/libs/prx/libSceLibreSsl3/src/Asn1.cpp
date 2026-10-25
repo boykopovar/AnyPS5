@@ -1,16 +1,11 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslAsn1String {
-    int length;
-    int type;
-    unsigned char* data;
-    std::int64_t flags;
-};
 
 static_assert(sizeof(LibreSslAsn1String) == 24);
 static_assert(offsetof(LibreSslAsn1String, type) == 4);
@@ -24,8 +19,6 @@ constexpr std::int64_t Asn1StringFlagNdef = 0x010;
 }
 
 extern "C" {
-void APS5_VABI free_nid_postfix(void* pointer);
-
 const unsigned char* APS5_VABI ASN1_STRING_get0_data_nid_postfix(const LibreSslAsn1String* string) {
     if (!string) throw std::invalid_argument(std::string(__func__) + ": null string");
     return string->data;
