@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
@@ -14,25 +15,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
-
-struct ImeVshContext;
-struct ImeVshParameter;
-struct ImePreeditMetaInfo;
-struct ImeDictionaryWord;
-
-struct ImeVshCaretGeometry {
-    std::int32_t x;
-    std::int32_t y;
-    std::uint32_t height;
-    std::uint32_t index;
-};
-
-struct ImeVshTextGeometry {
-    std::int32_t x;
-    std::int32_t y;
-    std::uint32_t width;
-    std::uint32_t height;
-};
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);

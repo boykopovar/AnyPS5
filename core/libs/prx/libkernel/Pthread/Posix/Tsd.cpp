@@ -1,15 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Common.hpp"
-
-extern "C" {
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-void* APS5_VABI scePthreadGetspecific(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-}
 
 extern "C" {
 

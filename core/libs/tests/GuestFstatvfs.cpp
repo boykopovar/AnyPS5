@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <array>
@@ -10,16 +14,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-extern "C" {
-int APS5_VABI fstatvfs_nid_postfix(int, void*);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -34,7 +28,7 @@ static void RequireFailure(int descriptor, int error) {
     output.fill(0x5A5A5A5A5A5A5A5Aull);
     const auto saved = output;
     *__error_nid_postfix() = 0;
-    Require(fstatvfs_nid_postfix(descriptor, output.data()) == -1);
+    Require(fstatvfs_nid_postfix(descriptor, reinterpret_cast<LibcStatvfs*>(output.data())) == -1);
     Require(*__error_nid_postfix() == error);
     Require(output == saved);
 }
@@ -43,7 +37,7 @@ static void RequireVolume(int descriptor, const std::filesystem::path& path) {
     std::array<std::uint64_t, 13> guarded;
     guarded.fill(0xA5A5A5A5A5A5A5A5ull);
     *__error_nid_postfix() = 12345;
-    Require(fstatvfs_nid_postfix(descriptor, guarded.data() + 1) == 0);
+    Require(fstatvfs_nid_postfix(descriptor, reinterpret_cast<LibcStatvfs*>(guarded.data() + 1)) == 0);
     Require(*__error_nid_postfix() == 12345);
     Require(guarded.front() == 0xA5A5A5A5A5A5A5A5ull && guarded.back() == guarded.front());
     const auto* fields = guarded.data() + 1;

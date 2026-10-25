@@ -1,3 +1,7 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -5,20 +9,8 @@
 #include <cstdlib>
 #include <thread>
 
-extern "C" {
-int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId);
-Pthread APS5_VABI pthread_self_nid_postfix(void);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
-int* APS5_VABI __error_nid_postfix();
-}
-
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceJemspace/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -6,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 
-extern "C" void APS5_VABI sceJemspaceGetStats(const void*, void*);
 
 namespace {
 

@@ -1,42 +1,10 @@
+#include "prx/libSceNpTus/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceNpTusCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
-int APS5_VABI sceNpTusDeleteNpTitleCtx(int titleCtxId);
-int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId);
-int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
-int APS5_VABI sceNpTusCreateRequest(int titleCtxId);
-int APS5_VABI sceNpTusDeleteRequest(int reqId);
-int APS5_VABI sceNpTusAbortRequest(int reqId);
-int APS5_VABI sceNpTusPollAsync(int reqId, int* result);
-int APS5_VABI sceNpTusGetMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusSetMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAccountId, std::int32_t slotId, std::int64_t inVariable, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* outVariable, std::uint64_t outVariableSize, void* option);
-int APS5_VABI sceNpTusWaitAsync(int reqId, int* result);
-int APS5_VABI sceNpTusGetMultiSlotVariableA(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableAsync(int reqId, const void* targetNpId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableAVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableAVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableForCrossSaveAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableForCrossSave(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableForCrossSaveVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusGetMultiSlotVariableForCrossSaveVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
-int APS5_VABI sceNpTusSetMultiSlotVariableA(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
-int APS5_VABI sceNpTusSetMultiSlotVariableAsync(int reqId, const void* targetNpId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
-int APS5_VABI sceNpTusSetMultiSlotVariableVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariableA(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariableAsync(int reqId, const void* targetNpId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariable(int reqId, const void* targetNpId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariableVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTusDeleteMultiSlotVariableVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option);
-}
 
 static constexpr int SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550704);

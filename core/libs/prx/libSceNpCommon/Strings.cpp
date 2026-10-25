@@ -1,3 +1,4 @@
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstddef>

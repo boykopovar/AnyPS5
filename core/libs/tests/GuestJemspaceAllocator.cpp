@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceJemspace/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -12,25 +15,6 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-void* APS5_VABI sceJemspaceCreate(const char*, std::size_t, unsigned);
-int APS5_VABI sceJemspaceDestroy(void*);
-void* APS5_VABI sceJemspaceMalloc(void*, std::size_t);
-int APS5_VABI sceJemspaceFree(void*, void*);
-void* APS5_VABI sceJemspaceCalloc(void*, std::size_t, std::size_t);
-void* APS5_VABI sceJemspaceRealloc(void*, void*, std::size_t);
-void* APS5_VABI sceJemspaceMemalign(void*, std::size_t, std::size_t);
-void* APS5_VABI sceJemspaceReallocalign(void*, void*, std::size_t, std::size_t);
-int APS5_VABI sceJemspacePosixMemalign(void*, void**, std::size_t, std::size_t);
-std::size_t APS5_VABI sceJemspaceMallocUsableSize(const void*);
-void APS5_VABI sceJemspaceGetStats(const void*, void*);
-int APS5_VABI sceJemspacePurge(void*);
-void APS5_VABI sceJemspacePrintStats(void(APS5_VABI*)(void*, const char*), void*, const char*);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int APS5_VABI sceKernelMapNamedFlexibleMemory(void**, std::size_t, int, int, const char*);
-int APS5_VABI sceKernelMunmap(std::uint64_t, std::size_t);
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
-}
 
 namespace {
 

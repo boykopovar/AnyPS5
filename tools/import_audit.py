@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -15,7 +16,12 @@ import progress
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 MODULE_SUFFIX = "#"
-CLASSES = ("implemented", "stub", "absent", "module")
+CLASSES = ("implemented", "partial", "stub", "absent", "module")
+CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
+BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
+EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
+PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
+BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 
 
@@ -86,14 +92,18 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     dynamic = {}
     needed_offsets = []
+    terminated = False
     for position in range(0, dynamic_size, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
+            terminated = True
             break
         if tag == 1:
             needed_offsets.append(value)
         else:
             dynamic[tag] = value
+    if not terminated:
+        raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
@@ -210,12 +220,16 @@ def elf_imports(path, data):
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
+            terminated = False
             for position in range(0, size, 16):
                 tag, value = unpack("<qQ", data, offset + position, path, "dynamic entry")
                 if tag == 0:
+                    terminated = True
                     break
                 if tag == 1:
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
+            if not terminated:
+                raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     return symbols, needed
 
 
@@ -463,10 +477,128 @@ def nids_of(name, aliases):
     return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
 
 
+def top_level_statements(body):
+    braces, parens, start, parts = 0, 0, 1, []
+    for i, character in enumerate(body[1:-1], 1):
+        if character in "([":
+            parens += 1
+        elif character in ")]":
+            parens -= 1
+        elif character == "{":
+            braces += 1
+        elif character == "}":
+            braces -= 1
+            if not braces and not parens:
+                parts.append((start, body[start:i + 1]))
+                start = i + 1
+        elif character == ";" and not braces and not parens:
+            parts.append((start, body[start:i + 1]))
+            start = i + 1
+    parts.append((start, body[start:-1]))
+    return parts
+
+
+def branch_variants(body):
+    root = []
+    lists, groups = [root], []
+    position = 0
+    for directive in PREPROCESSOR_LINE.finditer(body):
+        lists[-1].append(body[position:directive.start()])
+        position = directive.end()
+        kind = directive.group(1)
+        if kind in ("if", "ifdef", "ifndef"):
+            group = {"alternatives": [[]], "default": False}
+            lists[-1].append(group)
+            groups.append(group)
+            lists.append(group["alternatives"][-1])
+            continue
+        if not groups:
+            raise AuditError(f"#{kind} without a matching #if")
+        group = groups[-1]
+        lists.pop()
+        if kind == "endif":
+            if not group["default"]:
+                group["alternatives"].append([])
+            groups.pop()
+            continue
+        group["default"] = group["default"] or kind == "else"
+        group["alternatives"].append([])
+        lists.append(group["alternatives"][-1])
+    if groups:
+        raise AuditError("#if without a matching #endif")
+    root.append(body[position:])
+
+    def expand(items):
+        variants = [""]
+        for item in items:
+            if isinstance(item, str):
+                variants = [variant + item for variant in variants]
+                continue
+            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
+            variants = [variant + choice for variant in variants for choice in choices]
+            if len(variants) > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+        return variants
+
+    return expand(root)
+
+
+def variant_calls(body):
+    return [unconditional_calls(variant) for variant in branch_variants(body)]
+
+
+def unconditional_calls(body):
+    names = set()
+    for offset, statement in top_level_statements(body):
+        block = statement.strip()
+        if block.startswith("{") and block.endswith("}"):
+            names |= unconditional_calls(block)
+        elif not (CONDITIONAL.match(block) or BRANCHING.search(statement)):
+            for call in progress.CALL.finditer(statement):
+                before = statement[:call.start()]
+                if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
+                    names.add(call.group(1))
+        if EXIT.search(statement):
+            break
+    return names
+
+
+def always_stub_calls(text):
+    helpers = {}
+    for match in progress.STUB_WRAPPER.finditer(text):
+        body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
+        helpers.setdefault(match.group(1), []).extend(variant_calls(body))
+    calls = {progress.STUB}
+    while True:
+        found = {name for name, bodies in helpers.items() if name not in calls and all(targets & calls for targets in bodies)}
+        if not found:
+            return calls
+        calls |= found
+
+
+def conditional_stubs(library):
+    conditional = set()
+    for source in library.rglob("*.cpp"):
+        if "tests" in source.relative_to(library).parts:
+            continue
+        text = progress.code(source.read_text(errors="ignore"))
+        calls = always_stub_calls(text)
+        for match in progress.DEFINITION.finditer(text):
+            body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
+            if not all(targets & calls for targets in variant_calls(body)):
+                conditional.add(match.group(1))
+    return conditional
+
+
 def source_stubs(source):
+    return source_stub_classes(source)[0]
+
+
+def source_stub_classes(source):
     if not Path(source).is_dir():
         raise AuditError(f"{source}: not a directory")
     stubs = {}
+    partial = set()
     shared = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
@@ -477,9 +609,12 @@ def source_stubs(source):
         if "shared_sources" in group:
             shared[library.name] = group["shared_sources"]
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
             for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
+                if name in conditional:
+                    partial.add((library.name + ".prx", nid))
     for library, owner in shared.items():
         chain = [library]
         while owner in shared:
@@ -490,7 +625,9 @@ def source_stubs(source):
         for (provider, nid), name in list(stubs.items()):
             if provider == owner + ".prx":
                 stubs[(library + ".prx", nid)] = name
-    return stubs
+                if (provider, nid) in partial:
+                    partial.add((library + ".prx", nid))
+    return stubs, partial
 
 
 def read_registry(path):
@@ -561,17 +698,17 @@ class ModuleNames(set):
         return isinstance(library, str) and module_stem(library, self.fold) in self.stems
 
 
-def classify(nid, library, providers, stubs, modules):
+def classify(nid, library, providers, stubs, modules, partial=frozenset()):
     if library and library in modules:
         return "module"
     if not providers:
         return "absent"
     if all((provider, nid) in stubs for provider in providers):
-        return "stub"
+        return "partial" if any((provider, nid) in partial for provider in providers) else "stub"
     return "implemented"
 
 
-def audit(imports, exports, stubs, libraries, modules, module_imports=None, module_exports=None, *, needed_libraries=(), windows_libraries=()):
+def audit(imports, exports, stubs, libraries, modules, module_imports=None, module_exports=None, *, needed_libraries=(), windows_libraries=(), partial=frozenset()):
     windows_names = {}
     for library in windows_libraries:
         windows_names.setdefault(library.casefold(), set()).add(library)
@@ -614,11 +751,11 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
             if not library:
                 providers = sorted(set(providers) | set((module_exports or {}).get(resolved_nid, [])))
-        kind = classify(resolved_nid, library, providers, stubs, modules)
+        kind = classify(resolved_nid, library, providers, stubs, modules, partial)
         record["class"] = kind
         record["providers"] = providers
-        record["library_mismatch"] = kind in ("implemented", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
-        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind == "stub" else None
+        record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
+        record["name"] = next((stubs[(provider, resolved_nid)] for provider in providers if (provider, resolved_nid) in stubs), None) if kind in ("partial", "stub") else None
     ordered = sorted(records.values(), key=lambda record: (record["class"], record["library"] or "", record.get("module") or "", record["nid"]))
     check_conservation(len(imports) + sum(len(symbols) for symbols, _ in (module_imports or {}).values()), ordered)
     missing = defaultdict(int)
@@ -739,7 +876,8 @@ def render(summary, records, missing, stops, missing_hosts=(), located=None):
     lines = [f"{summary['references']} references, {summary['unique_imports']} unique imports"]
     for kind in CLASSES:
         lines.append(f"  {kind:<12}{summary['unique_by_class'][kind]:>6} imports  {summary['references_by_class'][kind]:>6} references")
-    for title, kind in (("Absent: no built library exports these", "absent"), ("Stub: exported but throws when called", "stub")):
+    for title, kind in (("Absent: no built library exports these", "absent"), ("Stub: exported but throws when called", "stub"),
+                        ("Partial: exported, throws only for inputs whose behaviour is unknown", "partial")):
         selected = [record for record in records if record["class"] == kind]
         if selected:
             lines.append("")
@@ -798,6 +936,7 @@ def main(argv=None):
             inputs += [file for directory in args.libs for file in directory_files(directory, "*.prx")]
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
+            inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
             output = args.json.resolve()
             if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")
@@ -810,7 +949,8 @@ def main(argv=None):
         modules = set(module_imports)
         modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
         modules = ModuleNames(modules, fold=bool(windows))
-        records, missing = audit(imports, exports, source_stubs(args.source), libraries, modules, module_imports, module_exports, needed_libraries=needed, windows_libraries=windows)
+        stubs, partial = source_stub_classes(args.source)
+        records, missing = audit(imports, exports, stubs, libraries, modules, module_imports, module_exports, needed_libraries=needed, windows_libraries=windows, partial=partial)
         missing_hosts = audit_host_dependencies(host_dependencies, libraries, modules, windows)
         if args.names:
             attach_names(records, load_names(args.names))

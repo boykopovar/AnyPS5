@@ -7,6 +7,7 @@
 
 ### Functional
 
+- [std::filesystem::_Xfilesystem_error](../../../core/libs/prx/libSceLibcInternal/Filesystem.cpp) (libSceLibcInternal, NIDs `B0CeIhQty7Y` and `C6-7Mo5WbwU`) - both overloads still throw `NotImplemented`: on the console they throw `std::filesystem::filesystem_error`, whose guest type information and layout this library does not provide yet. The filesystem primitives beside them follow the PS5 13.60 module
 - [makecontext](../../../core/libs/prx/libSceLibcInternal/UserContext.cpp) (libSceLibcInternal) follows FreeBSD 11's `lib/libc/amd64/gen/makecontext.c`: at most six arguments, a stack of at least `MINSIGSTKSZ` (2048) bytes, and `exit(0)` when the function returns with no `uc_link`. The console's version is not verified
 - [makecontext](../../../core/libs/prx/libSceLibcInternal/UserContext.cpp) (libSceLibcInternal) on Windows pins its stack writable until a later `makecontext` stack overlaps it, since nothing tells the library when the guest frees the stack
 - [Thread exit destructors](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) run when a libkernel thread finishes; on the main or a host thread only `_sceLibcInternalThreadDtors` runs them, as `exit` does, else they are dropped

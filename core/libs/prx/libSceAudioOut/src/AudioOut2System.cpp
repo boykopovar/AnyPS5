@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -11,10 +12,6 @@ static constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_PARAM = static_cast<int>(0x802
 static std::atomic<bool> g_chatEnabled{false};
 
 extern "C" {
-
-int APS5_VABI sceAudioOut2Initialize(void) {
-    return 0;
-}
 
 int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
     (void)param;

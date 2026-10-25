@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
@@ -9,8 +11,6 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
-
-extern "C" char* APS5_VABI getenv_nid_postfix(const char* name);
 
 namespace {
 

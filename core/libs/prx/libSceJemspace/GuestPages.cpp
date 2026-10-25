@@ -1,14 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 
 extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI madvise_nid_postfix(void*, std::size_t, int);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int APS5_VABI sceKernelMunmap(std::uint64_t, std::size_t);
-int APS5_VABI sceKernelSetVirtualRangeName(const void*, std::uint64_t, const char*);
 
 void* JemspaceMapPages_nid_no_patch(void* address, std::size_t bytes, std::size_t alignment, bool committed) {
     const int protection = committed ? 3 : 0;

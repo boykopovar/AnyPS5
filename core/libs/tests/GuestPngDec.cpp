@@ -1,3 +1,4 @@
+#include "prx/libScePngDec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
@@ -7,14 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI scePngDecQueryMemorySize(const PngDecCreateParam*);
-std::int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI scePngDecDelete(void*);
-std::int32_t APS5_VABI scePngDecParseHeader(const PngDecParseParam*, PngDecImageInfo*);
-std::int32_t APS5_VABI scePngDecDecode(void*, const PngDecDecodeParam*, PngDecImageInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

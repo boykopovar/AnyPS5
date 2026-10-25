@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -6,14 +7,65 @@
 #include <cstdint>
 #include <stdexcept>
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
+#include <stdlib.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+#endif
+
 namespace {
-#ifndef _WIN32
+#ifdef _WIN32
+constexpr std::intptr_t NoStreamHandle = -2;
+
+std::intptr_t StandardHandle(int descriptor) {
+    const auto previous = _set_thread_local_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {});
+    const std::intptr_t handle = ::_get_osfhandle(descriptor);
+    _set_thread_local_invalid_parameter_handler(previous);
+    return handle;
+}
+
+}
+
+extern "C" void PrepareStandardStreams_nid_no_patch() {
+    static const bool ready = [] {
+        for (int descriptor = 0; descriptor <= 2; ++descriptor) {
+            const std::intptr_t handle = StandardHandle(descriptor);
+            if (handle != -1 && handle != NoStreamHandle) continue;
+            auto* const stream = __acrt_iob_func(descriptor);
+            const int existing = ::_fileno(stream);
+            if (existing >= 0) {
+                const std::intptr_t existingHandle = StandardHandle(existing);
+                if (existingHandle != -1 && existingHandle != NoStreamHandle) {
+                    if (::_dup2(existing, descriptor) != 0)
+                        throw std::runtime_error("cannot restore a standard descriptor from its stream");
+                    continue;
+                }
+            }
+            const int opened = ::_open("NUL", (descriptor == 0 ? _O_RDONLY : _O_WRONLY) | _O_BINARY);
+            if (opened < 0) throw std::runtime_error("cannot open NUL for a missing standard descriptor");
+            if (opened > descriptor) {
+                const int moved = ::_dup2(opened, descriptor);
+                ::_close(opened);
+                if (moved != 0) throw std::runtime_error("cannot restore a missing standard descriptor");
+            }
+            if (::_fileno(stream) != descriptor && ::_close(descriptor) != 0)
+                throw std::runtime_error("cannot release a restored standard descriptor");
+            if (::_wfreopen(L"NUL", descriptor == 0 ? L"rb" : L"wb", stream) != stream || ::_fileno(stream) != descriptor)
+                throw std::runtime_error("cannot attach a standard stream to its NUL descriptor");
+        }
+        return true;
+    }();
+    static_cast<void>(ready);
+}
+
+namespace {
+#else
 const bool standardDescriptorsOpen = [] {
     for (int descriptor = 0; descriptor <= 2; ++descriptor) {
         if (::fcntl(descriptor, F_GETFD) != -1 || errno != EBADF) continue;
@@ -29,8 +81,7 @@ const bool standardDescriptorsOpen = [] {
 FileStream input{stdin};
 }
 extern "C" {
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
+
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
@@ -73,7 +124,6 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
     return static_cast<std::int32_t>(code);
 }
 
-
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
@@ -108,6 +158,7 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
     auto* stream = __stdinp_nid_postfix;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     flockfile_nid_postfix(stream);
+
     struct Unlock {
         FileStream* stream;
         ~Unlock() { funlockfile_nid_postfix(stream); }
@@ -230,5 +281,6 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);
+
 }
 }

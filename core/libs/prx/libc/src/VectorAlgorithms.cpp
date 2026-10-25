@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6,11 +7,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-
-struct MinMaxPointers {
-    const void* minimum;
-    const void* maximum;
-};
 
 template<typename TValue>
 TValue Read(const unsigned char* address) {

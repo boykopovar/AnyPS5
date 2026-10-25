@@ -1,3 +1,4 @@
+#include "prx/libSceNpManager/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -43,9 +44,6 @@ int SignedOutRequest(int reqId) {
     std::lock_guard lock(requestMutex);
     return liveRequests.count(reqId) ? SCE_NP_ERROR_SIGNED_OUT : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
-
-using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
-using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npId, void* userdata);
 
 constexpr int NP_STATE_CALLBACK_MAX = 8;
 
@@ -997,7 +995,6 @@ int APS5_VABI sceNpUnknown_WxLcN76q19o(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 
 int APS5_VABI sceNpCheckCallbackForLib() {
     return sceNpCheckCallback();

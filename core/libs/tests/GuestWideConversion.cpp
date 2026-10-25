@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -7,25 +8,6 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-std::uint64_t APS5_VABI _WStoul_nid_postfix(const char16_t*, char16_t**, int);
-int APS5_VABI _Iswctype_nid_postfix(std::uint32_t, std::uint64_t);
-int APS5_VABI swscanf_nid_postfix(const char16_t*, const char16_t*, ...);
-int APS5_VABI swscanf_s_nid_postfix(const char16_t*, const char16_t*, ...);
-int APS5_VABI iswalnum_nid_postfix(std::uint32_t);
-int APS5_VABI iswalpha_nid_postfix(std::uint32_t);
-int APS5_VABI iswcntrl_nid_postfix(std::uint32_t);
-int APS5_VABI iswdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswgraph_nid_postfix(std::uint32_t);
-int APS5_VABI iswlower_nid_postfix(std::uint32_t);
-int APS5_VABI iswprint_nid_postfix(std::uint32_t);
-int APS5_VABI iswpunct_nid_postfix(std::uint32_t);
-int APS5_VABI iswspace_nid_postfix(std::uint32_t);
-int APS5_VABI iswupper_nid_postfix(std::uint32_t);
-int APS5_VABI iswxdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswblank_nid_postfix(std::uint32_t);
-}
 
 static int failures = 0;
 

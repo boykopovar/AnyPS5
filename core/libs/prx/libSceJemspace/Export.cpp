@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceJemspace/include/Api.hpp"
 #define JEMALLOC_NO_DEMANGLE
 #include <algorithm>
 #include <array>
@@ -10,13 +13,6 @@
 #include <mutex>
 
 #include "prx/libc/include/general/VabiMacros.hpp"
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t);
-void APS5_VABI free_nid_postfix(void*);
-int APS5_VABI sceKernelMapNamedFlexibleMemory(void**, std::size_t, int, int, const char*);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int APS5_VABI sceKernelMunmap(std::uint64_t, std::size_t);
-}
 namespace {
 struct Space {
     extent_hooks_t hooks;
@@ -31,7 +27,6 @@ struct Space {
 };
 static_assert(sizeof(Space) == 152);
 static_assert(offsetof(Space, limit) == 104);
-using StatsWriter = void(APS5_VABI*)(void*, const char*);
 struct StatsOutput {
     StatsWriter write;
     void* opaque;

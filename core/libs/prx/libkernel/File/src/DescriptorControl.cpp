@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -33,9 +35,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI dup2_nid_postfix(int from, int to);
 
 namespace {
 
