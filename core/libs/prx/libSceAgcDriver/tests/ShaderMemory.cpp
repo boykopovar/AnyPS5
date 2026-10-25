@@ -8307,7 +8307,8 @@ void verifyGcnSampleThroughVolume() {
     require(plan->info.images.size() == 1u && plan->info.images[0].dimension == RdnaImageDimension::Dim2D, "GCN volume sample: the GCN sample was not inferred as one 2D image");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
-    request.context.memory = memory.Regions();
+    const auto memoryRegions = memory.Regions();
+    request.context.memory = memoryRegions;
     const auto compiled = Recompile(request, *capture);
     const auto& words = compiled->spirv;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
