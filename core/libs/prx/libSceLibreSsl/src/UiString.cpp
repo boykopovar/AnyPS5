@@ -1,24 +1,8 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslUi {
-    const void* meth;
-    void* strings;
-    void* userData;
-    void* exData;
-    int flags;
-};
-
-struct LibreSslUiString {
-    int type;
-    const char* outString;
-    int inputFlags;
-    char* resultBuf;
-    unsigned char data[24];
-    int flags;
-};
 
 static_assert(sizeof(LibreSslUi) == 40);
 static_assert(offsetof(LibreSslUi, userData) == 16);
