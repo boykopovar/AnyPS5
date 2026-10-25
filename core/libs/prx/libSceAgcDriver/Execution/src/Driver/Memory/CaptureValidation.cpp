@@ -67,7 +67,7 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
     auto& skipped = ShaderRecompiler::ThreadOwned(skippedSlot);
     skipped.clear();
     for (const auto& range : vouched) {
-        if (range.begin < range.end && range.end <= captured.size() && (skipped.empty() || skipped.back().end <= range.begin) && !view.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low))) skipped.push_back(range);
+        if (range.begin < range.end && range.end <= captured.size() && (skipped.empty() || skipped.back().end <= range.begin) && range.low <= range.high && !view.Overlaps(range.low, static_cast<std::size_t>(range.high - range.low))) skipped.push_back(range);
     }
     for (std::size_t i = 0, range = 0; i < captured.size(); ++i) {
         if (range < skipped.size() && i == skipped[range].begin) {

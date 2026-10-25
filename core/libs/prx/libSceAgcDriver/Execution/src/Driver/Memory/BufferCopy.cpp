@@ -51,6 +51,7 @@ std::optional<StreamCopy> StreamCopyRange(const std::vector<std::uint32_t>& user
     const auto elements = std::min<std::uint64_t>(std::uint64_t{groups} * 128u, userData[6]);
     const StreamCopy copy{base(0), base(4), static_cast<std::size_t>(elements) * 16u};
     if (copy.bytes == 0 || copy.bytes > (16u << 20u) || userData[2] < elements || copy.source % 16 != 0 || copy.destination % 16 != 0) return std::nullopt;
+    if (copy.bytes > std::numeric_limits<std::uint64_t>::max() - copy.source || copy.bytes > std::numeric_limits<std::uint64_t>::max() - copy.destination) return std::nullopt;
     return copy;
 }
 
@@ -71,8 +72,14 @@ std::optional<StreamCopy> IndexedCopyRange(const std::vector<std::uint32_t>& use
     const auto base = [&](std::size_t word) { return userData[word] | (static_cast<std::uint64_t>(userData[word + 1] & 0xffffu) << 32u); };
     const auto elements = std::min<std::uint64_t>(std::uint64_t{groups} * 64u, count);
     if (elements == 0 || std::uint64_t{sourceOffset} + elements > userData[2] || std::uint64_t{destinationOffset} + elements > userData[6]) return std::nullopt;
-    const StreamCopy copy{base(0) + std::uint64_t{sourceOffset} * 16u, base(4) + std::uint64_t{destinationOffset} * 16u, static_cast<std::size_t>(elements) * 16u};
+    const auto srcSpan = std::uint64_t{sourceOffset} * 16u;
+    const auto dstSpan = std::uint64_t{destinationOffset} * 16u;
+    const auto srcBase = base(0);
+    const auto dstBase = base(4);
+    if (srcSpan > std::numeric_limits<std::uint64_t>::max() - srcBase || dstSpan > std::numeric_limits<std::uint64_t>::max() - dstBase) return std::nullopt;
+    const StreamCopy copy{srcBase + srcSpan, dstBase + dstSpan, static_cast<std::size_t>(elements) * 16u};
     if (copy.bytes > (16u << 20u) || copy.source % 16 != 0 || copy.destination % 16 != 0) return std::nullopt;
+    if (copy.bytes > std::numeric_limits<std::uint64_t>::max() - copy.source || copy.bytes > std::numeric_limits<std::uint64_t>::max() - copy.destination) return std::nullopt;
     return copy;
 }
 
@@ -230,7 +237,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         std::memcpy(&period, reinterpret_cast<const void*>(record + 4), 4);
         bytes = static_cast<std::size_t>(count) * 4u;
 
-        if (count == 0 || period < count || groups[0] != (count + 63u) / 64u || count > userData[2] || count > userData[6] || bytes > (16u << 20u) || source % 4 != 0 || destination % 4 != 0 || (record < destination + bytes && destination < record + 8)) {
+        if (count == 0 || period < count || groups[0] != (count + 63u) / 64u || count > userData[2] || count > userData[6] || bytes > (16u << 20u) || source % 4 != 0 || destination % 4 != 0 || bytes > std::numeric_limits<std::uint64_t>::max() - destination || bytes > std::numeric_limits<std::uint64_t>::max() - source || (record < destination + bytes && destination < record + 8)) {
             countCopy(CopyShape, bytes, started, locked);
             return false;
         }

@@ -87,6 +87,39 @@ int main() {
         Require(bounded, "a dispatch whose written images are a real one and a null one is not bounded");
         Require(Contains(dispatchRanges, written, written + surfaceBytes), "a written image next to a null one is not a dispatch write range");
         Require(!Touches(dispatchRanges, 0, surfaceBytes), "a null storage image is a dispatch write range");
+        ShaderRecompiler::DescriptorBinding buffers;
+        buffers.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+        buffers.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+        buffers.count = 3;
+        const auto makeBuffer = [](std::uint64_t base, std::uint32_t numRecords, std::uint16_t stride) {
+            std::array<std::uint32_t, 4> words{};
+            words[0] = static_cast<std::uint32_t>(base);
+            words[1] = static_cast<std::uint32_t>((base >> 32u) & 0xffffu) | (static_cast<std::uint32_t>(stride) << 16u);
+            words[2] = numRecords;
+            words[3] = 0x00014004u;
+            return words;
+        };
+        constexpr std::uint64_t bufferWritten = 0x500000000ull;
+        constexpr std::uint64_t bufferReadOnly = 0x600000000ull;
+        constexpr std::uint32_t bufferRecords = 1024;
+        const auto b0 = makeBuffer(bufferWritten, bufferRecords, 4);
+        const auto b1 = makeBuffer(bufferReadOnly, bufferRecords, 4);
+        const auto b2 = makeBuffer(0xfffffffffffff000ull, 0x10000, 4);
+        buffers.guestDescriptor.insert(buffers.guestDescriptor.end(), b0.begin(), b0.end());
+        buffers.guestDescriptor.insert(buffers.guestDescriptor.end(), b1.begin(), b1.end());
+        buffers.guestDescriptor.insert(buffers.guestDescriptor.end(), b2.begin(), b2.end());
+        buffers.bufferWritten = {true, false, true};
+        program.bindings.push_back(buffers);
+        for (const bool exact : {false, true}) {
+            const auto ranges = DrawWriteRanges(state, stages, exact);
+            Require(Contains(ranges, bufferWritten, bufferWritten + bufferRecords * 4u), "a guest buffer the draw stores to is not a write range");
+            Require(!Touches(ranges, bufferReadOnly, bufferReadOnly + bufferRecords * 4u), "a guest buffer the draw only reads is a write range");
+            Require(!Touches(ranges, 0xfffffffffffff000ull, 0xffffffffffffffffull), "an overflowing guest buffer produced a write range");
+        }
+        const auto dispatchWithBuffers = AgcDriver::DriverDetail::DispatchWriteRanges(program, bounded);
+        Require(Contains(dispatchWithBuffers, bufferWritten, bufferWritten + bufferRecords * 4u), "a written guest buffer is not a dispatch write range");
+        Require(!Touches(dispatchWithBuffers, bufferReadOnly, bufferReadOnly + bufferRecords * 4u), "an unwritten guest buffer is a dispatch write range");
+        Require(!Touches(dispatchWithBuffers, 0xfffffffffffff000ull, 0xffffffffffffffffull), "an overflowing guest buffer produced a dispatch write range");
         AgcDriver::Graphics::State targets{};
         targets.hasColorTarget = true;
         auto& color = targets.color;

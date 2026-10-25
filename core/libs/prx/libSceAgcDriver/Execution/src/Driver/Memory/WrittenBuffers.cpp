@@ -27,7 +27,7 @@ void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVis
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto base = descriptor.Base48();
             const auto size = descriptor.GetSize();
-            if (base == 0 || size == 0) continue;
+            if (base == 0 || size == 0 || size > std::numeric_limits<std::uint64_t>::max() - base) continue;
             visit(element, base, base + size, element < binding.bufferAtomic.size() && binding.bufferAtomic[element]);
         }
     }
@@ -57,6 +57,9 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
     bounded = compiled.bdaAbiVersion == 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     constexpr std::uint64_t UnknownImageBytes = 64ull * 1024 * 1024;
+    const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
+        if (begin != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - begin) ranges.emplace_back(begin, begin + bytes);
+    };
     for (const auto& binding : compiled.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::Gds || binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer) bounded = false;
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
@@ -71,8 +74,8 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
             if (Graphics::IsNullTextureResource(words)) continue;
             const auto resource = Graphics::DecodeTextureResource(words);
             const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
-            ranges.emplace_back(resource.baseAddress, resource.baseAddress + (surfaceBytes != 0 ? surfaceBytes : UnknownImageBytes));
-            if (resource.dccAddress != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownImageBytes));
+            add(resource.baseAddress, surfaceBytes != 0 ? surfaceBytes : UnknownImageBytes);
+            if (resource.dccAddress != 0) add(resource.dccAddress, surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownImageBytes);
         }
     }
     visitWrittenBuffers(compiled, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
@@ -102,7 +105,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
     constexpr std::uint64_t UnknownBytes = 64ull * 1024 * 1024;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
-        if (begin != 0) ranges.emplace_back(begin, begin + bytes);
+        if (begin != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - begin) ranges.emplace_back(begin, begin + bytes);
     };
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;
@@ -133,7 +136,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
         }
         const std::uint64_t bytes = color.bytes != 0 ? static_cast<std::uint64_t>(color.bytes) : UnknownBytes;
         const auto base = color.surfaceAddress != 0 ? std::min(color.surfaceAddress, color.address) : color.address;
-        if (base != 0) ranges.emplace_back(base, color.address + 2 * bytes + Slack);
+        if (base != 0) {
+            const auto span = 2 * bytes + Slack;
+            if (span <= std::numeric_limits<std::uint64_t>::max() - color.address) ranges.emplace_back(base, color.address + span);
+        }
         add(color.dccAddress, bytes / 16 + Slack);
         add(color.cmaskAddress, static_cast<std::uint64_t>(color.cmaskBytes) * std::max<std::uint32_t>(color.depth, 1));
     };
@@ -196,6 +202,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
 }
 
 std::optional<WrittenBuffer> Driver::newestWriterLocked(std::uint64_t begin, std::uint64_t end) const {
+    if (end <= begin) return std::nullopt;
     for (auto it = writtenBuffers.rbegin(); it != writtenBuffers.rend(); ++it) {
         if (begin < it->end && it->begin < end) return *it;
     }

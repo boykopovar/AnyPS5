@@ -86,6 +86,9 @@ void MatchTests() {
     Require(!StreamCopyRange(UserData(Source.data(), LargeGroups * 128u, Destination.data(), LargeGroups * 128u), LargeGroups), "a copy above 16 MiB was taken");
     Require(!StreamCopyRange(UserData(Source.data() + 1, 512, Destination.data(), 512), 4), "a source not aligned to 16 bytes was taken");
     Require(!StreamCopyRange(UserData(Source.data(), 512, Destination.data() + 1, 512), 4), "a destination not aligned to 16 bytes was taken");
+    const auto overflowPtr = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(~0ull - 15u));
+    Require(!StreamCopyRange(UserData(overflowPtr, 512, Destination.data(), 512), 4), "an overflowing source pointer was taken");
+    Require(!StreamCopyRange(UserData(Source.data(), 512, overflowPtr, 512), 4), "an overflowing destination pointer was taken");
 }
 
 std::vector<std::uint32_t> Commands(const std::vector<std::uint32_t>& data, std::uint32_t groups) {
