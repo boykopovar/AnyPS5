@@ -3857,6 +3857,33 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
     return GuestMemory::Watched(address, bytes);
 }
 
+#ifndef _WIN32
+namespace {
+
+bool privateAnonymousReadWrite(std::uint64_t begin, std::uint64_t end) {
+    std::FILE* maps = std::fopen("/proc/self/maps", "r");
+    if (maps == nullptr) return false;
+    bool covered = false;
+    char line[512];
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long long first = 0;
+        unsigned long long last = 0;
+        char permissions[5] = {};
+        unsigned long long offset = 0;
+        unsigned major = 0;
+        unsigned minor = 0;
+        unsigned long long inode = 0;
+        if (std::sscanf(line, "%llx-%llx %4s %llx %x:%x %llu", &first, &last, permissions, &offset, &major, &minor, &inode) != 7 || begin < first || begin >= last) continue;
+        covered = end <= last && std::strcmp(permissions, "rw-p") == 0 && inode == 0;
+        break;
+    }
+    std::fclose(maps);
+    return covered;
+}
+
+}
+#endif
+
 std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes) {
     const auto alignment = context.hostImportAlignment;
     if (alignment == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes - 2 * alignment) return nullptr;
@@ -3872,6 +3899,8 @@ std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::
         if (info.AllocationBase != allocation) return nullptr;
         cursor = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
     }
+#else
+    if (!privateAnonymousReadWrite(base, end)) return nullptr;
 #endif
     std::map<std::uint64_t, HostImport> made;
     auto& entry = made.emplace(base, HostImport{base, end - base, VK_NULL_HANDLE, VK_NULL_HANDLE, 0}).first->second;

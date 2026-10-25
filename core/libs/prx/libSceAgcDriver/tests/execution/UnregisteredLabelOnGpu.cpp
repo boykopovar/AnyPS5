@@ -8,6 +8,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 #include <array>
 #include <chrono>
@@ -73,6 +76,37 @@ void RequireReason(int reason, int expected, const char* what) {
     Require(reason == expected, ("unregistered label: " + std::string(what) + " returned reason " + std::to_string(reason) + " instead of " + std::to_string(expected)).c_str());
 }
 
+std::uint64_t AddressOf(const void* pointer) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+}
+
+void RequireMappedLabelsRefused(AgcDriver::VulkanDevice& device) {
+#ifdef _WIN32
+    const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(BlockBytes), nullptr);
+    Require(section != nullptr, "unregistered label: cannot create a section");
+    void* view = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, BlockBytes);
+    Require(view != nullptr, "unregistered label: cannot map the section");
+    const int reason = StoreLabel(device, AddressOf(view) + 8, 0x5a5a0005u, 5);
+    UnmapViewOfFile(view);
+    CloseHandle(section);
+    RequireReason(reason, 3, "a label in a mapped view of a section");
+#else
+    std::FILE* file = std::tmpfile();
+    Require(file != nullptr && ftruncate(fileno(file), static_cast<off_t>(BlockBytes)) == 0, "unregistered label: cannot create a file to map");
+    void* privateFile = mmap(nullptr, BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE, fileno(file), 0);
+    Require(privateFile != MAP_FAILED, "unregistered label: cannot map the file");
+    const int fileReason = StoreLabel(device, AddressOf(privateFile) + 8, 0x5a5a0005u, 5);
+    munmap(privateFile, BlockBytes);
+    std::fclose(file);
+    RequireReason(fileReason, 3, "a label in a private read-write mapping of a file");
+    void* shared = mmap(nullptr, BlockBytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    Require(shared != MAP_FAILED, "unregistered label: cannot map shared anonymous memory");
+    const int sharedReason = StoreLabel(device, AddressOf(shared) + 8, 0x5a5a0006u, 6);
+    munmap(shared, BlockBytes);
+    RequireReason(sharedReason, 3, "a label in a shared anonymous mapping");
+#endif
+}
+
 }
 
 int main() {
@@ -94,7 +128,13 @@ int main() {
         DWORD previous = 0;
         Require(VirtualProtect(reinterpret_cast<void*>(unregistered.Address() + 4096), 4096, PAGE_READONLY, &previous) != 0, "unregistered label: cannot protect the read-only page");
         RequireReason(StoreLabel(*device, unregistered.Address() + 4096 + 8, 0x5a5a0003u, 3), 3, "a label in read-only unregistered memory");
+#else
+        Require(mprotect(reinterpret_cast<void*>(unregistered.Address() + 4096), 4096, PROT_READ) == 0, "unregistered label: cannot protect the read-only page");
+        const int readOnlyReason = StoreLabel(*device, unregistered.Address() + 4096 + 8, 0x5a5a0003u, 3);
+        Require(mprotect(reinterpret_cast<void*>(unregistered.Address() + 4096), 4096, PROT_READ | PROT_WRITE) == 0, "unregistered label: cannot make the read-only page writable again");
+        RequireReason(readOnlyReason, 3, "a label in read-only unregistered memory");
 #endif
+        RequireMappedLabelsRefused(*device);
         RequireReason(StoreLabel(*device, labels.Address() + 4, 0x5a5a0004u, 4), 0, "a label in registered GPU memory");
         device->SubmitRecorded(true);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
