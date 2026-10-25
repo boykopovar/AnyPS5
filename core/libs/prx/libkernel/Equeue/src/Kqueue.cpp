@@ -10,6 +10,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libkernel/System/include/SignalEvents.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include <algorithm>
@@ -326,6 +327,36 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     return GuestErrno(queue->AddEvent(event));
 }
 
+struct SignalWatch {
+    std::uint64_t observed;
+};
+
+bool PollSignal(KernelEqueueEvent* event) {
+    auto& watch = *static_cast<SignalWatch*>(event->filter.data);
+    const auto current = GuestSignals::Generation(event->event.ident);
+    const auto capacity = static_cast<std::uint64_t>(std::numeric_limits<std::intptr_t>::max() - event->event.data);
+    const auto count = std::min(current - watch.observed, capacity);
+    watch.observed += count;
+    event->event.data += static_cast<std::intptr_t>(count);
+    return event->triggered || event->event.data != 0;
+}
+
+int AddSignalKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    auto watch = std::make_shared<SignalWatch>(SignalWatch{GuestSignals::Generation(change.ident)});
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    event.filter.data = watch.get();
+    event.filter.owner = std::move(watch);
+    event.filter.pollFunc = PollSignal;
+    event.filter.repoll = true;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 int AddUserKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     KernelEqueueEvent event{};
     event.event = change;
@@ -464,7 +495,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         change.data = 0;
         return GUEST_EINVAL;
     }
-    if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
+    if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_SIGNAL && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -482,6 +513,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             error = AddTimerKnote(queue, change, flags);
         } else if (change.filter == EVFILT_USER) {
             error = AddUserKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_SIGNAL) {
+            error = AddSignalKnote(queue, change, flags);
         } else if (change.filter == EVFILT_VNODE) {
             const std::uint32_t notes = change.fflags;
             change.fflags = 0;

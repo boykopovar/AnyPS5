@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/SignalEvents.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
@@ -36,6 +37,8 @@ constexpr int SaSiginfo = 0x40;
 constexpr int SaDefinedFlags = 0x7f;
 std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
+std::atomic<std::uint64_t> signalGenerations[MaxSignal + 1]{};
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 std::atomic<std::uint32_t> blockedMask{0};
 std::atomic<std::uint32_t> blockedMaskExtra[3]{};
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
@@ -78,6 +81,10 @@ bool SignalBlocked(int guest) {
     const auto word = SignalWord(guest);
     const auto mask = word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load();
     return (mask & SignalBit(guest)) != 0;
+}
+
+void RecordSignal(int guest) {
+    signalGenerations[guest].fetch_add(1, std::memory_order_relaxed);
 }
 
 struct PendingSignals {
@@ -290,6 +297,7 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
 }
 
 void ExpireAlarm(std::chrono::microseconds interval) {
+    RecordSignal(GuestSigalrm);
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
@@ -493,19 +501,28 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
-    if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
+    if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) {
+        RecordSignal(guest);
+        return 0;
+    }
     if (SignalBlocked(guest)) {
+        RecordSignal(guest);
         MarkPending(guest);
         return 0;
     }
-    if (action.handler == 0 && IgnoredByDefault(guest)) return 0;
+    if (action.handler == 0 && IgnoredByDefault(guest)) {
+        RecordSignal(guest);
+        return 0;
+    }
     const int native = NativeSignal(guest);
     if (native != 0) {
+        RecordSignal(guest);
         const int result = std::raise(native);
         if (result) *__error_nid_postfix() = 22;
         return result ? -1 : 0;
     }
-    if (!CaughtByGuest(guest)) { *__error_nid_postfix() = 22; return -1; }
+    if (action.handler <= 1) { *__error_nid_postfix() = 22; return -1; }
+    RecordSignal(guest);
     DeliverPendingSignal(guest);
     return 0;
 }
@@ -525,6 +542,7 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
+    RecordSignal(guest);
     if (Disposition(guest).handler != 1) MarkPending(guest);
     return 0;
 }
@@ -665,4 +683,9 @@ struct RegisterSignalsOnLoad {
     }
 };
 const RegisterSignalsOnLoad gRegisterSignals;
+}
+
+std::uint64_t GuestSignals::Generation(std::uintptr_t signal) {
+    if (signal < 1 || signal > MaxSignal) return 0;
+    return signalGenerations[signal].load(std::memory_order_relaxed);
 }
