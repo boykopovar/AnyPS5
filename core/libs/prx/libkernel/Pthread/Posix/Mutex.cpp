@@ -65,10 +65,6 @@ int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
     if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
-    if (result == 0 && attr && *attr) {
-        (*mutex)->_protocol = (*attr)->protocol;
-        (*mutex)->_ceiling = (*attr)->ceiling;
-    }
     return PosixThread::ToErrno(result);
 }
 
@@ -101,12 +97,10 @@ int APS5_VABI pthread_mutex_reltimedlock_np_nid_postfix(PthreadMutex* mutex, Ker
     return PosixThread::ToErrno(scePthreadMutexTimedlock(mutex, usec));
 }
 
-int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
-
 int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(const PthreadMutex* mutex, int* prioceiling) {
-    if (!prioceiling) throw std::runtime_error("pthread_mutex_getprioceiling: null prioceiling");
     auto* current = _priorityProtected(const_cast<PthreadMutex*>(mutex), "pthread_mutex_getprioceiling");
     if (!current) return POSIX_EINVAL;
+    if (!prioceiling) throw std::runtime_error("pthread_mutex_getprioceiling: null prioceiling");
     *prioceiling = current->_ceiling;
     return 0;
 }

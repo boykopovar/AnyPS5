@@ -154,8 +154,11 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
     auto replacement = std::make_unique<PthreadMutexPrivate>();
-    if (attr && *attr)
+    if (attr && *attr) {
         replacement->SetType((*attr)->type);
+        replacement->_protocol = (*attr)->protocol;
+        replacement->_ceiling = (*attr)->ceiling;
+    }
     std::lock_guard lock(InitializationMutex());
     std::atomic_ref<PthreadMutex>(*mutex).store(replacement.release(), std::memory_order_release);
     return 0;
