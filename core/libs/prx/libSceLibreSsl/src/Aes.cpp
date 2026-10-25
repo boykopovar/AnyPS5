@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -8,13 +9,8 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-constexpr int MaxRounds = 14;
-constexpr std::size_t BlockSize = 16;
 
-struct AesKey {
-    std::uint32_t roundKeys[4 * (MaxRounds + 1)];
-    std::int32_t rounds;
-};
+constexpr std::size_t BlockSize = 16;
 
 static_assert(sizeof(AesKey) == 244);
 

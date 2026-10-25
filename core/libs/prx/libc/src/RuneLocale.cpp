@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -159,10 +160,6 @@ int APS5_VABI wctob_nid_postfix(std::uint32_t c) {
     const auto unit = static_cast<std::uint16_t>(c);
     return unit < 0x80 ? static_cast<int>(unit) : -1;
 }
-
-std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc);
-const short* APS5_VABI _Getptolower_nid_postfix();
-const short* APS5_VABI _Getptoupper_nid_postfix();
 
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property) {
     if (std::strcmp(property, "tolower") == 0) return 1;

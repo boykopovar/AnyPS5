@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -10,7 +11,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -64,8 +64,6 @@
 #include <type_traits>
 #include <thread>
 #include <vector>
-
-extern "C" std::terminate_handler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(std::terminate_handler handler);
 
 namespace {
 
@@ -1926,8 +1924,35 @@ void TuningFieldTests() {
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "DISABLE_DUAL_QUAD was rejected");
     Require(state.hasColorTarget && state.blend.colorWriteMask == baseline.blend.colorWriteMask, "DISABLE_DUAL_QUAD changed color output");
     queue.context[0x202] = 0xcc0013;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "copy ROP");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5b0010;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5a0010;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "an XOR ROP was rejected");
+    Require(state.hasColorTarget && state.colorRop == 0x5a && AgcDriver::Graphics::LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_XOR, "an XOR ROP did not decode");
     queue.context[0x202] = 0xcc0010;
+    Require(AgcDriver::Graphics::DecodeState(queue).colorRop == AgcDriver::Graphics::CopyRop, "the copy ROP did not decode as the copy operation");
+    const std::array<std::pair<std::uint8_t, VkLogicOp>, 14> ropOperations{{
+        {0x0f, VK_LOGIC_OP_COPY_INVERTED}, {0xa0, VK_LOGIC_OP_AND}, {0xf0, VK_LOGIC_OP_COPY}, {0xfa, VK_LOGIC_OP_OR},
+        {0x00, VK_LOGIC_OP_CLEAR}, {0x11, VK_LOGIC_OP_NOR}, {0x33, VK_LOGIC_OP_COPY_INVERTED}, {0x55, VK_LOGIC_OP_INVERT}, {0x66, VK_LOGIC_OP_XOR},
+        {0x88, VK_LOGIC_OP_AND}, {0xaa, VK_LOGIC_OP_NO_OP}, {0xcc, VK_LOGIC_OP_COPY}, {0xee, VK_LOGIC_OP_OR}, {0xff, VK_LOGIC_OP_SET}}};
+    for (const auto& [rop, operation] : ropOperations) Require(AgcDriver::Graphics::LogicOpFromRop(rop) == operation, "a ROP3 code mapped to the wrong logic operation");
+    std::uint32_t documentedRops = 0;
+    for (std::uint32_t rop = 0; rop < 256u; ++rop) {
+        try {
+            static_cast<void>(AgcDriver::Graphics::LogicOpFromRop(static_cast<std::uint8_t>(rop)));
+            ++documentedRops;
+        } catch (const std::runtime_error&) {
+        }
+    }
+    Require(documentedRops == 28u, "a ROP3 code outside the source and brush forms was accepted, or one inside them was refused");
+    auto blendedLogic = queue;
+    blendedLogic.context[0x202] = 0x5a0010;
+    blendedLogic.context[0x1e0] = 0x40000101u;
+    for (std::uint32_t index = 0; index < 4u; ++index) blendedLogic.context[0x105 + index] = 0u;
+    blendedLogic.context[0x31c] |= 0x8000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(blendedLogic); }, "logic operation together with blending");
     for (const auto groups : {1u, 2u, 15u}) {
         queue.context[0x2d5] = 0x2000u | (groups << 15u);
         state = AgcDriver::Graphics::DecodeState(queue);
@@ -2967,7 +2992,12 @@ void depthCopyPassTests() {
     queue.context[0x31c] = 0x40710;
     queue.context[0x8e] = 1;
     auto pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 && pass->samples == 2 && pass->sample == 0 && pass->extent.width == 64 && pass->extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.samples == 2 && pass->sample == 0 && pass->source.extent.width == 64 && pass->source.extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && resource.samples == 2 && resource.width == 64 && resource.height == 4 && resource.tileMode == AgcDriver::Graphics::TextureTileMode::kZ64KBX && resource.pipeBankXor == pass->source.pipeBankXor && resource.dccAddress == pass->source.htileAddress, "the DB depth copy source descriptor of a two-sample plane decoded differently");
+    }
     Require(pass->color.format == VK_FORMAT_R32_SFLOAT && pass->color.samples == 1 && pass->color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "the DB depth copy target decoded differently");
     queue.context[0x000] = 0x104;
     Require(DecodeDepthCopyPass(queue)->sample == 1, "COPY_SAMPLE without COPY_CENTROID did not select the sample");
@@ -2992,23 +3022,31 @@ void depthCopyPassTests() {
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "single-sample R32 float");
     queue.context[0x31c] = 0x40710;
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
-    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "over part of the depth surface");
+    Require(DecodeDepthCopyPass(queue).has_value(), "a DB depth copy whose viewport covers part of the depth surface was refused");
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
+    queue.context[0x1e0] = 1u << 30u;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "blending");
+    queue.context[0x1e0] = 0;
     queue.context[0x010] = 0x80001187;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "mipmapped or partially resident");
     queue.context[0x010] = 0x80000187;
     queue.context[0x012] = 0x00001003;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.pipeBankXor == 0x300, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
     queue.context[0x012] = 0x00001000;
     queue.context[0x002] = 1u | (1u << 13u);
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
+    Require(pass.has_value() && pass->source.address == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
     queue.context[0x002] = 0;
     Require(DecodeDepthCopyPass(queue).has_value(), "the restored DB depth copy was refused");
     queue.context[0x010] = 0x80000183;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2D && resource.samples == 1 && resource.width == 64 && resource.height == 4 && resource.dccAddress == 0, "the DB depth copy source descriptor of a one-sample plane decoded differently");
+    }
     queue.context[0x000] = 0x104;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "a sample the depth plane does not have");
 }
@@ -3832,7 +3870,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -4327,6 +4365,53 @@ void multisampledDepthTests() {
     Require(state.truncatedCoverage && state.perSampleShading && state.samples == 2 && state.colors[0].samples == 1, "PS_ITER_SAMPLE into a one-sample color target beside a 2x depth target (PPSA02225's registers) did not run per sample with sample 0's color");
     queue = truncatedTwoSample();
     queue.context[0x31d] = 0x12000;
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    const auto oneFragment = [&] {
+        auto queue = singleSampleScan();
+        queue.context[0x2f8] = 0x00210002;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6ae;
+        queue.context[0x31d] = 0x2000;
+        queue.context[0x201] = 0x112202;
+        return queue;
+    };
+    queue = oneFragment();
+    state = DecodeState(queue);
+    Require(state.samples == 4 && !state.customSampleLocations && state.depth && state.depth->samples == 4 && state.colors.size() == 1 && state.colors[0].samples == 1 && state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment beside a 4x depth target (PPSA02015's registers) did not keep sample 0's color in its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment beside a 4x depth target");
+    queue = oneFragment();
+    queue.context[0x31c] |= 0x4000u;
+    queue.context[0x321] = 0x00c3a1b2u;
+    queue.context[0x3a0] = 0x01u;
+    state = DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].fmaskAddress == ((1ull << 40u) | 0xc3a10000ull), "a compressed one-fragment color target did not decode its FMASK address");
+    queue.context[0x321] = 0u;
+    queue.context[0x3a0] = 0u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue.context[0x321] = 0xa5u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue = oneFragment();
+    Require(DecodeState(queue).colors[0].fmaskAddress == 0u, "an uncompressed one-fragment color target noted an FMASK address");
+    queue = oneFragment();
+    queue.context[0x31d] = 0xa000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    queue = oneFragment();
+    queue.context[0x31d] = 0x8000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more fragments than samples are unsupported");
+    queue = oneFragment();
+    queue.context[0x201] = 0x012202;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x201] = 0x112201;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x2f8] = 0x00100001;
+    queue.context[0x010] = 0x22900987;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target's sample count differs from the rasterizer's");
+    queue = oneFragment();
+    queue.context[0x010] = 0;
+    queue.context[0x011] = 0;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
@@ -5894,6 +5979,7 @@ void descriptorPoolResetFailureTest() {
     });
     cache.Free(allocation);
     _ZSt13set_terminatePFvvE_nid_postfix(previous);
+
 }
 
 void pushConstantTests() {
@@ -10728,6 +10814,21 @@ void validationTests() {
         attribute.components = 2;
         attribute.resource.fields[1] |= 0x80000000u;
         expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "descriptor flags");
+        attribute.resource.fields = {0x1000, 8u << 16u, 3, 71u << 12u};
+        attribute.components = 3;
+        context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+            *properties = {};
+            if (format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R8G8B8A8_UNORM) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+        };
+        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_R16G16B16_SFLOAT && AgcDriver::Graphics::DecodeVertexFormat(attribute).bytes == 6, "a 3-component 16_16_16_16 float attribute was not decoded as 3 components");
+        const auto widened = AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1));
+        Require(widened.attributes[0].format == VK_FORMAT_R16G16B16A16_SFLOAT && widened.bindings[0].stride == 8 && AgcDriver::Graphics::VertexReadBytes(attribute, widened.attributes[0].format) == 8, "a 3-component 16_16_16_16 float attribute was not widened to the format the device supports");
+        Require(AgcDriver::Graphics::VertexAttributeSignature(attribute) == "f32x3", "widening the vertex format changed the shader input");
+        attribute.resource.fields = {0x1000, 4u << 16u, 3, 56u << 12u};
+        Require(AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)).attributes[0].format == VK_FORMAT_R8G8B8A8_UNORM, "a 3-component 8_8_8_8 unorm attribute was not widened to the format the device supports");
+        attribute.resource.fields = {0x1000, 12u << 16u, 3, 74u << 12u};
+        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "device does not support vertex format 106");
+        expectFailure([&] { AgcDriver::Graphics::VertexReadBytes(attribute, VK_FORMAT_R32G32B32A32_SFLOAT); }, "is not a form of");
     }
     for (const auto capability : {spv::CapabilityInt64Atomics, spv::CapabilityInt64ImageEXT}) {
         ShaderRecompiler::RecompileResult vertex;
@@ -10860,7 +10961,6 @@ void validationTests() {
         expectFailure([&] { validate(vertex, 0); }, "absent from recompiler binding metadata");
     }
 }
-
 
 }
 

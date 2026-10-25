@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -9,12 +10,6 @@
 
 using DesBlock = std::array<unsigned char, 8>;
 using DesSchedule = std::array<unsigned char, 128>;
-
-extern "C" {
-void APS5_VABI DES_ecb_encrypt_nid_postfix(const unsigned char*, unsigned char*, const unsigned char*, int);
-int APS5_VABI DES_set_key_nid_postfix(const unsigned char*, unsigned char*);
-void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -38,22 +33,27 @@ static void CheckVector(std::uint64_t key, std::uint64_t plain, std::uint64_t ci
     const auto plainBlock = Block(plain);
     DesBlock output{};
     DES_ecb_encrypt_nid_postfix(plainBlock.data(), output.data(), schedule.data(), 1);
+
     Require(output == Block(cipher));
     DES_ecb_encrypt_nid_postfix(output.data(), output.data(), schedule.data(), 0);
+
     Require(output == plainBlock);
     DesBlock again{};
     DES_ecb_encrypt_nid_postfix(plainBlock.data(), again.data(), schedule.data(), 7);
+
     Require(again == Block(cipher));
 }
 
 static void CheckParity() {
     DesBlock key{0x00, 0x01, 0x02, 0x03, 0x12, 0x13, 0xfe, 0xff};
     DES_set_odd_parity_nid_postfix(key.data());
+
     Require(key == (DesBlock{0x01, 0x01, 0x02, 0x02, 0x13, 0x13, 0xfe, 0xfe}));
     for (int value = 0; value < 256; ++value) {
         DesBlock single{};
         single.fill(static_cast<unsigned char>(value));
         DES_set_odd_parity_nid_postfix(single.data());
+
         Require((single[0] & 0xfe) == (value & 0xfe) && std::popcount(single[0]) % 2 == 1);
     }
 }

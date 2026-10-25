@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdio>
@@ -11,9 +12,7 @@
 #else
 #include <dlfcn.h>
 #endif
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-}
+
 using RenameFunction = int (APS5_VABI*)(const char*, const char*);
 static RenameFunction LoadKernelRename() {
 #ifdef _WIN32

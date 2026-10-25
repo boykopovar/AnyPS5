@@ -1,9 +1,8 @@
+#include "prx/libSceS3da/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct S3daInfo;
 
 extern "C" {
 

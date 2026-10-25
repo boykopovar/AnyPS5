@@ -1,3 +1,4 @@
+#include "prx/libSceVrTracker2/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6,34 +7,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
-struct VrTracker2InitializeParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    std::int32_t threadPriorities[2];
-    std::uint64_t threadAffinityMasks[2];
-    void* workMemory;
-    std::uint32_t workMemorySize;
-    std::uint32_t workMemoryAlignment;
-    std::uint32_t option;
-    std::uint32_t coordinateSystem;
-    std::uint8_t disableOption;
-    std::int8_t optionMode;
-    std::uint8_t reserved[14];
-};
-
-struct VrTracker2MemoryParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    std::uint8_t reserved[24];
-};
-
-struct VrTracker2MemoryRequirement {
-    std::uint32_t size;
-    std::uint32_t memorySize;
-    std::uint32_t memoryAlignment;
-    std::uint8_t reserved[20];
-};
-
 static_assert(sizeof(VrTracker2InitializeParameter) == 72);
 static_assert(offsetof(VrTracker2InitializeParameter, threadAffinityMasks) == 16);
 static_assert(offsetof(VrTracker2InitializeParameter, workMemory) == 32);
@@ -41,54 +14,13 @@ static_assert(offsetof(VrTracker2InitializeParameter, coordinateSystem) == 52);
 static_assert(offsetof(VrTracker2InitializeParameter, reserved) == 58);
 static_assert(sizeof(VrTracker2MemoryParameter) == 32);
 static_assert(sizeof(VrTracker2MemoryRequirement) == 32);
-struct VrTracker2LegacyParameter12 {
-    std::uint32_t size;
-    std::uint8_t opaque[8];
-};
-
-struct VrTracker2LegacyParameter20 {
-    std::uint32_t size;
-    std::uint8_t opaque[16];
-};
-
-struct VrTracker2UnsupportedCoordinateParameter;
 
 static_assert(sizeof(VrTracker2LegacyParameter12) == 12);
 static_assert(sizeof(VrTracker2LegacyParameter20) == 20);
 
-struct VrTracker2CalibrationResult;
-struct VrTracker2TelemetryData;
-struct VrTracker2PoseParameter;
-struct VrTracker2PoseResult;
-
-struct VrTracker2MeshRequirement {
-    std::uint32_t vertexCount;
-    std::uint32_t indexCount;
-    std::uint32_t vertexDataSize;
-    std::uint32_t indexDataSize;
-};
-
-struct VrTracker2Pose {
-    float position[3];
-    std::uint8_t padding[4];
-    float orientation[4];
-};
-
 static_assert(sizeof(VrTracker2MeshRequirement) == 16);
 static_assert(sizeof(VrTracker2Pose) == 32);
 static_assert(offsetof(VrTracker2Pose, orientation) == 16);
-
-struct VrTracker2ResultParameter {
-    std::uint32_t size;
-    std::int32_t deviceHandle;
-    std::uint32_t reserved;
-    std::uint8_t padding[4];
-    std::uint64_t timestamp;
-    std::uint32_t reserved2;
-    std::uint8_t padding2[4];
-    std::uint64_t userTag;
-    std::uint32_t reserved3[2];
-};
 
 struct VrTracker2LegacyResultParameter {
     std::uint32_t size;
@@ -105,20 +37,6 @@ static_assert(offsetof(VrTracker2ResultParameter, timestamp) == 16);
 static_assert(offsetof(VrTracker2ResultParameter, userTag) == 32);
 static_assert(sizeof(VrTracker2LegacyResultParameter) == 32);
 static_assert(offsetof(VrTracker2LegacyResultParameter, userTag) == 24);
-struct VrTracker2Result;
-struct VrTracker2CoordinateLocation;
-
-struct VrTracker2BoundaryGeometry {
-    std::uint32_t size;
-    std::uint32_t pointCount;
-    float points[256][3];
-};
-
-struct VrTracker2OrientedBoundingBox {
-    std::uint32_t size;
-    float transform[16];
-    float extents[3];
-};
 
 static_assert(sizeof(VrTracker2BoundaryGeometry) == 3080);
 static_assert(offsetof(VrTracker2BoundaryGeometry, points) == 8);
@@ -140,33 +58,7 @@ std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
 
 }
 
-struct VrTracker2RelativePoseResult {
-    VrTracker2Pose pose;
-    std::uint8_t reserved[32];
-};
-
 static_assert(sizeof(VrTracker2RelativePoseResult) == 64);
-
-struct VrTracker2ScalarResult {
-    std::uint32_t size;
-    float value;
-};
-
-struct VrTracker2TrackingOptions {
-    std::int32_t options[3];
-    std::uint8_t reset;
-    std::uint8_t reserved[3];
-    float vector[3];
-};
-
-struct VrTracker2TrackingOptionsResult {
-    VrTracker2TrackingOptions options;
-    float position[3];
-};
-
-struct VrTracker2DiagnosticResult;
-struct VrTracker2ExtendedResult;
-struct VrTracker2TrackingConfiguration;
 
 static_assert(sizeof(VrTracker2ScalarResult) == 8);
 static_assert(sizeof(VrTracker2TrackingOptions) == 28);
@@ -174,95 +66,21 @@ static_assert(offsetof(VrTracker2TrackingOptions, vector) == 16);
 static_assert(sizeof(VrTracker2TrackingOptionsResult) == 40);
 static_assert(offsetof(VrTracker2TrackingOptionsResult, position) == 28);
 
-struct VrTracker2ModeParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    float value;
-};
-
-struct VrTracker2DiagnosticText {
-    char sections[6][512];
-};
-
-struct VrTracker2CompositePoseResult;
-struct VrTracker2CameraImages;
-struct VrTracker2SensorFrame;
-struct VrTracker2TrackingStatus;
-struct VrTracker2BoundaryParameter;
-
 static_assert(sizeof(VrTracker2ModeParameter) == 12);
 static_assert(sizeof(VrTracker2DiagnosticText) == 3072);
-
-struct VrTracker2CameraFrame {
-    std::uint32_t selector;
-    std::uint32_t identifiers[2];
-    std::uint32_t width;
-    std::uint32_t height;
-    std::uint32_t pitch;
-    const void* pixels;
-    std::int32_t bufferIndex;
-};
-
-struct VrTracker2CameraFrameMetadata;
 
 static_assert(offsetof(VrTracker2CameraFrame, pixels) == 24);
 static_assert(offsetof(VrTracker2CameraFrame, bufferIndex) == 32);
 static_assert(sizeof(VrTracker2CameraFrame) == 40);
 
-struct VrTracker2SpatialQueryResult {
-    std::uint32_t size;
-    std::int32_t status;
-    float vectors[2][3];
-    float value;
-};
-
-struct VrTracker2DeviceCalibrationStatus;
-struct VrTracker2DeviceBoundaryParameter;
-struct VrTracker2ResetPoseParameter;
-
 static_assert(sizeof(VrTracker2SpatialQueryResult) == 36);
 static_assert(offsetof(VrTracker2SpatialQueryResult, vectors) == 8);
 static_assert(offsetof(VrTracker2SpatialQueryResult, value) == 32);
-
-struct VrTracker2MapData;
-struct VrTracker2MapStatus;
-
-struct VrTracker2RuntimeStatus;
-struct VrTracker2DiagnosticState;
-struct VrTracker2ExtendedDiagnosticState;
-struct VrTracker2SensorDiagnostics;
-struct VrTracker2DeviceDiagnostics;
-struct VrTracker2TimingDiagnostics;
-struct VrTracker2MapConfiguration;
-struct VrTracker2SensorSummary;
-
-struct VrTracker2CoordinateResultParameter {
-    std::uint32_t coordinateSystem;
-    std::uint32_t reserved;
-    VrTracker2ResultParameter parameter;
-};
-
-struct VrTracker2BoundaryFitResult {
-    std::uint8_t flags[4];
-    float dimensions[4];
-};
-
-struct VrTracker2VectorResult {
-    std::uint32_t size;
-    float value[3];
-};
-
-struct VrTracker2ExtendedTrackingResult;
 
 static_assert(sizeof(VrTracker2CoordinateResultParameter) == 56);
 static_assert(offsetof(VrTracker2CoordinateResultParameter, parameter) == 8);
 static_assert(sizeof(VrTracker2BoundaryFitResult) == 20);
 static_assert(sizeof(VrTracker2VectorResult) == 16);
-
-struct VrTracker2MeshVertex;
-struct VrTracker2TimedPoseResult;
-struct VrTracker2ImagePoseResult;
-struct VrTracker2ImageFrame;
 
 extern "C" {
 

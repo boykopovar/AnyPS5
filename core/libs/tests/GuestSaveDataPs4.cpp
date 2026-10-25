@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -7,29 +9,6 @@
 #include <random>
 #include <stdexcept>
 #include <string>
-
-struct SaveDataMountPs4 {
-    std::int32_t user_id;
-    std::int32_t pad;
-    const void* title_id;
-    const SceSaveDataDirName* dir_name;
-    const void* fingerprint;
-    std::uint64_t blocks;
-    std::uint32_t mount_mode;
-    std::uint8_t reserved[32];
-};
-
-extern "C" int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataMount(const SaveDataMountPs4*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint*);
-extern "C" int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-extern "C" int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-extern "C" int APS5_VABI sceSaveDataInitialize(const void*);
-extern "C" int APS5_VABI sceSaveDataTerminate();
-extern "C" int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t, std::size_t, const SaveDataParam*);
-extern "C" int APS5_VABI sceSaveDataSetSaveDataMemory(std::int32_t, void*, std::size_t, std::int64_t);
-extern "C" int APS5_VABI sceSaveDataGetSaveDataMemory(std::int32_t, void*, std::size_t, std::int64_t);
 
 namespace {
 

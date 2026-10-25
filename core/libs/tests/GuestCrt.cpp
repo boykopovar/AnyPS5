@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -13,31 +15,6 @@
 #include <ctime>
 #include <exception>
 #include <limits>
-
-extern "C" {
-SonyLconv* APS5_VABI sceAmprLocaleconv(void);
-double APS5_VABI sceAmprSinh(double x, double y);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context);
-int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
-void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler);
-int APS5_VABI sceAmprFltrounds(void);
-void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error);
-std::size_t APS5_VABI sceAmprMbstowcs(std::uint16_t* dest, const char* src, std::size_t size);
-int APS5_VABI sceAmprAsctimeS(char* buffer, std::size_t size, const GuestTm* time);
-int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
-std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context);
-int APS5_VABI __fpclassifyd_nid_postfix(double value);
-unsigned __int128 APS5_VABI __udivti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
-__int128 APS5_VABI __divti3_nid_postfix(__int128 dividend, __int128 divisor);
-unsigned __int128 APS5_VABI __umodti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
-__int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor);
-SonyLconv* APS5_VABI localeconv_nid_postfix(void);
-int APS5_VABI sceAmprFpclassifyd(double value);
-unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix();
-}
 
 #define Require(condition) do { if (!(condition)) { std::fprintf(stderr, "guest_crt: line %d: %s\n", __LINE__, #condition); std::abort(); } } while (0)
 
@@ -154,6 +131,7 @@ int main() {
     trapped = false;
     try {
         __umodti3_nid_postfix(((unsigned __int128)0x1234 << 64) | 0x5678, 0);
+
     } catch (const std::runtime_error& error) {
         trapped = std::strcmp(error.what(), "__umodti3: integer divide by zero (0x00000000000012340000000000005678 % 0)") == 0;
     }

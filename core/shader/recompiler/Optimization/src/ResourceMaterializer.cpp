@@ -207,7 +207,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (!validImageDescriptor(descriptor, base.r128)) {
         return rejectImage(invalidImageReason(descriptor), "image descriptor is invalid");
     }
-    decoded.dimension = descriptorDimension(descriptor, base.dimension);
+    const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
+    decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
     if (base.depthCompare) {
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
@@ -1838,7 +1839,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
 }
 
 std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
-    if (memoKey == 0u || snapshot.tables.tables.empty() || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
+    if (snapshot.tables.tables.empty()) {
+        static const auto none = std::make_shared<const ResolvedImageTables>();
+        static_cast<void>(ResolveImageTables(info, snapshot, memoKey));
+        return none;
+    }
+    if (memoKey == 0u || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
     auto reducing = reducingSamplers(info, snapshot);
     auto& memo = resolutionMemo();
     auto& totals = tableReuseTotals();
@@ -1940,10 +1946,23 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
-        if (image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        const bool planeAdded = image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid;
+        if (planeAdded) {
             auto plane = mode;
             plane.dimension = RdnaImageDimension::Dim2D;
             modes.push_back(plane);
+        }
+        if (image.dimension == RdnaImageDimension::Dim1D && image.dimensionQueryOnly && !storage) {
+            for (const auto dimension : {RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D}) {
+                if (dimension == RdnaImageDimension::Dim2D && planeAdded) continue;
+                auto view = mode;
+                view.dimension = dimension;
+                modes.push_back(view);
+            }
+            auto cube = mode;
+            cube.dimension = RdnaImageDimension::Dim2DArray;
+            cube.cube = true;
+            modes.push_back(cube);
         }
         if (image.dimension == RdnaImageDimension::Dim1DArray || image.dimension == RdnaImageDimension::Dim2DArray || image.dimension == RdnaImageDimension::Dim2DMsaaArray) {
             auto plain = mode;

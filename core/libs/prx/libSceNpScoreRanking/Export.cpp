@@ -1,3 +1,4 @@
+#include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -30,18 +31,8 @@ static constexpr std::uint64_t FRIEND_RANKING_OPTION_SIZE = 24;
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 
-struct NpScoreGameInfo {
-    std::uint64_t infoSize;
-    std::uint8_t data[189];
-    std::uint8_t pad[3];
-};
 static_assert(sizeof(NpScoreGameInfo) == GAME_INFO_SIZE);
 
-struct NpScoreFriendRankingOption {
-    std::uint64_t size;
-    const std::uint32_t* startSerialRank;
-    const std::uint32_t* hits;
-};
 static_assert(sizeof(NpScoreFriendRankingOption) == FRIEND_RANKING_OPTION_SIZE);
 
 namespace {

@@ -1,22 +1,10 @@
+#include "prx/libScePlayerSelectionDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI scePlayerSelectionDialogInitialize(void);
-int APS5_VABI scePlayerSelectionDialogOpen(const PlayerSelectionDialogParam* param);
-int APS5_VABI scePlayerSelectionDialogUpdateStatus(void);
-int APS5_VABI scePlayerSelectionDialogGetStatus(void);
-int APS5_VABI scePlayerSelectionDialogGetResult(PlayerSelectionDialogResult* result);
-int APS5_VABI scePlayerSelectionDialogParamInitialize(void* param);
-int APS5_VABI scePlayerSelectionDialogClose(void);
-int APS5_VABI scePlayerSelectionDialogTerminate(void);
-}
 
 namespace {
 
@@ -47,6 +35,7 @@ int main() {
     bool threw = false;
     try {
         scePlayerSelectionDialogParamInitialize(&param);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

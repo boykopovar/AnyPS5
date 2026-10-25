@@ -1,3 +1,4 @@
+#include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -272,11 +273,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12
     return 0;
 }
 
-struct IntrusivePtr {
-    void* object;
-    void (APS5_VABI* deleter)(void*);
-    void* libContext;
-};
 static_assert(sizeof(IntrusivePtr) == 0x18);
 
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -463,12 +459,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common21DownStreamTransactionINS2_12Intrusive
     return 0;
 }
 
-struct CommonString {
-    std::int32_t referenceCount;
-    char* buffer;
-    std::uint64_t bufferSize;
-    void* libContext;
-};
 static_assert(sizeof(CommonString) == 0x20 && offsetof(CommonString, buffer) == 0x08);
 static_assert(offsetof(CommonString, bufferSize) == 0x10 && offsetof(CommonString, libContext) == 0x18);
 
@@ -895,7 +885,6 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
 // SessionManager2V1 and extra Common symbols, from a title dump whose modules lack
 // libSceNpCppWebApi.prx.
 // --------------------------------------------------------------------------
-
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V115LocalizedStringEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
     CopyIntrusivePtr(self, source, 0x00);

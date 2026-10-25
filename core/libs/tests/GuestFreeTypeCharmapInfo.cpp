@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -13,13 +14,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Get_Charmap_Index_nid_postfix(GuestCharMapRec*);
-std::uint64_t APS5_VABI FT_Get_CMap_Language_ID_nid_postfix(GuestCharMapRec*);
-std::int64_t APS5_VABI FT_Get_CMap_Format_nid_postfix(GuestCharMapRec*);
-int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec*, GuestCharMapRec*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

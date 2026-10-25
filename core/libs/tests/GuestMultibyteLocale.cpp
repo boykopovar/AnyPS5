@@ -1,24 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t*, const char*, std::size_t, void*);
-std::size_t APS5_VABI mbrlen_nid_postfix(const char*, std::size_t, void*);
-int APS5_VABI mbtowc_nid_postfix(std::uint16_t*, const char*, std::size_t);
-int APS5_VABI mblen_nid_postfix(const char*, std::size_t);
-std::size_t APS5_VABI wcrtomb_nid_postfix(char*, std::uint16_t, void*);
-int APS5_VABI wctomb_nid_postfix(char*, std::uint16_t);
-int APS5_VABI mbsinit_nid_postfix(const void*);
-int APS5_VABI _Getmbcurmax_nid_postfix();
-std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t*, const char*, std::size_t);
-std::size_t APS5_VABI wcstombs_nid_postfix(char*, const std::uint16_t*, std::size_t);
-std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t*, const char**, std::size_t, void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 constexpr auto Invalid = static_cast<std::size_t>(-1);
 constexpr auto Incomplete = static_cast<std::size_t>(-2);
@@ -83,6 +69,7 @@ static void CheckState() {
     Require(mbtowc_nid_postfix(&value, "\xa9", 1) == 1 && value == 0xe9, "mbtowc keeps the partial character");
     Require(mbtowc_nid_postfix(&value, "\xe2\x82\xac", 8) == 3 && value == 0x20ac, "mbtowc limits the count to three bytes");
     mbtowc_nid_postfix(&value, "\xc3", 1);
+
     Require(mbtowc_nid_postfix(nullptr, nullptr, 0) == 0 && mbtowc_nid_postfix(&value, "A", 1) == 1, "a null string resets mbtowc");
     Require(mblen_nid_postfix("\xc3", 1) == -1 && mblen_nid_postfix("\xa9", 1) == -1, "mblen keeps no state");
     Require(mblen_nid_postfix("\xe2\x82\xac", 3) == 3 && mblen_nid_postfix(nullptr, 0) == 0, "mblen");

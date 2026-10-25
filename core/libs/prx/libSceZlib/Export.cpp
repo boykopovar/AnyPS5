@@ -1,3 +1,4 @@
+#include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "zlib.h"
 #include <chrono>
@@ -21,7 +22,7 @@ constexpr std::int32_t NO_SPACE = static_cast<std::int32_t>(0x8112001C);
 constexpr std::int32_t INVALID_ARGUMENT = static_cast<std::int32_t>(0x81120016);
 constexpr std::int32_t FATAL = static_cast<std::int32_t>(0x811200FF);
 
-struct Result {
+struct InflateResult {
     std::uint32_t produced;
     std::int32_t status;
 };
@@ -30,7 +31,7 @@ std::mutex serviceMutex;
 bool initialized = false;
 std::uint64_t nextId = 1;
 std::uint64_t session = 0;
-std::unordered_map<std::uint64_t, Result> results;
+std::unordered_map<std::uint64_t, InflateResult> results;
 std::deque<std::uint64_t> completed;
 std::condition_variable completion;
 
@@ -79,7 +80,7 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
     const std::uint64_t id = nextId++;
-    results[id] = Result{produced, status};
+    results[id] = InflateResult{produced, status};
     completed.push_back(id);
     completion.notify_one();
     *requestId = id;

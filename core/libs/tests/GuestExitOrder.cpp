@@ -1,12 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
-extern "C" int APS5_VABI atexit_nid_postfix(void (APS5_VABI *func)());
 
 namespace {
 
