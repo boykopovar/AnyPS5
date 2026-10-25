@@ -602,6 +602,8 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEED1Ev, VectorReferenceCountOffset},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V16AvatarEEEEEED1Ev, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev, StringVectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev, ScalarVectorReferenceCountOffset},
     };
     for (const auto& testCase : destructors) TestDestroy(testCase);
 
