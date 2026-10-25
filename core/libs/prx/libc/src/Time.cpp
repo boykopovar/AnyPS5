@@ -189,6 +189,9 @@ std::recursive_mutex& zoneMutex() {
 
 char** HostZoneNames();
 char* GuestZoneName(int index);
+#ifdef _WIN32
+void refreshGuestZoneNames();
+#endif
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -208,6 +211,7 @@ void applyGuestZone() {
     current = guest;
 #ifdef _WIN32
     _tzset();
+    refreshGuestZoneNames();
 #else
     ::tzset();
 #endif
@@ -478,14 +482,34 @@ char** HostZoneNames() {
 #endif
 }
 
+#ifdef _WIN32
+std::array<std::string, 2>& guestZoneNamesUtf8() {
+    static std::array<std::string, 2> names;
+    return names;
+}
+
+bool& guestZoneNamesInitialized() {
+    static bool initialized = false;
+    return initialized;
+}
+
+void refreshGuestZoneNames() {
+    char** names = HostZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
+    for (std::size_t index = 0; index < utf8Names.size(); ++index)
+        utf8Names[index] = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+    guestZoneNamesInitialized() = true;
+}
+#endif
+
 char* GuestZoneName(int index) {
     static char unnamed[] = "   ";
     char** names = HostZoneNames();
 #ifdef _WIN32
-    static std::array<std::string, 2> utf8Names;
+    if (!guestZoneNamesInitialized()) refreshGuestZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
     const bool daylightSaving = _daylight != 0;
     if (index >= 0 && index < 2) {
-        utf8Names[static_cast<std::size_t>(index)] = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
         if (index == 1 && !daylightSaving) return unnamed;
         return utf8Names[static_cast<std::size_t>(index)].data();
     }
@@ -504,6 +528,9 @@ int daylight_nid_postfix = 0;
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
+#ifdef _WIN32
+    refreshGuestZoneNames();
+#endif
     tzname_nid_postfix[0] = GuestZoneName(0);
     tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
