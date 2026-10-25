@@ -18,6 +18,7 @@ constexpr std::size_t EncryptOffset = 16;
 constexpr std::size_t BufLenOffset = 20;
 constexpr std::size_t OivOffset = 24;
 constexpr std::size_t IvOffset = 40;
+constexpr std::size_t BufOffset = 56;
 constexpr std::size_t NumOffset = 88;
 constexpr std::size_t KeyLenOffset = 104;
 constexpr std::size_t FlagsOffset = 112;
@@ -652,6 +653,136 @@ static void TestUpdateArguments() {
     RequireThrows([&] { EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written); });
 }
 
+using Descriptor = const LibreSslEvpCipher* (APS5_VABI*)(void);
+
+constexpr const char* Sp80038aKey128 = "2b7e151628aed2a6abf7158809cf4f3c";
+constexpr const char* Sp80038aKey192 = "8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b";
+constexpr const char* Sp80038aKey256 = "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4";
+
+static Bytes Hex(const char* text) {
+    const auto nibble = [](char digit) { return static_cast<unsigned char>(digit <= '9' ? digit - '0' : digit - 'a' + 10); };
+    Bytes bytes;
+    for (; text[0] && text[1]; text += 2) bytes.push_back(static_cast<unsigned char>(nibble(text[0]) << 4 | nibble(text[1])));
+    return bytes;
+}
+
+static void RequireDescriptor(const Cipher* cipher, int nid, std::size_t keyLength, int ivLength, std::uint64_t flags, int contextSize) {
+    Require(cipher != nullptr && cipher->nid == nid && cipher->blockSize == 1 && cipher->keyLength == static_cast<int>(keyLength));
+    Require(cipher->ivLength == ivLength && cipher->flags == flags && cipher->contextSize == contextSize);
+    Require(cipher->init != nullptr && cipher->doCipher != nullptr && cipher->applicationData == nullptr);
+    Require(cipher->setAsn1Parameters == nullptr && cipher->getAsn1Parameters == nullptr);
+}
+
+static void RequireThreeForms(const Cipher* cipher, const Bytes& key, const Bytes& iv, const Bytes& plain, const Bytes& encrypted) {
+    unsigned char context[ContextBytes] {};
+    Bytes output;
+    for (std::size_t chunk : {1, 7, 64}) {
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data()) == 1);
+        Require(Process(context, EVP_EncryptUpdate_nid_postfix, EVP_EncryptFinal_ex_nid_postfix, plain, chunk, output) == 1);
+        Require(output == encrypted);
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data()) == 1);
+        Require(Process(context, EVP_DecryptUpdate_nid_postfix, EVP_DecryptFinal_ex_nid_postfix, encrypted, chunk, output) == 1);
+        Require(output == plain);
+        for (int encrypt : {1, 0}) {
+            Require(EVP_CipherInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data(), encrypt) == 1);
+            Require(Process(context, EVP_CipherUpdate_nid_postfix, EVP_CipherFinal_ex_nid_postfix, encrypt ? plain : encrypted, chunk, output) == 1);
+            Require(output == (encrypt ? encrypted : plain));
+        }
+    }
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), iv.data()) == 1);
+    Require(Process(context, EVP_EncryptUpdate_nid_postfix, EVP_EncryptFinal_ex_nid_postfix, plain, 5, output) == 1);
+    Require(output == encrypted);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+static void TestAesCfb8() {
+    const struct {
+        Descriptor descriptor;
+        int nid;
+        const char* key;
+        const char* encrypted;
+    } cases[] {
+        {EVP_aes_128_cfb8_nid_postfix, 653, Sp80038aKey128, "3b79424c9c0dd436bace9e0ed4586a4f32b9"},
+        {EVP_aes_192_cfb8_nid_postfix, 654, Sp80038aKey192, "cda2521ef0a905ca44cd057cbf0d47a0678a"},
+        {EVP_aes_256_cfb8_nid_postfix, 655, Sp80038aKey256, "dc1f1a8520a64db55fcc8ac554844e889700"},
+    };
+    const auto iv = Hex("000102030405060708090a0b0c0d0e0f");
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172aae2d");
+    for (const auto& test : cases) {
+        const auto* cipher = reinterpret_cast<const Cipher*>(test.descriptor());
+        const auto key = Hex(test.key);
+        const auto encrypted = Hex(test.encrypted);
+        Require(EvpCipher(cipher) == test.descriptor());
+        RequireDescriptor(cipher, test.nid, key.size(), 16, 0x4003, 264);
+        Require(cipher->cleanup == nullptr && cipher->control == nullptr);
+        RequireThreeForms(cipher, key, iv, plain, encrypted);
+        unsigned char context[ContextBytes] {};
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data()) == 1);
+        Store(context, NumOffset, 9);
+        auto buffer = plain;
+        int written = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), buffer.data(), &written, buffer.data(), 18) == 1);
+        Require(written == 18 && buffer == encrypted && Load<int>(context, NumOffset) == 9);
+        Require(std::memcmp(context + IvOffset, encrypted.data() + 2, 16) == 0);
+        RequireThrows([&] { EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, buffer.data(), 3); });
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+}
+
+static void TestAesCtr() {
+    const struct {
+        Descriptor descriptor;
+        int nid;
+        const char* key;
+        const char* encrypted;
+    } cases[] {
+        {EVP_aes_128_ctr_nid_postfix, 904, Sp80038aKey128, "874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff5ae4df3edbd5d35e5b4f09020db03eab1e031dda2fbe03d1792170a0f3009cee"},
+        {EVP_aes_192_ctr_nid_postfix, 905, Sp80038aKey192, "1abc932417521ca24f2b0459fe7e6e0b090339ec0aa6faefd5ccc2c6f4ce8e941e36b26bd1ebc670d1bd1d665620abf74f78a7f6d29809585a97daec58c6b050"},
+        {EVP_aes_256_ctr_nid_postfix, 906, Sp80038aKey256, "601ec313775789a5b7a7f504bbf3d228f443e3ca4d62b59aca84e990cacaf5c52b0930daa23de94ce87017ba2d84988ddfc9c58db67aada613c2dd08457941a6"},
+    };
+    const auto counter = Hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710");
+    for (const auto& test : cases) {
+        const auto* cipher = reinterpret_cast<const Cipher*>(test.descriptor());
+        const auto key = Hex(test.key);
+        const auto encrypted = Hex(test.encrypted);
+        Require(EvpCipher(cipher) == test.descriptor());
+        RequireDescriptor(cipher, test.nid, key.size(), 16, 0x4005, 264);
+        Require(cipher->cleanup == nullptr && cipher->control == nullptr);
+        RequireThreeForms(cipher, key, counter, plain, encrypted);
+        unsigned char context[ContextBytes] {};
+        unsigned char out[64] {};
+        int written = -1;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), counter.data()) == 1);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 18) == 1 && written == 18);
+        Require(Load<int>(context, NumOffset) == 2 && context[IvOffset + 15] == 0x01 && context[IvOffset + 14] == 0xff);
+        for (std::size_t index = 0; index < 16; ++index) Require(context[BufOffset + index] == (plain[16 + index] ^ encrypted[16 + index]));
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, nullptr, nullptr) == 1);
+        Require(Load<int>(context, NumOffset) == 0);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data() + 32, 32) == 1 && written == 32);
+        Require(std::memcmp(out, encrypted.data() + 32, 32) == 0);
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_ctr_nid_postfix());
+    const auto key = Hex(Sp80038aKey128);
+    const Bytes wrap(16, 0xff);
+    unsigned char context[ContextBytes] {};
+    unsigned char out[17] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), wrap.data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 17) == 1 && written == 17);
+    Require(Bytes(out, out + 17) == Hex("e13338e36cb71962e00d020b4cedbd86d3"));
+    for (std::size_t index = 0; index < 16; ++index) Require(context[IvOffset + index] == (index == 15 ? 1 : 0));
+    Store(context, KeyLenOffset, 20);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nullptr) == 0);
+    Require(cipher->init(context, nullptr, nullptr, 1) == 0);
+    Store(context, NumOffset, 16);
+    RequireThrows([&] { EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 1); });
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 1); });
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -668,5 +799,7 @@ int main() {
     TestStreamCipher();
     TestCustomCipher();
     TestUpdateArguments();
+    TestAesCfb8();
+    TestAesCtr();
     return 0;
 }
