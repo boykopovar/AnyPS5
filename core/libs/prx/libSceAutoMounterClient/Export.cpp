@@ -1,19 +1,8 @@
+#include "prx/libSceAutoMounterClient/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct AutoMounterUsbDeviceInfo {
-    char deviceName[128];
-    std::byte metadata[22];
-    std::byte data0[256];
-    std::byte padding[2];
-    std::uint64_t data0Size;
-    std::byte data1[256];
-    std::uint64_t data1Size;
-    std::byte data2[256];
-    std::uint64_t data2Size;
-};
 
 static_assert(sizeof(AutoMounterUsbDeviceInfo) == 944);
 static_assert(offsetof(AutoMounterUsbDeviceInfo, data0) == 150);

@@ -1,3 +1,4 @@
+#include "prx/libSceNpPartner001/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
 #include <stdexcept>

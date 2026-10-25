@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdio>
@@ -7,11 +8,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI gethostname_nid_postfix(char*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition, int line) {
     if (!condition) {

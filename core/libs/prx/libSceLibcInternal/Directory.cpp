@@ -1,11 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include <cerrno>
 #include <cstdint>
-
-extern "C" int APS5_VABI close_nid_postfix(int d);
-extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
     constexpr int SetDescriptorFlags = 2;

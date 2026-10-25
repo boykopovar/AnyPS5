@@ -66,7 +66,7 @@ bool Driver::pipelineDispatch() {
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
     PerformanceTimer timing("Driver.Dispatch");
     const auto address = (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u);
-    if (address == SkippedShader() && address != 0) return;
+    if (SkippedShader(address)) return;
     auto registeredShader = RegisteredProgram(*submission.shaders, address, {0});
     if (!registeredShader) registeredShader = ReadRawShader(address);
     const auto& snapshot = *registeredShader;
@@ -119,13 +119,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (indirectArguments == 0 && (packet[4] & 0x2u) != 0) {
         partialGroups = Pm4::PartialGroupThreads({packet[1], packet[2], packet[3]}, {readRegister(queue.shader, 0x207), readRegister(queue.shader, 0x208), readRegister(queue.shader, 0x209)});
     }
-    const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
+    const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClearCompletion;
     if (resolving) {
         if (indirectArguments == 0 && Graphics::MatchMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) return;
         if (!partialLastGroup && matchesFillKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute)) return;
-        if (!partialLastGroup && indirectArguments == 0 && (matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute))) return;
+        if (!partialLastGroup && indirectArguments == 0 && (matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) || MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute))) return;
     } else {
         if (indirectArguments == 0 && Graphics::TakeMultisampledSingleClear(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads)) {
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
@@ -414,6 +414,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked.resolvedAt = std::chrono::steady_clock::now();
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;
+        if (!cached && compiledResult != nullptr && !localDevice->HasComputePipeline(*compiledResult)) {
+            SubmitLibraryPrebuild([localDevice, compiledResult, address] {
+                try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
+            });
+        }
         return;
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);

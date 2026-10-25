@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -5,11 +7,6 @@
 #include <stdexcept>
 #include <string>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
 static_assert(sizeof(GuestSignalSet) == 16);
 
 namespace {

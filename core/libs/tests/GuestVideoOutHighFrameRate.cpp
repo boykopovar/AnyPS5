@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Output.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
@@ -6,16 +7,6 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceVideoOutOpen(int, int, int, const void*);
-int APS5_VABI sceVideoOutClose(int);
-int APS5_VABI sceVideoOutIsOutputSupported(int, std::uint64_t, const VideoOutOutputOptions*, void*, std::uint64_t);
-int APS5_VABI sceVideoOutConfigureOutput(int, std::uint64_t, const VideoOutOutputOptions*, void*, std::uint64_t);
-int APS5_VABI sceVideoOutWaitVblank(int);
-int APS5_VABI sceVideoOutGetOutputStatus(int, VideoOutOutputStatus*);
-int APS5_VABI sceVideoOutGetResolutionStatus(int, VideoOutResolutionStatus*);
-}
 
 static constexpr int Unsupported = static_cast<int>(0x80290016u);
 

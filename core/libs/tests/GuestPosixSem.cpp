@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -8,16 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sem_init_nid_postfix(void*, int, unsigned int);
-int APS5_VABI sem_destroy_nid_postfix(void*);
-int APS5_VABI sem_post_nid_postfix(void*);
-int APS5_VABI sem_trywait_nid_postfix(void*);
-int APS5_VABI sem_timedwait_nid_postfix(void*, const KernelTimespec*);
-int APS5_VABI sem_getvalue_nid_postfix(void*, int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition, const char* message) {
     if (!condition) {

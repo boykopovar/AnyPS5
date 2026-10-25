@@ -49,12 +49,30 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VSubrevF32:
     case RdnaOpcode::VMulF32:
     case RdnaOpcode::VMulLegacyF32:
+        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+            const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
+            if (denormals == 1u || denormals == 2u) {
+                if (!float32DenormPreserve || float32FlushToZero) {
+                    throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+                }
+                return denormals == 1u ? 2u : 1u;
+            }
+        }
+        flush = 3u;
+        break;
     case RdnaOpcode::VMullitF32:
+        flush = 3u;
+        break;
     case RdnaOpcode::VMinF32:
     case RdnaOpcode::VMaxF32:
     case RdnaOpcode::VMin3F32:
     case RdnaOpcode::VMax3F32:
     case RdnaOpcode::VMed3F32:
+        if (!floatMode.has_value() || ((floatMode->floatMode >> 4u) & 1u) == 0u) return 3u;
+        if (((floatMode->floatMode >> 4u) & 3u) == 1u && (!float32DenormPreserve || float32FlushToZero)) {
+            throw std::runtime_error("f32 denormal mode 1 at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+        }
+        return 0u;
     case RdnaOpcode::VFractF32:
     case RdnaOpcode::VFloorF32:
     case RdnaOpcode::VCeilF32:
@@ -93,7 +111,6 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VCmpxNleF32:
     case RdnaOpcode::VCmpxNlgF32:
     case RdnaOpcode::VCmpxNltF32:
-        return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VCvtI32F32:
     case RdnaOpcode::VCvtU32F32:
     case RdnaOpcode::VCvtRpiI32F32:
@@ -105,6 +122,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VCvtPkU8F32:
     case RdnaOpcode::VCvtPkrtzF16F32:
     case RdnaOpcode::VCvtF16F32:
+        return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VDivScaleF32:
     case RdnaOpcode::VDivFixupF32:
     case RdnaOpcode::VMadMixloF16:
@@ -119,6 +137,12 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     }
     const std::uint32_t denormals = floatMode.has_value() ? (floatMode->floatMode >> 4u) & 3u : 0u;
     if (denormals == 1u || denormals == 2u) {
+        if (inst.op == RdnaOpcode::VMullitF32 && (denormals == 2u || (floatMode->floatMode & 3u) == 0u)) {
+            if (!float32DenormPreserve || float32FlushToZero) {
+                throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+            }
+            return denormals == 1u ? 2u : 1u;
+        }
         throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " is not implemented");
     }
     if (denormals != 0u) return 0u;
