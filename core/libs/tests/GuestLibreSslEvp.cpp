@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -11,62 +12,9 @@
 #include <string>
 #include <vector>
 
-extern "C" {
-const void* APS5_VABI EVP_md5_nid_postfix(void);
-const void* APS5_VABI EVP_sha256_nid_postfix(void);
-const void* APS5_VABI EVP_sha384_nid_postfix(void);
-const void* APS5_VABI EVP_sha512_nid_postfix(void);
-int APS5_VABI EVP_MD_size_nid_postfix(const void*);
-void APS5_VABI EVP_MD_CTX_init_nid_postfix(void*);
-void* APS5_VABI EVP_MD_CTX_create_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(void*);
-void APS5_VABI EVP_MD_CTX_destroy_nid_postfix(void*);
-int APS5_VABI EVP_DigestInit_ex_nid_postfix(void*, const void*, void*);
-int APS5_VABI EVP_DigestUpdate_nid_postfix(void*, const void*, std::size_t);
-int APS5_VABI EVP_DigestFinal_ex_nid_postfix(void*, unsigned char*, unsigned int*);
-int APS5_VABI EVP_Digest_nid_postfix(const void*, std::size_t, unsigned char*, unsigned int*, const void*, void*);
-void APS5_VABI HMAC_CTX_init_nid_postfix(void*);
-void APS5_VABI HMAC_CTX_cleanup_nid_postfix(void*);
-int APS5_VABI HMAC_Init_ex_nid_postfix(void*, const void*, int, const void*, void*);
-int APS5_VABI HMAC_Init_nid_postfix(void*, const void*, int, const void*);
-int APS5_VABI HMAC_Update_nid_postfix(void*, const unsigned char*, std::size_t);
-int APS5_VABI HMAC_Final_nid_postfix(void*, unsigned char*, unsigned int*);
-unsigned char* APS5_VABI HMAC_nid_postfix(const void*, const void*, int, const unsigned char*, std::size_t, unsigned char*, unsigned int*);
-}
-
-struct MdContext {
-    const void* digest;
-    void* engine;
-    std::uint64_t flags;
-    void* mdData;
-    void* pkeyContext;
-    void* update;
-};
-
-struct TestMd {
-    std::int32_t type;
-    std::int32_t pkeyType;
-    std::int32_t mdSize;
-    std::uint64_t flags;
-    int (APS5_VABI* init)(MdContext*);
-    int (APS5_VABI* update)(MdContext*, const void*, std::size_t);
-    int (APS5_VABI* finalize)(MdContext*, unsigned char*);
-    void* copy;
-    int (APS5_VABI* cleanup)(MdContext*);
-    void* sign;
-    void* verify;
-    std::int32_t requiredPkeyType[5];
-    std::int32_t blockSize;
-    std::int32_t contextSize;
-    void* control;
-};
-
-static_assert(sizeof(MdContext) == 48);
-static_assert(sizeof(TestMd) == 120);
-
 struct Algorithm {
     const char* name;
-    const void* md;
+    const EvpMd* md;
     int type;
     int pkeyType;
     int size;
@@ -153,7 +101,7 @@ template<typename T> static T Field(const void* base, std::size_t offset) {
     return value;
 }
 
-static std::string DigestInChunks(MdContext& context, const void* md, const std::vector<unsigned char>& message, std::size_t chunk) {
+static std::string DigestInChunks(EvpMdContext& context, const EvpMd* md, const std::vector<unsigned char>& message, std::size_t chunk) {
     unsigned char digest[64] {};
     unsigned int size = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, md, nullptr) == 1);
@@ -163,7 +111,7 @@ static std::string DigestInChunks(MdContext& context, const void* md, const std:
     return Hex(digest, size);
 }
 
-static std::string MacInChunks(void* context, const std::vector<unsigned char>& key, const void* md, const std::vector<unsigned char>& message, std::size_t chunk) {
+static std::string MacInChunks(HmacContext* context, const std::vector<unsigned char>& key, const EvpMd* md, const std::vector<unsigned char>& message, std::size_t chunk) {
     unsigned char mac[64] {};
     unsigned int size = 0;
     Require(HMAC_Init_ex_nid_postfix(context, key.data(), static_cast<int>(key.size()), md, nullptr) == 1);
@@ -176,24 +124,24 @@ static std::string MacInChunks(void* context, const std::vector<unsigned char>& 
 static int customInits = 0;
 static int customCleanups = 0;
 
-static int APS5_VABI CustomInit(MdContext* context) {
+static int APS5_VABI CustomInit(EvpMdContext* context) {
     ++customInits;
     std::memset(context->mdData, 0, 4);
     return 1;
 }
 
-static int APS5_VABI CustomUpdate(MdContext* context, const void* data, std::size_t length) {
+static int APS5_VABI CustomUpdate(EvpMdContext* context, const void* data, std::size_t length) {
     auto* sum = static_cast<unsigned char*>(context->mdData);
     for (std::size_t i = 0; i < length; ++i) sum[i % 4] = static_cast<unsigned char>(sum[i % 4] + static_cast<const unsigned char*>(data)[i]);
     return 1;
 }
 
-static int APS5_VABI CustomFinal(MdContext* context, unsigned char* digest) {
+static int APS5_VABI CustomFinal(EvpMdContext* context, unsigned char* digest) {
     std::memcpy(digest, context->mdData, 4);
     return 1;
 }
 
-static int APS5_VABI CustomCleanup(MdContext*) {
+static int APS5_VABI CustomCleanup(EvpMdContext*) {
     ++customCleanups;
     return 1;
 }
@@ -265,8 +213,8 @@ int main() {
         Require(Field<void*>(algorithm.md, 24) && Field<void*>(algorithm.md, 32) && Field<void*>(algorithm.md, 40));
         Require(Field<void*>(algorithm.md, 48) == nullptr && Field<void*>(algorithm.md, 56) == nullptr);
 
-        auto* created = static_cast<MdContext*>(EVP_MD_CTX_create_nid_postfix());
-        Require(created && AllZero(created, sizeof(MdContext)));
+        auto* created = EVP_MD_CTX_create_nid_postfix();
+        Require(created && AllZero(created, sizeof(EvpMdContext)));
         for (std::size_t m = 0; m < messages.size(); ++m) {
             for (const std::size_t chunk : {std::size_t(1), std::size_t(algorithm.block - 1), std::size_t(algorithm.block), std::size_t(algorithm.block + 1), std::size_t(1000)})
                 Require(DigestInChunks(*created, algorithm.md, messages[m], chunk) == algorithm.digests[m]);
@@ -276,36 +224,37 @@ int main() {
             Require(size == static_cast<unsigned int>(algorithm.size) && Hex(digest, size) == algorithm.digests[m]);
             Require(EVP_Digest_nid_postfix(messages[m].data(), messages[m].size(), digest, nullptr, algorithm.md, nullptr) == 1);
         }
-        Require(created->digest == algorithm.md && created->update == Field<void*>(algorithm.md, 32));
+        Require(created->digest == algorithm.md && Field<void*>(created, 40) == Field<void*>(algorithm.md, 32));
         Require(created->mdData && AllZero(created->mdData, static_cast<std::size_t>(algorithm.contextSize)));
         void* const data = created->mdData;
         Require(EVP_DigestInit_ex_nid_postfix(created, algorithm.md, nullptr) == 1 && created->mdData == data);
-        Require(EVP_MD_CTX_cleanup_nid_postfix(created) == 1 && AllZero(created, sizeof(MdContext)));
+        Require(EVP_MD_CTX_cleanup_nid_postfix(created) == 1 && AllZero(created, sizeof(EvpMdContext)));
         EVP_MD_CTX_destroy_nid_postfix(created);
 
-        alignas(16) unsigned char hmac[288];
-        std::memset(hmac, 0x5a, sizeof(hmac));
-        HMAC_CTX_init_nid_postfix(hmac);
-        Require(Field<const void*>(hmac, 0) == nullptr && AllZero(hmac + 8, 3 * sizeof(MdContext)));
+        HmacContext hmac;
+        const auto* hmacBytes = reinterpret_cast<const unsigned char*>(&hmac);
+        std::memset(&hmac, 0x5a, sizeof(hmac));
+        HMAC_CTX_init_nid_postfix(&hmac);
+        Require(Field<const void*>(&hmac, 0) == nullptr && AllZero(hmacBytes + 8, 3 * sizeof(EvpMdContext)));
         for (std::size_t c = 0; c < macCases.size(); ++c) {
             const auto& [key, message] = macCases[c];
             for (const std::size_t chunk : {std::size_t(1), std::size_t(algorithm.block), std::size_t(1000)})
-                Require(MacInChunks(hmac, key, algorithm.md, message, chunk) == algorithm.macs[c]);
-            Require(Field<const void*>(hmac, 0) == algorithm.md);
+                Require(MacInChunks(&hmac, key, algorithm.md, message, chunk) == algorithm.macs[c]);
+            Require(Field<const void*>(&hmac, 0) == algorithm.md);
             const bool hashed = key.size() > static_cast<std::size_t>(algorithm.block);
-            const auto keyLength = Field<std::uint32_t>(hmac, 152);
+            const auto keyLength = Field<std::uint32_t>(&hmac, 152);
             Require(keyLength == (hashed ? static_cast<std::uint32_t>(algorithm.size) : key.size()));
-            Require(hashed || std::memcmp(hmac + 156, key.data(), key.size()) == 0);
-            Require(AllZero(hmac + 156 + keyLength, 128 - keyLength));
+            Require(hashed || std::memcmp(hmacBytes + 156, key.data(), key.size()) == 0);
+            Require(AllZero(hmacBytes + 156 + keyLength, 128 - keyLength));
 
             unsigned char mac[64] {};
             unsigned int size = 0;
-            Require(HMAC_Init_ex_nid_postfix(hmac, nullptr, 0, nullptr, nullptr) == 1);
-            Require(HMAC_Update_nid_postfix(hmac, message.data(), message.size()) == 1);
-            Require(HMAC_Final_nid_postfix(hmac, mac, &size) == 1 && Hex(mac, size) == algorithm.macs[c]);
-            Require(HMAC_Init_ex_nid_postfix(hmac, nullptr, 0, algorithm.md, nullptr) == 1);
-            Require(HMAC_Update_nid_postfix(hmac, message.data(), message.size()) == 1);
-            Require(HMAC_Final_nid_postfix(hmac, mac, nullptr) == 1 && Hex(mac, static_cast<std::size_t>(algorithm.size)) == algorithm.macs[c]);
+            Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, nullptr, nullptr) == 1);
+            Require(HMAC_Update_nid_postfix(&hmac, message.data(), message.size()) == 1);
+            Require(HMAC_Final_nid_postfix(&hmac, mac, &size) == 1 && Hex(mac, size) == algorithm.macs[c]);
+            Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, algorithm.md, nullptr) == 1);
+            Require(HMAC_Update_nid_postfix(&hmac, message.data(), message.size()) == 1);
+            Require(HMAC_Final_nid_postfix(&hmac, mac, nullptr) == 1 && Hex(mac, static_cast<std::size_t>(algorithm.size)) == algorithm.macs[c]);
 
             std::memset(mac, 0, sizeof(mac));
             size = 0;
@@ -314,15 +263,15 @@ int main() {
             const unsigned char* shared = HMAC_nid_postfix(algorithm.md, key.data(), static_cast<int>(key.size()), message.data(), message.size(), nullptr, nullptr);
             Require(shared && Hex(shared, static_cast<std::size_t>(algorithm.size)) == algorithm.macs[c]);
         }
-        HMAC_CTX_cleanup_nid_postfix(hmac);
-        Require(AllZero(hmac, sizeof(hmac)));
+        HMAC_CTX_cleanup_nid_postfix(&hmac);
+        Require(AllZero(&hmac, sizeof(hmac)));
     }
 
     const auto* sha256 = EVP_sha256_nid_postfix();
     const auto* sha512 = EVP_sha512_nid_postfix();
     const auto* md5 = EVP_md5_nid_postfix();
 
-    MdContext context;
+    EvpMdContext context;
     std::memset(&context, 0x77, sizeof(context));
     EVP_MD_CTX_init_nid_postfix(&context);
     Require(AllZero(&context, sizeof(context)));
@@ -355,7 +304,7 @@ int main() {
     Require(context.digest == sha256 && context.mdData == nullptr && context.update == nullptr);
     Require(EVP_MD_CTX_cleanup_nid_postfix(&context) == 1 && AllZero(&context, sizeof(context)));
 
-    TestMd custom {};
+    EvpMd custom {};
     custom.type = 12345;
     custom.mdSize = 4;
     custom.init = CustomInit;
@@ -374,33 +323,33 @@ int main() {
     custom.mdSize = 65;
     Require(EVP_Digest_nid_postfix(bytes, sizeof(bytes), sum, &sumSize, &custom, nullptr) == 0);
 
-    alignas(16) unsigned char hmac[288] {};
-    HMAC_CTX_init_nid_postfix(hmac);
+    HmacContext hmac {};
+    HMAC_CTX_init_nid_postfix(&hmac);
     unsigned char mac[64] {};
     unsigned int macSize = 0;
-    Require(HMAC_Update_nid_postfix(hmac, abc.data(), abc.size()) == 0);
-    Require(HMAC_Final_nid_postfix(hmac, mac, &macSize) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, nullptr, 0, nullptr, nullptr) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, nullptr, 0, sha256, nullptr) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, "k", -1, sha256, nullptr) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, "Jefe", 4, sha256, nullptr) == 1);
-    Require(HMAC_Init_ex_nid_postfix(hmac, nullptr, 0, md5, nullptr) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, "Jefe", -1, nullptr, nullptr) == 0);
-    Require(HMAC_Init_ex_nid_postfix(hmac, "Jefe", 4, nullptr, nullptr) == 1);
+    Require(HMAC_Update_nid_postfix(&hmac, abc.data(), abc.size()) == 0);
+    Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, nullptr, nullptr) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, sha256, nullptr) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, "k", -1, sha256, nullptr) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, sha256, nullptr) == 1);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, nullptr, 0, md5, nullptr) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", -1, nullptr, nullptr) == 0);
+    Require(HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, nullptr, nullptr) == 1);
     const auto question = Bytes("what do ya want for nothing?");
-    Require(HMAC_Update_nid_postfix(hmac, question.data(), question.size()) == 1);
-    Require(HMAC_Final_nid_postfix(hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[1].macs[1]);
-    RequireThrows([&] { HMAC_Init_ex_nid_postfix(hmac, "Jefe", 4, sha256, &engine); });
-    HMAC_CTX_cleanup_nid_postfix(hmac);
+    Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
+    Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[1].macs[1]);
+    RequireThrows([&] { HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, sha256, &engine); });
+    HMAC_CTX_cleanup_nid_postfix(&hmac);
 
-    std::memset(hmac, 0x33, sizeof(hmac));
-    Require(HMAC_Init_nid_postfix(hmac, "Jefe", 4, md5) == 1);
-    Require(HMAC_Update_nid_postfix(hmac, question.data(), question.size()) == 1);
-    Require(HMAC_Final_nid_postfix(hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[0].macs[1]);
-    Require(HMAC_Init_nid_postfix(hmac, nullptr, 0, nullptr) == 1);
-    Require(HMAC_Update_nid_postfix(hmac, question.data(), question.size()) == 1);
-    Require(HMAC_Final_nid_postfix(hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[0].macs[1]);
-    HMAC_CTX_cleanup_nid_postfix(hmac);
+    std::memset(&hmac, 0x33, sizeof(hmac));
+    Require(HMAC_Init_nid_postfix(&hmac, "Jefe", 4, md5) == 1);
+    Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
+    Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[0].macs[1]);
+    Require(HMAC_Init_nid_postfix(&hmac, nullptr, 0, nullptr) == 1);
+    Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
+    Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[0].macs[1]);
+    HMAC_CTX_cleanup_nid_postfix(&hmac);
 
     Require(HMAC_nid_postfix(sha256, nullptr, 0, abc.data(), abc.size(), mac, &macSize) == nullptr);
     Require(HMAC_nid_postfix(sha256, "", 0, nullptr, 0, mac, &macSize) == mac && macSize == 32);
@@ -431,15 +380,15 @@ int main() {
     for (const std::size_t c : {std::size_t(1), std::size_t(4)}) {
         const auto& [key, message] = macCases[c];
         for (int failure = 0; failure < 3; ++failure) {
-            HMAC_CTX_init_nid_postfix(hmac);
+            HMAC_CTX_init_nid_postfix(&hmac);
             allocationsBeforeFailure = failure;
-            Require(HMAC_Init_ex_nid_postfix(hmac, key.data(), static_cast<int>(key.size()), sha256, nullptr) == 0);
+            Require(HMAC_Init_ex_nid_postfix(&hmac, key.data(), static_cast<int>(key.size()), sha256, nullptr) == 0);
             Require(allocationsBeforeFailure == -1 && liveBlocks == failure);
             for (const std::size_t offset : {std::size_t(8), std::size_t(56), std::size_t(104)})
-                Require(Field<void*>(hmac, offset + 24) || (!Field<const void*>(hmac, offset) && !Field<void*>(hmac, offset + 40)));
-            if (key.size() <= 64) RequireThrows([&] { HMAC_Update_nid_postfix(hmac, message.data(), message.size()); });
-            Require(MacInChunks(hmac, key, sha256, message, 1000) == algorithms[1].macs[c] && liveBlocks == 3);
-            HMAC_CTX_cleanup_nid_postfix(hmac);
+                Require(Field<void*>(&hmac, offset + 24) || (!Field<const void*>(&hmac, offset) && !Field<void*>(&hmac, offset + 40)));
+            if (key.size() <= 64) RequireThrows([&] { HMAC_Update_nid_postfix(&hmac, message.data(), message.size()); });
+            Require(MacInChunks(&hmac, key, sha256, message, 1000) == algorithms[1].macs[c] && liveBlocks == 3);
+            HMAC_CTX_cleanup_nid_postfix(&hmac);
             Require(liveBlocks == 0);
         }
         allocationsBeforeFailure = 2;

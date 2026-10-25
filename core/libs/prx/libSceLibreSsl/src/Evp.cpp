@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -5,63 +7,7 @@
 #include <string>
 #include "prx/libc/include/General.hpp"
 
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t size);
-void* APS5_VABI calloc_nid_postfix(std::size_t count, std::size_t size);
-void APS5_VABI free_nid_postfix(void* pointer);
-int APS5_VABI MD5_Init_nid_postfix(void* context);
-int APS5_VABI MD5_Update_nid_postfix(void* context, const void* data, std::size_t length);
-int APS5_VABI MD5_Final_nid_postfix(unsigned char* digest, void* context);
-int APS5_VABI SHA256_Init_nid_postfix(void* context);
-int APS5_VABI SHA256_Update_nid_postfix(void* context, const void* data, std::size_t length);
-int APS5_VABI SHA256_Final_nid_postfix(unsigned char* digest, void* context);
-int APS5_VABI SHA384_Init_nid_postfix(void* context);
-int APS5_VABI SHA512_Init_nid_postfix(void* context);
-int APS5_VABI SHA512_Update_nid_postfix(void* context, const void* data, std::size_t length);
-int APS5_VABI SHA512_Final_nid_postfix(unsigned char* digest, void* context);
-}
-
 namespace {
-struct EvpMdContext;
-
-struct EvpMd {
-    std::int32_t type;
-    std::int32_t pkeyType;
-    std::int32_t mdSize;
-    std::uint64_t flags;
-    int (APS5_VABI* init)(EvpMdContext* context);
-    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
-    int (APS5_VABI* finalize)(EvpMdContext* context, unsigned char* digest);
-    int (APS5_VABI* copy)(EvpMdContext* to, const EvpMdContext* from);
-    int (APS5_VABI* cleanup)(EvpMdContext* context);
-    void* sign;
-    void* verify;
-    std::int32_t requiredPkeyType[5];
-    std::int32_t blockSize;
-    std::int32_t contextSize;
-    int (APS5_VABI* control)(EvpMdContext* context, int command, int argument, void* pointer);
-};
-
-struct EvpMdContext {
-    const EvpMd* digest;
-    void* engine;
-    std::uint64_t flags;
-    void* mdData;
-    void* pkeyContext;
-    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
-};
-
-constexpr std::size_t HmacMaxBlock = 128;
-
-struct HmacContext {
-    const EvpMd* md;
-    EvpMdContext mdContext;
-    EvpMdContext innerContext;
-    EvpMdContext outerContext;
-    std::uint32_t keyLength;
-    unsigned char key[HmacMaxBlock];
-};
-
 static_assert(sizeof(EvpMd) == 120);
 static_assert(offsetof(EvpMd, flags) == 16);
 static_assert(offsetof(EvpMd, sign) == 64);
@@ -86,43 +32,43 @@ constexpr std::int32_t PkeyRsa2 = 19;
 constexpr std::int32_t PointerSize = 8;
 
 int APS5_VABI Md5Init(EvpMdContext* context) {
-    return MD5_Init_nid_postfix(context->mdData);
+    return MD5_Init_nid_postfix(static_cast<Md5Context*>(context->mdData));
 }
 
 int APS5_VABI Md5Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return MD5_Update_nid_postfix(context->mdData, data, length);
+    return MD5_Update_nid_postfix(static_cast<Md5Context*>(context->mdData), data, length);
 }
 
 int APS5_VABI Md5Final(EvpMdContext* context, unsigned char* digest) {
-    return MD5_Final_nid_postfix(digest, context->mdData);
+    return MD5_Final_nid_postfix(digest, static_cast<Md5Context*>(context->mdData));
 }
 
 int APS5_VABI Sha256Init(EvpMdContext* context) {
-    return SHA256_Init_nid_postfix(context->mdData);
+    return SHA256_Init_nid_postfix(static_cast<Sha256Context*>(context->mdData));
 }
 
 int APS5_VABI Sha256Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return SHA256_Update_nid_postfix(context->mdData, data, length);
+    return SHA256_Update_nid_postfix(static_cast<Sha256Context*>(context->mdData), data, length);
 }
 
 int APS5_VABI Sha256Final(EvpMdContext* context, unsigned char* digest) {
-    return SHA256_Final_nid_postfix(digest, context->mdData);
+    return SHA256_Final_nid_postfix(digest, static_cast<Sha256Context*>(context->mdData));
 }
 
 int APS5_VABI Sha384Init(EvpMdContext* context) {
-    return SHA384_Init_nid_postfix(context->mdData);
+    return SHA384_Init_nid_postfix(static_cast<Sha512Context*>(context->mdData));
 }
 
 int APS5_VABI Sha512Init(EvpMdContext* context) {
-    return SHA512_Init_nid_postfix(context->mdData);
+    return SHA512_Init_nid_postfix(static_cast<Sha512Context*>(context->mdData));
 }
 
 int APS5_VABI Sha512Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return SHA512_Update_nid_postfix(context->mdData, data, length);
+    return SHA512_Update_nid_postfix(static_cast<Sha512Context*>(context->mdData), data, length);
 }
 
 int APS5_VABI Sha512Final(EvpMdContext* context, unsigned char* digest) {
-    return SHA512_Final_nid_postfix(digest, context->mdData);
+    return SHA512_Final_nid_postfix(digest, static_cast<Sha512Context*>(context->mdData));
 }
 
 constexpr EvpMd Md5 {
