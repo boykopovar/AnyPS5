@@ -1,3 +1,5 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -26,11 +28,8 @@ static void InitializeHeap() {
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
-extern "C" {
-void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void*);
-void* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
-void APS5_VABI free_nid_postfix(void*);
-int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(void*, int);
+static LibreSslEvpCipherCtx* Context(unsigned char* memory) {
+    return reinterpret_cast<LibreSslEvpCipherCtx*>(memory);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -47,7 +46,7 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
 static void TestInit() {
     unsigned char memory[ContextBytes + 16];
     std::memset(memory, 0xAA, sizeof(memory));
-    EVP_CIPHER_CTX_init_nid_postfix(memory);
+    EVP_CIPHER_CTX_init_nid_postfix(Context(memory));
     for (std::size_t index = 0; index < ContextBytes; ++index) Require(memory[index] == 0);
     for (std::size_t index = ContextBytes; index < sizeof(memory); ++index) Require(memory[index] == 0xAA);
     RequireThrows([] { EVP_CIPHER_CTX_init_nid_postfix(nullptr); });
@@ -55,7 +54,7 @@ static void TestInit() {
 
 static void TestNew() {
     for (int round = 0; round < 4; ++round) {
-        auto* context = static_cast<unsigned char*>(EVP_CIPHER_CTX_new_nid_postfix());
+        auto* context = reinterpret_cast<unsigned char*>(EVP_CIPHER_CTX_new_nid_postfix());
         Require(context != nullptr);
         for (std::size_t index = 0; index < ContextBytes; ++index) Require(context[index] == 0);
         std::memset(context, 0x5A, ContextBytes);
@@ -65,16 +64,16 @@ static void TestNew() {
 
 static void TestSetPadding() {
     unsigned char context[ContextBytes] {};
-    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
     Require(Flags(context) == 0x100);
-    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
     Require(Flags(context) == 0x100);
-    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 1) == 1);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 1) == 1);
     Require(Flags(context) == 0);
     SetFlags(context, UINT64_C(0xFFFFFFFF000000FF));
-    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
     Require(Flags(context) == UINT64_C(0xFFFFFFFF000001FF));
-    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, -5) == 1);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), -5) == 1);
     Require(Flags(context) == UINT64_C(0xFFFFFFFF000000FF));
     for (std::size_t index = 0; index < ContextBytes; ++index) {
         if (index < FlagsOffset || index >= FlagsOffset + 8) Require(context[index] == 0);
