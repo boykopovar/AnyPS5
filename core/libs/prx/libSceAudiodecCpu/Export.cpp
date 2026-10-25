@@ -36,12 +36,6 @@ constexpr std::uint32_t LpcmInputCapacity = 0x43800;
 constexpr std::uint32_t LpcmStateOffset = 0xb8;
 constexpr std::uint32_t PtsStep = 450;
 
-struct AudiodecCpuMemory {
-    std::uint32_t ui_size;
-    void* p_memory;
-    std::uint32_t ui_memory_size;
-};
-
 struct LpcmParam {
     std::uint32_t size;
     std::uint32_t channelConfig;
