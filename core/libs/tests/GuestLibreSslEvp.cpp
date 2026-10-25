@@ -20,6 +20,7 @@ struct Algorithm {
     int size;
     int block;
     int contextSize;
+    std::uint64_t flags;
     const char* digests[3];
     const char* macs[6];
 };
@@ -165,17 +166,17 @@ int main() {
     macCases.emplace_back(std::vector<unsigned char>(131, 0xaa), Bytes("This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm."));
 
     const Algorithm algorithms[] {
-        {"MD5", EVP_md5_nid_postfix(), 4, 8, 16, 64, 100,
+        {"MD5", EVP_md5_nid_postfix(), 4, 8, 16, 64, 100, 0,
          {"d41d8cd98f00b204e9800998ecf8427e", "900150983cd24fb0d6963f7d28e17f72", "10046f077f2082ac19676b8079f1cb1a"},
          {"5ccec34ea9656392457fa1ac27f08fbc", "750c783e6ab0b503eaa86e310a5db738", "2ab8b9a9f7d3894d15ad8383b97044b2",
           "697eaf0aca3a3aea3a75164746ffaa79", "bfecaf4efff90a3a668f3922fec3762d", "09b8ae7b15adbbb243aca3491b51512b"}},
-        {"SHA256", EVP_sha256_nid_postfix(), 672, 668, 32, 64, 120,
+        {"SHA256", EVP_sha256_nid_postfix(), 672, 668, 32, 64, 120, 0xc,
          {"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
           "1e9bc38cbf860b9ec31918b065f9b52476c549a782e0e7990bed8ce3868d2371"},
          {"b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7", "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
           "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe", "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b",
           "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54", "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2"}},
-        {"SHA384", EVP_sha384_nid_postfix(), 673, 669, 48, 128, 224,
+        {"SHA384", EVP_sha384_nid_postfix(), 673, 669, 48, 128, 224, 0xc,
          {"38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
           "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7",
           "94c38db521ca733b8904c2d14b6e82d33dcfcc26e1318c579dbee1fc2f472019034e792263b9d46e90e700de2f6e7e91"},
@@ -185,7 +186,7 @@ int main() {
           "3e8a69b7783c25851933ab6290af6ca77a9981480850009cc5577c6e1f573b4e6801dd23c4a7d679ccf8a386c674cffb",
           "4ece084485813e9088d2c63a041bc5b44f9ef1012a2b588f3cd11f05033ac4c60c2ef6ab4030fe8296248df163f44952",
           "6617178e941f020d351e2f254e8fd32c602420feb0b8fb9adccebb82461e99c5a678cc31e799176d3860e6110c46523e"}},
-        {"SHA512", EVP_sha512_nid_postfix(), 674, 670, 64, 128, 224,
+        {"SHA512", EVP_sha512_nid_postfix(), 674, 670, 64, 128, 224, 0xc,
          {"cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
           "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
           "00e36fccf193e59697a92b5ab24666ce6326d7fa16bf10832d0991ddc591112e9dfa6a636950ed9c4d67344a760654c2ff7785e1d60094d651038735b5dccabd"},
@@ -207,6 +208,7 @@ int main() {
         Require(Field<std::int32_t>(algorithm.md, 0) == algorithm.type);
         Require(Field<std::int32_t>(algorithm.md, 4) == algorithm.pkeyType);
         Require(Field<std::int32_t>(algorithm.md, 8) == algorithm.size);
+        Require(Field<std::uint64_t>(algorithm.md, 16) == algorithm.flags);
         Require(Field<std::int32_t>(algorithm.md, 80) == 6 && Field<std::int32_t>(algorithm.md, 84) == 19);
         Require(Field<std::int32_t>(algorithm.md, 100) == algorithm.block);
         Require(Field<std::int32_t>(algorithm.md, 104) == algorithm.contextSize);
@@ -324,6 +326,7 @@ int main() {
     Require(EVP_Digest_nid_postfix(bytes, sizeof(bytes), sum, &sumSize, &custom, nullptr) == 0);
 
     HmacContext hmac {};
+    const auto* hmacBytes = reinterpret_cast<const unsigned char*>(&hmac);
     HMAC_CTX_init_nid_postfix(&hmac);
     unsigned char mac[64] {};
     unsigned int macSize = 0;
@@ -350,6 +353,24 @@ int main() {
     Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
     Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[0].macs[1]);
     HMAC_CTX_cleanup_nid_postfix(&hmac);
+
+    std::vector<unsigned char> blockKey(128);
+    for (std::size_t i = 0; i < blockKey.size(); ++i) blockKey[i] = static_cast<unsigned char>(i * 3 + 1);
+    const struct { const EvpMd* md; std::size_t keySize; const char* mac; } blockKeyCases[] {
+        {sha256, 64, "631102ef12fb140c75c4a32ec732a95ce65da9a6603779445246ba02f9df465e"},
+        {sha512, 128, "4638cabcab823870028a23978c0291c3c51861040154631b99929a35e84aa6f5eebf2d3b0081ae6a45dd8241f0175302562bdf3f83b299af324bb54095207b03"},
+    };
+    for (const auto& [md, keySize, expected] : blockKeyCases) {
+        const std::vector<unsigned char> key(blockKey.begin(), blockKey.begin() + static_cast<std::ptrdiff_t>(keySize));
+        HMAC_CTX_init_nid_postfix(&hmac);
+        for (const std::size_t chunk : {std::size_t(1), keySize, std::size_t(1000)}) {
+            Require(MacInChunks(&hmac, key, md, longMessage, chunk) == expected);
+            Require(Field<std::uint32_t>(&hmac, 152) == keySize && std::memcmp(hmacBytes + 156, key.data(), keySize) == 0);
+        }
+        HMAC_CTX_cleanup_nid_postfix(&hmac);
+        Require(HMAC_nid_postfix(md, key.data(), static_cast<int>(keySize), longMessage.data(), longMessage.size(), mac, &macSize) == mac);
+        Require(Hex(mac, macSize) == expected);
+    }
 
     Require(HMAC_nid_postfix(sha256, nullptr, 0, abc.data(), abc.size(), mac, &macSize) == nullptr);
     Require(HMAC_nid_postfix(sha256, "", 0, nullptr, 0, mac, &macSize) == mac && macSize == 32);
