@@ -64,6 +64,8 @@ int main() {
         requireDistinctTargets("s_cbranch_scc0 to the next instruction", zeroOffsetBranch);
         constexpr std::array<std::uint32_t, 4> unalignedStore{0x7e020281u, 0xe0700000u, 0x80020100u, 0xbf810000u};
         requireDistinctTargets("store through a descriptor with an unaligned base", unalignedStore);
+        constexpr std::array<std::uint32_t, 8> loopBranch{0xbe880380u, 0x7e020280u, 0xe0700000u, 0x80000100u, 0x80088108u, 0xbf0a8408u, 0xbf85fffbu, 0xbf810000u};
+        requireDistinctTargets("loop with conditional backward branch", loopBranch);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "SpirvBranchTargets: %s\n", error.what());
         return 1;

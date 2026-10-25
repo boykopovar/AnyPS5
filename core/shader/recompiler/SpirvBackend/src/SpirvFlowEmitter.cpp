@@ -47,6 +47,9 @@ void EmitKillIfPixelValidMaskInactive(SpirvEmitterState& state) {
 // Block metadata is paired with BlockOrder by position (as IrProgram validation does); terminator
 // targets name control-flow ids, which are not IR block ids.
 const IrBlock* TargetBlock(const IrProgram& program, std::uint32_t id) {
+    if (id == InvalidControlFlowId) {
+        return nullptr;
+    }
     const auto& blocks = program.BlockOrder();
     const auto& blockInfo = program.Metadata().blockInfo;
     if (blocks.size() != blockInfo.size()) {
@@ -132,15 +135,21 @@ std::uint32_t GuardLoopExit(SpirvEmitterState& state, const BlockInfo& info, std
 }
 
 bool IsLoopMerge(const IrProgram& program, std::uint32_t block) {
+    if (block == InvalidControlFlowId) {
+        return false;
+    }
     for (const auto& info : program.Metadata().blockInfo) {
-        if (info.terminator.loopHeader && info.terminator.mergeBlock == block) return true;
+        if (info.terminator.loopHeader && info.terminator.mergeBlock != InvalidControlFlowId && info.terminator.mergeBlock == block) return true;
     }
     return false;
 }
 
 bool IsContinueTarget(const IrProgram& program, std::uint32_t block) {
+    if (block == InvalidControlFlowId) {
+        return false;
+    }
     for (const auto& info : program.Metadata().blockInfo) {
-        if (info.terminator.loopHeader && info.terminator.continueBlock == block) return true;
+        if (info.terminator.loopHeader && info.terminator.continueBlock != InvalidControlFlowId && info.terminator.continueBlock == block) return true;
     }
     return false;
 }
