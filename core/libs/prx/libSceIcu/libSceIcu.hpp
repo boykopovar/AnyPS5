@@ -10,3 +10,5 @@
 #include "Space.hpp"
 #include "Unescape.hpp"
 #include "Identified.hpp"
+
+#include "Copy.hpp"

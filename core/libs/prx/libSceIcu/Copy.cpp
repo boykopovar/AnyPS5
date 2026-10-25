@@ -1,4 +1,5 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -42,7 +43,11 @@ char16_t* APS5_VABI u_strncat_nid_postfix(char16_t* destination, const char16_t*
 }
 
 char16_t* APS5_VABI u_memcpy_nid_postfix(char16_t* destination, const char16_t* source, std::int32_t count) {
-    if (count > 0) std::memcpy(destination, source, static_cast<std::size_t>(count) * sizeof(char16_t));
+    if (count > 0) {
+        const auto bytes = static_cast<std::size_t>(count) * sizeof(char16_t);
+        GuestArena::HostWrite access(destination, bytes);
+        std::memcpy(destination, source, bytes);
+    }
     return destination;
 }
 
