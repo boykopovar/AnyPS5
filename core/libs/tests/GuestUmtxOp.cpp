@@ -49,6 +49,7 @@ static constexpr std::uint32_t PRIO_PROTECT = 0x8;
 static constexpr std::uint32_t WRITE_OWNER = 0x80000000u;
 static constexpr std::uint32_t WRITE_WAITERS = 0x40000000u;
 static constexpr std::uint32_t READ_WAITERS = 0x20000000u;
+static constexpr std::uint32_t PREFER_READER = 0x2;
 
 struct Umutex {
     std::uint32_t owner = 0;
@@ -507,6 +508,23 @@ static void RwlockStateFollowsTheConsole() {
     Require(FailsWith(Umtx(nullptr, UMTX_OP_RW_RDLOCK, 0), GUEST_EFAULT));
 }
 
+static void RwlockReaderPreferenceFollowsTheConsole() {
+    const auto readLock = [](std::uint32_t state, std::uint32_t flags, std::uint64_t value, std::uint32_t& after) {
+        Urwlock rwlock;
+        rwlock.state = state;
+        rwlock.flags = flags;
+        UmtxTime timeout = ShortTimeout();
+        const int result = Umtx(&rwlock, UMTX_OP_RW_RDLOCK, value, SizeOf(sizeof(timeout)), &timeout);
+        after = rwlock.state;
+        return result;
+    };
+    std::uint32_t after = 0;
+    Require(FailsWith(readLock(WRITE_WAITERS, 0, 0, after), GUEST_ETIMEDOUT) && after == (WRITE_WAITERS | READ_WAITERS));
+    Require(readLock(WRITE_WAITERS, 0, PREFER_READER, after) == 0 && after == (WRITE_WAITERS | 1));
+    Require(readLock(WRITE_WAITERS, PREFER_READER, 0, after) == 0 && after == (WRITE_WAITERS | 1));
+    Require(FailsWith(readLock(WRITE_OWNER, 0, PREFER_READER, after), GUEST_ETIMEDOUT) && after == (WRITE_OWNER | READ_WAITERS));
+}
+
 static void RwlockUnlockWakesTheBlockedWriter() {
     Urwlock rwlock;
     Require(Umtx(&rwlock, UMTX_OP_RW_RDLOCK, 0) == 0);
@@ -546,4 +564,5 @@ int main() {
     ConditionWaitReleasesTheMutexAndWakes();
     RwlockStateFollowsTheConsole();
     RwlockUnlockWakesTheBlockedWriter();
+    RwlockReaderPreferenceFollowsTheConsole();
 }
