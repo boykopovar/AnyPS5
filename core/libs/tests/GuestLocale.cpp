@@ -98,7 +98,15 @@ static void CheckCollateVtableObject() {
     Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "abc", 3) == 0);
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
     for (std::uintptr_t& slot : _ZTVSt7collateIcE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckCodecvtVtableObject() {
+    Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == 104);
     for (std::uintptr_t& slot : _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) {
         Require(slot == 0);
         slot = 0x1111;

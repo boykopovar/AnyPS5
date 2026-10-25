@@ -624,7 +624,6 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16] {};
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[13] {};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
