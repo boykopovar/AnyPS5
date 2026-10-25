@@ -187,7 +187,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t la
         if (round != 0) continue;
         image = StorageTexture::FindPending(surface, bytes);
         Require(image != nullptr, "storage array layers: per-layer stores left no pending image of the whole array");
-        Require(image->Descriptor().baseArray == 0 && image->Descriptor().depthOrLastArray == layers - 1u, "storage array layers: the pending image of the " + std::to_string(layers) + "-layer array holds layers 0.." + std::to_string(image->Descriptor().depthOrLastArray));
+        Require(image->Descriptor().baseArray == 0 && image->Descriptor().depthOrLastArray == layers - 1u, "storage array layers: the pending image of the " + std::to_string(layers) + "-layer array holds layers " + std::to_string(image->Descriptor().baseArray) + ".." + std::to_string(image->Descriptor().depthOrLastArray));
     }
     image.reset();
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
@@ -229,10 +229,10 @@ void ExactLookups(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto copied = AgcDriver::Graphics::CachedStorageSurface(context, shorter);
         Require(copied != nullptr, "storage array layers: the copy destination has no storage image");
-        Require(copied->Descriptor().baseArray == 0 &&copied->Descriptor().depthOrLastArray == 1u, "storage array layers: a copy destination of layers 0..1 got layers 0.." + std::to_string(copied->Descriptor().depthOrLastArray));
+        Require(copied->Descriptor().baseArray == 0 && copied->Descriptor().depthOrLastArray == 1u, "storage array layers: a copy destination of layers 0..1 got layers " + std::to_string(copied->Descriptor().baseArray) + ".." + std::to_string(copied->Descriptor().depthOrLastArray));
         const auto target = AgcDriver::Graphics::CachedStorageLayers(context, shorter, 0u, 2u);
         Require(target != nullptr, "storage array layers: the color target has no storage image");
-        Require(target->Descriptor().baseArray == 0 &&target->Descriptor().depthOrLastArray == 1u, "storage array layers: a color target of layers 0..1 got layers 0.." + std::to_string(target->Descriptor().depthOrLastArray));
+        Require(target->Descriptor().baseArray == 0 && target->Descriptor().depthOrLastArray == 1u, "storage array layers: a color target of layers 0..1 got layers " + std::to_string(target->Descriptor().baseArray) + ".." + std::to_string(target->Descriptor().depthOrLastArray));
     }
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
