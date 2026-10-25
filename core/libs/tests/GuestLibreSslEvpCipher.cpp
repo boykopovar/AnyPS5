@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,8 +8,8 @@
 #include <source_location>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI EVP_CIPHER_block_size_nid_postfix(const void*);
+static const LibreSslEvpCipher* Cipher(const unsigned char* memory) {
+    return reinterpret_cast<const LibreSslEvpCipher*>(memory);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -29,7 +30,7 @@ static int BlockSize(std::int32_t value) {
     alignas(8) unsigned char cipher[CipherSize];
     std::memset(cipher, 0xAA, sizeof(cipher));
     std::memcpy(cipher + BlockSizeOffset, &value, sizeof(value));
-    return EVP_CIPHER_block_size_nid_postfix(cipher);
+    return EVP_CIPHER_block_size_nid_postfix(Cipher(cipher));
 }
 
 static void TestBlockSize() {
@@ -47,7 +48,7 @@ static void TestBlockSize() {
     std::memcpy(cipher + 8, &keyLength, sizeof(keyLength));
     unsigned char before[CipherSize];
     std::memcpy(before, cipher, sizeof(cipher));
-    Require(EVP_CIPHER_block_size_nid_postfix(cipher) == 16);
+    Require(EVP_CIPHER_block_size_nid_postfix(Cipher(cipher)) == 16);
     Require(std::memcmp(before, cipher, sizeof(cipher)) == 0);
     RequireThrows([] { EVP_CIPHER_block_size_nid_postfix(nullptr); });
 }
