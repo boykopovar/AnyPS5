@@ -5,6 +5,25 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 
+struct LibreSsl3Stack {
+    int num;
+    char** data;
+    int sorted;
+    int numAlloc;
+    void* comp;
+};
+
+struct LibreSsl3ExtensionsCertInfo {
+    unsigned char beforeExtensions[72];
+    const LibreSsl3Stack* extensions;
+    unsigned char rest[24];
+};
+
+struct LibreSsl3ExtensionsX509 {
+    const LibreSsl3ExtensionsCertInfo* certInfo;
+    unsigned char rest[208];
+};
+
 extern "C" {
 
 int APS5_VABI ASN1_INTEGER_free_nid_postfix(void);
@@ -74,12 +93,12 @@ int APS5_VABI X509_STORE_CTX_free_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_new_nid_postfix(void);
 int APS5_VABI X509_STORE_up_ref_nid_postfix(void);
-int APS5_VABI X509_get0_extensions_nid_postfix(void);
+const LibreSsl3Stack* APS5_VABI X509_get0_extensions_nid_postfix(const LibreSsl3ExtensionsX509* certificate);
 int APS5_VABI X509_get0_notAfter_nid_postfix(void);
 int APS5_VABI X509_get0_notBefore_nid_postfix(void);
 int APS5_VABI X509_get0_signature_nid_postfix(void);
-int APS5_VABI X509_get_ext_nid_postfix(void);
-int APS5_VABI X509_get_ext_count_nid_postfix(void);
+void* APS5_VABI X509_get_ext_nid_postfix(const LibreSsl3ExtensionsX509* certificate, int loc);
+int APS5_VABI X509_get_ext_count_nid_postfix(const LibreSsl3ExtensionsX509* certificate);
 int APS5_VABI X509_get_version_nid_postfix(void);
 int APS5_VABI X509_getm_notAfter_nid_postfix(void);
 int APS5_VABI X509_getm_notBefore_nid_postfix(void);

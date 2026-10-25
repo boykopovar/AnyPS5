@@ -1,26 +1,8 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSsl3Stack {
-    int num;
-    char** data;
-    int sorted;
-    int numAlloc;
-    void* comp;
-};
-
-struct LibreSsl3ExtensionsCertInfo {
-    unsigned char beforeExtensions[72];
-    const LibreSsl3Stack* extensions;
-    unsigned char rest[24];
-};
-
-struct LibreSsl3ExtensionsX509 {
-    const LibreSsl3ExtensionsCertInfo* certInfo;
-    unsigned char rest[208];
-};
 
 static_assert(sizeof(LibreSsl3Stack) == 32);
 static_assert(offsetof(LibreSsl3Stack, data) == 8);
