@@ -1,24 +1,9 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslEvpCipher {
-    int nid;
-    int blockSize;
-    int keyLength;
-    int ivLength;
-    std::uint64_t flags;
-    void* init;
-    void* doCipher;
-    void* cleanup;
-    int contextSize;
-    void* setAsn1Parameters;
-    void* getAsn1Parameters;
-    void* control;
-    void* applicationData;
-};
 
 static_assert(sizeof(LibreSslEvpCipher) == 88);
 static_assert(offsetof(LibreSslEvpCipher, blockSize) == 4);
