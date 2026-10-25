@@ -354,7 +354,7 @@ void UnknownLevelsFollowFreeBsd() {
     Require(SetFails(datagram, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a datagram socket must fail with EINVAL (22)");
     Require(SetFails(stream6, 0, 1, &one, sizeof(one), ErrorInvalid), "the IP level on an AF_INET6 socket must fail with EINVAL (22), ip6_ctloutput");
     Require(SetFails(stream6, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_INET6 socket must fail with EINVAL (22)");
-    Require(SetFails(stream, 0, 1, &one, sizeof(one), ErrorNoProtocolOption), "an IP-level option nothing here handles must fail with ENOPROTOOPT (42)");
+    Require(SetFails(stream, 0, 0x7777, &one, sizeof(one), ErrorNoProtocolOption), "an unknown IP-level option must fail with ENOPROTOOPT (42)");
     Require(SetFails(datagram, 17, 77, &one, sizeof(one), ErrorNoProtocolOption), "a UDP-level option with no case in udp_ctloutput must fail with ENOPROTOOPT (42)");
     int pair[2]{-1, -1};
     Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
