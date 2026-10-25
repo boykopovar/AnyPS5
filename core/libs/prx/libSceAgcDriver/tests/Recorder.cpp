@@ -10450,6 +10450,7 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     leadImport.lead = 0x1000;
     Require(HostImportDeviceAddress(leadImport, keysAddress) == leadImport.address + 0x40 && HostImportDeviceAddress(*import, keysAddress) == import->address + (keysAddress - import->base), "the device address of a key range in an import with a lead does not point at the keys");
     const bool guarded = std::getenv("APS5_NO_GUARDED_KEY_STORE") == nullptr;
+    const bool blocksWatched = watched && PrepareImportWatch(context) == ImportWatch::Watch;
     {
         const auto commands = recorder.Commands();
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -10479,15 +10480,15 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     };
     const auto leftBefore = Recorder::StoreCounts().keyBlocksLeftToCpu;
     const auto late = lateStore(0x12345678u);
-    const std::uint8_t lateBlock = guarded && watched ? 0x00 : 0xff;
-    Require(keys[0] == lateBlock && keys[396] == lateBlock && keys[404] == lateBlock, guarded && watched ? "a guarded key store wrote into a block the CPU wrote after it was recorded" : "the key store did not store the keys");
+    const std::uint8_t lateBlock = guarded && blocksWatched ? 0x00 : 0xff;
+    Require(keys[0] == lateBlock && keys[396] == lateBlock && keys[404] == lateBlock, guarded && blocksWatched ? "a guarded key store wrote into a block the CPU wrote after it was recorded" : "the key store did not store the keys");
     Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone");
     Require(late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
     Require(!guarded || Recorder::StoreCounts().keyStoresGuarded > guardedAfterFill, "the second key store was not counted as guarded");
-    Require(!guarded || !watched || Recorder::StoreCounts().keyBlocksLeftToCpu > leftBefore, "the block the CPU wrote was not counted as left to it");
+    Require(!guarded || !blocksWatched || Recorder::StoreCounts().keyBlocksLeftToCpu > leftBefore, "the block the CPU wrote was not counted as left to it");
     if (!guarded) return;
-    if (!watched) {
-        std::cout << "write watching unavailable: a late CPU store of the value the keys held not tested\n";
+    if (!blocksWatched) {
+        std::cout << "host import not write-watched: a late CPU store of the value the keys held not tested\n";
         return;
     }
     Require(lateStore(0u) == 0u, "a guarded key store overwrote a late CPU store of the value the keys held");
