@@ -65,6 +65,14 @@ static bool Unnamed(int descriptor, int (APS5_VABI *query)(int, void*, std::uint
     return query(descriptor, name, &length) == 0 && length == 4 && name[0] == 16 && name[1] == 1 && name[4] == 0xaa;
 }
 
+static bool NotConnected(int descriptor) {
+    std::uint8_t name[16];
+    std::memset(name, 0xaa, sizeof(name));
+    std::uint32_t length = sizeof(name);
+    *__error_nid_postfix() = 0;
+    return getpeername_nid_postfix(descriptor, name, &length) == -1 && *__error_nid_postfix() == 57 && length == sizeof(name) && name[0] == 0xaa;
+}
+
 static bool ReceiveFaults(int descriptor, GuestMsghdr* message) {
     *__error_nid_postfix() = 0;
     return recvmsg_nid_postfix(descriptor, message, 0) == -1 && *__error_nid_postfix() == 14;
@@ -172,7 +180,9 @@ int main(int argc, char** argv) {
     Require(shutdown_nid_postfix(pair[0], 1) == 0);
     Require(Readable(pair[1], In | Hup) && recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
     Require(Exchange(pair[1], pair[0], "still open"));
+    Require(Unnamed(pair[0], getpeername_nid_postfix) && Unnamed(pair[1], getpeername_nid_postfix));
     Require(close_nid_postfix(pair[0]) == 0);
+    Require(NotConnected(pair[1]) && Unnamed(pair[1], getsockname_nid_postfix));
     Require(Readable(pair[1], In | Hup) && recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
     std::int64_t sent = 0;
     for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(pair[1], ping, sizeof(ping), NoSignal);
@@ -221,7 +231,11 @@ int main(int argc, char** argv) {
     Require(senderLength == 16 && sender[0] == 16 && sender[1] == 1);
     Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 2 && datagram[0] == 'b' && datagram[1] == 'b');
     Require(Exchange(pair[1], pair[0], "back"));
-    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    const int copy = dup_nid_postfix(pair[0]);
+    Require(copy >= 0 && close_nid_postfix(pair[0]) == 0);
+    Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
+    Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
+    Require(close_nid_postfix(pair[1]) == 0);
 
 #ifdef __APPLE__
     Require(ThrowsRuntimeError([&] { socketpair_nid_postfix(Unix, SequencedPacket, 0, pair); }));

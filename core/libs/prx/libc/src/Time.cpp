@@ -21,6 +21,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
+extern "C" int64_t timezone_nid_postfix;
 
 namespace {
 
@@ -243,19 +244,6 @@ constexpr const char* MONTH_FULL_NAMES[] = {"January", "February", "March", "Apr
     "October", "November", "December"};
 constexpr int YEAR_BASE = 1900;
 
-enum class Padding { Default, Less, Space, Zero };
-
-const char* paddingFormat(int width, Padding padding, bool spaced) {
-    static constexpr const char* formats[][4] = {
-        {"%02d", "%d", "%2d", "%02d"},
-        {"%2d", "%d", "%2d", "%02d"},
-        {"%03d", "%d", "%3d", "%03d"},
-        {"%04d", "%d", "%4d", "%04d"},
-    };
-    const int row = width == 2 ? (spaced ? 1 : 0) : width == 3 ? 2 : 3;
-    return formats[row][static_cast<int>(padding)];
-}
-
 bool isLeapYearSum(int year, int base) {
     return isLeapYear(year % 400 + base % 400);
 }
@@ -263,248 +251,151 @@ bool isLeapYearSum(int year, int base) {
 struct FormatBuffer {
     char* cursor;
     char* limit;
+    bool full;
 };
 
-void addText(FormatBuffer& buffer, const char* text) {
-    while (buffer.cursor < buffer.limit && (*buffer.cursor = *text++) != '\0') ++buffer.cursor;
+void addPiece(FormatBuffer& buffer, const char* text, std::size_t length) {
+    if (buffer.full) return;
+    if (length > static_cast<std::size_t>(buffer.limit - buffer.cursor)) {
+        buffer.full = true;
+        return;
+    }
+    std::memcpy(buffer.cursor, text, length);
+    buffer.cursor += length;
 }
 
-void addNumber(FormatBuffer& buffer, int value, const char* format) {
+void addText(FormatBuffer& buffer, const char* text) {
+    addPiece(buffer, text, std::strlen(text));
+}
+
+int clampedField(std::int64_t value, int modulus) {
+    return value < 0 ? 0 : static_cast<int>(value % modulus);
+}
+
+void addNumber(FormatBuffer& buffer, std::int64_t value, int modulus, const char* format) {
     char text[16];
-    std::snprintf(text, sizeof(text), format, value);
+    std::snprintf(text, sizeof(text), format, clampedField(value, modulus));
     addText(buffer, text);
 }
 
-void addYear(FormatBuffer& buffer, int year, int base, bool century, bool lastDigits) {
-    int trail = year % 100 + base % 100;
-    int lead = year / 100 + base / 100 + trail / 100;
-    trail %= 100;
-    if (trail < 0 && lead > 0) {
-        trail += 100;
-        --lead;
-    } else if (lead < 0 && trail > 0) {
-        trail -= 100;
-        ++lead;
-    }
-    if (century) {
-        if (lead == 0 && trail < 0) addText(buffer, "-0");
-        else addNumber(buffer, lead, "%02d");
-    }
-    if (lastDigits) addNumber(buffer, trail < 0 ? -trail : trail, "%02d");
+const char* tableName(int index, const char* const* names, const char* const* shortNames, int count) {
+    if (index < 0) return shortNames[0];
+    return index < count ? names[index] : "";
 }
 
-const char* guestZoneName(const GuestTm& guest) {
-    if (guest.tm_zone != nullptr) return guest.tm_zone;
-    if (guest.tm_isdst < 0) return "";
-#ifdef _WIN32
-    return _tzname[guest.tm_isdst != 0 ? 1 : 0];
-#else
-    return tzname[guest.tm_isdst != 0 ? 1 : 0];
-#endif
+int twoDigitYear(std::int64_t year) {
+    return static_cast<int>((year % 100 + 100) % 100);
 }
 
-void addIsoWeek(FormatBuffer& buffer, char conversion, Padding padding, const GuestTm& time) {
+std::int64_t weekOfYear(const GuestTm& time, int shift) {
+    return (static_cast<std::int64_t>(time.tm_yday) + 7 - (static_cast<std::int64_t>(time.tm_wday) + shift) % 7) / 7;
+}
+
+struct IsoWeek {
+    std::int64_t year;
+    int week;
+};
+
+IsoWeek isoWeek(const GuestTm& time) {
+    if (time.tm_yday < 0) NotImplemented_nid_no_patch("strftime: ISO week of a negative tm_yday");
+    if (time.tm_yday >= (isLeapYearSum(time.tm_year, YEAR_BASE) ? 366 : 365)) NotImplemented_nid_no_patch("strftime: ISO week of a tm_yday past the year");
+    if (time.tm_wday < -6) NotImplemented_nid_no_patch("strftime: ISO week of a tm_wday below -6");
     int base = YEAR_BASE;
-    int yday = time.tm_yday;
-    int week = 0;
+    std::int64_t yday = time.tm_yday;
     for (;;) {
         const int length = isLeapYearSum(time.tm_year, base) ? 366 : 365;
-        const int bottom = (yday + 11 - time.tm_wday) % 7 - 3;
-        int top = bottom - length % 7;
+        const std::int64_t bottom = (yday + 11 - time.tm_wday) % 7 - 3;
+        std::int64_t top = bottom - length % 7;
         if (top < -3) top += 7;
         top += length;
-        if (yday >= top) {
-            ++base;
-            week = 1;
-            break;
-        }
-        if (yday >= bottom) {
-            week = 1 + (yday - bottom) / 7;
-            break;
-        }
+        if (yday >= top) return {static_cast<std::int64_t>(time.tm_year) + base + 1, 1};
+        if (yday >= bottom) return {static_cast<std::int64_t>(time.tm_year) + base, static_cast<int>(1 + (yday - bottom) / 7)};
         --base;
         yday += isLeapYearSum(time.tm_year, base) ? 366 : 365;
     }
-    if (conversion == 'V') addNumber(buffer, week, paddingFormat(2, padding, false));
-    else addYear(buffer, time.tm_year, base, conversion == 'G', true);
+}
+
+void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time);
+
+void addZoneOffset(FormatBuffer& buffer, const GuestTm& time) {
+    std::int64_t east = -timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0);
+    const char sign = east < 0 ? '-' : '+';
+    if (east < 0) east = -east;
+    char text[32];
+    std::snprintf(text, sizeof(text), "%c%02lld%02lld", sign, static_cast<long long>(east / 3600), static_cast<long long>(east / 60 % 60));
+    addText(buffer, text);
+}
+
+bool addConversion(FormatBuffer& buffer, char conversion, const GuestTm& time) {
+    const std::int64_t year = static_cast<std::int64_t>(time.tm_year) + YEAR_BASE;
+    switch (conversion) {
+    case 'a': addText(buffer, tableName(time.tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7)); return true;
+    case 'A': addText(buffer, tableName(time.tm_wday, WEEKDAY_FULL_NAMES, WEEKDAY_NAMES, 7)); return true;
+    case 'b':
+    case 'h': addText(buffer, tableName(time.tm_mon, MONTH_NAMES, MONTH_NAMES, 12)); return true;
+    case 'B': addText(buffer, tableName(time.tm_mon, MONTH_FULL_NAMES, MONTH_NAMES, 12)); return true;
+    case 'c': formatTime(buffer, "%a %b %e %H:%M:%S %Y", time); return true;
+    case 'C': addNumber(buffer, time.tm_year / 100 + YEAR_BASE / 100, 100, "%02d"); return true;
+    case 'd': addNumber(buffer, time.tm_mday, 100, "%02d"); return true;
+    case 'D':
+    case 'x': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
+    case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
+    case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
+    case 'G': addNumber(buffer, isoWeek(time).year, 10000, "%04d"); return true;
+    case 'H': addNumber(buffer, time.tm_hour, 100, "%02d"); return true;
+    case 'I': addNumber(buffer, (static_cast<std::int64_t>(time.tm_hour) + 11) % 12 + 1, 100, "%02d"); return true;
+    case 'j': addNumber(buffer, static_cast<std::int64_t>(time.tm_yday) + 1, 1000, "%03d"); return true;
+    case 'm': addNumber(buffer, static_cast<std::int64_t>(time.tm_mon) + 1, 100, "%02d"); return true;
+    case 'M': addNumber(buffer, time.tm_min, 100, "%02d"); return true;
+    case 'n': addText(buffer, "\n"); return true;
+    case 'p': addText(buffer, time.tm_hour < 12 ? "AM" : "PM"); return true;
+    case 'r': formatTime(buffer, "%I:%M:%S %p", time); return true;
+    case 'R': formatTime(buffer, "%H:%M", time); return true;
+    case 'S': addNumber(buffer, time.tm_sec, 100, "%02d"); return true;
+    case 't': addText(buffer, "\t"); return true;
+    case 'T':
+    case 'X': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'u': addNumber(buffer, time.tm_wday == 0 ? 7 : time.tm_wday, 10, "%d"); return true;
+    case 'U': addNumber(buffer, weekOfYear(time, 7), 100, "%02d"); return true;
+    case 'V': addNumber(buffer, isoWeek(time).week, 100, "%02d"); return true;
+    case 'w': addNumber(buffer, time.tm_wday, 10, "%d"); return true;
+    case 'W': addNumber(buffer, weekOfYear(time, 6), 100, "%02d"); return true;
+    case 'y': addNumber(buffer, twoDigitYear(year), 100, "%02d"); return true;
+    case 'Y': addNumber(buffer, year, 10000, "%04d"); return true;
+    case 'z': addZoneOffset(buffer, time); return true;
+    case 'Z': {
+        const char* name = tzname_nid_postfix[time.tm_isdst > 0 ? 1 : 0];
+        addText(buffer, name != nullptr ? name : "");
+        return true;
+    }
+    case '%': addText(buffer, "%"); return true;
+    default: return false;
+    }
 }
 
 void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time) {
-    for (; *format != '\0'; ++format) {
-        if (*format == '%') {
-            bool alternative = false;
-            Padding padding = Padding::Default;
-            bool handled = true;
-            for (bool modifier = true; modifier;) {
-                modifier = false;
-                switch (*++format) {
-                case '\0':
-                    --format;
-                    handled = false;
-                    break;
-                case 'A':
-                    addText(buffer, time.tm_wday < 0 || time.tm_wday >= 7 ? "?" : WEEKDAY_FULL_NAMES[time.tm_wday]);
-                    break;
-                case 'a':
-                    addText(buffer, time.tm_wday < 0 || time.tm_wday >= 7 ? "?" : WEEKDAY_NAMES[time.tm_wday]);
-                    break;
-                case 'B':
-                    addText(buffer, time.tm_mon < 0 || time.tm_mon >= 12 ? "?" : MONTH_FULL_NAMES[time.tm_mon]);
-                    break;
-                case 'b':
-                case 'h':
-                    addText(buffer, time.tm_mon < 0 || time.tm_mon >= 12 ? "?" : MONTH_NAMES[time.tm_mon]);
-                    break;
-                case 'C':
-                    addYear(buffer, time.tm_year, YEAR_BASE, true, false);
-                    break;
-                case 'c':
-                    formatTime(buffer, "%a %b %e %H:%M:%S %Y", time);
-                    break;
-                case 'D':
-                    formatTime(buffer, "%m/%d/%y", time);
-                    break;
-                case 'd':
-                    addNumber(buffer, time.tm_mday, paddingFormat(2, padding, false));
-                    break;
-                case 'E':
-                case 'O':
-                    if (alternative) {
-                        handled = false;
-                        break;
-                    }
-                    alternative = true;
-                    modifier = true;
-                    break;
-                case 'e':
-                    addNumber(buffer, time.tm_mday, paddingFormat(2, padding, true));
-                    break;
-                case 'F':
-                    formatTime(buffer, "%Y-%m-%d", time);
-                    break;
-                case 'H':
-                    addNumber(buffer, time.tm_hour, paddingFormat(2, padding, false));
-                    break;
-                case 'I':
-                    addNumber(buffer, time.tm_hour % 12 != 0 ? time.tm_hour % 12 : 12, paddingFormat(2, padding, false));
-                    break;
-                case 'j':
-                    addNumber(buffer, time.tm_yday + 1, paddingFormat(3, padding, false));
-                    break;
-                case 'k':
-                    addNumber(buffer, time.tm_hour, paddingFormat(2, padding, true));
-                    break;
-                case 'l':
-                    addNumber(buffer, time.tm_hour % 12 != 0 ? time.tm_hour % 12 : 12, paddingFormat(2, padding, true));
-                    break;
-                case 'M':
-                    addNumber(buffer, time.tm_min, paddingFormat(2, padding, false));
-                    break;
-                case 'm':
-                    addNumber(buffer, time.tm_mon + 1, paddingFormat(2, padding, false));
-                    break;
-                case 'n':
-                    addText(buffer, "\n");
-                    break;
-                case 'p':
-                    addText(buffer, time.tm_hour >= 12 ? "PM" : "AM");
-                    break;
-                case 'R':
-                    formatTime(buffer, "%H:%M", time);
-                    break;
-                case 'r':
-                    formatTime(buffer, "%I:%M:%S %p", time);
-                    break;
-                case 'S':
-                    addNumber(buffer, time.tm_sec, paddingFormat(2, padding, false));
-                    break;
-                case 's': {
-                    GuestTm copy = time;
-                    char text[24];
-                    std::snprintf(text, sizeof(text), "%lld", static_cast<long long>(libc_mktime_nid_postfix(&copy)));
-                    addText(buffer, text);
-                    break;
-                }
-                case 'T':
-                    formatTime(buffer, "%H:%M:%S", time);
-                    break;
-                case 't':
-                    addText(buffer, "\t");
-                    break;
-                case 'U':
-                    addNumber(buffer, (time.tm_yday + 7 - time.tm_wday) / 7, paddingFormat(2, padding, false));
-                    break;
-                case 'u':
-                    addNumber(buffer, time.tm_wday == 0 ? 7 : time.tm_wday, "%d");
-                    break;
-                case 'V':
-                case 'G':
-                case 'g':
-                    addIsoWeek(buffer, *format, padding, time);
-                    break;
-                case 'v':
-                    formatTime(buffer, "%e-%b-%Y", time);
-                    break;
-                case 'W':
-                    addNumber(buffer, (time.tm_yday + 7 - (time.tm_wday != 0 ? time.tm_wday - 1 : 6)) / 7,
-                        paddingFormat(2, padding, false));
-                    break;
-                case 'w':
-                    addNumber(buffer, time.tm_wday, "%d");
-                    break;
-                case 'X':
-                    formatTime(buffer, "%H:%M:%S", time);
-                    break;
-                case 'x':
-                    formatTime(buffer, "%m/%d/%y", time);
-                    break;
-                case 'y':
-                    addYear(buffer, time.tm_year, YEAR_BASE, false, true);
-                    break;
-                case 'Y':
-                    addYear(buffer, time.tm_year, YEAR_BASE, true, true);
-                    break;
-                case 'Z':
-                    addText(buffer, guestZoneName(time));
-                    break;
-                case 'z': {
-                    if (time.tm_isdst < 0) break;
-                    int difference = static_cast<int>(time.tm_gmtoff);
-                    addText(buffer, difference < 0 ? "-" : "+");
-                    if (difference < 0) difference = -difference;
-                    difference /= 60;
-                    addNumber(buffer, difference / 60 * 100 + difference % 60, paddingFormat(4, padding, false));
-                    break;
-                }
-                case '+':
-                    formatTime(buffer, "%a %b %e %H:%M:%S %Z %Y", time);
-                    break;
-                case '-':
-                case '_':
-                case '0':
-                    if (padding != Padding::Default) {
-                        handled = false;
-                        break;
-                    }
-                    padding = *format == '-' ? Padding::Less : *format == '_' ? Padding::Space : Padding::Zero;
-                    modifier = true;
-                    break;
-                default:
-                    handled = false;
-                    break;
-                }
-            }
-            if (handled) continue;
+    for (; *format != '\0' && !buffer.full; ++format) {
+        if (*format != '%' || format[1] == '\0') {
+            addPiece(buffer, format, 1);
+            continue;
         }
-        if (buffer.cursor == buffer.limit) break;
-        *buffer.cursor++ = *format;
+        ++format;
+        if (*format == 'E' || *format == 'O') {
+            if (format[1] == '\0') throw std::invalid_argument("strftime: the format ends after an E or O modifier");
+            ++format;
+        }
+        if (!addConversion(buffer, *format, time)) {
+            const char unknown[] = {'%', *format};
+            addPiece(buffer, unknown, sizeof(unknown));
+        }
     }
 }
 
 std::size_t formatGuestTime(char* destination, std::size_t size, const char* format, const GuestTm& time) {
-    FormatBuffer buffer{destination, destination + size};
+    FormatBuffer buffer{destination, destination + size, false};
     formatTime(buffer, format == nullptr ? "%c" : format, time);
-    if (buffer.cursor == buffer.limit) return 0;
+    if (buffer.full || buffer.cursor == buffer.limit) return 0;
     *buffer.cursor = '\0';
     return static_cast<std::size_t>(buffer.cursor - destination);
 }
@@ -705,12 +596,9 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
         std::memcpy(result, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
         return result;
     }
-    const char* weekday = timeptr->tm_wday >= 0 && timeptr->tm_wday < 7 ? WEEKDAY_NAMES[timeptr->tm_wday] : "???";
-    const char* month = timeptr->tm_mon >= 0 && timeptr->tm_mon < 12 ? MONTH_NAMES[timeptr->tm_mon] : "???";
-    char year[16];
-    formatGuestTime(year, sizeof(year), "%Y", *timeptr);
-    std::snprintf(result, sizeof(result), std::strlen(year) <= 4 ? "%s %s%3d %.2d:%.2d:%.2d %-4s\n" : "%s %s%3d %.2d:%.2d:%.2d     %s\n",
-        weekday, month, timeptr->tm_mday, timeptr->tm_hour, timeptr->tm_min, timeptr->tm_sec, year);
+    const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
+    std::snprintf(result, sizeof(result), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+        clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
     return result;
 }
 
