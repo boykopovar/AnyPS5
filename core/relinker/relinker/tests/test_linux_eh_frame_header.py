@@ -131,19 +131,25 @@ def main():
             assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
             assert elf[64 + 5 * 56:64 + 6 * 56] == image[64 + 5 * 56:64 + 6 * 56], "Bytes after the input program header table changed"
 
-        image = fixture(5, with_frame=False)
-        headers = image[64:64 + 4 * 56]
-        headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * 65530
-        struct.pack_into("<Q", image, 32, len(image))
-        struct.pack_into("<H", image, 56, 65534)
-        image += headers
-        source = Path(directory) / "overflowing-header-count.elf"
-        output = source.with_suffix(".out")
-        source.write_bytes(image)
-        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
-        assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
-        assert "Not enough program header slots: need 65537, available 65534" in result.stderr, result.stderr
-        assert not output.exists(), "An unrepresentable header count must not produce an executable"
+        for padding_count in (65527, 65528, 65530):
+            image = fixture(5, with_frame=False)
+            headers = image[64:64 + 4 * 56]
+            headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * padding_count
+            struct.pack_into("<Q", image, 32, len(image))
+            struct.pack_into("<H", image, 56, 4 + padding_count)
+            image += headers
+            source = Path(directory) / f"header-count-{padding_count}.elf"
+            output = source.with_suffix(".out")
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
+            if padding_count == 65527:
+                assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+                assert len(program_headers(output.read_bytes())) == 65534
+            else:
+                assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+                assert "Extended program header counts are not supported" in result.stderr, result.stderr
+                assert not output.exists(), "An unsupported extended count must not produce an executable"
+            assert source.read_bytes() == image, "Source changed"
     print("Linux eh_frame header test passed")
 
 

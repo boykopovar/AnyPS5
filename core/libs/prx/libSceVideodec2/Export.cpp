@@ -1,3 +1,4 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include <array>
 #include <span>
 #include <cstdint>
@@ -24,6 +25,8 @@ extern "C" {
 
 namespace {
 
+using namespace SceVideodec2;
+
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
 constexpr std::uint32_t PitchAlignment = 256;
 constexpr std::uint32_t HeightAlignment = 32;
@@ -32,107 +35,6 @@ constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
-
-struct ComputeMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-};
-
-struct ComputeConfigInfo {
-    std::uint64_t thisSize;
-    std::uint16_t computePipeId;
-    std::uint16_t computeQueueId;
-    bool checkMemoryType;
-};
-
-struct DecoderConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct DecoderMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    bool isAccepted;
-};
-
-struct OutputInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    bool isErrorFrame;
-    std::uint8_t pictureCount;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    std::uint32_t frameFormat;
-    std::uint32_t framePitchInBytes;
-};
-
-struct AvcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint8_t idrPictureFlag;
-    std::uint8_t profileIdc;
-    std::uint8_t levelIdc;
-    std::uint32_t picWidthInLumaSamples;
-    std::uint32_t picHeightInLumaSamples;
-};
-
-struct Vp9PictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t profile;
-    std::uint32_t level;
-    std::uint32_t keyFrameFlag;
-    std::uint32_t intraOnly;
-    std::uint8_t bitDepth;
-    std::uint8_t colorRange;
-    std::uint32_t colorSpace;
-    std::uint32_t numFrames;
-    std::uint32_t frameWidth;
-    std::uint32_t frameHeight;
-    std::uint32_t renderWidth;
-    std::uint32_t renderHeight;
-};
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
@@ -283,6 +185,20 @@ struct Picture {
     bool idr = false;
     Vp9PictureInfo vp9{};
     Crop crop{};
+    bool hevcIdr = false;
+    std::uint8_t bitDepthMinus8 = 0;
+};
+
+struct PictureHeader {
+    std::uint64_t pts;
+    std::uint64_t dts;
+    std::uint64_t attached;
+    bool keyFrame;
+    bool hevcIdr;
+    std::uint32_t profile;
+    std::uint32_t level;
+    Crop crop;
+    std::uint8_t bitDepthMinus8;
 };
 
 struct FrameDeleter {
@@ -437,6 +353,16 @@ bool CarriesAvcSlice(const std::vector<std::uint8_t>& unit) {
     return false;
 }
 
+bool StartsHevcIdr(const std::vector<std::uint8_t>& unit) {
+    for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
+        if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
+        const auto type = (unit[index + 3] >> 1u) & 0x3fu;
+        if (type < 32) return type == 19 || type == 20;
+        index += 2;
+    }
+    return false;
+}
+
 void Receive(Decoder& decoder) {
     for (;;) {
         FramePointer frame(av_frame_alloc());
@@ -526,6 +452,7 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
     if (decoder.context->profile > 0) decoder.profile = static_cast<std::uint32_t>(decoder.context->profile) & 0xffu;
     if (decoder.context->level > 0) decoder.level = static_cast<std::uint32_t>(decoder.context->level);
     if (!WriteNv12(decoder, *picture, static_cast<std::uint8_t*>(frame->frameBuffer), frame->frameBufferSize)) throw std::runtime_error("Videodec2: NV12 conversion failed");
+    timestamps.bitDepthMinus8 = decoder.sampleBytes == 2 ? 2 : 0;
     const auto pitch = PitchBytes(decoder.width, decoder.sampleBytes);
     frame->isAccepted = true;
     output->isValid = true;
@@ -664,7 +591,9 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     std::memcpy(packet->data + decoder.parameterSets.size(), unit->data(), unit->size());
     decoder.parameterSets.clear();
     packet->pts = decoder.nextKey;
-    decoder.inputs.emplace(decoder.nextKey++, picture);
+    auto tagged = picture;
+    tagged.hevcIdr = decoder.codec == CodecHevc && StartsHevcIdr(*unit);
+    decoder.inputs.emplace(decoder.nextKey++, tagged);
     Send(decoder, packet);
     EmitDecoded(handle, decoder, frame, output);
     return 0;
@@ -676,7 +605,7 @@ int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t handle, FrameBuffer* f
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
-    if (!decoder.flushing) {
+    if (!decoder.flushing && decoder.ready.empty() && !decoder.inputs.empty()) {
         Send(decoder, nullptr);
         decoder.flushing = true;
     }
@@ -776,15 +705,23 @@ int APS5_VABI sceVideodec2GetVp9PictureInfo_nid_postfix(const OutputInfo* output
     return 0;
 }
 
-void Videodec2PictureCrop_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Crop* crop) {
-    if (!crop) throw std::runtime_error("Videodec2: invalid argument pointer");
+void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frameBuffer, PictureHeader* header) {
+    if (!header) throw std::runtime_error("Videodec2: invalid argument pointer");
     const auto found = FindDecoder(handle);
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
     const auto picture = decoder.pictures.find(frameBuffer);
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
-    *crop = picture->second.crop;
+    const auto& stored = picture->second;
+    *header = {stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+}
+
+void Videodec2PictureCrop_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Crop* crop) {
+    if (!crop) throw std::runtime_error("Videodec2: invalid argument pointer");
+    PictureHeader header{};
+    Videodec2PictureHeader_nid_no_patch(handle, frameBuffer, &header);
+    *crop = header.crop;
 }
 
 }

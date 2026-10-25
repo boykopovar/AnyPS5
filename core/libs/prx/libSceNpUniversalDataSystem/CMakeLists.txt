@@ -1,4 +1,5 @@
 add_library(libSceNpUniversalDataSystem SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/System.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Context.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Handle.cpp

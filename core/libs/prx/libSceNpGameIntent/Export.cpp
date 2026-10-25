@@ -1,3 +1,4 @@
+#include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -11,7 +12,6 @@ constexpr int NpGameIntentErrorInvalidArgument = -2141898748;
 constexpr int NpGameIntentErrorIntentNotFound = -2141898746;
 constexpr int NpGameIntentErrorValueNotFound = -2141898745;
 constexpr int NpGameIntentUserIdInvalid = -1;
-
 
 }
 

@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -11,10 +12,10 @@ bool isAsciiDigit(char c) {
     return c >= '0' && c <= '9';
 }
 
-bool parseVersionNumber(const char* line, size_t lineLen, size_t& index, int32_t* value) {
-    if (index >= lineLen || !isAsciiDigit(line[index])) return false;
+bool parseVersionNumber(const char* line, size_t& index, int32_t* value) {
+    if (!isAsciiDigit(line[index])) return false;
     uint32_t number = 0;
-    while (index < lineLen && isAsciiDigit(line[index])) {
+    while (isAsciiDigit(line[index])) {
         number = number * 10 + static_cast<uint32_t>(line[index] - '0');
         ++index;
     }
@@ -36,11 +37,11 @@ int APS5_VABI sceHttpParseStatusLine(const char* statusLine, size_t lineLen, int
     if (lineLen < 8 || std::memcmp(statusLine, "HTTP/", 5) != 0) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
 
     size_t index = 5;
-    if (!parseVersionNumber(statusLine, lineLen, index, httpMajorVer)) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
-    if (index >= lineLen || statusLine[index] != '.') return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+    if (!parseVersionNumber(statusLine, index, httpMajorVer)) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+    if (statusLine[index] != '.') return ERROR_PARSE_HTTP_INVALID_RESPONSE;
     ++index;
-    if (!parseVersionNumber(statusLine, lineLen, index, httpMinorVer)) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
-    if (index >= lineLen || statusLine[index] != ' ') return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+    if (!parseVersionNumber(statusLine, index, httpMinorVer)) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+    if (statusLine[index] != ' ') return ERROR_PARSE_HTTP_INVALID_RESPONSE;
     ++index;
 
     if (lineLen - index < 3) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
@@ -51,10 +52,11 @@ int APS5_VABI sceHttpParseStatusLine(const char* statusLine, size_t lineLen, int
     index += 3;
 
     const char* phrase = statusLine + index;
-    const void* lineFeed = std::memchr(phrase, '\n', lineLen - index);
-    if (!lineFeed) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+    const size_t searched = lineLen - index + 1;
+    size_t length = 0;
+    while (length != searched && phrase[length] != '\n') ++length;
+    if (length == searched) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
 
-    size_t length = static_cast<size_t>(static_cast<const char*>(lineFeed) - phrase);
     const size_t consumed = index + length + 1;
     if (consumed > static_cast<size_t>(INT32_MAX)) {
         throw std::out_of_range("sceHttpParseStatusLine: consumed byte count exceeds int");

@@ -1,12 +1,9 @@
+#include "prx/libSceRegMgr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

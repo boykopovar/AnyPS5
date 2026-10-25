@@ -1,3 +1,4 @@
+#include "prx/libSceUsbStorageDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -7,18 +8,6 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceUsbStorageDialogInitialize(void);
-int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param);
-int APS5_VABI sceUsbStorageDialogUpdateStatus(void);
-int APS5_VABI sceUsbStorageDialogGetStatus(void);
-int APS5_VABI sceUsbStorageDialogGetResult(UsbStorageDialogResult* result);
-int APS5_VABI sceUsbStorageDialogClose(void);
-int APS5_VABI sceUsbStorageDialogTerminate(void);
-}
 
 namespace {
 

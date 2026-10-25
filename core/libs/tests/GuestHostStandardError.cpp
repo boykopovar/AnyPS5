@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <csignal>
@@ -16,18 +18,7 @@
 #endif
 
 extern "C" {
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI puts_nid_postfix(const char*);
-int APS5_VABI fprintf_nid_postfix(FileStream*, const char*, ...);
-void APS5_VABI perror_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
+
 extern FileStream* __stderrp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 }

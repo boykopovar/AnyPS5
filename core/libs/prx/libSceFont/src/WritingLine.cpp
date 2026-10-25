@@ -1,3 +1,4 @@
+#include "prx/libSceFont/include/Api.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>

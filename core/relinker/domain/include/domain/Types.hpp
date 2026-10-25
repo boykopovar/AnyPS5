@@ -106,6 +106,7 @@ struct SysVDynamicSection {
     std::vector<GuestRuntime> GuestModules;
     std::map<VirtualAddress, std::string> ImportModules;
     std::set<VirtualAddress> FunctionImports;
+    std::set<VirtualAddress> NamedImports;
     std::set<std::string> UnmatchedImportModules;
     std::vector<std::string> NeededLibraries;
 };

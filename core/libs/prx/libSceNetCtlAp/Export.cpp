@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtlAp/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -22,8 +23,6 @@ constexpr int NET_CTL_AP_EVENT_TYPE_LAST = 4;
 constexpr std::size_t NET_CTL_AP_INFO_SIZE = 152;
 constexpr std::size_t NET_CTL_AP_CONNECT_INFO_SIZE = 184;
 constexpr int MAX_CALLBACKS = 8;
-
-using NetCtlApCallback = void(APS5_VABI*)(int, void*);
 
 struct CallbackSlot {
     NetCtlApCallback func = nullptr;
@@ -77,6 +76,7 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
             return 0;
         }
     }
+    *cid = -1;
     return NET_CTL_AP_ERROR_CALLBACK_MAX;
 }
 

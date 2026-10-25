@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -35,6 +36,8 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
+constexpr int SCE_AJM_ERROR_INVALID_ADDRESS = static_cast<int>(0x80930016);
 
 constexpr std::int32_t AJM_RESULT_NOT_INITIALIZED = 0x00000001;
 constexpr std::int32_t AJM_RESULT_INVALID_DATA = 0x00000002;
@@ -215,6 +218,7 @@ struct JobHeader {
     std::uint32_t inputCount;
     std::uint32_t outputCount;
     std::uint8_t parameters[16];
+    bool console;
 };
 
 struct PackedJob {
@@ -690,9 +694,17 @@ void EmitFrame(Instance& instance, PcmOutputs& outputs, const std::uint8_t* pcm,
     ResamplerProduce(instance, outputs, channels, encoding, sampleBytes);
 }
 
+// A PS4 reports an ATRAC9 stream's bitrate from its superframe: 448-byte superframes of 4 frames of 256
+// samples at 48 kHz gave 168000 (Knowledge is Power: Decades, every run job's format sideband).
+std::uint32_t At9Bitrate(const Instance& instance) {
+    const auto samples = static_cast<std::uint64_t>(instance.info.framesInSuperframe) * static_cast<std::uint64_t>(instance.info.frameSamples);
+    if (samples == 0) return 0;
+    return static_cast<std::uint32_t>(static_cast<std::uint64_t>(instance.info.superframeSize) * 8u * static_cast<std::uint64_t>(instance.info.samplingRate) / samples);
+}
+
 SidebandFormat CurrentFormat(const Instance& instance) {
     switch (instance.codec) {
-    case CODEC_AT9: return {static_cast<std::uint32_t>(instance.info.channels), ChannelMask(static_cast<std::size_t>(instance.info.channels)), static_cast<std::uint32_t>(instance.info.samplingRate), PcmEncoding(instance), 0, 0};
+    case CODEC_AT9: return {static_cast<std::uint32_t>(instance.info.channels), ChannelMask(static_cast<std::size_t>(instance.info.channels)), static_cast<std::uint32_t>(instance.info.samplingRate), PcmEncoding(instance), At9Bitrate(instance), 0};
     case CODEC_MP3: return {instance.mp3Channels, ChannelMask(instance.mp3Channels), instance.mp3SampleRate, PcmEncoding(instance), instance.mp3Bitrate, 0};
     case CODEC_OPUS: return {instance.opusChannels, ChannelMask(instance.opusChannels), instance.opusSampleRate, PcmEncoding(instance), 0, 0};
     case CODEC_M4AAC: return {instance.aacChannels, ChannelMask(instance.aacChannels), instance.aacSampleRate, PcmEncoding(instance), instance.aacBitrate, 0};
@@ -767,12 +779,22 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         if (segmentEnded()) break;
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
+        const bool roomForFrame = Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes;
+        // A PS4 reports which side ran out (probe runs of a title's ATRAC9 stream through libSceAjm's
+        // builders): PARTIAL_INPUT when the input ran out, on a superframe boundary or not, with room
+        // left; NOT_ENOUGH_ROOM when the room ran out with input left, after however many frames (and
+        // with none decoded for a zero room); both (0x18) when the input ended just as the output
+        // filled, which is every Wwise run job. A run without input (a format query) reports 0.
+        // Resampled runs were not measured and keep the earlier rule: a trailing partial superframe is
+        // partial input, a zero-output run is out of room.
+        const bool measured = !Resampling(instance);
         if (input.size() - consumed < needed) {
-            if (input.size() != consumed) result |= AJM_RESULT_PARTIAL_INPUT;
+            if (input.size() != consumed || (measured && !input.empty())) result |= AJM_RESULT_PARTIAL_INPUT;
+            if (measured && !input.empty() && !roomForFrame) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
-        if (Resampling(instance) ? pcmOutputs.Room() < channels * sampleBytes : pcmOutputs.Room() < frameBytes) {
-            if (frames == 0 && pcmOutputs.produced == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
+        if (!roomForFrame) {
+            if (measured || (frames == 0 && pcmOutputs.produced == 0)) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
         if (instance.superframeRemaining == 0) {
@@ -796,6 +818,7 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         ++frames;
 
         EmitFrame(instance, pcmOutputs, pcm.data(), frameSamples, channels, sampleBytes);
+        if (job.console && (job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
     if (segmentEnded()) instance.segmentSamples = 0;
 
@@ -851,14 +874,15 @@ std::uint32_t ReadBigEndian(const std::uint8_t* data, std::size_t bytes) {
 
 int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame);
 
-void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint32_t header, AjmDecMp3ParseFrame* frame) {
+void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint32_t header, AjmDecMp3ParseFrame* frame, int parseOfl) {
     const std::size_t end = std::min<std::size_t>(streamSize, frame->frame_size);
-    if (end <= 4) return;
-    const std::size_t available = end - 4;
+    const std::size_t sideInfoStart = 4 + (((header >> 16u) & 1u) == 0 ? 2u : 0u);
+    if (end <= sideInfoStart) return;
+    const std::size_t available = end - sideInfoStart;
     std::size_t bit = 0;
     const auto readBits = [&](std::uint32_t count) {
         std::uint32_t value = 0;
-        for (std::uint32_t i = 0; i < count; ++i, ++bit) value = (value << 1u) | (bit / 8 < available ? (stream[4 + bit / 8] >> (7 - bit % 8)) & 1u : 0u);
+        for (std::uint32_t i = 0; i < count; ++i, ++bit) value = (value << 1u) | (bit / 8 < available ? (stream[sideInfoStart + bit / 8] >> (7 - bit % 8)) & 1u : 0u);
         return value;
     };
     const bool mpeg1 = ((header >> 19u) & 3u) == 3u;
@@ -872,11 +896,20 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
         }
     }
     bit += mainDataBits;
-    std::size_t at = 4 + std::min<std::size_t>((bit + 7) / 8, available);
+    std::size_t at = sideInfoStart + std::min<std::size_t>((bit + 7) / 8, available);
 
-    if (at + 8 <= end && (std::memcmp(stream + at, "Xing", 4) == 0 || std::memcmp(stream + at, "Info", 4) == 0)) {
-        const std::uint8_t flags = stream[at + 7];
-        std::size_t field = at + 8;
+    std::size_t tagAt = at;
+    if (tagAt + 8 > end || (std::memcmp(stream + tagAt, "Xing", 4) != 0 && std::memcmp(stream + tagAt, "Info", 4) != 0)) {
+        const std::size_t fixedOffset = mpeg1 ? (mono ? 21u : 36u) : (mono ? 13u : 21u);
+        tagAt = 0;
+        if (fixedOffset + 8 <= end && (std::memcmp(stream + fixedOffset, "Xing", 4) == 0 || std::memcmp(stream + fixedOffset, "Info", 4) == 0)) {
+            tagAt = fixedOffset;
+        }
+    }
+
+    if (tagAt != 0) {
+        const std::uint8_t flags = stream[tagAt + 7];
+        std::size_t field = tagAt + 8;
         std::uint32_t frames = 0;
         if (flags & 0x01u) {
             if (field + 4 > end) return;
@@ -903,30 +936,34 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
             frame->encoder_delay = frame->samples_per_channel + delay + 529;
             frame->ofl_type = MP3_OFL_LAME;
         }
-    } else if (at != 36 && end >= 40 && std::memcmp(stream + 36, "VBRI", 4) == 0) {
-        NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (VBRI header outside MPEG-1 stereo)");
-    } else if (at + 26 <= end && std::memcmp(stream + at, "VBRI", 4) == 0) {
-        frame->encoder_delay = ReadBigEndian(stream + at + 6, 2);
+        return;
+    }
+
+    const std::size_t vbriAt = end >= 40 && std::memcmp(stream + 36, "VBRI", 4) == 0 ? 36 : at;
+    if (vbriAt + 26 <= end && std::memcmp(stream + vbriAt, "VBRI", 4) == 0) {
+        frame->encoder_delay = ReadBigEndian(stream + vbriAt + 6, 2);
         frame->ofl_type = MP3_OFL_VBRI;
-        if (frame->frame_size <= streamSize) {
+        if (parseOfl == 1 && frame->frame_size <= streamSize) {
             AjmDecMp3ParseFrame next{};
-            if (ParseMp3Header(stream + frame->frame_size, streamSize - static_cast<std::uint32_t>(frame->frame_size), 1, &next) == 0 && next.ofl_type == MP3_OFL_FGH) {
+            if (ParseMp3Header(stream + frame->frame_size, streamSize - static_cast<std::uint32_t>(frame->frame_size), 2, &next) == 0 && next.ofl_type == MP3_OFL_FGH) {
                 frame->encoder_delay += next.encoder_delay;
                 frame->total_samples = next.total_samples;
                 frame->ofl_type = MP3_OFL_VBRI_AND_FGH;
             }
         }
-    } else if (at + 10 <= end) {
-        while (at + 9 < end && stream[at] != 0xB4u) ++at;
-        if (at + 9 >= end) return;
-        std::uint8_t crc = 0xFF;
-        for (std::size_t i = 0; i < 9; ++i) {
-            for (int shift = 7; shift >= 0; --shift) {
-                const bool same = ((crc >> 7u) & 1u) == ((stream[at + i] >> shift) & 1u);
-                crc = static_cast<std::uint8_t>(same ? (crc << 1u) ^ 0x45u : crc << 1u);
-            }
+        return;
+    }
+
+    while (at + 9 < end && stream[at] != 0xB4u) ++at;
+    if (at + 9 >= end) return;
+    std::uint8_t crc = 0xFF;
+    for (std::size_t i = 0; i < 9; ++i) {
+        for (int shift = 7; shift >= 0; --shift) {
+            const bool same = ((crc >> 7u) & 1u) == ((stream[at + i] >> shift) & 1u);
+            crc = static_cast<std::uint8_t>(same ? (crc << 1u) ^ 0x45u : crc << 1u);
         }
-        if (stream[at + 9] != crc) return;
+    }
+    if (stream[at + 9] == crc) {
         frame->encoder_delay = ReadBigEndian(stream + at + 1, 2);
         frame->total_samples = ReadBigEndian(stream + at + 3, 4);
         frame->ofl_type = MP3_OFL_FGH;
@@ -944,13 +981,13 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     };
     const std::uint32_t header = (std::uint32_t{stream[0]} << 24u) | (std::uint32_t{stream[1]} << 16u) | (std::uint32_t{stream[2]} << 8u) | stream[3];
     const std::uint32_t version = (header >> 19u) & 3u;
+    const std::uint32_t layer = (header >> 17u) & 3u;
     const std::uint32_t sampleRate = sampleRates[version][(header >> 10u) & 3u];
     const std::uint32_t bitrate = kbps[version][(header >> 12u) & 15u] * 1000u;
-    const bool valid = (header >> 21u) == 0x7FFu && sampleRate != 0 && bitrate != 0;
+    const bool valid = (header >> 21u) == 0x7FFu && layer != 0 && sampleRate != 0 && bitrate != 0;
     AJM_TRACE("[ajm] parse mp3 frame %02x %02x %02x %02x (%u bytes, parse ofl %d) -> %s, %u Hz, %u bps\n", stream[0], stream[1], stream[2], stream[3], streamSize, parseOfl, valid ? "ok" : "invalid", sampleRate, bitrate);
     if (!valid) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    if (parseOfl && ((header >> 17u) & 3u) != 1u) NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (original file length lookup outside layer III)");
-    if (parseOfl && ((header >> 16u) & 1u) == 0) NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (original file length lookup in a CRC-protected frame)");
+    if (parseOfl && layer != 1u) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const bool mpeg1 = version == 3;
     frame->frame_size = (mpeg1 ? 144u : 72u) * bitrate / sampleRate + ((header >> 9u) & 1u);
     frame->num_channels = ((header >> 6u) & 3u) == 3u ? 1u : 2u;
@@ -961,7 +998,7 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     frame->num_frames = 0;
     frame->total_samples = 0;
     frame->ofl_type = MP3_OFL_NONE;
-    if (parseOfl) ParseMp3Ofl(stream, streamSize, header, frame);
+    if (parseOfl) ParseMp3Ofl(stream, streamSize, header, frame, parseOfl);
     return 0;
 }
 
@@ -1121,7 +1158,6 @@ std::size_t OpusPacketSamples(const std::uint8_t* packet, std::size_t size) {
     }
     return frames * frameSamples;
 }
-
 
 std::size_t OpusLength(const std::uint8_t* data, std::size_t size, std::size_t& at) {
     if (at >= size) return SIZE_MAX;
@@ -1678,6 +1714,169 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
     }
 }
 
+int RegisterBatch(std::uint32_t context, AjmBatchError* error, std::uint32_t* batch) {
+    if (error) std::memset(error, 0, sizeof(*error));
+    const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard lock(g_batchLock);
+        g_batches.emplace(id, context);
+    }
+    *batch = id;
+    return 0;
+}
+
+// The PS4 batch buffer (sceAjmBatchStartBuffer) is not private: the PS4 SDK builds it with inline code
+// in the title, so it has the console's layout, taken from shadPS4's reimplementation of the PS4
+// library. It is a run of chunks, each starting with a 32-bit word that holds the chunk kind in bits
+// 0-5 and a payload in bits 6-25. A job chunk has the instance as payload and, in a second word, the
+// byte count of the chunks after it that describe the job; an inline chunk holds that many bytes of data
+// a job's control buffer may point to. A job's flags chunk has flags bits 32-51 as payload and bits 0-31
+// in its second word; its buffer chunks have a 32-bit size and a 64-bit address.
+enum class ConsoleChunk : std::uint32_t {
+    Job = 0,
+    InputRunBuffer = 1,
+    InputControlBuffer = 2,
+    ControlFlags = 3,
+    RunFlags = 4,
+    ReturnAddress = 6,
+    InlineBuffer = 7,
+    OutputRunBuffer = 17,
+    OutputControlBuffer = 18,
+};
+
+constexpr std::uint32_t CONSOLE_STATISTICS_INSTANCE = 0x80000;
+constexpr std::uint64_t CONSOLE_FLAGS_VERSION_AND_CODEC = 0x7FF;
+
+// The low header word as the PS4's libSceAjm builders write it (a trace of 32 545 batches a Wwise title
+// started on a PS4): bits 0-3 the kind, bit 4 the output direction of a buffer chunk
+// (0x11 output run, 0x12 output control), bits 6-25 the job's instance or the flags' bits 32-51. The
+// builders leave bits 5, 26, 27 and 31 as they were, and a title that reuses its batch memory (Wwise
+// does) carries the previous batch's bytes there: a 6-bit kind read job headers as 16, 32 or 48 and run
+// flags as 20, 36 or 52, and a 26-bit payload read flags bit 52 set.
+ConsoleChunk ConsoleChunkKind(std::uint32_t word) {
+    const std::uint32_t kind = word & 0xFu;
+    return static_cast<ConsoleChunk>(kind == 1 || kind == 2 ? kind | (word & 0x10u) : kind);
+}
+
+std::uint32_t ConsoleChunkPayload(std::uint32_t word) {
+    return (word >> 6) & 0xFFFFFu;
+}
+
+std::uint8_t* PutConsoleChunk(std::uint8_t* at, ConsoleChunk kind, std::uint32_t payload, std::uint32_t word) {
+    const std::uint32_t words[2] = {static_cast<std::uint32_t>(kind) | ((payload & 0xFFFFFu) << 6), word};
+    std::memcpy(at, words, sizeof(words));
+    return at + sizeof(words);
+}
+
+std::uint8_t* PutConsoleFlags(std::uint8_t* at, ConsoleChunk kind, std::uint64_t flags) {
+    return PutConsoleChunk(at, kind, static_cast<std::uint32_t>(flags >> 32), static_cast<std::uint32_t>(flags));
+}
+
+std::uint8_t* PutConsoleBuffer(std::uint8_t* at, ConsoleChunk kind, const void* address, std::size_t size) {
+    at = PutConsoleChunk(at, kind, 0, static_cast<std::uint32_t>(size));
+    std::memcpy(at, &address, sizeof(address));
+    return at + sizeof(address);
+}
+
+std::uint8_t* BeginConsoleJob(std::uint8_t* job, const void* returnAddress) {
+    std::uint8_t* at = job + 2 * sizeof(std::uint32_t);
+    return returnAddress ? PutConsoleBuffer(at, ConsoleChunk::ReturnAddress, returnAddress, 0) : at;
+}
+
+void* EndConsoleJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance) {
+    PutConsoleChunk(job, ConsoleChunk::Job, instance, static_cast<std::uint32_t>(end - job) - 2 * sizeof(std::uint32_t));
+    return end;
+}
+
+struct ConsoleJob {
+    JobHeader header;
+    std::vector<AjmBuffer> buffers;
+};
+
+// What sceAjmBatchStartBuffer reports in the AjmBatchError when it refuses a batch: the error, the job
+// chunk, the offending chunk's offset in the job and the job's return address, as a PS4 fills them for a
+// buffer chunk with a null address and a nonzero size (INVALID_ADDRESS, nothing of the batch run). The
+// other refusals here report MALFORMED_BATCH the same way; they were not measured.
+struct ConsoleRefusal {
+    std::int32_t code = SCE_AJM_ERROR_MALFORMED_BATCH;
+    const std::uint8_t* job = nullptr;
+    std::uint32_t offset = 0;
+    const void* returnAddress = nullptr;
+};
+
+// Reads one console job: the chunks between the job header at `job` and `end`. A buffer chunk of size
+// zero is dropped whatever its address, as a PS4 does. Returns false with the refusal filled for a null
+// address with a nonzero size, for chunks that overrun the job and for a job without flags.
+bool ReadConsoleJob(std::uint32_t instance, const std::uint8_t* job, const std::uint8_t* end, ConsoleJob& out, ConsoleRefusal& refusal) {
+    out.header = JobHeader{};
+    out.header.instance = instance;
+    out.header.console = true;
+    std::vector<AjmBuffer> inputs;
+    std::vector<AjmBuffer> outputs;
+    AjmBuffer controlInput{};
+    AjmBuffer controlOutput{};
+    ConsoleChunk flagsKind = ConsoleChunk::Job;
+    refusal = ConsoleRefusal{};
+    refusal.job = job;
+    const std::uint8_t* at = job + 2 * sizeof(std::uint32_t);
+    while (at < end) {
+        refusal.offset = static_cast<std::uint32_t>(at - job);
+        if (end - at < 8) return false;
+        std::uint32_t words[2];
+        std::memcpy(words, at, sizeof(words));
+        const auto kind = ConsoleChunkKind(words[0]);
+        if (kind == ConsoleChunk::ControlFlags || kind == ConsoleChunk::RunFlags) {
+            if (flagsKind != ConsoleChunk::Job) return false;
+            flagsKind = kind;
+            out.header.flags = (std::uint64_t{ConsoleChunkPayload(words[0])} << 32) | words[1];
+            at += sizeof(words);
+            continue;
+        }
+        if (kind != ConsoleChunk::InputRunBuffer && kind != ConsoleChunk::InputControlBuffer && kind != ConsoleChunk::ReturnAddress && kind != ConsoleChunk::OutputRunBuffer && kind != ConsoleChunk::OutputControlBuffer) {
+            NotImplemented_nid_no_patch(("sceAjmBatchStartBuffer (job chunk kind " + std::to_string(static_cast<unsigned>(kind)) + ")").c_str());
+        }
+        if (end - at < 16) return false;
+        AjmBuffer buffer{nullptr, words[1]};
+        std::memcpy(&buffer.ptr, at + sizeof(words), sizeof(buffer.ptr));
+        at += 16;
+        if (kind == ConsoleChunk::ReturnAddress) {
+            refusal.returnAddress = buffer.ptr;
+            continue;
+        }
+        if (buffer.size == 0) continue;
+        if (!buffer.ptr) {
+            refusal.code = SCE_AJM_ERROR_INVALID_ADDRESS;
+            return false;
+        }
+        if (kind == ConsoleChunk::InputRunBuffer) inputs.push_back(buffer);
+        if (kind == ConsoleChunk::OutputRunBuffer) outputs.push_back(buffer);
+        if (kind == ConsoleChunk::InputControlBuffer) controlInput = buffer;
+        if (kind == ConsoleChunk::OutputControlBuffer) controlOutput = buffer;
+    }
+    refusal.offset = static_cast<std::uint32_t>(end - job);
+    if (flagsKind == ConsoleChunk::Job) return false;
+    JobHeader& header = out.header;
+    header.sideband = controlOutput.ptr;
+    header.sidebandSize = controlOutput.size;
+    if (instance == CONSOLE_STATISTICS_INSTANCE) {
+        header.kind = JobKind::GetStatistics;
+    } else if (flagsKind == ConsoleChunk::ControlFlags) {
+        constexpr std::uint64_t implemented = CONSOLE_FLAGS_VERSION_AND_CODEC | CONTROL_RESET | CONTROL_INITIALIZE | SIDEBAND_GAPLESS_DECODE;
+        if ((header.flags & ~implemented) != 0) NotImplemented_nid_no_patch("sceAjmBatchStartBuffer (control job flags other than RESET, INITIALIZE and SIDEBAND_GAPLESS_DECODE)");
+        if (!inputs.empty() || !outputs.empty()) NotImplemented_nid_no_patch("sceAjmBatchStartBuffer (control job with run buffers)");
+        header.kind = JobKind::Control;
+        if (controlInput.size) inputs.push_back(controlInput);
+    } else {
+        if (controlInput.size) NotImplemented_nid_no_patch("sceAjmBatchStartBuffer (run job with an input control buffer)");
+        header.kind = JobKind::Run;
+    }
+    header.inputCount = static_cast<std::uint32_t>(inputs.size());
+    header.outputCount = static_cast<std::uint32_t>(outputs.size());
+    AJM_TRACE("[ajm] console job: instance %u, %s flags 0x%llx, %u input and %u output buffers, control input %llu and output %llu bytes\n", instance, flagsKind == ConsoleChunk::ControlFlags ? "control" : "run", static_cast<unsigned long long>(header.flags), header.inputCount, header.outputCount, static_cast<unsigned long long>(controlInput.size), static_cast<unsigned long long>(controlOutput.size));
+    out.buffers = std::move(inputs);
+    out.buffers.insert(out.buffers.end(), outputs.begin(), outputs.end());
+    return true;
+}
 }
 
 extern "C" {
@@ -1879,14 +2078,19 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     (void)priority;
-    if (!info || !batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch || !info->p_buffer || info->offset > info->size) return SCE_AJM_ERROR_INVALID_PARAMETER;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
-    const auto* end = cursor + info->offset;
+    auto remaining = info->offset;
     std::vector<AjmBuffer> buffers;
-    while (cursor < end) {
+    while (remaining != 0) {
+        if (remaining < sizeof(PackedJob)) NotImplemented_nid_no_patch("AJM batch contains a truncated private job header");
         PackedJob record;
         std::memcpy(&record, cursor, sizeof(record));
+        const std::size_t bufferCount = static_cast<std::size_t>(record.inputCount) + record.outputCount;
+        const std::size_t parameterBytes = (static_cast<std::size_t>(record.parameterSize) + 7u) & ~std::size_t{7};
+        const std::size_t requiredBytes = sizeof(PackedJob) + bufferCount * sizeof(AjmBuffer) + parameterBytes;
+        if (record.parameterSize > sizeof(JobHeader::parameters) || record.bytes < requiredBytes || record.bytes > remaining) NotImplemented_nid_no_patch("AJM batch contains an invalid private job size");
         JobHeader job{};
         job.kind = static_cast<JobKind>(record.kind);
         job.bytes = record.bytes;
@@ -1901,16 +2105,10 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
         if (!buffers.empty()) std::memcpy(buffers.data(), cursor + sizeof(record), buffers.size() * sizeof(AjmBuffer));
         if (record.parameterSize) std::memcpy(job.parameters, cursor + sizeof(record) + buffers.size() * sizeof(AjmBuffer), record.parameterSize);
         Execute(job, buffers.data(), buffers.data() + job.inputCount);
-        cursor += record.bytes;
+        remaining -= record.bytes;
+        if (remaining != 0) cursor += record.bytes;
     }
-    if (error) std::memset(error, 0, sizeof(*error));
-    const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
-    {
-        std::lock_guard lock(g_batchLock);
-        g_batches.emplace(id, context);
-    }
-    *batch = id;
-    return 0;
+    return RegisterBatch(context, error, batch);
 }
 
 int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout, AjmBatchError* error) {
@@ -1937,6 +2135,71 @@ int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* erro
     (void)info;
     if (error) std::memset(error, 0, sizeof(*error));
     return 0;
+}
+
+void* APS5_VABI sceAjmBatchJobControlBufferRa(void* position, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
+    auto* job = static_cast<std::uint8_t*>(position);
+    auto* at = BeginConsoleJob(job, return_address);
+    at = PutConsoleBuffer(at, ConsoleChunk::InputControlBuffer, sideband_input, sideband_input_size);
+    at = PutConsoleFlags(at, ConsoleChunk::ControlFlags, flags);
+    at = PutConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
+    return EndConsoleJob(job, at, instance);
+}
+
+void* APS5_VABI sceAjmBatchJobRunSplitBufferRa(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address) {
+    if ((input_buffers_num && !input_buffers) || (output_buffers_num && !output_buffers)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
+    auto* job = static_cast<std::uint8_t*>(position);
+    auto* at = BeginConsoleJob(job, return_address);
+    for (std::size_t index = 0; index < input_buffers_num; ++index) at = PutConsoleBuffer(at, ConsoleChunk::InputRunBuffer, input_buffers[index].ptr, input_buffers[index].size);
+    at = PutConsoleFlags(at, ConsoleChunk::RunFlags, flags);
+    for (std::size_t index = 0; index < output_buffers_num; ++index) at = PutConsoleBuffer(at, ConsoleChunk::OutputRunBuffer, output_buffers[index].ptr, output_buffers[index].size);
+    at = PutConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
+    return EndConsoleJob(job, at, instance);
+}
+
+void* APS5_VABI sceAjmBatchJobRunBufferRa(void* position, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
+    const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
+    const AjmBuffer output{data_output, data_output_size};
+    return sceAjmBatchJobRunSplitBufferRa(position, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size, return_address);
+}
+
+int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uint32_t batch_size, int priority, AjmBatchError* error, uint32_t* batch_id) {
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
+    if (!batch_id || !batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    AJM_TRACE("[ajm] batch start buffer: context %u, priority %d, %u bytes\n", context, priority, batch_size);
+    std::vector<ConsoleJob> jobs;
+    ConsoleRefusal refusal;
+    const std::uint8_t* at = batch;
+    const std::uint8_t* end = batch + batch_size;
+    bool accepted = batch_size % 8 == 0;
+    while (accepted && at < end) {
+        refusal = ConsoleRefusal{};
+        refusal.job = at;
+        if (end - at < 8) {
+            accepted = false;
+            break;
+        }
+        std::uint32_t words[2];
+        std::memcpy(words, at, sizeof(words));
+        const std::uint8_t* body = at + sizeof(words);
+        if (words[1] > static_cast<std::size_t>(end - body)) {
+            accepted = false;
+            break;
+        }
+        const auto kind = ConsoleChunkKind(words[0]);
+        if (kind == ConsoleChunk::Job) {
+            accepted = ReadConsoleJob(ConsoleChunkPayload(words[0]), at, body + words[1], jobs.emplace_back(), refusal);
+        } else if (kind != ConsoleChunk::InlineBuffer) {
+            NotImplemented_nid_no_patch(("sceAjmBatchStartBuffer (batch chunk kind " + std::to_string(static_cast<unsigned>(kind)) + ")").c_str());
+        }
+        at = body + words[1];
+    }
+    if (!accepted) {
+        if (error) *error = AjmBatchError{refusal.code, refusal.job, refusal.offset, refusal.returnAddress};
+        return SCE_AJM_ERROR_MALFORMED_BATCH;
+    }
+    for (const ConsoleJob& job : jobs) Execute(job.header, job.buffers.data(), job.buffers.data() + job.header.inputCount);
+    return RegisterBatch(context, error, batch_id);
 }
 
 }

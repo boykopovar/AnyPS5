@@ -1,28 +1,18 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <thread>
 
 extern "C" {
-using GuestRudpEventHandler = void(APS5_VABI*)(int, int, int, void*);
-struct GuestRudpPollEvent {
-    int ctxId;
-    std::uint16_t reqEvents;
-    std::uint16_t rtnEvents;
-};
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler, void*, int*);
-int APS5_VABI sceRudpTerminate(int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpPollCreate(std::size_t);
-int APS5_VABI sceRudpPollControl(int, int, int, std::uint16_t);
-int APS5_VABI sceRudpPollWait(int, GuestRudpPollEvent*, std::size_t, std::uint64_t);
-int APS5_VABI sceRudpPollDestroy(int);
+
 }
 
 static void Require(bool value) {
@@ -44,7 +34,7 @@ int main() {
     constexpr std::uint16_t write = 0x0002;
     constexpr std::uint64_t forever = std::numeric_limits<std::uint64_t>::max();
     alignas(16) static std::array<unsigned char, 0x10000> pool{};
-    std::array<GuestRudpPollEvent, 4> events{};
+    std::array<RudpPollEvent, 4> events{};
     const auto eventCount = static_cast<std::uint32_t>(events.size());
 
     Require(sceRudpPollCreate(1) == notInitialized);
@@ -92,6 +82,23 @@ int main() {
     Require(sceRudpPollWait(poll, events.data(), eventCount, 20000) == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(20));
 
+#ifdef _WIN32
+    for (const auto timeout : {100ULL, 1000ULL}) {
+        std::array<std::chrono::nanoseconds, 31> samples{};
+        for (auto& sample : samples) {
+            const auto before = std::chrono::steady_clock::now();
+            Require(sceRudpPollWait(poll, events.data(), eventCount, timeout) == 0);
+            sample = std::chrono::steady_clock::now() - before;
+            Require(sample >= std::chrono::microseconds(timeout));
+        }
+        std::sort(samples.begin(), samples.end());
+        const auto median = samples[samples.size() / 2];
+        std::fprintf(stderr, "sceRudpPollWait(%llu us) median: %lld ns\n", timeout,
+                     static_cast<long long>(median.count()));
+        Require(median < std::chrono::milliseconds(12));
+    }
+#endif
+
     Require(sceRudpTerminate(second) == 0);
     Require(sceRudpPollControl(poll, add, first, read) == 0);
     Require(sceRudpTerminate(first) == 0);
@@ -100,6 +107,19 @@ int main() {
     Require(sceRudpCreateContext(Handler, nullptr, &third) == 0);
     Require(sceRudpPollControl(poll, add, third, read) == 0);
     Require(sceRudpPollControl(other, add, third, read) == 0);
+
+    const int finitePoll = sceRudpPollCreate(1);
+    Require(finitePoll > 0);
+    int finiteResult = 0;
+    std::thread finiteWaiter([&] {
+        finiteResult = sceRudpPollWait(finitePoll, events.data(), eventCount, 1000000);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto destroyedAt = std::chrono::steady_clock::now();
+    Require(sceRudpPollDestroy(finitePoll) == 0);
+    finiteWaiter.join();
+    Require(finiteResult == invalidPoll);
+    Require(std::chrono::steady_clock::now() - destroyedAt < std::chrono::milliseconds(500));
 
     int destroyedResult = 0;
     std::thread destroyedWaiter([&] { destroyedResult = sceRudpPollWait(poll, events.data(), eventCount, forever); });

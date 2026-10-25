@@ -9,9 +9,28 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace {
+
+std::filesystem::path ExecutablePath(const char* argument) {
+#ifdef _WIN32
+    static_cast<void>(argument);
+    std::vector<wchar_t> filename(32768);
+    const auto size = GetModuleFileNameW(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
+    if (size == 0 || size >= filename.size()) throw std::runtime_error("Cannot locate the autorun test executable");
+    return std::filesystem::path(filename.data());
+#else
+    return std::filesystem::absolute(argument);
+#endif
+}
+
+}
 
 int main(int, char* argv[]) {
-    const auto executable = std::filesystem::absolute(argv[0]);
+    const auto executable = ExecutablePath(argv[0]);
     const auto name = executable.stem().string();
     if (name.starts_with("anyps5-autorun-child-")) {
         if (name.find("signal") != std::string::npos) std::raise(SIGILL);
