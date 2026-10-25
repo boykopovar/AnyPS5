@@ -90,7 +90,7 @@ static int StatAt(const std::filesystem::path& p, NativeStat* st, int flags) {
             return -1;
         }
         const std::string prefix = split == 0 ? std::string("/") : rest.substr(0, split);
-        const int next = ::openat(directory, prefix.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        const int next = ::openat(directory, prefix.c_str(), O_SEARCH | O_CLOEXEC);
         const int error = errno;
         if (directory != AT_FDCWD) ::close(directory);
         if (next < 0) {
