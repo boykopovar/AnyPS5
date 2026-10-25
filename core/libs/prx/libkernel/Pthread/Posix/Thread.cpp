@@ -288,6 +288,14 @@ void APS5_VABI pthread_set_name_np_nid_postfix(Pthread thread, const char* name)
 
 }
 
+int APS5_VABI pthread_getstack_np_nid_postfix(Pthread thread, void** addr, std::size_t* size) {
+    if (!thread || !addr || !size) return PosixThread::GUEST_EINVAL;
+    if (thread->_joined.load(std::memory_order_acquire)) return PosixThread::GUEST_ESRCH;
+    *addr = thread->stackAddress;
+    *size = thread->stackSize;
+    return 0;
+}
+
 Pthread APS5_VABI pthread_self_nid_postfix(void) {
     return scePthreadSelf();
 }

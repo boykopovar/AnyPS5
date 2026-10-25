@@ -499,6 +499,7 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value);
 int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, const KernelTimespec* abstime);
 int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name);
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name);
+int APS5_VABI pthread_getstack_np_nid_postfix(Pthread thread, void** addr, std::size_t* size);
 void APS5_VABI pthread_set_name_np_nid_postfix(Pthread thread, const char* name);
 Pthread APS5_VABI pthread_self_nid_postfix(void);
 int APS5_VABI pthread_getthreadid_np_nid_postfix(void);

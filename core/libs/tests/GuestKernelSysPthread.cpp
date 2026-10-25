@@ -50,9 +50,26 @@ static void TestAtfork() {
     Require(handlers[before + 1].prepare == nullptr && handlers[before + 1].parent == nullptr && handlers[before + 1].child == nullptr);
 }
 
+static void* APS5_VABI DummyThread(void*) { return nullptr; }
+
+static void TestGetstack() {
+    void* addr = nullptr;
+    std::size_t size = 0;
+    Require(pthread_getstack_np_nid_postfix(nullptr, &addr, &size) == 22);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, DummyThread, nullptr, "getstack_test") == 0);
+    Require(pthread_getstack_np_nid_postfix(thread, nullptr, &size) == 22);
+    Require(pthread_getstack_np_nid_postfix(thread, &addr, nullptr) == 22);
+    Require(pthread_getstack_np_nid_postfix(thread, &addr, &size) == 0);
+    Require(addr != nullptr && size > 0);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(pthread_getstack_np_nid_postfix(thread, &addr, &size) == 3);
+}
+
 int main() {
     TestScope();
     TestConcurrency();
     TestAtfork();
+    TestGetstack();
     return 0;
 }

@@ -130,7 +130,7 @@ int APS5_VABI pthread_barrier_setname_np_nid_postfix(void);
 int APS5_VABI pthread_cond_setname_np_nid_postfix(void);
 int APS5_VABI pthread_get_specificarray_np_nid_postfix(void);
 int APS5_VABI pthread_get_user_context_np_nid_postfix(void);
-int APS5_VABI pthread_getstack_np_nid_postfix(void);
+int APS5_VABI pthread_getstack_np_nid_postfix(Pthread thread, void** addr, std::size_t* size);
 int APS5_VABI pthread_main_np_nid_postfix(void);
 int APS5_VABI pthread_multi_np_nid_postfix(void);
 int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(void);
