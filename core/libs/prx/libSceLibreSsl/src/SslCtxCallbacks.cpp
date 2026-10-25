@@ -1,29 +1,8 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslCtxCallbacks {
-    unsigned char beforeNewSession[24];
-    void* newSessionCb;
-    unsigned char beforeAppVerify[16];
-    void* appVerifyCallback;
-    void* appVerifyArg;
-    void* clientCertCb;
-    unsigned char beforeInfo[16];
-    void* infoCallback;
-    unsigned char beforeNextProto[288];
-    void* nextProtoSelectCb;
-    void* nextProtoSelectCbArg;
-    void* alpnSelectCb;
-    void* alpnSelectCbArg;
-    unsigned char rest[48];
-};
-
-struct LibreSslCallbackCtx {
-    unsigned char beforeInternal[112];
-    LibreSslCtxCallbacks* internal;
-};
 
 static_assert(sizeof(LibreSslCtxCallbacks) == 464);
 static_assert(offsetof(LibreSslCtxCallbacks, newSessionCb) == 24);
