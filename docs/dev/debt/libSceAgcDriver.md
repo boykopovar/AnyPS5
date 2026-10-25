@@ -397,6 +397,8 @@
 
 - [Zero color export formats](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a target that `CB_TARGET_MASK` and `CB_SHADER_MASK` enable but whose `SPI_SHADER_COL_FORMAT` entry is `SPI_SHADER_ZERO` is left unwritten. Mesa derives `CB_SHADER_MASK` from the formats (`ac_get_cb_shader_mask`), so the console's behaviour for the combination is unmeasured here; the driver keeps later export indices and blend slots where the shader mask puts them, as it does for a `COLOR_INVALID` target.
 
+- [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.

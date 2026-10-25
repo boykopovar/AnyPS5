@@ -2985,7 +2985,7 @@ void memoryValueFillTests() {
 }
 
 void depthMaintenanceTests() {
-    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x4000u}) {
+    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
             auto queue = makeState();
             queue.context[0x000] = mode | clear;
@@ -3003,6 +3003,14 @@ void depthMaintenanceTests() {
         auto queue = makeState();
         queue.context[0x000] = control;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
+    }
+    for (const auto reserved : {0x00004000u, 0x80000000u, 0xffffc000u}) {
+        auto queue = makeState();
+        queue.context[0x000] = reserved;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "reserved DB_RENDER_CONTROL bits were mistaken for maintenance");
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+        queue.context[0x000] = reserved | 4u;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a maintenance bit next to reserved bits was not reported");
     }
     for (const auto clear : {0u, 1u, 2u, 3u}) {
         auto queue = makeState();

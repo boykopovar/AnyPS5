@@ -1362,10 +1362,12 @@ bool DepthResummarizeDrawsNothing(const QueueState& queue) {
 std::string DepthMaintenanceRejection(const QueueState& queue) {
     if (DepthResummarizeDrawsNothing(queue)) return {};
     const auto control = find(queue.context, 0x000);
-    if (control == queue.context.end() || (control->second & ~0x2fe3u) == 0) return {};
+    if (control == queue.context.end()) return {};
+    constexpr std::uint32_t maintenance = 0x0000101cu;
+    if ((control->second & maintenance) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & ~0x2fe3u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
