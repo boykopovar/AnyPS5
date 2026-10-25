@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -33,14 +34,8 @@ static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstat
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
-extern "C" {
-void* APS5_VABI SSL_get_SSL_CTX_nid_postfix(const TestSsl*);
-void* APS5_VABI SSL_get_rbio_nid_postfix(const TestSsl*);
-void* APS5_VABI SSL_get_wbio_nid_postfix(const TestSsl*);
-int APS5_VABI SSL_version_nid_postfix(const TestSsl*);
-std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const TestSsl*);
-int APS5_VABI SSL_get_shutdown_nid_postfix(const TestSsl*);
-int APS5_VABI SSL_want_nid_postfix(const TestSsl*);
+static const LibreSsl* Ssl(const TestSsl* ssl) {
+    return reinterpret_cast<const LibreSsl*>(ssl);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -59,10 +54,10 @@ static void TestGetSslCtx() {
     int session = 0;
     TestSsl ssl {};
     RequireThrows([] { SSL_get_SSL_CTX_nid_postfix(nullptr); });
-    Require(SSL_get_SSL_CTX_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_SSL_CTX_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.ctx = &context;
     ssl.session = &session;
-    Require(SSL_get_SSL_CTX_nid_postfix(&ssl) == &context);
+    Require(SSL_get_SSL_CTX_nid_postfix(Ssl(&ssl)) == &context);
 }
 
 static void TestGetRbio() {
@@ -70,10 +65,10 @@ static void TestGetRbio() {
     int write = 0;
     TestSsl ssl {};
     RequireThrows([] { SSL_get_rbio_nid_postfix(nullptr); });
-    Require(SSL_get_rbio_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_rbio_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.rbio = &read;
     ssl.wbio = &write;
-    Require(SSL_get_rbio_nid_postfix(&ssl) == &read);
+    Require(SSL_get_rbio_nid_postfix(Ssl(&ssl)) == &read);
 }
 
 static void TestGetWbio() {
@@ -82,61 +77,61 @@ static void TestGetWbio() {
     int buffer = 0;
     TestSsl ssl {};
     RequireThrows([] { SSL_get_wbio_nid_postfix(nullptr); });
-    Require(SSL_get_wbio_nid_postfix(&ssl) == nullptr);
+    Require(SSL_get_wbio_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.rbio = &read;
     ssl.wbio = &write;
     ssl.bbio = &buffer;
-    Require(SSL_get_wbio_nid_postfix(&ssl) == &write);
+    Require(SSL_get_wbio_nid_postfix(Ssl(&ssl)) == &write);
 }
 
 static void TestVersion() {
     TestSsl ssl {};
     RequireThrows([] { SSL_version_nid_postfix(nullptr); });
-    Require(SSL_version_nid_postfix(&ssl) == 0);
+    Require(SSL_version_nid_postfix(Ssl(&ssl)) == 0);
     ssl.version = 0x0303;
-    Require(SSL_version_nid_postfix(&ssl) == 0x0303);
+    Require(SSL_version_nid_postfix(Ssl(&ssl)) == 0x0303);
     ssl.version = 0xFEFF;
-    Require(SSL_version_nid_postfix(&ssl) == 0xFEFF);
+    Require(SSL_version_nid_postfix(Ssl(&ssl)) == 0xFEFF);
 }
 
 static void TestVerifyResult() {
     TestSsl ssl {};
     RequireThrows([] { SSL_get_verify_result_nid_postfix(nullptr); });
-    Require(SSL_get_verify_result_nid_postfix(&ssl) == 0);
+    Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == 0);
     ssl.verifyResult = 20;
-    Require(SSL_get_verify_result_nid_postfix(&ssl) == 20);
+    Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == 20);
     ssl.verifyResult = INT64_C(0x100000002);
-    Require(SSL_get_verify_result_nid_postfix(&ssl) == INT64_C(0x100000002));
+    Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == INT64_C(0x100000002));
     ssl.verifyResult = -1;
-    Require(SSL_get_verify_result_nid_postfix(&ssl) == -1);
+    Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == -1);
 }
 
 static void TestGetShutdown() {
     TestSslInternal internal {};
     TestSsl ssl {};
     RequireThrows([] { SSL_get_shutdown_nid_postfix(nullptr); });
-    RequireThrows([&] { SSL_get_shutdown_nid_postfix(&ssl); });
+    RequireThrows([&] { SSL_get_shutdown_nid_postfix(Ssl(&ssl)); });
     ssl.internal = &internal;
-    Require(SSL_get_shutdown_nid_postfix(&ssl) == 0);
+    Require(SSL_get_shutdown_nid_postfix(Ssl(&ssl)) == 0);
     internal.rwstate = 3;
     internal.shutdown = 1;
-    Require(SSL_get_shutdown_nid_postfix(&ssl) == 1);
+    Require(SSL_get_shutdown_nid_postfix(Ssl(&ssl)) == 1);
     internal.shutdown = 3;
-    Require(SSL_get_shutdown_nid_postfix(&ssl) == 3);
+    Require(SSL_get_shutdown_nid_postfix(Ssl(&ssl)) == 3);
 }
 
 static void TestWant() {
     TestSslInternal internal {};
     TestSsl ssl {};
     RequireThrows([] { SSL_want_nid_postfix(nullptr); });
-    RequireThrows([&] { SSL_want_nid_postfix(&ssl); });
+    RequireThrows([&] { SSL_want_nid_postfix(Ssl(&ssl)); });
     ssl.internal = &internal;
-    Require(SSL_want_nid_postfix(&ssl) == 0);
+    Require(SSL_want_nid_postfix(Ssl(&ssl)) == 0);
     internal.rwstate = 1;
-    Require(SSL_want_nid_postfix(&ssl) == 1);
+    Require(SSL_want_nid_postfix(Ssl(&ssl)) == 1);
     internal.shutdown = 2;
     internal.rwstate = 3;
-    Require(SSL_want_nid_postfix(&ssl) == 3);
+    Require(SSL_want_nid_postfix(Ssl(&ssl)) == 3);
 }
 
 int main() {

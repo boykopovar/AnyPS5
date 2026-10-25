@@ -1,47 +1,9 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslSslInternal {
-    unsigned char beforeRwstate[156];
-    int rwstate;
-    unsigned char beforeShutdown[8];
-    int shutdown;
-    unsigned char rest[260];
-};
-
-struct LibreSsl {
-    int version;
-    const void* method;
-    void* rbio;
-    void* wbio;
-    void* bbio;
-    int server;
-    void* s3;
-    void* d1;
-    void* param;
-    void* cipherList;
-    void* cert;
-    unsigned int sidCtxLength;
-    unsigned char sidCtx[32];
-    void* session;
-    int verifyMode;
-    int error;
-    int errorCode;
-    void* ctx;
-    std::int64_t verifyResult;
-    int references;
-    int clientVersion;
-    unsigned int maxSendFragment;
-    char* tlsextHostname;
-    int tlsextStatusType;
-    void* initialCtx;
-    void* encReadCtx;
-    void* readHash;
-    LibreSslSslInternal* internal;
-};
 
 static_assert(sizeof(LibreSslSslInternal) == 432);
 static_assert(offsetof(LibreSslSslInternal, rwstate) == 156);
