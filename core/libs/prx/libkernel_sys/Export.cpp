@@ -318,6 +318,18 @@ int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
+int APS5_VABI sceKernelGetCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    return sceKernelGetCompiledSdkVersion(version);
+}
+
+int APS5_VABI get_sdk_compiled_version_nid_postfix(std::int32_t* version) {
+    if (version == nullptr) return static_cast<int>(Fail(GuestEfault));
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    return 0;
+}
+
 int APS5_VABI fork_nid_postfix(void) {
     NotImplemented_nid_no_patch("fork: child processes");
     return -1;

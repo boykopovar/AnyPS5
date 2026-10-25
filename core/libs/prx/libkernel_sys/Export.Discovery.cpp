@@ -82,10 +82,6 @@ int APS5_VABI get_page_table_stats_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI get_sdk_compiled_version_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI get_self_auth_info_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -827,10 +823,6 @@ int APS5_VABI sceKernelGetCompiledSdkVersionByPath(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetCompiledSdkVersionByPid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceKernelGetCoredumpAppInfo(void) {
     NotImplemented_nid_no_patch(__func__);
