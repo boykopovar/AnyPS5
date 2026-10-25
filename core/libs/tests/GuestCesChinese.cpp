@@ -227,7 +227,8 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
     std::uint16_t backUtf16[8] = {};
     Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == 6);
     Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10);
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 4, &produced) == dstBufferEnd);
+    std::uint16_t shortUtf16[4] = {};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 4, &produced) == dstBufferEnd);
     Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == 6);
     std::uint8_t again[16] = {};
     Require(sceCesUtf16StrToMbcsStr(context, backUtf16, 6, &consumed, again, sizeof(again), &produced) == 0 && consumed == 6 && produced == gbSize);

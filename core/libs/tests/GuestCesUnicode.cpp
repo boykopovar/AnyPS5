@@ -1,7 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCesCs/JisX0208.hpp"
-#include "prx/libSceCesCs/JisX0212.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -160,6 +159,7 @@ void TestErrors() {
 }
 
 void TestEucJp() {
+    constexpr int INVALID_PROFILE = static_cast<int>(0x805C0004);
     std::array<uint8_t, 1024> sheet{};
     const void* profile = sceCesUcsProfileInitEucJpCp51932(sheet.data());
     auto check = [&](const uint8_t* source, uint32_t length, uint32_t code) {
@@ -177,10 +177,11 @@ void TestEucJp() {
             output.fill(0xA5);
             consumed = produced = SENTINEL;
             Require(sceCesEucJpToUtf8(profile, source, length, &consumed, output.data(), cap, &produced) == DST_BUFFER_END);
-            Require(consumed == SENTINEL && produced == SENTINEL && output[0] == 0xA5);
+            Require(consumed == length && produced == expectedLength && output[0] == 0xA5);
         }
     };
-    for (uint32_t code = 0; code < 128; ++code) {
+    for (uint32_t code = 0; code < 0xA0; ++code) {
+        if (code == 0x0E || code == 0x8E || code == 0x8F) continue;
         const uint8_t source[] = {static_cast<uint8_t>(code)};
         check(source, 1, code);
     }
@@ -189,39 +190,41 @@ void TestEucJp() {
         check(source, 2, 0xFF61 + cell);
     }
     uint32_t assigned = 0;
-    for (uint32_t supplementary = 0; supplementary < 2; ++supplementary) {
-        for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
-            const uint32_t code = supplementary ? JisX0212::TO_UCS2[cell] : JisX0208::TO_UCS2[cell];
-            const uint8_t source[] = {0x8F, static_cast<uint8_t>(0xA1 + cell / 94), static_cast<uint8_t>(0xA1 + cell % 94)};
-            const uint8_t* start = source + (supplementary ? 0 : 1);
-            const uint32_t length = supplementary ? 3 : 2;
-            if (code) { check(start, length, code); ++assigned; }
-            else {
-                uint8_t output[4] = {0xA5, 0xA5, 0xA5, 0xA5};
-                uint32_t consumed = SENTINEL;
-                uint32_t produced = SENTINEL;
-                Require(sceCesEucJpToUtf8(profile, start, length, &consumed, output, 4, &produced) == UNASSIGNED_CODE);
-                Require(consumed == SENTINEL && produced == SENTINEL && output[0] == 0xA5);
-            }
+    for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
+        const uint32_t code = JisX0208::TO_UCS2[cell];
+        const uint8_t source[] = {static_cast<uint8_t>(0xA1 + cell / 94), static_cast<uint8_t>(0xA1 + cell % 94)};
+        if (code) { check(source, 2, code); ++assigned; }
+        else {
+            uint8_t output[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+            uint32_t consumed = SENTINEL;
+            uint32_t produced = SENTINEL;
+            Require(sceCesEucJpToUtf8(profile, source, 2, &consumed, output, 4, &produced) == UNASSIGNED_CODE);
+            Require(consumed == 2 && produced == 0 && output[0] == 0xA5);
         }
     }
-    Require(assigned == 13403);
-    const uint8_t source[] = {0x8F, 0xA2, 0xAF, 'X'};
+    Require(assigned == 7336);
+    const uint8_t source[] = {0xA4, 0xA2, 'X'};
     uint8_t output[4] = {0xA5, 0xA5, 0xA5, 0xA5};
     uint32_t consumed = SENTINEL;
     uint32_t produced = SENTINEL;
-    Require(sceCesEucJpToUtf8(nullptr, source, 3, &consumed, output, 4, &produced) == INVALID_PARAMETER);
+    Require(sceCesEucJpToUtf8(nullptr, source, 3, &consumed, output, 4, &produced) == INVALID_PROFILE);
+    Require(consumed == 0 && produced == 0);
     Require(sceCesEucJpToUtf8(profile, nullptr, 3, &consumed, output, 4, &produced) == INVALID_SRC_BUFFER);
-    Require(sceCesEucJpToUtf8(profile, source, 0, &consumed, output, 4, &produced) == SRC_BUFFER_END);
+    Require(sceCesEucJpToUtf8(profile, source, 0, &consumed, output, 4, &produced) == INVALID_SRC_BUFFER);
     Require(sceCesEucJpToUtf8(profile, source, 3, &consumed, nullptr, 4, &produced) == INVALID_DST_BUFFER);
-    for (uint32_t size : {1u, 2u}) Require(sceCesEucJpToUtf8(profile, source, size, &consumed, output, 4, &produced) == SRC_BUFFER_END);
+    Require(consumed == 2 && produced == 3);
+    Require(sceCesEucJpToUtf8(profile, source, 1, &consumed, output, 4, &produced) == SRC_BUFFER_END);
+    Require(consumed == 2 && produced == 0);
     const uint8_t malformed[] = {0x8E, 0x41};
     Require(sceCesEucJpToUtf8(profile, malformed, 2, &consumed, output, 4, &produced) == INVALID_ENCODE);
-    Require(consumed == SENTINEL && produced == SENTINEL && output[0] == 0xA5);
-    Require(sceCesEucJpToUtf8(profile, source, 4, &consumed, output, 4, &produced) == 0);
-    Require(consumed == 3 && produced == 2 && output[0] == 0xCB && output[1] == 0x98 && output[2] == 0xA5);
-    Require(sceCesEucJpToUtf8(profile, source, 4, nullptr, output, 4, nullptr) == 0);
-    std::puts("13403 assigned JIS cells plus ASCII, half-width katakana and unassigned cells checked");
+    Require(consumed == 2 && produced == 0 && output[0] == 0xA5);
+    const uint8_t supplementary[] = {0x8F, 0xA2, 0xAF};
+    Require(sceCesEucJpToUtf8(profile, supplementary, 3, &consumed, output, 4, &produced) == INVALID_ENCODE);
+    Require(consumed == 3 && produced == 0 && output[0] == 0xA5);
+    Require(sceCesEucJpToUtf8(profile, source, 3, &consumed, output, 4, &produced) == 0);
+    Require(consumed == 2 && produced == 3 && output[0] == 0xE3 && output[1] == 0x81 && output[2] == 0x82 && output[3] == 0xA5);
+    Require(sceCesEucJpToUtf8(profile, source, 3, nullptr, output, 4, nullptr) == 0);
+    std::puts("7336 assigned JIS X 0208 cells plus single bytes and half-width katakana checked");
 }
 
 }

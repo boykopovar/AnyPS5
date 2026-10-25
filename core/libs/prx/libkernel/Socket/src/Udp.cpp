@@ -122,6 +122,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     GuestSockets::SocketOptionState options;
     bool receiveShut = false;
     bool sendShut = false;
+    std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -1225,6 +1226,8 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         firstGuard.value = Invalid;
         auto second = std::make_shared<Socket>(native[1], GuestUnix, plainType);
         secondGuard.value = Invalid;
+        first->peer = second;
+        second->peer = first;
         if (nonblocking && (SetNonBlocking(*first) || SetNonBlocking(*second))) return -1;
         const int firstDescriptor = Install(std::move(first));
         if (firstDescriptor < 0) return -1;
@@ -1307,6 +1310,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             accepted->options.tcpKeepIdle = listener->options.tcpKeepIdle;
             accepted->options.tcpKeepInterval = listener->options.tcpKeepInterval;
             accepted->options.tcpKeepCount = listener->options.tcpKeepCount;
+            accepted->options.tcpFlags = listener->options.tcpFlags & 0x1000;
         }
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));
@@ -1386,6 +1390,7 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
 int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->peer.expired()) return Fail(57);
     if (!address || !length) return Fail(14);
     if (socket->family == GuestUnix) return UnnamedAddress(address, length);
     sockaddr_storage native{};

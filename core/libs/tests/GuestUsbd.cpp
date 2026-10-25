@@ -1,6 +1,7 @@
 #include "prx/libSceUsbd/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +19,10 @@ namespace {
 namespace {
 
 constexpr std::int32_t invalidArgument = static_cast<std::int32_t>(0x80240002);
+constexpr std::int32_t noDevice = static_cast<std::int32_t>(0x80240004);
+constexpr std::int32_t notFound = static_cast<std::int32_t>(0x80240005);
+constexpr std::int32_t otherError = static_cast<std::int32_t>(0x802400FF);
+constexpr std::uint8_t absentEndpoint = 0x70;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -87,6 +92,10 @@ void Device() {
     void* handle = nullptr;
     Require(sceUsbdOpen(device, &handle) == 0 && handle != nullptr, "opening the device failed");
     Require(sceUsbdCheckConnected(handle) == 0, "an open device was reported disconnected");
+    Require(sceUsbdGetDevice(handle) == device, "the device of an open handle is not the device it was opened from");
+    const int speed = sceUsbdGetDeviceSpeed(device);
+    Require(speed >= 1 && speed <= 4, "the device speed is not low, full, high or super speed");
+    std::printf("device speed %d\n", speed);
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};
@@ -131,6 +140,7 @@ void Device() {
     const std::uint8_t* interfaceArray = *reinterpret_cast<const std::uint8_t* const*>(config0 + 16);
     std::uint8_t interruptAddress = 0;
     std::uint16_t interruptMax = 0;
+    std::uint8_t interruptInterface = 0;
     if (interfaceArray == nullptr) {
         Require(false, "the active config descriptor has no interface array");
     }
@@ -144,11 +154,29 @@ void Device() {
             if ((item[2] & 0x80) != 0 && (item[3] & 3) == 3) {
                 interruptAddress = item[2];
                 interruptMax = static_cast<std::uint16_t>(item[4] | item[5] << 8);
+                interruptInterface = alternate[2];
             }
         }
     }
     Require(interruptAddress != 0 && interruptMax != 0, "the device has no interrupt IN endpoint");
     sceUsbdFreeConfigDescriptor(config);
+    Require(sceUsbdGetMaxPacketSize(device, interruptAddress) == interruptMax, "the max packet size differs from the endpoint descriptor");
+    const int expectedIso = speed <= 2 ? interruptMax : (interruptMax & 0x7FF) * std::min(1 + ((interruptMax >> 11) & 3), 3);
+    Require(sceUsbdGetMaxIsoPacketSize(device, interruptAddress) == expectedIso, "the max iso packet size differs from the endpoint descriptor");
+    Require(sceUsbdGetMaxPacketSize(device, absentEndpoint) == notFound && sceUsbdGetMaxIsoPacketSize(device, absentEndpoint) == notFound, "an absent endpoint has a max packet size");
+    Require(sceUsbdSetInterfaceAltSetting(handle, interruptInterface, 0) == notFound, "an unclaimed interface took an alternate setting");
+    Require(sceUsbdSetInterfaceAltSetting(handle, 32, 0) == invalidArgument && sceUsbdSetInterfaceAltSetting(handle, -1, 0) == invalidArgument, "an interface number outside 0 to 31 was accepted");
+    Require(sceUsbdClaimInterface(handle, interruptInterface) == 0, "claiming the interrupt endpoint's interface failed");
+    const std::int32_t alternate = sceUsbdSetInterfaceAltSetting(handle, interruptInterface, 0);
+    Require(alternate == 0 || alternate == otherError, "alternate setting 0 returned neither success nor the other error");
+    std::printf("alternate setting 0 of interface %u: %d\n", interruptInterface, alternate);
+    Require(sceUsbdClearHalt(handle, interruptAddress) == 0, "clearing the interrupt endpoint's halt failed");
+    Require(sceUsbdClearHalt(handle, absentEndpoint) == otherError, "clearing the halt of an absent endpoint did not return the other error");
+    const std::int32_t detached = sceUsbdDetachKernelDriver(handle, interruptInterface);
+    Require(detached == 0 || detached == otherError, "detaching the kernel driver returned neither success nor the other error");
+    std::printf("kernel driver detach: %d\n", detached);
+    Require(sceUsbdReleaseInterface(handle, interruptInterface) == 0, "releasing the interrupt endpoint's interface failed");
+    Require(sceUsbdSetInterfaceAltSetting(handle, interruptInterface, 0) == notFound, "a released interface took an alternate setting");
 
     auto* transfer = reinterpret_cast<UsbdTransfer*>(sceUsbdAllocTransfer(0));
     std::uint8_t setup[8 + 18] = {0x80, 6, 0x00, 0x01, 0x00, 0x00, 18, 0};
@@ -196,7 +224,17 @@ void Device() {
     sceUsbdClose(handle);
 
     Require(Throws([&] { sceUsbdClose(handle); }), "a handle was closed twice");
+    Require(Throws([&] { sceUsbdGetDevice(handle); }), "the device of a closed handle was returned");
     sceUsbdUnrefDevice(device);
+    void* byId = sceUsbdOpenDeviceWithVidPid(static_cast<std::uint16_t>(vendor), static_cast<std::uint16_t>(product));
+    Require(byId != nullptr, "opening the device by vendor and product failed");
+    void* byIdDevice = sceUsbdGetDevice(byId);
+    std::uint8_t byIdDescriptor[18] = {};
+    Require(sceUsbdGetDeviceDescriptor(byIdDevice, byIdDescriptor) == 0, "the device of a handle opened by vendor and product has no descriptor");
+    Require((byIdDescriptor[8] | byIdDescriptor[9] << 8) == vendor && (byIdDescriptor[10] | byIdDescriptor[11] << 8) == product, "the device opened by vendor and product has another vendor or product");
+    Require(sceUsbdGetMaxPacketSize(byIdDevice, interruptAddress) == interruptMax, "the max packet size through a handle's device differs");
+    sceUsbdClose(byId);
+    Require(Throws([&] { sceUsbdGetDeviceDescriptor(byIdDevice, byIdDescriptor); }), "the device of a closed handle stayed known");
 
     std::puts("USBD device tests passed");
 }
@@ -291,6 +329,21 @@ int main(int argc, char** argv) {
 
     Require(Throws([&] { sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer)); }), "submitting on a handle that was never opened did not throw");
     sceUsbdFreeTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
+    Require(Throws([&] { sceUsbdClearHalt(nullptr, 0x81); }), "clearing a halt on a null handle did not throw");
+    Require(Throws([&] { sceUsbdClearHalt(&foreign, 0x81); }), "clearing a halt on a handle that was never opened did not throw");
+    Require(sceUsbdDetachKernelDriver(nullptr, 0) == invalidArgument, "null handle kernel driver detach accepted");
+    Require(Throws([&] { sceUsbdDetachKernelDriver(&foreign, 0); }), "kernel driver detach on a handle that was never opened did not throw");
+    Require(sceUsbdGetDevice(nullptr) == nullptr, "a null handle has a device");
+    Require(Throws([&] { sceUsbdGetDevice(&foreign); }), "the device of a handle that was never opened did not throw");
+    Require(sceUsbdGetDeviceSpeed(nullptr) == 0, "a null device has a speed");
+    Require(Throws([&] { sceUsbdGetDeviceSpeed(&foreign); }), "the speed of a device that was never listed did not throw");
+    Require(sceUsbdGetMaxPacketSize(nullptr, 0x81) == noDevice, "a null device has a max packet size");
+    Require(Throws([&] { sceUsbdGetMaxPacketSize(&foreign, 0x81); }), "the max packet size of a device that was never listed did not throw");
+    Require(Throws([&] { sceUsbdGetMaxIsoPacketSize(nullptr, 0x81); }), "the max iso packet size of a null device did not throw");
+    Require(Throws([&] { sceUsbdGetMaxIsoPacketSize(&foreign, 0x81); }), "the max iso packet size of a device that was never listed did not throw");
+    Require(sceUsbdSetInterfaceAltSetting(nullptr, 0, 0) == invalidArgument, "null handle alternate setting accepted");
+    Require(Throws([&] { sceUsbdSetInterfaceAltSetting(&foreign, 0, 0); }), "an alternate setting on a handle that was never opened did not throw");
+    Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device with vendor and product 0 was opened");
     sceUsbdFreeTransfer(nullptr);
 
     Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
@@ -306,6 +359,7 @@ int main(int argc, char** argv) {
     Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
     sceUsbdExit();
+    Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device was opened after the library exited");
 
     std::puts("USBD tests passed");
     return 0;

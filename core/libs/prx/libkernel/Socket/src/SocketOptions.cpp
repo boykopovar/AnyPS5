@@ -49,6 +49,9 @@ constexpr int GuestTcpMaximumSegment = 2;
 constexpr int GuestTcpKeepIdle = 0x100;
 constexpr int GuestTcpKeepInterval = 0x200;
 constexpr int GuestTcpKeepCount = 0x400;
+constexpr int GuestTcpNoPush = 4;
+constexpr int GuestTcpNoOptions = 8;
+constexpr int GuestTcpOption80 = 0x80;
 constexpr int MinimumSegment = 216;
 constexpr unsigned int TicksPerSecond = 1000;
 constexpr unsigned int DefaultKeepIdle = 7200;
@@ -62,6 +65,9 @@ constexpr int GuestIpMulticastLoop = 11;
 constexpr int GuestIpMulticastInterface = 9;
 constexpr int GuestIpAddMembership = 12;
 constexpr int GuestIpDropMembership = 13;
+constexpr int GuestIpReceiveDestination = 7;
+constexpr int GuestIpReceiveInterface = 20;
+constexpr int GuestIpReceiveTimeToLive = 65;
 constexpr std::uint32_t MulticastRequestWithIndex = 12;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
@@ -128,6 +134,24 @@ void EnsureBuffers(SocketOptionState& state, int family, int type) {
     }
     state.sendLowWater = std::min(2048, state.sendBuffer);
     state.receiveLowWater = 1;
+}
+
+int TcpFlagBit(int option) {
+    switch (option) {
+        case GuestTcpNoPush: return 0x1000;
+        case GuestTcpNoOptions: return 0x8;
+        case GuestTcpOption80: return 0x10000;
+        default: return 0;
+    }
+}
+
+int IpReceiveBit(int option) {
+    switch (option) {
+        case GuestIpReceiveDestination: return 1;
+        case GuestIpReceiveInterface: return 2;
+        case GuestIpReceiveTimeToLive: return 4;
+        default: return 0;
+    }
 }
 
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
@@ -301,11 +325,15 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
 int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length) {
     if (!tcp) return ErrorInvalid;
     if (option != GuestTcpNoDelay && option != GuestTcpMaximumSegment && option != GuestTcpKeepIdle && option != GuestTcpKeepInterval &&
-        option != GuestTcpKeepCount)
+        option != GuestTcpKeepCount && TcpFlagBit(option) == 0)
         return ErrorNoProtocolOption;
     if (length < sizeof(int)) return ErrorInvalid;
     int number;
     std::memcpy(&number, value, sizeof(number));
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        state.tcpFlags = number != 0 ? state.tcpFlags | bit : state.tcpFlags & ~bit;
+        return 0;
+    }
     const auto unsignedNumber = static_cast<unsigned int>(number);
     if (option == GuestTcpMaximumSegment) {
         if (number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
@@ -333,6 +361,10 @@ int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp,
             : option == GuestTcpKeepIdle ? (state.tcpKeepIdle != 0 ? state.tcpKeepIdle : DefaultKeepIdle)
             : option == GuestTcpKeepInterval ? (state.tcpKeepInterval != 0 ? state.tcpKeepInterval : DefaultKeepInterval)
             : (state.tcpKeepCount != 0 ? state.tcpKeepCount : DefaultKeepCount);
+        return Copy(value, length, &number, sizeof(number));
+    }
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        const int number = state.tcpFlags & bit;
         return Copy(value, length, &number, sizeof(number));
     }
     if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
@@ -396,6 +428,13 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
         std::memcpy(&state.multicastInterface, &address, sizeof(address));
         return 0;
     }
+    if (const int bit = IpReceiveBit(option); bit != 0) {
+        if (length < sizeof(int)) return ErrorInvalid;
+        int number;
+        std::memcpy(&number, value, sizeof(number));
+        state.ipReceiveOptions = number != 0 ? state.ipReceiveOptions | bit : state.ipReceiveOptions & ~bit;
+        return 0;
+    }
     if (option == GuestIpTimeToLive || option == GuestIpTypeOfService) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
@@ -438,7 +477,8 @@ int GetIpLevelOption(SocketOptionState& state, bool ipv4, bool datagram, int opt
         return Copy(value, length, &state.multicastInterface, sizeof(state.multicastInterface));
     }
     int number;
-    if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
+    if (const int bit = IpReceiveBit(option); bit != 0) number = (state.ipReceiveOptions & bit) != 0 ? 1 : 0;
+    else if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
     else if (option == GuestIpTypeOfService) number = state.ipTypeOfService;
     else if (option == GuestIpMulticastTimeToLive) number = state.multicastTimeToLive;
     else if (option == GuestIpMulticastLoop) number = state.multicastLoop ? 1 : 0;
