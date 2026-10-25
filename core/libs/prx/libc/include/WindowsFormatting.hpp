@@ -15,7 +15,6 @@
 #include <vector>
 #include <type_traits>
 
-extern "C" int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
 extern "C" std::FILE* GuestStandardOutputFile_nid_no_patch();
 
 namespace LibcDetail {
@@ -161,13 +160,21 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
     }
 }
 
-inline std::string NanSpec(const std::string& spec) {
+inline std::string PaddedStringSpec(const std::string& spec) {
     std::string result = "%";
     std::size_t index = 1;
     for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index)
         if (spec[index] == '-' && result.size() == 1) result += '-';
     for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) result += spec[index];
     return result + 's';
+}
+
+inline std::string NanText(const std::string& spec, bool negative, bool upper) {
+    std::string sign;
+    if (negative) sign = "-";
+    else if (spec.find('+') != std::string::npos) sign = "+";
+    else if (spec.find(' ') != std::string::npos) sign = " ";
+    return sign + (upper ? "NAN" : "nan");
 }
 
 inline std::string FormatPointer(const std::string& spec, const void* pointer) {
@@ -205,7 +212,8 @@ inline std::string FormatPointer(const std::string& spec, const void* pointer) {
     return std::string(padding, ' ') + digits;
 }
 
-constexpr size_t maximumArgumentPosition = 99;
+inline constexpr char KnownConversions[] = "diouxXeEfFgGaAcCsSpn";
+constexpr size_t maximumArgumentPosition = 65535;
 
 inline size_t ArgumentPosition(const char*& format) {
     const char* end = format;
@@ -214,7 +222,8 @@ inline size_t ArgumentPosition(const char*& format) {
     size_t position = 0;
     for (const char* digit = format; digit != end && position <= maximumArgumentPosition; ++digit)
         position = position * 10 + static_cast<size_t>(*digit - '0');
-    if (position == 0 || position > maximumArgumentPosition) throw std::invalid_argument("Format argument position out of range");
+    if (position == 0) return 0;
+    if (position > maximumArgumentPosition) throw std::invalid_argument("Format argument position out of range");
     format = end + 1;
     return position;
 }
@@ -258,7 +267,6 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
 
 inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr, bool secure = false) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
-    const int savedError = errno;
     const char* const formatStart = format;
     FormatArguments args(source);
     args.Number(NumberedArgumentClasses(format));
@@ -279,16 +287,24 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         }
         if (const size_t position = ArgumentPosition(format)) args.Seek(position);
         std::string spec = "%";
-        for (; *format && std::strchr("-+ #0'", *format); ++format)
+        bool unmeasuredUnknownFlag = false;
+        bool zeroFlag = false;
+        for (; *format && std::strchr("-+ #0'", *format); ++format) {
             if (*format != '\'') spec += *format;
+            if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
+            if (*format == '0') zeroFlag = true;
+        }
+        bool widthGiven = false;
         if (*format == '*') {
             ++format;
             const int width = star();
             if (width < 0) spec += '-';
             spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
+            widthGiven = true;
         } else {
-            while (*format >= '0' && *format <= '9') spec += *format++;
+            for (; *format >= '0' && *format <= '9'; widthGiven = true) spec += *format++;
         }
+        if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
@@ -319,6 +335,13 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         const char conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
+        if (!std::strchr(KnownConversions, conversion)) {
+            if (secure || unmeasuredUnknownFlag)
+                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
+            const char text[] = {'%', conversion, '\0'};
+            output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
+            continue;
+        }
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -346,17 +369,16 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 spec = spec.substr(0, spec.find('.')) + ".1";
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
-            const char* nan = conversion >= 'a' ? "nan" : "NAN";
             if (length == "L") {
                 static_assert(sizeof(long double) == 16);
                 static_assert(std::numeric_limits<long double>::digits == 64);
                 const long double value = args.Next<long double>();
-                if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                if (std::isnan(value)) output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
                 else output.Value(spec + "L" + conversion, value);
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
                 const double value = args.Next<double>();
-                if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                if (std::isnan(value)) output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
                 else output.Value(spec + conversion, value);
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
@@ -377,8 +399,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
-                char32_t code = *value++;
-                if (code >= 0xd800 && code < 0xdc00 && *value >= 0xdc00 && *value < 0xe000) code = 0x10000 + ((code - 0xd800) << 10) + (*value++ - 0xdc00);
+                const char32_t code = *value++;
                 const auto previousSize = utf8.size();
                 AppendUtf8(utf8, code);
                 if (utf8.size() > precisionLimit) {
@@ -390,10 +411,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         } else if (conversion == 'p' && (length.empty() || length == "l")) {
             const std::string text = FormatPointer(spec, args.Next<void*>());
             output.Append(text.data(), text.size());
-        } else if (conversion == 'm') {
-            char message[128];
-            strerror_r_nid_postfix(savedError, message, sizeof(message));
-            output.Value(spec + 's', static_cast<const char*>(message));
         } else if (conversion == 'n' && secure) {
             throw FormatConstraintViolation("Format count conversion");
         } else if (conversion == 'n' && integerLength && spec == "%") {

@@ -277,6 +277,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
         snd = readCStr(fst);
+        if (snd.empty() || snd.find_first_of("\\:$\r\n") != std::string::npos)
+            throw RelinkerException("Invalid dependency: " + snd, dynStrTabOffset + fst);
         neededLibraries.push_back(snd);
     }
 
@@ -346,8 +348,13 @@ RelinkResult RelinkerPipeline::Relink() {
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
+            validationPolicy->ValidateRelocationTypeSupported(relType, pos);
+
             if (relType == R_X86_64_NONE)
                 continue;
+
+            if (plt && relType != R_X86_64_JUMP_SLOT)
+                throw RelinkerException("Unsupported PLT relocation type", pos);
 
             if (relType == 8) {
                 if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
@@ -376,9 +383,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
-
-    for (const auto& ref : nidRefs)
-        validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());

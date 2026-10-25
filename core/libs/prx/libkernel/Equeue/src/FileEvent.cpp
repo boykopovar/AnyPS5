@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -165,6 +166,16 @@ struct Snapshot {
 };
 
 bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
+    std::wstring path(MAX_PATH, L'\0');
+    auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
+    if (length >= path.size()) {
+        path.resize(length);
+        length = ::GetFinalPathNameByHandleW(handle, path.data(), length, FILE_NAME_NORMALIZED);
+    }
+    if (length != 0 && length < path.size()) {
+        path.resize(length);
+        snapshot.path = std::move(path);
+    }
     FILE_BASIC_INFO basic{};
     FILE_STANDARD_INFO standard{};
     if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
@@ -178,16 +189,6 @@ bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
     snapshot.creation = basic.CreationTime.QuadPart;
     snapshot.lastWrite = basic.LastWriteTime.QuadPart;
     snapshot.change = basic.ChangeTime.QuadPart;
-    std::wstring path(MAX_PATH, L'\0');
-    auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
-    if (length >= path.size()) {
-        path.resize(length);
-        length = ::GetFinalPathNameByHandleW(handle, path.data(), length, FILE_NAME_NORMALIZED);
-    }
-    if (length != 0 && length < path.size()) {
-        path.resize(length);
-        snapshot.path = std::move(path);
-    }
     return true;
 }
 

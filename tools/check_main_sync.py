@@ -52,9 +52,12 @@ def merged_pull_requests(repo, mergebase, base, paths):
 
 
 def report(repo, base, head):
+    repo = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
     found = git(repo, "merge-base", base, head, check=False)
-    if found.returncode:
+    if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")
+    if found.returncode:
+        raise RuntimeError(f"git merge-base failed: {found.stderr.strip()}")
     mergebase = found.stdout.strip()
     behind = int(git(repo, "rev-list", "--count", f"{head}..{base}").stdout)
     ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}").stdout)
@@ -88,14 +91,17 @@ def render(data):
     return "\n".join(out)
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description="report whether a branch is in step with the upstream main before you push or test")
     parser.add_argument("--base", help="the main ref to compare against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("--head", default="HEAD", help="the branch or commit to check (default: HEAD)")
     parser.add_argument("--repo", type=Path, default=Path("."), help="the repository to check (default: the current directory)")
     parser.add_argument("--fetch", action="store_true", help="fetch the base's remote first")
     parser.add_argument("--strict", action="store_true", help="also fail when the branch is behind the base")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         def fetch(ref):
             remote, _, branch = ref.partition("/")
@@ -117,9 +123,11 @@ if __name__ == "__main__":
         data = report(args.repo, base, args.head)
     except RuntimeError as error:
         parser.error(str(error))
-    sys.stdout.reconfigure(errors="backslashreplace")
     print(render(data))
-    if data["conflicts"]:
-        raise SystemExit(1)
-    if args.strict and data["behind"]:
-        raise SystemExit(1)
+    if data["conflicts"] or (args.strict and data["behind"]):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

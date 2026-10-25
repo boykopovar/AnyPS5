@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,7 +44,7 @@ struct Sampler {
     std::uint64_t stackHigh = 0;
     std::vector<DwarfFrames> modules;
     std::uint64_t pendingModule = 0;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> counts;
     CollapsedStacks stacks;
     std::uint64_t samples = 0;

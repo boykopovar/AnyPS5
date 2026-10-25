@@ -322,7 +322,7 @@ void verifyMode() {
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
-    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--frame-red-zone", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
         expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");

@@ -2,14 +2,20 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
 
 DeferredLabels& deferredLabels() {
-    static thread_local DeferredLabels* deferred = nullptr;
-    return ShaderRecompiler::ThreadOwned(deferred);
+    struct Slot {};
+    auto* deferred = HostThreadSlot<DeferredLabels*, Slot>::Get();
+    if (deferred == nullptr) {
+        ShaderRecompiler::ThreadOwned(deferred);
+        HostThreadSlot<DeferredLabels*, Slot>::Set(deferred);
+    }
+    return *deferred;
 }
 
 bool DeferLabels() {

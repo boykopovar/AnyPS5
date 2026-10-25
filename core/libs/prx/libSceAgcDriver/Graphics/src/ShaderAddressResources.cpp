@@ -93,6 +93,10 @@ bool storesThroughAddressesCached(const ShaderRecompiler::SharedSpirv& spirv) {
 
 }
 
+bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv) {
+    return storesThroughAddressesCached(spirv);
+}
+
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words) {
     if (words.size() < 5 || words[0] != spv::MagicNumber) return true;
     std::unordered_set<std::uint32_t> pointerTypes;
@@ -134,7 +138,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
+        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");

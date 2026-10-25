@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -5,11 +6,13 @@
 #include <iphlpapi.h>
 #else
 #include <ifaddrs.h>
-#include <linux/if_link.h>
 #include <net/if.h>
-#include <net/if_arp.h>
 #include <netinet/in.h>
+#ifdef __linux__
+#include <linux/if_link.h>
+#include <net/if_arp.h>
 #include <netpacket/packet.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -29,17 +32,6 @@
 #include <utility>
 #include <vector>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestInterfaceAddress {
-    GuestInterfaceAddress* next;
-    char* name;
-    std::uint32_t flags;
-    void* address;
-    void* netmask;
-    void* destination;
-    void* data;
-};
 static_assert(sizeof(GuestInterfaceAddress) == 56);
 static_assert(offsetof(GuestInterfaceAddress, flags) == 16);
 static_assert(offsetof(GuestInterfaceAddress, address) == 24);
@@ -160,6 +152,7 @@ int HostEntries(std::vector<Entry>& entries) {
     return 0;
 }
 #else
+#ifdef __linux__
 constexpr std::uint8_t guestLinkFamily = 18;
 constexpr std::size_t guestLinkNameArea = 8 + 16;
 constexpr std::size_t guestLinkMinimum = 54;
@@ -171,6 +164,7 @@ constexpr std::uint8_t guestLinkStateDown = 1;
 constexpr std::uint8_t guestLinkStateUp = 2;
 constexpr std::size_t guestInterfaceDataSize = 152;
 constexpr unsigned int hostLowerUp = 0x10000;
+#endif
 
 struct HostInterface {
     std::string name;
@@ -179,6 +173,7 @@ struct HostInterface {
     std::vector<Entry> addresses;
 };
 
+#ifdef __linux__
 template<typename TValue>
 void Store(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
@@ -253,6 +248,7 @@ std::vector<std::uint8_t> GuestInterfaceData(const std::string& name, unsigned i
     }
     return data;
 }
+#endif
 
 std::uint32_t InterfaceFlags(unsigned int host) {
     constexpr std::pair<unsigned int, std::uint32_t> flags[] = {
@@ -288,6 +284,7 @@ int HostEntries(std::vector<Entry>& entries) {
     try {
         for (auto* item = host; item; item = item->ifa_next) {
             if (!item->ifa_addr) continue;
+#ifdef __linux__
             if (item->ifa_addr->sa_family == AF_PACKET) {
                 const auto& link = *reinterpret_cast<const sockaddr_ll*>(item->ifa_addr);
                 HostInterface& owner = interfaceFor(CheckedName(item->ifa_name));
@@ -302,6 +299,7 @@ int HostEntries(std::vector<Entry>& entries) {
                 owner.linked = true;
                 continue;
             }
+#endif
             if (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6) continue;
             if (!item->ifa_netmask) throw std::runtime_error(std::string("getifaddrs: host address without a netmask on ") + item->ifa_name);
             Entry entry{CheckedName(item->ifa_name), InterfaceFlags(item->ifa_flags), GuestAddress(item->ifa_addr), GuestAddress(item->ifa_netmask), {}};

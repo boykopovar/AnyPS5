@@ -45,6 +45,7 @@ struct ColorTarget {
     ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::None;
     // DCC metadata of a compressed target (CB_COLOR_INFO DCC_ENABLE), or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
+    std::uint64_t chainDccAddress = 0;
     bool dccAlphaOnMsb = false;
     bool dccPipeAligned = false;
     std::uint64_t cmaskAddress = 0;
@@ -67,7 +68,11 @@ struct ColorTarget {
     bool uintExport = false;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
+    std::uint32_t coverageSamples = 1;
     std::uint32_t dccControl = 0;
+    std::uint64_t fmaskAddress = 0;
+    std::uint32_t fmaskPipeBankXor = 0;
+    std::uint16_t partialWriteMask = 0;
 };
 
 struct DepthTarget {
@@ -95,6 +100,7 @@ struct State {
     std::optional<DepthTarget> depth;
     bool depthTest = false;
     bool depthWrite = false;
+    bool depthCopySource = false;
     VkCompareOp depthCompare = VK_COMPARE_OP_ALWAYS;
     bool depthBoundsTest = false;
     float minDepthBounds = 0.0f;
@@ -140,6 +146,7 @@ struct State {
     bool ditheredAlphaToCoverage = false;
     bool perSampleShading = false;
     bool mergedCoverage = false;
+    bool truncatedCoverage = false;
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
@@ -148,20 +155,30 @@ struct State {
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
     std::array<float, 4> blendConstants;
+    std::uint8_t colorRop = 0xccu;
     std::uint32_t samples = 1;
     std::array<std::uint8_t, 32> sampleLocations{};
     bool customSampleLocations = false;
     bool sampleLocationGrid = false;
     std::uint32_t paClVsOutCntl = 0;
+    bool vertexPoints = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool pixelEarlyZ = false;
+    bool pixelKill = false;
 };
 
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
 // distance vectors); a vertex program that exports pos1..pos3 depends on them.
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
 
+inline constexpr std::uint8_t CopyRop = 0xccu;
+VkLogicOp LogicOpFromRop(std::uint8_t rop);
+
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
+void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
@@ -178,6 +195,11 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
+std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+bool DepthStencilWrites(const State& state);
+bool DepthStencilTests(const State& state);
+ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);
@@ -202,9 +224,7 @@ struct ColorMetadataPass {
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
 struct DepthCopyPass {
-    std::uint64_t depthAddress;
-    VkExtent2D extent;
-    std::uint32_t samples;
+    DepthTarget source;
     std::uint32_t sample;
     ColorTarget color;
 };
@@ -278,7 +298,7 @@ inline constexpr std::array<DrawKeyRange, 50> DrawKeyRegisters{{
     // PA_SU_VTX_CNTL, the sample masks, PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
     {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x286, 2}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2af, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x2fe, 16}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
     // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, DCC_BASE_EXT, ATTRIB2, ATTRIB3.
-    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 8}, {RegisterBank::Context, 0x3a8, 0x18},
+    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 0x10}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
     // the hull user pointer, program address, RSRC2 and user words; the local program address.

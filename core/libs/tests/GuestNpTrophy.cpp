@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -8,18 +9,6 @@
 #include <random>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t serviceLabel, std::uint64_t options);
-int APS5_VABI sceNpTrophyDestroyContext(int context);
-int APS5_VABI sceNpTrophyCreateHandle(int* handle);
-int APS5_VABI sceNpTrophyDestroyHandle(int handle);
-int APS5_VABI sceNpTrophyRegisterContext(int context, int handle, std::uint64_t options);
-int APS5_VABI sceNpTrophyGetTrophyUnlockState(int context, int handle, std::uint32_t* flags, std::uint32_t* count);
-int APS5_VABI sceNpTrophyUnlockTrophy(int context, int handle, int trophyId, int* platinumId);
-int APS5_VABI sceNpTrophyGetGameIcon(int context, int handle, void* buffer, std::uint64_t* size);
-int APS5_VABI sceNpTrophyGetTrophyIcon(int context, int handle, int trophyId, void* buffer, std::uint64_t* size);
-}
 
 namespace {
 
@@ -78,10 +67,10 @@ int main() {
     Require(sceNpTrophyCreateHandle(&handle) == 0, "create the handle");
 
     std::uint32_t flags[4] = {}, count = 0;
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == NotRegistered, "state before registration");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == NotRegistered, "state before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
 
     std::uint64_t size = 0;
     Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &size) == 0 && size == 9, "game icon size");
@@ -96,7 +85,7 @@ int main() {
     Require(sceNpTrophyUnlockTrophy(context, handle, 2, &platinum) == InvalidTrophyId, "unlock a trophy past the count");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == 0 && platinum == -1, "unlock trophy 1");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == AlreadyUnlocked, "unlock trophy 1 twice");
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == 0 && size == 6 && std::memcmp(icon, "second", 6) == 0, "icon of the unlocked trophy");
     int saved = -1;

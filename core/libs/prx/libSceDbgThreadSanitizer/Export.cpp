@@ -1,3 +1,4 @@
+#include "prx/libSceDbgThreadSanitizer/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 

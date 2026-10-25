@@ -20,6 +20,10 @@ bool IsRawRead(const IrResourcePlan& program, IrOpcode op, std::uint32_t index) 
     return (op == IrOpcode::LoadAddressU32 && kind == ResourceKind::ScalarAddress) || (op == IrOpcode::ReadConstBuffer && kind == ResourceKind::ScalarBuffer);
 }
 
+bool IsMemoryRead(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConst || opcode == IrOpcode::LoadAddressU32 || opcode == IrOpcode::ReadConstBuffer;
+}
+
 bool LoadedFromMemory(const IrValue& handle) {
     std::vector<const IrValue*> pending;
     std::vector<const IrValue*> visited;
@@ -31,8 +35,7 @@ bool LoadedFromMemory(const IrValue& handle) {
         value = value->Resolve();
         if (value->HasImmediate() || std::find(visited.begin(), visited.end(), value) != visited.end()) continue;
         visited.push_back(value);
-        const auto opcode = value->Opcode();
-        if (opcode == IrOpcode::ReadConst || opcode == IrOpcode::LoadAddressU32 || opcode == IrOpcode::ReadConstBuffer) return true;
+        if (IsMemoryRead(value->Opcode())) return true;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) pending.push_back(value->Argument(index));
     }
     return false;

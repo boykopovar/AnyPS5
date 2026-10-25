@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -11,42 +13,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-struct NetIovec {
-    void* base;
-    std::uint64_t length;
-};
-
-struct NetMsghdr {
-    void* name;
-    std::uint32_t nameLength;
-    NetIovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
-
-extern "C" {
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetSocketClose(int);
-int APS5_VABI sceNetSocketAbort(int, int);
-int APS5_VABI sceNetBind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockname(int, void*, std::uint32_t*);
-int APS5_VABI sceNetListen(int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetAccept(int, void*, std::uint32_t*);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockopt(int, int, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI sceNetSend(int, const void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetSendmsg(int, const NetMsghdr*, int);
-std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI sceNetRecvmsg(int, NetMsghdr*, int);
-int* APS5_VABI sceNetErrnoLoc();
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-}
 
 namespace {
 

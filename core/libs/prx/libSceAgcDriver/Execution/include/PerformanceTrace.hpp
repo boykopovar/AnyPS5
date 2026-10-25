@@ -451,18 +451,30 @@ public:
 
     static void AppendString(std::string& output, std::string_view text) {
         output += '"';
-        for (const char character : text) {
+        std::size_t index = 0;
+        while (index < text.size()) {
+            const char character = text[index];
             const auto byte = static_cast<unsigned char>(character);
             if (character == '"' || character == '\\') {
                 output += '\\';
                 output += character;
-            } else if (byte < 0x20 || byte >= 0x7f) {
+            } else if (byte >= 0x80) {
+                if (const auto length = utf8SequenceLength(text, index); length != 0) {
+                    output.append(text.substr(index, length));
+                    index += length;
+                    continue;
+                }
+                char escaped[8];
+                std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(byte));
+                output += escaped;
+            } else if (byte < 0x20 || byte == 0x7f) {
                 char escaped[8];
                 std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(byte));
                 output += escaped;
             } else {
                 output += character;
             }
+            ++index;
         }
         output += '"';
     }
@@ -697,6 +709,34 @@ public:
     }
 
 private:
+    static std::size_t utf8SequenceLength(std::string_view text, std::size_t index) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        std::size_t length = 0;
+        unsigned char low = 0x80;
+        unsigned char high = 0xbf;
+        if (lead >= 0xc2 && lead <= 0xdf) {
+            length = 2;
+        } else if (lead >= 0xe0 && lead <= 0xef) {
+            length = 3;
+            if (lead == 0xe0) low = 0xa0;
+            if (lead == 0xed) high = 0x9f;
+        } else if (lead >= 0xf0 && lead <= 0xf4) {
+            length = 4;
+            if (lead == 0xf0) low = 0x90;
+            if (lead == 0xf4) high = 0x8f;
+        } else {
+            return 0;
+        }
+        if (text.size() - index < length) return 0;
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto next = static_cast<unsigned char>(text[index + offset]);
+            if (next < low || next > high) return 0;
+            low = 0x80;
+            high = 0xbf;
+        }
+        return length;
+    }
+
     static void AppendMachine(std::string& output, const TraceSummary& summary) {
         if (summary.host) {
             output += ",\"cpu\":";

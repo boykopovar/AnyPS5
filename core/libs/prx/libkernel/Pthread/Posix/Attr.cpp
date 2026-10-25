@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -6,16 +7,6 @@
 #include "prx/libc/include/General.hpp"
 #include "../include/Pthread.hpp"
 #include "Common.hpp"
-
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
-int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, std::size_t size);
-int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched);
-int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
-int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
-}
 
 static constexpr int GuestSchedFifo = 1;
 static constexpr int GuestSchedRr = 3;

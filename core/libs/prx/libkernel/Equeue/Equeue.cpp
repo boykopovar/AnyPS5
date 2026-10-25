@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
@@ -12,6 +14,62 @@
 #include <stdexcept>
 #include <unordered_map>
 
+static constexpr std::uint64_t FileRepollNs = 1000000;
+
+struct UnreadFile {
+    bool measured = false;
+    std::int64_t bytes = 0;
+};
+
+static UnreadFile UnreadFileBytes(int file) {
+    FileStat status{};
+    if (sceKernelFstat(file, &status) != 0) {
+        return {};
+    }
+    const std::int64_t offset = sceKernelLseek(file, 0, 1);
+    if (offset < 0) {
+        return {};
+    }
+    return {true, status.st_size - offset};
+}
+
+static bool RegularFile(int descriptor) {
+    if (File::IsHostStream(descriptor)) {
+        return false;
+    }
+    FileStat status{};
+    return sceKernelFstat(descriptor, &status) == 0 && (status.st_mode & 0170000) == 0100000;
+}
+
+static KernelEqueueEvent FileEvent(int descriptor, int16_t filter, uint16_t flags, void* udata) {
+    KernelEqueueEvent event{};
+    event.event.ident = static_cast<uintptr_t>(descriptor);
+    event.event.filter = filter;
+    event.event.flags = flags;
+    event.event.udata = udata;
+    event.filter.repoll = true;
+    if (filter == EVFILT_WRITE) {
+        event.filter.pollFunc = [](KernelEqueueEvent* e) {
+            e->event.data = 0;
+            return true;
+        };
+    } else {
+        event.filter.owner = std::make_shared<UnreadFile>();
+        event.filter.pollFunc = [](KernelEqueueEvent* e) {
+            const auto* unread = static_cast<const UnreadFile*>(e->filter.owner.get());
+            if (!unread->measured || unread->bytes == 0) {
+                return false;
+            }
+            e->event.data = static_cast<intptr_t>(unread->bytes);
+            return true;
+        };
+    }
+    event.filter.resetFunc = [](KernelEqueueEvent* e) {
+        e->triggered = false;
+    };
+    return event;
+}
+
 static std::unordered_map<KernelEqueue, KernelEqueueRef> g_equeues;
 static std::mutex g_equeueMutex;
 static uint64_t g_nextEqueue = 1;
@@ -21,6 +79,7 @@ struct KernelEqueuePrivate::WaitSet {
     std::vector<std::shared_ptr<void>> held;
     std::vector<std::shared_ptr<KernelEqueuePrivate>> queues;
     uint64_t nearestTimerNs = std::numeric_limits<uint64_t>::max();
+    bool repoll = false;
 };
 
 extern "C" {
@@ -98,6 +157,28 @@ bool KernelEqueuePrivate::PollEvents() {
     return polled;
 }
 
+void KernelEqueuePrivate::MeasureFiles(std::unique_lock<std::mutex>& lock) {
+    std::vector<std::pair<int, std::shared_ptr<void>>> files;
+    for (const auto& e : m_events) {
+        if (e.enabled && e.filter.repoll && e.event.filter == EVFILT_READ) {
+            files.emplace_back(static_cast<int>(e.event.ident), e.filter.owner);
+        }
+    }
+    if (files.empty()) {
+        return;
+    }
+    lock.unlock();
+    std::vector<UnreadFile> measured;
+    measured.reserve(files.size());
+    for (const auto& [file, owner] : files) {
+        measured.push_back(UnreadFileBytes(file));
+    }
+    lock.lock();
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        *static_cast<UnreadFile*>(files[i].second.get()) = measured[i];
+    }
+}
+
 void KernelEqueuePrivate::WakePollers() {
     for (const auto waker : m_pollers) {
         GuestSockets::Wake(waker);
@@ -117,6 +198,8 @@ void KernelEqueuePrivate::GatherInterests(WaitSet& wait, std::uintptr_t waker, b
         }
         if (e.filter.watched) {
             GatherWatched(wait, e.filter.watched, waker);
+        } else if (e.filter.repoll) {
+            wait.repoll = true;
         } else if (e.filter.waitDescriptor >= 0) {
             wait.interests.push_back({e.filter.waitDescriptor, false});
             wait.held.push_back(e.filter.owner);
@@ -151,6 +234,12 @@ void KernelEqueuePrivate::WaitForDescriptors(std::unique_lock<std::mutex>& lock,
     const auto waker = GuestSockets::CurrentWaker();
     WaitSet wait;
     GatherInterests(wait, waker, false);
+    if (wait.repoll) {
+        const std::uint64_t soon = TimedWait::NowNanos() + FileRepollNs;
+        if (deadlineNanos == 0 || deadlineNanos > soon) {
+            deadlineNanos = soon;
+        }
+    }
     m_pollers.push_back(waker);
     if (!wait.queues.empty()) {
         PollEvents();
@@ -187,9 +276,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         return CollectOncePerWait(ev, num);
     }
     int ret = 0;
+    std::list<KernelEqueueEvent> requeued;
     for (auto it = m_events.begin(); it != m_events.end() && ret < num;) {
         auto& e = *it;
-        if (!e.enabled) {
+        if (!e.triggered || !e.enabled) {
             ++it;
             continue;
         }
@@ -221,8 +311,15 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
             e.pendingEvents.pop_front();
             e.triggered = true;
         }
-        it = erase ? m_events.erase(it) : std::next(it);
+        const auto next = std::next(it);
+        if (erase) {
+            m_events.erase(it);
+        } else {
+            requeued.splice(requeued.end(), m_events, it);
+        }
+        it = next;
     }
+    m_events.splice(m_events.end(), requeued);
     return ret;
 }
 
@@ -271,6 +368,10 @@ int KernelEqueuePrivate::GetTriggeredEvents(KernelEvent* ev, int num) {
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
     }
+    MeasureFiles(lock);
+    if (m_closed) {
+        return SCE_KERNEL_ERROR_EBADF;
+    }
     TriggerExpiredTimers(MonotonicNs());
     PollEvents();
     return CollectTriggered(ev, num);
@@ -282,6 +383,10 @@ bool KernelEqueuePrivate::HasTriggeredEvents() {
 
 std::size_t KernelEqueuePrivate::CountTriggeredEvents() {
     std::unique_lock lock(m_mutex);
+    if (m_closed) {
+        return 0;
+    }
+    MeasureFiles(lock);
     if (m_closed) {
         return 0;
     }
@@ -311,6 +416,10 @@ int KernelEqueuePrivate::WaitForEventsUntil(KernelEvent* ev, int num, std::uint6
         return SCE_KERNEL_ERROR_EBADF;
     }
     for (;;) {
+        MeasureFiles(lock);
+        if (m_closed) {
+            return SCE_KERNEL_ERROR_EBADF;
+        }
         TriggerExpiredTimers(MonotonicNs());
         const bool polling = PollEvents();
         const int ret = CollectTriggered(ev, num);
@@ -414,6 +523,9 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
     }
+    if (filter == EVFILT_TIMER) {
+        TriggerExpiredTimers(MonotonicNs());
+    }
     auto it = std::find_if(m_events.begin(), m_events.end(),
         [ident, filter](const auto& e) {
             return e.event.ident == ident && e.event.filter == filter;
@@ -502,7 +614,6 @@ int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, in
     }
     return owner->DeleteEvent(ident, filter);
 }
-
 
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
@@ -685,6 +796,7 @@ int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
         }
     };
     EqueueAddEvent_nid_postfix(eq, event);
+
     return EQUEUE_OK;
 }
 
@@ -697,6 +809,7 @@ int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
         return EQUEUE_OK;
     }
     EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_AMPR);
+
     return EQUEUE_OK;
 }
 
@@ -709,14 +822,18 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
     std::int64_t available = 0;
     bool eof = false;
     const bool isPipe = !isSocket && filter == EVFILT_READ && !File::IsHostStream(fd) && GuestSockets::PipeReadState(fd, &available, &eof);
-    if (!isSocket && !isPipe && DescriptorIsOpen_nid_no_patch(fd)) {
-        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: descriptor that is neither a socket nor the read end of a pipe" : "sceKernelAddWriteEvent: non-socket descriptor");
+    const bool isFile = !isSocket && !isPipe && RegularFile(fd);
+    if (!isSocket && !isPipe && !isFile && DescriptorIsOpen_nid_no_patch(fd)) {
+        NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: descriptor that is neither a socket, the read end of a pipe nor a regular file" : "sceKernelAddWriteEvent: descriptor that is neither a socket nor a regular file");
     }
     if (size > 1 && !isPipe) {
         NotImplemented_nid_no_patch(filter == EVFILT_READ ? "sceKernelAddReadEvent: low watermark" : "sceKernelAddWriteEvent: low watermark");
     }
-    if (!isSocket && !isPipe) {
+    if (!isSocket && !isPipe && !isFile) {
         return SCE_KERNEL_ERROR_EBADF;
+    }
+    if (isFile) {
+        return EqueueAddEvent_nid_postfix(eq, FileEvent(fd, filter, EV_ADD, udata));
     }
     return EqueueAddEvent_nid_postfix(eq, EqueueDescriptorEvent(fd, filter, EV_ADD, udata));
 }

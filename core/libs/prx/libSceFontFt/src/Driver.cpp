@@ -1,3 +1,4 @@
+#include "prx/libSceFontFt/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -12,7 +13,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -198,6 +203,41 @@ int APS5_VABI LibrarySupport(FontLibNative* library, std::uint32_t formats) {
     return SCE_FONT_OK;
 }
 
+#ifdef _WIN32
+void CloseMappedFile(FT_Stream stream) {
+    UnmapViewOfFile(stream->base);
+    delete stream;
+}
+
+FT_Error OpenFileFace(FT_Library library, const char* path, FT_Long subFontIndex, FT_Face* face) {
+    const HANDLE file = CreateFileW(std::filesystem::path(reinterpret_cast<const char8_t*>(path)).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return FT_Err_Cannot_Open_Resource;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > std::numeric_limits<long>::max()) {
+        CloseHandle(file);
+        return FT_Err_Cannot_Open_Stream;
+    }
+    const HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(file);
+    if (!mapping) return FT_Err_Cannot_Open_Stream;
+    void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping);
+    if (!view) return FT_Err_Cannot_Open_Stream;
+    auto* stream = new FT_StreamRec{};
+    stream->base = static_cast<unsigned char*>(view);
+    stream->size = static_cast<unsigned long>(size.QuadPart);
+    stream->close = &CloseMappedFile;
+    FT_Open_Args args{};
+    args.flags = FT_OPEN_STREAM;
+    args.stream = stream;
+    return FT_Open_Face(library, &args, subFontIndex, face);
+}
+#else
+FT_Error OpenFileFace(FT_Library library, const char* path, FT_Long subFontIndex, FT_Face* face) {
+    return FT_New_Face(library, path, subFontIndex, face);
+}
+#endif
+
 int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const void* fontAddress, std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord, FontObj** inoutFontObj) {
     (void)uniqueWord;
     if (!library || !fontAddress || !inoutFontObj) return SCE_FONT_ERROR_INVALID_PARAMETER;
@@ -222,7 +262,7 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     if (fromMemory) {
         error = FT_New_Memory_Face(*ftLibrary, static_cast<const FT_Byte*>(fontAddress), static_cast<FT_Long>(fontSize), static_cast<FT_Long>(subFontIndex), &face);
     } else {
-        error = FT_New_Face(*ftLibrary, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
+        error = OpenFileFace(*ftLibrary, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
     }
     if (error != 0 || !face) {
         if (fromMemory || error == FT_Err_Unknown_File_Format) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;

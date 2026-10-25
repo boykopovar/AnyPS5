@@ -1,3 +1,4 @@
+#include "prx/libSceAvSetting/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

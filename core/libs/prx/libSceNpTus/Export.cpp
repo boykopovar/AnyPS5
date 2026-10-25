@@ -1,3 +1,4 @@
+#include "prx/libSceNpTus/include/Api.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <mutex>
@@ -88,6 +89,16 @@ int Complete(int reqId, int asyncResult) {
     if (const int error = WaitOffline(reqId, &result)) return error;
     return result;
 }
+
+constexpr std::uint32_t INVALID_SERVICE_LABEL = 0xFFFFFFFF;
+
+int CreateTitleContext() {
+    std::lock_guard lock(tusMutex);
+    if (titleContexts.size() >= MAX_TITLE_CONTEXTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
+    const int contextId = nextTitleContext++;
+    titleContexts.insert(contextId);
+    return contextId;
+}
 }
 
 extern "C" {
@@ -95,11 +106,7 @@ extern "C" {
 int APS5_VABI sceNpTusCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId) {
     (void)serviceLabel;
     (void)userId;
-    std::lock_guard lock(tusMutex);
-    if (titleContexts.size() >= MAX_TITLE_CONTEXTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
-    const int contextId = nextTitleContext++;
-    titleContexts.insert(contextId);
-    return contextId;
+    return CreateTitleContext();
 }
 
 int APS5_VABI sceNpTusCreateRequest(int titleCtxId) {
@@ -177,14 +184,14 @@ int APS5_VABI sceNpTusSetThreadParam(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTssCreateNpTitleCtx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId) {
+    if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (serviceLabel == INVALID_SERVICE_LABEL) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return CreateTitleContext();
 }
 
-int APS5_VABI sceNpTssCreateNpTitleCtxA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId) {
+    return sceNpTusCreateNpTitleCtxA(serviceLabel, userId);
 }
 
 int APS5_VABI sceNpTusCreateTitleCtx(void) {
