@@ -306,6 +306,16 @@ int main() {
     Require(datagram >= 0);
     Require(sceKernelAddWriteEvent(blocking, datagram, 1, nullptr) == SCE_OK);
     Require(sceKernelDeleteWriteEvent(blocking, datagram) == SCE_OK);
+    std::array<std::uint8_t, 16> datagramAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    std::uint32_t datagramAddressSize = datagramAddress.size();
+    Require(bind_nid_postfix(datagram, datagramAddress.data(), datagramAddress.size()) == 0);
+    Require(getsockname_nid_postfix(datagram, datagramAddress.data(), &datagramAddressSize) == 0);
+    Require(connect_nid_postfix(datagram, datagramAddress.data(), datagramAddress.size()) == 0);
+    Require(sceKernelAddReadEvent(blocking, datagram, 1, nullptr) == SCE_OK);
+    Require(send_nid_postfix(datagram, "", 0, 0) == 0);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(datagram) && events[0].data == 0);
+    Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
     Require(close_nid_postfix(datagram) == 0);
     Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
 

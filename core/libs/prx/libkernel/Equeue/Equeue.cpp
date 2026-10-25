@@ -899,7 +899,7 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
     }
     auto event = EqueueDescriptorEvent(fd, filter, EV_ADD, udata);
     if (isSocket) {
-        event.lowWater = static_cast<std::int64_t>(std::min<std::size_t>(size, static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())));
+        event.lowWater = size > 1 ? static_cast<std::int64_t>(std::min<std::size_t>(size, static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))) : 0;
     }
     return EqueueAddEvent_nid_postfix(eq, event);
 }
