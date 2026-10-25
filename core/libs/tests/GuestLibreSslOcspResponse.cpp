@@ -1,44 +1,10 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
-
-struct TestAsn1String {
-    int length;
-    int type;
-    unsigned char* data;
-    std::int64_t flags;
-};
-
-struct TestOcspResponse {
-    TestAsn1String* responseStatus;
-    void* responseBytes;
-};
-
-struct TestOcspRevokedInfo {
-    TestAsn1String* revocationTime;
-    TestAsn1String* revocationReason;
-};
-
-struct TestOcspCertStatus {
-    int type;
-    void* value;
-};
-
-struct TestOcspSingleResponse {
-    void* certId;
-    TestOcspCertStatus* certStatus;
-    TestAsn1String* thisUpdate;
-    TestAsn1String* nextUpdate;
-    void* singleExtensions;
-};
-
-extern "C" {
-int APS5_VABI OCSP_response_status_nid_postfix(const TestOcspResponse*);
-int APS5_VABI OCSP_single_get0_status_nid_postfix(const TestOcspSingleResponse*, int*, TestAsn1String**, TestAsn1String**, TestAsn1String**);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -55,8 +21,8 @@ constexpr int Enumerated = 10;
 constexpr int NegativeEnumerated = 0x10A;
 constexpr int Integer = 2;
 
-static int Status(TestAsn1String* value) {
-    TestOcspResponse response {value, nullptr};
+static int Status(LibreSslAsn1String* value) {
+    LibreSslOcspResponse response {value, nullptr};
     return OCSP_response_status_nid_postfix(&response);
 }
 
@@ -67,7 +33,7 @@ static void TestResponseStatus() {
     unsigned char wide[] {0x01, 0x02, 0x03, 0x04, 0x05};
     unsigned char full[] {0x80, 0, 0, 0, 0, 0, 0, 0};
     unsigned char nine[] {0, 0, 0, 0, 0, 0, 0, 0, 1};
-    TestAsn1String value {1, Enumerated, zero, 0};
+    LibreSslAsn1String value {1, Enumerated, zero, 0};
     Require(Status(&value) == 0);
     value = {1, Enumerated, three, 0};
     Require(Status(&value) == 3);
@@ -94,16 +60,16 @@ static void TestResponseStatus() {
 }
 
 static void TestSingleStatus() {
-    TestAsn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
+    LibreSslAsn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
     unsigned char keyCompromise[] {1};
-    TestAsn1String reasonValue {1, Enumerated, keyCompromise, 0};
-    TestOcspRevokedInfo revokedInfo {&revoked, &reasonValue};
-    TestOcspCertStatus status {0, nullptr};
-    TestOcspSingleResponse single {nullptr, &status, &thisUpdate, &nextUpdate, nullptr};
+    LibreSslAsn1String reasonValue {1, Enumerated, keyCompromise, 0};
+    LibreSslOcspRevokedInfo revokedInfo {&revoked, &reasonValue};
+    LibreSslOcspCertStatus status {0, nullptr};
+    LibreSslOcspSingleResponse single {nullptr, &status, &thisUpdate, &nextUpdate, nullptr};
     int reason = 77;
-    TestAsn1String* revocationTime = &other;
-    TestAsn1String* thisResult = nullptr;
-    TestAsn1String* nextResult = nullptr;
+    LibreSslAsn1String* revocationTime = &other;
+    LibreSslAsn1String* thisResult = nullptr;
+    LibreSslAsn1String* nextResult = nullptr;
 
     Require(OCSP_single_get0_status_nid_postfix(nullptr, &reason, &revocationTime, &thisResult, &nextResult) == -1);
     Require(reason == 77 && revocationTime == &other && thisResult == nullptr && nextResult == nullptr);
@@ -127,7 +93,7 @@ static void TestSingleStatus() {
     Require(OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr) == 1);
     Require(reason == -1);
 
-    TestAsn1String wrongType {1, Integer, keyCompromise, 0};
+    LibreSslAsn1String wrongType {1, Integer, keyCompromise, 0};
     revokedInfo.revocationReason = &wrongType;
     Require(OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr) == 1);
     Require(reason == -1);

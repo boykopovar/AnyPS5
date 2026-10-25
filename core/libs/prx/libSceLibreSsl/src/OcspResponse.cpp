@@ -1,38 +1,9 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
-
-struct LibreSslAsn1String {
-    int length;
-    int type;
-    unsigned char* data;
-    std::int64_t flags;
-};
-
-struct LibreSslOcspResponse {
-    LibreSslAsn1String* responseStatus;
-    void* responseBytes;
-};
-
-struct LibreSslOcspRevokedInfo {
-    LibreSslAsn1String* revocationTime;
-    LibreSslAsn1String* revocationReason;
-};
-
-struct LibreSslOcspCertStatus {
-    int type;
-    void* value;
-};
-
-struct LibreSslOcspSingleResponse {
-    void* certId;
-    LibreSslOcspCertStatus* certStatus;
-    LibreSslAsn1String* thisUpdate;
-    LibreSslAsn1String* nextUpdate;
-    void* singleExtensions;
-};
 
 static_assert(sizeof(LibreSslAsn1String) == 24);
 static_assert(offsetof(LibreSslAsn1String, type) == 4);
