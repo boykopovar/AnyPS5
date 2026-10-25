@@ -1,4 +1,4 @@
-add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ErrorName.cpp Export.cpp Invariant.cpp Numeric.cpp Version.cpp)
+add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ConstrainedFieldPosition.cpp ErrorName.cpp Export.cpp Invariant.cpp Numeric.cpp Version.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIcu)
 
@@ -21,8 +21,14 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_icu_error_name_tests)
     add_test(NAME guest_icu_error_name COMMAND guest_icu_error_name_tests)
     set_tests_properties(guest_icu_error_name PROPERTIES TIMEOUT 10)
+    add_test_executable(guest_icu_constrained_field_position_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConstrainedFieldPosition.cpp)
+    target_include_directories(guest_icu_constrained_field_position_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_constrained_field_position_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_constrained_field_position_tests)
+    add_test(NAME guest_icu_constrained_field_position COMMAND guest_icu_constrained_field_position_tests)
+    set_tests_properties(guest_icu_constrained_field_position PROPERTIES TIMEOUT 10)
     if(WIN32)
-        set_tests_properties(guest_icu_version guest_icu_numeric guest_icu_error_name PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_version guest_icu_numeric guest_icu_error_name guest_icu_constrained_field_position PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
