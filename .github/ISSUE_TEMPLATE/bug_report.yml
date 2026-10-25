@@ -1,0 +1,59 @@
+name: Bug report
+description: A title, homebrew or test stops, crashes or renders wrongly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search open and closed issues and pull requests for the error text first, and comment there if it is already reported.
+        Game bring-up progress belongs in [Discussions](https://github.com/boykopovar/AnyPS5/discussions/categories/game-bring-up), one thread per title.
+        A slow scene or a change in speed goes into the [Performance report](https://github.com/boykopovar/AnyPS5/issues/new?template=performance.yml) form, which asks for a [performance trace](https://github.com/boykopovar/AnyPS5/blob/main/docs/dev/BUILD.md#performance-trace) and its `tools/trace_digest.py` digest.
+  - type: input
+    id: summary
+    attributes:
+      label: What happens
+      description: One sentence, with the exact error text if there is one.
+    validations:
+      required: true
+  - type: input
+    id: title
+    attributes:
+      label: Title, test or build step
+      description: Title ID and content version (for example PPSAxxxxx 01.000.000), a homebrew with its source, the ctest name, or the build step that fails.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: AnyPS5 commit
+      description: The `main` commit that was built, or the release that was used, and any pull requests merged on top.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS, GPU and driver version, and the compiler if you built it yourself.
+      placeholder: Arch Linux, GCC 16.2.1, RTX 5080 (NVIDIA 615.78.08)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands that were run, environment variables included, and how long it takes to stop.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The lines around the stop.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: What was checked
+      description: Other devices or commits tried, and whether it is the same every run. Attach the full log and screenshots here.

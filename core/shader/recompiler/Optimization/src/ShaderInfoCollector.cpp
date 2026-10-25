@@ -1,4 +1,5 @@
 #include "Optimization/ShaderInfoCollector.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -71,6 +72,35 @@ void ValidateOptions(const IrProgram& program, ShaderStageInputInfo inputInfo) {
         default:
             return Fail("unsupported shader stage for info collection");
     }
+}
+
+void EnsurePixelInterpolatorCoverage(const IrProgram& program, ShaderPixelInputInfo& pixel) {
+    std::uint32_t needed = pixel.inputNum;
+    const auto consider = [&](std::uint32_t attribute) {
+        if (attribute < 32u && attribute + 1u > needed) needed = attribute + 1u;
+    };
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            switch (inst->Opcode()) {
+                case IrOpcode::GetAttribute:
+                case IrOpcode::GetInterpolationParameter:
+                case IrOpcode::GetInterpolationParameterF16:
+                case IrOpcode::InterpolateHostP1:
+                case IrOpcode::InterpolateHostP2: {
+                    const IrValue* attribute = inst->Argument(0)->Resolve();
+                    if (attribute->HasImmediate() && attribute->Type() == IrType::U32) consider(attribute->ImmediateU32());
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+    if (needed <= pixel.inputNum) return;
+    for (std::uint32_t input = pixel.inputNum; input < needed; ++input) {
+        pixel.interpolatorSettings[input] = 0x20u;
+    }
+    pixel.inputNum = needed;
 }
 
 void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inputInfo) {
@@ -246,7 +276,7 @@ bool IsPixelParameterFlat(const ShaderPixelInputInfo& pixel, std::uint32_t input
 }
 
 void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pixel, ShaderInfo& info) {
-    if (pixel->HasPositionInput() || pixel->psDitheredAlphaToCoverage || pixel->QuadMasked() || pixel->SampleLocationsVary()) {
+    if (pixel->HasPositionInput() || pixel->psDitheredAlphaToCoverage || pixel->QuadMasked() || pixel->SampleLocationsVary() || pixel->ReordersSamples()) {
         AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     }
     if (pixel->psFrontFace) {
@@ -256,6 +286,8 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
     std::array<bool, 32> perVertex {};
     std::array<bool, 32> interpolated {};
     std::array<bool, 32> halfRead {};
+    std::array<bool, 32> readsP10 {};
+    std::array<bool, 32> readsP20 {};
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() == IrOpcode::GetAttribute) {
@@ -269,7 +301,9 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
                 const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
                 const auto mode = inst->Argument(2)->Resolve()->ImmediateU32();
                 read[input] = true;
-                perVertex[input] = perVertex[input] || mode == 1u || !IsPixelParameterFlat(*pixel, input);
+                readsP10[input] = readsP10[input] || mode == 0u;
+                readsP20[input] = readsP20[input] || mode == 1u;
+                perVertex[input] = perVertex[input] || (readsP10[input] && readsP20[input]) || !IsPixelParameterFlat(*pixel, input);
             } else if (inst->Opcode() == IrOpcode::GetInterpolationParameterF16) {
                 const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
                 const bool high = inst->Argument(3)->Resolve()->ImmediateU32() != 0u;
@@ -336,10 +370,16 @@ void CollectComputeInputs(const ShaderComputeInputInfo* compute, ShaderInfo& inf
     }
 }
 
+bool OwnControlPointWrite(const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::SetTessellationAttribute) return false;
+    const auto kind = static_cast<TessellationAttribute>(inst.Argument(0)->ImmediateU32());
+    return kind == TessellationAttribute::ControlOutput || kind == TessellationAttribute::ControlShared;
+}
+
 void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (program.Resources().stage == IrShaderStage::TessellationControl && inst->Opcode() == IrOpcode::LaneId) {
+            if (program.Resources().stage == IrShaderStage::TessellationControl && (inst->Opcode() == IrOpcode::LaneId || OwnControlPointWrite(*inst))) {
                 AddInput(info, StageInputKind::InvocationId, 0, 1, "gl_InvocationID");
             }
             if (inst->Opcode() != IrOpcode::GetBuiltin) {
@@ -384,8 +424,11 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     AddInput(info, kind, 0, 1, "gl_SampleMaskIn");
                     break;
                 case StageInputKind::BaryCoordSmooth:
+                    AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    break;
                 case StageInputKind::BaryCoordSmoothCenter:
                 case StageInputKind::BaryCoordSmoothSample:
+                    info.smoothOffsetBarycentrics = true;
                     AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
                     if (kind == StageInputKind::BaryCoordSmoothSample && program.Metadata().pixelIteratesSamples) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
                     break;
@@ -513,6 +556,25 @@ std::uint16_t SamplerUseOf(IrOpcode opcode, std::uint32_t flags, IrShaderStage s
     return static_cast<std::uint16_t>(use);
 }
 
+void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
+    if (info.runtimeImageModes.size() != info.images.size() || std::ranges::any_of(info.images, [](const ImageResource& image) { return image.targetMerge; })) {
+        return Fail("color target merge image cannot join the prepared images");
+    }
+    ImageResource image;
+    image.source = std::numeric_limits<std::uint32_t>::max();
+    image.resourceClass = ImageResourceClass::Storage;
+    image.numericClass = IrTextureNumericClass::Uint;
+    image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : RdnaImageDimension::Dim2D;
+    image.read = true;
+    image.written = true;
+    image.fmaskCompatible = false;
+    image.targetMerge = true;
+    info.images.push_back(image);
+    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
+    if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
+}
+
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
     for (auto& sampler : info.samplers) {
         sampler.uses = 0;
@@ -543,6 +605,9 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
     if (!program.Resources().resourceTrackingComplete || program.Metadata().shaderInfoComplete) {
         return Fail(!program.Resources().resourceTrackingComplete ? "shader resources were not tracked" : "shader info already collected");
     }
+    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel != nullptr) {
+        EnsurePixelInterpolatorCoverage(program, const_cast<ShaderPixelInputInfo&>(*inputInfo.pixel));
+    }
     ValidateOptions(program, inputInfo);
     ValidateValueReferences(program, inputInfo);
     auto next = program.Info();
@@ -558,7 +623,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             return SharedAccessOf(inst->Opcode()) == SharedAccess::Atomic && inst->Type() == IrType::U64;
         });
     });
-    next.usesFaultBuffer = next.usesFaultBuffer || (next.sharedMemoryBytes != 0u && ldsAtomic64);
+    next.usesFaultBuffer = next.usesFaultBuffer || ldsAtomic64;
     switch (program.Resources().stage) {
         case IrShaderStage::Vertex:
         case IrShaderStage::Local:
@@ -582,6 +647,8 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
     }
     CollectBuiltinInputs(program, next);
     CollectOutputs(program, inputInfo, next);
+    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel->mergeMask != 0u) AddTargetMerge(*inputInfo.pixel, next);
+    if ((program.Resources().stage == IrShaderStage::Vertex || program.Resources().stage == IrShaderStage::Mesh) && inputInfo.vertex != nullptr && inputInfo.vertex->pointList) AddOutput(next, StageOutputKind::PointSize, 0, 0, "gl_PointSize");
     CollectSamplerUses(program, next);
     program.Info() = std::move(next);
     program.Metadata().shaderInfoComplete = true;

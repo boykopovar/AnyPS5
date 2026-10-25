@@ -28,6 +28,15 @@ static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int de
     return information.GrantedAccess;
 }
 
+static inline std::uint32_t WindowsFileNumber_nid_no_patch(std::uint64_t fileId) {
+    const std::uint32_t folded = static_cast<std::uint32_t>(fileId) ^ (static_cast<std::uint32_t>(fileId >> 32) * 0x9E3779B1u);
+    return folded == 0 ? 1 : folded;
+}
+
+static inline std::uint32_t WindowsFileNumber_nid_no_patch(const BY_HANDLE_FILE_INFORMATION& identity) {
+    return WindowsFileNumber_nid_no_patch((static_cast<std::uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow);
+}
+
 static inline bool WindowsHandleOnlyAppends_nid_no_patch(ACCESS_MASK access) {
     return (access & (FILE_WRITE_DATA | FILE_APPEND_DATA)) == FILE_APPEND_DATA;
 }

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
@@ -50,7 +51,7 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     const char* kind = nullptr;
     if (opcode == 0x49 && packet.size() >= 7) { target = packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u); kind = "RELEASE_MEM"; }
     else if (opcode == 0x37 && packet.size() >= 5) { target = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WRITE_DATA"; }
-    else if ((opcode == 0x3c || opcode == 0x93) && packet.size() >= 7) { target = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WAIT_REG_MEM"; }
+    else if ((opcode == 0x3c || opcode == 0x93) && packet.size() >= 7) { target = (packet[2] & (Pm4::WaitAwaitedBytes(packet) == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WAIT_REG_MEM"; }
     else if (opcode == 0x40 && packet.size() >= 6) { target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u); kind = "COPY_DATA"; }
     std::uint64_t length = 4;
     if (opcode == 0x50 && packet.size() >= 7) {
@@ -60,7 +61,7 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     }
     if (kind == nullptr) return;
     if (std::string_view(kind) != "WAIT_REG_MEM") {
-        static std::mutex historyMutex;
+        static AgcDriver::Mutex historyMutex;
         std::lock_guard lock(historyMutex);
         auto& entry = writeHistory()[writeCursor()++ % writeHistory().size()];
         entry = {target, length, queue, opcode};

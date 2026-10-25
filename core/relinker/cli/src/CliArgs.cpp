@@ -13,7 +13,7 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--patches <file> | --no-patches] <input.elf> <output.elf>\n"
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--macos-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [--frame-red-zone] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--patches <file> | --no-patches] <input.elf> <output.elf>\n"
            "       relinker --verify-patches <file> [--verify-output] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... <path>\n"
            "Example: relinker input.elf output.elf";
 }
@@ -21,7 +21,7 @@ const char* Usage() {
 namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
-    "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base",
+    "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
@@ -35,8 +35,7 @@ bool IsOneOf(const std::string& option, const std::string_view (&names)[Count]) 
 
 }
 
-static std::uint64_t ParseLinuxFixedBase(std::string_view value) {
-    constexpr std::uint64_t lowest = 0x10000;
+static std::uint64_t ParseFixedBase(std::string_view value, const std::uint64_t lowest, const char* error) {
     constexpr std::uint64_t highest = 0x7fffffff0000;
     constexpr std::uint64_t alignment = 0x10000;
     const bool hexadecimal = value.starts_with("0x") || value.starts_with("0X");
@@ -44,7 +43,7 @@ static std::uint64_t ParseLinuxFixedBase(std::string_view value) {
     std::uint64_t address = 0;
     const auto parsed = std::from_chars(value.data(), value.data() + value.size(), address, hexadecimal ? 16 : 10);
     if (value.empty() || parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || address < lowest || address > highest || address % alignment != 0)
-        throw std::runtime_error("--linux-fixed-base requires a 64 KiB-aligned address from 0x10000 through 0x7fffffff0000");
+        throw std::runtime_error(error);
     return address;
 }
 
@@ -76,7 +75,12 @@ Args ParseArgs(int argc, char* argv[]) {
             if (args.linuxFixedBase) throw std::runtime_error("--linux-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string_view(argv[i + 1]).empty() || std::string_view(argv[i + 1]).starts_with("--"))
                 throw std::runtime_error("--linux-fixed-base requires an address");
-            args.linuxFixedBase = ParseLinuxFixedBase(argv[++i]);
+            args.linuxFixedBase = ParseFixedBase(argv[++i], 0x10000, "--linux-fixed-base requires a 64 KiB-aligned address from 0x10000 through 0x7fffffff0000");
+        } else if (arg == "--macos-fixed-base") {
+            if (args.macosFixedBase) throw std::runtime_error("--macos-fixed-base cannot be repeated");
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty() || std::string_view(argv[i + 1]).starts_with("--"))
+                throw std::runtime_error("--macos-fixed-base requires an address");
+            args.macosFixedBase = ParseFixedBase(argv[++i], 0x20000, "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
         } else if (arg == "--skip-syscall-check") {
             args.skipSyscallCheck = true;
         } else if (arg == "--trap-sdk-syscall-stubs") {
@@ -101,6 +105,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.executables.push_back(argv[++i]);
         } else if (arg == "--to-intel") {
             args.toIntel = true;
+        } else if (arg == "--frame-red-zone") {
+            args.frameRedZone = true;
         } else if (arg == "--to-rosetta") {
             args.toRosetta = true;
             args.toIntel = true;
@@ -193,14 +199,16 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.windowsFixedBase && !args.toWindows)
         throw std::runtime_error("--windows-fixed-base requires --windows");
-    if (args.traceImports && !args.toWindows)
-        throw std::runtime_error("--trace-imports requires --windows");
+    if (args.traceImports && args.toMacos)
+        throw std::runtime_error("--trace-imports cannot be used with --macos");
     if (args.traceImports && args.lazyBinding)
         throw std::runtime_error("--trace-imports conflicts with --lazy-binding");
     if (args.linuxFixedBase && (args.toWindows || args.toMacos))
         throw std::runtime_error("--linux-fixed-base cannot be used with --windows or --macos");
     if (args.linuxFixedBase && args.lazyBinding)
         throw std::runtime_error("--linux-fixed-base conflicts with --lazy-binding");
+    if (args.macosFixedBase && !args.toMacos)
+        throw std::runtime_error("--macos-fixed-base requires --macos");
 
     if (!args.showHelp && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
         throw std::runtime_error(Usage());

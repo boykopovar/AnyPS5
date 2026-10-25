@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <ranges>
 #include <utility>
 #include <string_view>
 #include <vector>
@@ -32,6 +34,17 @@ enum class ShaderStage {
 struct MemoryRegion {
     std::uint64_t guestAddress;
     std::span<const std::byte> bytes;
+};
+
+class MemoryRegionView : public std::span<const MemoryRegion> {
+    using Base = std::span<const MemoryRegion>;
+public:
+    using Base::Base;
+    constexpr MemoryRegionView() noexcept = default;
+    constexpr MemoryRegionView(Base value) noexcept : Base(value) {}
+    template <std::ranges::contiguous_range TRange>
+        requires (!std::ranges::borrowed_range<TRange>)
+    MemoryRegionView(TRange&&) = delete;
 };
 
 struct ShaderBinary {
@@ -113,7 +126,8 @@ enum class ConservativeZExport : std::uint8_t {
 enum class ColorExportPacking : std::uint8_t {
     None,
     Unorm10_11_11,
-    Float11_11_10
+    Float11_11_10,
+    Unorm4_4_4_4
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -150,6 +164,17 @@ inline constexpr std::uint32_t One = 3u;
 
 }
 
+struct TargetMerge {
+    std::uint8_t target = 0;
+    std::uint16_t mask = 0;
+    std::uint8_t samples = 1;
+    std::array<std::uint32_t, 8> descriptor{};
+    bool depthStencilWrites = false;
+    bool depthStencilTests = false;
+
+    bool operator==(const TargetMerge&) const = default;
+};
+
 struct ShaderPixelStageInfo {
     std::uint32_t interpolatorCount;
     std::array<std::uint32_t, 32> interpolatorSettings;
@@ -180,6 +205,7 @@ struct ShaderPixelStageInfo {
     bool dualSourceBlend;
     bool alphaToCoverage;
     bool stencilRefExportEnable;
+    bool stencilOperationValueExport = false;
     RasterPrimitive rasterPrimitive = RasterPrimitive::Triangle;
     bool layerExported = false;
     bool ditheredAlphaToCoverage = false;
@@ -189,6 +215,8 @@ struct ShaderPixelStageInfo {
     bool iteratesSamples = false;
     PixelPositionLocation positionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
+    TargetMerge targetMerge{};
+    std::array<std::uint32_t, 4> sampleOrder{};
 };
 
 struct ShaderVertexBufferResource {
@@ -212,6 +240,10 @@ struct ShaderVertexStageInfo {
     bool fetchEmbedded;
     std::uint32_t paClVsOutCntl = 0;
     std::uint32_t depthRemapMode = 0;
+    bool pointList = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
 };
 
 struct ShaderFloatMode {
@@ -235,7 +267,7 @@ struct GuestContext {
     std::optional<ShaderComputeStageInfo> compute;
     std::optional<ShaderPixelStageInfo> pixel;
     std::optional<ShaderVertexStageInfo> vertex;
-    std::span<const MemoryRegion> memory;
+    MemoryRegionView memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
@@ -289,6 +321,12 @@ struct SpirvTarget {
     bool robustBufferAccess2 = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
+    bool waveLdsMemoryBarriers = false;
+    bool float32DenormPreserve = false;
+    bool fusedExactArithmetic = false;
+    bool largePixelFunctionLdsBuffer = false;
+    std::uint32_t pixelFunctionStorageDwords = 4096u;
+    bool deviceScopeLdsMemoryBarriers = false;
 };
 
 struct BindingLayout {
@@ -339,6 +377,7 @@ struct TessellationConfiguration {
     bool breakAtInstance = false;
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
+    bool mergedHull = false;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
@@ -364,12 +403,39 @@ struct GraphicsDrawParameters {
     std::uint32_t instanceCount;
 };
 
+struct FragmentParameter {
+    std::uint32_t location;
+    std::uint32_t sourceLocation;
+    bool flat;
+    bool perVertex;
+    bool custom = false;
+    bool flatP10 = false;
+    bool vertexOrder = false;
+    bool flatP20 = false;
+    bool operator==(const FragmentParameter&) const = default;
+};
+
+struct BarycentricEmulation {
+    bool active = false;
+    bool smooth = false;
+    bool linear = false;
+    bool smoothOffset = false;
+    bool operator==(const BarycentricEmulation&) const = default;
+};
+
+struct MeshBarycentricLayout {
+    BarycentricEmulation emulation;
+    std::vector<FragmentParameter> parameters;
+    bool operator==(const MeshBarycentricLayout&) const = default;
+};
+
 struct GraphicsCompileContext {
     std::uint32_t firstUserSgpr;
     std::span<const LinkedProgram> linkedPrograms;
     std::optional<MeshConfiguration> mesh;
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
+    std::optional<MeshBarycentricLayout> meshBarycentrics;
 };
 
 struct RecompileRequest {
@@ -473,30 +539,32 @@ struct VertexAttribute {
     std::uint32_t formatComponents = 0;
 };
 
-struct FragmentParameter {
-    std::uint32_t location;
-    std::uint32_t sourceLocation;
-    bool flat;
-    bool perVertex;
-    bool custom = false;
-    bool flatP10 = false;
-    bool vertexOrder = false;
-};
-
-struct BarycentricEmulation {
-    bool active = false;
-    bool smooth = false;
-    bool linear = false;
-};
-
 struct BarycentricEmulationLayout {
     static constexpr std::uint32_t NoLocation = 0xffffffffu;
     std::uint32_t smoothLocation = NoLocation;
     std::uint32_t linearLocation = NoLocation;
+    std::uint32_t positionsLocation = NoLocation;
+    std::uint32_t reciprocalWLocation = NoLocation;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> perVertexLocations;
 };
 
-[[nodiscard]] BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation);
+[[nodiscard]] BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation, bool meshPositions = false);
+
+struct EmulatedPerVertexParameter {
+    std::uint32_t sourceLocation;
+    std::uint32_t location;
+};
+
+struct EmulatedInterface {
+    std::vector<std::uint32_t> passed;
+    std::vector<bool> passedFlat;
+    std::vector<EmulatedPerVertexParameter> perVertex;
+    BarycentricEmulationLayout layout;
+    std::uint32_t barycentrics = 0;
+    std::uint32_t sources = 0;
+};
+
+[[nodiscard]] EmulatedInterface DescribeEmulatedInterface(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation, bool meshPositions = false);
 
 // A 128-bit hash of a module's words (SharedSpirv::ContentHash), zero for an empty module. The
 // mixing is pure integer arithmetic over the words in order, so the value is the same on every run,
@@ -595,6 +663,8 @@ private:
     std::shared_ptr<Holder> holder;
 };
 
+[[nodiscard]] SharedSpirv InternSpirv(std::vector<std::uint32_t> words);
+
 struct VertexInput {
     std::uint32_t location;
     std::uint32_t components;
@@ -622,6 +692,7 @@ struct CompiledShaderArtifact {
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
     std::uint32_t bdaAbiVersion = 0;
+    std::uint32_t windowLaneGuards = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;
     std::int32_t vertexOffsetSgpr = -1;
@@ -632,11 +703,14 @@ struct CompiledShaderArtifact {
     bool instanceOffsetConflict = false;
     std::uint32_t hostSubgroupSize = 0;
     bool fullSubgroups = false;
+    bool functionLdsBuffer = false;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
+    std::optional<MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
+    bool bdaWrites = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
@@ -648,6 +722,7 @@ struct ShaderInvocation {
     std::vector<std::byte> pushConstants;
     bool readsDepthRemapPush = false;
     std::vector<VertexAttribute> vertexAttributes;
+    std::uint64_t userDataRegisterReads = 0;
     std::uint32_t poisonedSrtReads = 0;
     std::vector<ImageTableEntryPoison> imageTablePoison;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
@@ -670,7 +745,18 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
+struct ResultKeyMemo {
+    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
@@ -687,13 +773,33 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         };
         mix(specialization.size());
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
-        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
+        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
         for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
         if (identity.Empty()) identity.low = 1;
         return identity;
     }
 };
+
+[[nodiscard]] std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment);
+
+struct MeshOutputUse {
+    std::uint32_t flatParameters = 0;
+    std::uint32_t perVertexParameters = 0;
+    std::uint32_t clipVaryings = 0;
+    std::uint32_t clipDistances = 0;
+    std::uint32_t cullDistances = 0;
+    bool layer = false;
+};
+
+struct MeshOutputBudget {
+    std::uint32_t vertexLocations = 0;
+    std::uint32_t primitiveLocations = 0;
+    std::uint64_t components = 0;
+    std::uint64_t bytes = 0;
+};
+
+[[nodiscard]] MeshOutputBudget MeshBarycentricOutputBudget(const MeshConfiguration& mesh, const MeshTargetLimits& limits, const MeshOutputUse& use);
 
 [[nodiscard]] RecompileResult Recompile(const RecompileRequest& request);
 
@@ -731,7 +837,7 @@ struct BarycentricTessellationShaders {
     RecompileResult evaluation;
 };
 
-[[nodiscard]] BarycentricTessellationShaders BuildBarycentricTessellationShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, std::uint32_t maxFragmentInputComponents);
+[[nodiscard]] BarycentricTessellationShaders BuildBarycentricTessellationShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, std::uint32_t maxFragmentInputComponents, std::uint32_t provokingVertex);
 
 }
 

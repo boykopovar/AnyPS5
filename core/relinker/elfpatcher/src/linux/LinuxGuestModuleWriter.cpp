@@ -9,7 +9,7 @@
 
 namespace Elfpatcher {
 
-std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath) const {
+std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath, const bool deferInitialization) const {
     auto bytes = image.Bytes;
     std::vector<Domain::ProgramHeader> headers;
     std::uint64_t end = 0;
@@ -24,12 +24,18 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     }
     if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
         headers.push_back({PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
-    if (end > std::numeric_limits<std::uint64_t>::max() - 0x4000) throw Domain::RelinkerException("Guest virtual address overflow");
+    std::vector<Domain::ProgramHeader> loads;
+    for (const auto& header : headers)
+        if (header.Type == 1) loads.push_back(header);
+    std::stable_sort(loads.begin(), loads.end(), [](const auto& left, const auto& right) { return left.MappedAddress < right.MappedAddress; });
+    for (std::size_t index = 0, next = 0; index < headers.size(); ++index)
+        if (headers[index].Type == 1) headers[index] = loads[next++];
+    if (end >std::numeric_limits<std::uint64_t>::max() - 0x4000) throw Domain::RelinkerException("Guest virtual address overflow");
     Io::AlignBuffer(bytes, 0x4000);
     const auto extraOffset = bytes.size();
     const auto extraAddress = Io::AlignUp64(end, 0x4000);
     const auto address = [&] { return extraAddress + bytes.size() - extraOffset; };
-    const bool passesModuleArgs = image.Init != 0;
+    const bool passesModuleArgs = image.HasInit && !deferInitialization;
     std::uint64_t argsSlot = 0;
     std::uint64_t resultSlot = 0;
     if (passesModuleArgs) {
@@ -77,6 +83,39 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::WriteU64(relaData, entry, slot);
         Io::WriteU64(relaData, entry + 8, (symbol << 32) | kGlobDat);
     };
+    std::uint64_t lifecycleTable = 0;
+    if (deferInitialization) {
+        constexpr char exportName[] = "__aps5_guest_lifecycle_nid_no_patch";
+        if (std::any_of(image.Symbols.begin(), image.Symbols.end(), [&](const auto& symbol) { return symbol.Name == exportName; }))
+            throw Domain::RelinkerException("Reserved guest lifecycle export is already present");
+        Io::AlignBuffer(bytes, 8);
+        lifecycleTable = address();
+        const auto pointer = [&](std::uint64_t target, bool relocate = true) {
+            const auto slot = address();
+            Io::AppendU64(bytes, 0);
+            if (!relocate) return;
+            Io::AppendU64(relaData, slot);
+            Io::AppendU64(relaData, 8);
+            Io::AppendU64(relaData, target);
+        };
+        Io::AppendU64(bytes, 0x415053354c494658ull);
+        pointer(0);
+        pointer(image.Init, image.HasInit);
+        pointer(image.Fini, image.Fini != 0);
+        Io::AppendU64(bytes, image.InitArray.size());
+        Io::AppendU64(bytes, image.FiniArray.size());
+        Io::AppendU64(bytes, 0);
+        Io::AppendU64(bytes, 0);
+        for (const auto slot : image.InitArray) pointer(slot);
+        for (const auto slot : image.FiniArray) pointer(slot);
+        const auto entry = symbols.size();
+        symbols.resize(entry + 24, 0);
+        Io::WriteU32(symbols, entry, addString(exportName));
+        symbols[entry + 4] = 0x11;
+        Io::WriteU16(symbols, entry + 6, 1);
+        Io::WriteU64(symbols, entry + 8, lifecycleTable);
+        Io::WriteU64(symbols, entry + 16, address() - lifecycleTable);
+    }
     if (passesModuleArgs) {
         argsImport = addUndefinedImport("__aps5_get_pending_module_args_nid_no_patch");
         resultImport = addUndefinedImport("__aps5_set_module_init_result_nid_no_patch");
@@ -121,7 +160,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         return static_cast<std::uint32_t>(static_cast<std::int32_t>(distance));
     };
     const auto lifecycle = [&](std::uint64_t target) {
-        if (target == 0) return std::uint64_t{};
+        if (!image.HasInit) return std::uint64_t{};
         const auto start = address();
         std::vector<std::uint8_t> stub(kStubSize, 0xc3);
         stub[0x00] = 0x50;
@@ -150,8 +189,33 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU32(bytes, static_cast<std::uint32_t>(distance));
         return start;
     };
-    const auto init = lifecycle(image.Init);
-    const auto fini = finalizer(image.Fini);
+    const auto init = deferInitialization ? 0 : lifecycle(image.Init);
+    auto fini = deferInitialization ? 0 : finalizer(image.Fini);
+    if (deferInitialization && (image.Fini != 0 || !image.FiniArray.empty())) {
+        fini = address();
+        bytes.insert(bytes.end(), {0x48, 0x83, 0x3d});
+        Io::AppendU32(bytes, stubDisplacement(lifecycleTable + 48, address() + 5));
+        bytes.push_back(2);
+        bytes.insert(bytes.end(), {0x0f, 0x85});
+        const auto skip = bytes.size();
+        Io::AppendU32(bytes, 0);
+        bytes.insert(bytes.end(), {0x48, 0xc7, 0x05});
+        Io::AppendU32(bytes, stubDisplacement(lifecycleTable + 48, address() + 8));
+        Io::AppendU32(bytes, 4);
+        bytes.insert(bytes.end(), {0x48, 0x83, 0xec, 8});
+        for (auto slot = image.FiniArray.rbegin(); slot != image.FiniArray.rend(); ++slot) {
+            bytes.insert(bytes.end(), {0x48, 0x8b, 0x05});
+            Io::AppendU32(bytes, stubDisplacement(*slot, address() + 4));
+            bytes.insert(bytes.end(), {0x48, 0x85, 0xc0, 0x74, 8, 0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xff, 0xd0});
+        }
+        if (image.Fini != 0) {
+            bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe8});
+            Io::AppendU32(bytes, stubDisplacement(image.Fini, address() + 4));
+        }
+        bytes.insert(bytes.end(), {0x48, 0x83, 0xc4, 8});
+        Io::WriteU32(bytes, skip, static_cast<std::uint32_t>(bytes.size() - skip - 4));
+        bytes.push_back(0xc3);
+    }
     Io::AlignBuffer(bytes, 8);
     const auto dynamicOffset = bytes.size();
     const auto dynamicAddress = address();
@@ -175,8 +239,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         tag(20, 7);
         tag(3, image.Got);
     }
-    if (!image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
-    if (!image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
+    if (!deferInitialization && !image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
+    if (!deferInitialization && !image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
     if (init != 0) tag(12, init);
     if (fini != 0) tag(13, fini);
     tag(30, DF_BIND_NOW | (image.Symbolic ? DF_SYMBOLIC : 0));

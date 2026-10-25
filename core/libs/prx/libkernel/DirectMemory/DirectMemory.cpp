@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cwctype>
 #include <memory>
+#include <new>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -326,13 +327,63 @@ void ZeroReusedPhysical(std::uint64_t start, std::size_t bytes) {
 }
 #endif
 
+#ifdef _WIN32
+bool SectionPoolEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_DIRECT_MEMORY_SECTION_POOL") == nullptr;
+    return enabled;
+}
+
+class SectionPool {
+public:
+    static SectionPool& Get() {
+        static auto* pool = new SectionPool;
+        return *pool;
+    }
+
+    HANDLE Take(std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        const auto found = sections.find(bytes);
+        if (found == sections.end() || found->second.empty()) return nullptr;
+        const auto section = found->second.back();
+        found->second.pop_back();
+        --count;
+        pooledBytes -= bytes;
+        return section;
+    }
+
+    bool Keep(HANDLE section, std::size_t bytes) noexcept {
+        if (bytes > MaxSectionBytes) return false;
+        std::lock_guard lock(mutex);
+        if (count == MaxSections || bytes > MaxPooledBytes - pooledBytes) return false;
+        try {
+            sections[bytes].push_back(section);
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
+        ++count;
+        pooledBytes += bytes;
+        return true;
+    }
+
+private:
+    static constexpr std::size_t MaxSections = 256;
+    static constexpr std::size_t MaxSectionBytes = 16u << 20;
+    static constexpr std::size_t MaxPooledBytes = 256u << 20;
+    std::mutex mutex;
+    std::map<std::size_t, std::vector<HANDLE>> sections;
+    std::size_t count = 0;
+    std::size_t pooledBytes = 0;
+};
+#endif
+
 class PhysicalBacking {
 public:
     PhysicalBacking(std::size_t bytes, int memoryType, std::uint64_t start) : memoryType(memoryType), bytes(bytes) {
 #ifdef _WIN32
         static_cast<void>(start);
         const auto size = static_cast<std::uint64_t>(bytes);
-        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, static_cast<DWORD>(size >> 32), static_cast<DWORD>(size), nullptr);
+        if (SectionPoolEnabled()) section = SectionPool::Get().Take(bytes);
+        if (!section) section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, static_cast<DWORD>(size >> 32), static_cast<DWORD>(size), nullptr);
         if (!section) {
             const auto error = static_cast<int>(GetLastError());
             char message[96];
@@ -364,8 +415,12 @@ public:
 
     ~PhysicalBacking() {
 #ifdef _WIN32
-        GuestArena::GuestArenaForgetSection_nid_postfix(section);
-        CloseHandle(section);
+        if (!SectionPoolEnabled()) {
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        } else if (!GuestArena::GuestArenaForgetReusableSection_nid_no_patch(section) || !SectionPool::Get().Keep(section, bytes)) {
+            CloseHandle(section);
+        }
 #else
         if (hostWriteView != nullptr) ::munmap(hostWriteView, bytes);
 #endif
@@ -662,7 +717,8 @@ void RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t 
     std::vector<std::pair<std::uintptr_t, std::size_t>> aliases;
     {
         std::lock_guard lock(g_directLock);
-        for (const auto& [base, mapping] : g_directMappings) {
+        for (const auto base : MappingsSharingPhys(phys, phys + len)) {
+            const auto& mapping = g_directMappings.at(base);
             const auto first = std::max(phys, mapping.phys);
             const auto last = std::min(phys + len, mapping.phys + (mapping.end - base));
             if (first < last) aliases.emplace_back(base + (first - mapping.phys), last - first);
@@ -875,11 +931,18 @@ void RecordReservation(const void* addr, size_t len) {
     g_reservations.emplace(start, start + len);
 }
 
+int ReportedProtection(int prot) {
+    if ((prot & 0x2) != 0) prot |= 0x1;
+    if ((prot & 0x80) != 0) prot |= 0x40;
+    if ((prot & 0x200) != 0) prot |= 0x100;
+    return prot;
+}
+
 void RecordProtection(const void* addr, size_t len, int prot) {
     const auto start = reinterpret_cast<std::uintptr_t>(addr);
     std::lock_guard lock(g_protectionLock);
     EraseProtections(start, start + len);
-    if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, prot});
+    if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, ReportedProtection(prot)});
 }
 
 void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
@@ -1018,7 +1081,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bo
             std::lock_guard lock(g_protectionLock);
             auto replacement = g_protections;
             EraseProtections(start, start + len, replacement);
-            const auto recorded = replacement.emplace(start, ProtectedRange{start + len, prot}).first;
+            const auto recorded = replacement.emplace(start, ProtectedRange{start + len, ReportedProtection(prot)}).first;
             result = SCE_KERNEL_ERROR_ENOMEM;
             if (!VirtualFree(*addr, len, MEM_DECOMMIT)) return false;
             if (VirtualAlloc(*addr, len, MEM_COMMIT, WinProtFromPosix(LinuxProtFromSce(prot))) != *addr) {
@@ -1062,7 +1125,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bo
 int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, int descriptor, std::uint64_t offset, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || (offset & (PS5_PAGE_SIZE - 1)) != 0 || len > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) || offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - len) return SCE_KERNEL_ERROR_EINVAL;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const bool shared = (flags & 3) == 1;
     GuestAllocations::Mutation mutation;
     const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
@@ -1073,10 +1136,20 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, len);
     const int nativeProtection = LinuxProtFromSce(prot);
     const int nativeFlags = (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED;
-    if (::mmap(mapped, len, nativeProtection, nativeFlags, descriptor, static_cast<off_t>(offset)) == MAP_FAILED) {
+#ifdef __APPLE__
+    const int mappedProtection = nativeProtection & ~PROT_EXEC;
+#else
+    const int mappedProtection = nativeProtection;
+#endif
+    if (::mmap(mapped, len, mappedProtection, nativeFlags, descriptor, static_cast<off_t>(offset)) == MAP_FAILED) {
         const int error = errno;
         Unmap(mapped, len);
         throw std::system_error(error, std::generic_category(), "map guest shared memory");
+    }
+    if (mappedProtection != nativeProtection && ::mprotect(mapped, len, nativeProtection) != 0) {
+        const int error = errno;
+        Unmap(mapped, len);
+        throw std::system_error(error, std::generic_category(), "make a guest file mapping executable");
     }
     try {
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, false);
@@ -1143,6 +1216,9 @@ int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object) {
     try {
 #ifdef _WIN32
         GuestArena::GuestArenaMap_nid_postfix(mapped, len, object, 0, WinProtFromPosix(nativeProtection));
+#elif defined(__APPLE__)
+        if (::mmap(mapped, len, nativeProtection & ~PROT_EXEC, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
+        if ((nativeProtection & PROT_EXEC) != 0 && ::mprotect(mapped, len, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "make shared memory executable");
 #else
         if (::mmap(mapped, len, nativeProtection, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
 #endif
@@ -1423,14 +1499,46 @@ bool GuestProtection(uintptr_t addr, int* prot) {
 }
 
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpuEntries, std::uint64_t* gpuEntries) {
+    constexpr std::uint64_t GpuDirectorySpan = 1ULL << 30;
+    struct DirectSpan {
+        std::uintptr_t start;
+        std::uintptr_t end;
+        std::uint64_t phys;
+    };
+    std::vector<DirectSpan> direct;
+    {
+        std::lock_guard lock(g_directLock);
+        direct.reserve(g_directMappings.size());
+        for (const auto& [start, mapping] : g_directMappings) direct.push_back({start, mapping.end, mapping.phys});
+    }
+    const auto largePage = [&](std::uintptr_t granule) {
+        const auto next = std::upper_bound(direct.begin(), direct.end(), granule, [](std::uintptr_t address, const DirectSpan& span) { return address < span.start; });
+        if (next == direct.begin()) return false;
+        const auto& span = *std::prev(next);
+        return granule + granularity <= span.end && (span.phys + (granule - span.start)) % granularity == 0;
+    };
     std::uint64_t cpu = 0;
     std::uint64_t gpu = 0;
+    std::uint64_t cpuNext = 0;
+    std::uint64_t gpuNext = 0;
+    std::uint64_t directoryNext = 0;
     std::lock_guard lock(g_protectionLock);
     for (const auto& [start, range] : g_protections) {
         if (range.end <= start) continue;
-        const auto entries = (range.end - 1) / granularity - start / granularity + 1;
-        if (range.prot & 0x7) cpu += entries;
-        if (range.prot & GuestProtGpuReadWrite) gpu += entries;
+        const auto first = start / granularity;
+        const auto last = (range.end - 1) / granularity;
+        if (last + 1 > std::max(first, cpuNext)) cpu += last + 1 - std::max(first, cpuNext);
+        cpuNext = std::max(cpuNext, last + 1);
+        if ((range.prot & GuestProtGpuReadWrite) == 0) continue;
+        const auto firstDirectory = start / GpuDirectorySpan;
+        const auto lastDirectory = (range.end - 1) / GpuDirectorySpan;
+        if (lastDirectory + 1 > std::max(firstDirectory, directoryNext)) gpu += lastDirectory + 1 - std::max(firstDirectory, directoryNext);
+        directoryNext = std::max(directoryNext, lastDirectory + 1);
+        for (auto granule = std::max(first, gpuNext); granule <= last; ++granule) {
+            const auto address = static_cast<std::uintptr_t>(granule * granularity);
+            if (address < start || address + granularity > range.end || !largePage(address)) ++gpu;
+        }
+        gpuNext = std::max(gpuNext, last + 1);
     }
     *cpuEntries = cpu;
     *gpuEntries = gpu;

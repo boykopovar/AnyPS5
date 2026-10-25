@@ -14,6 +14,7 @@
 #else
 #include <sys/mman.h>
 #endif
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -66,6 +67,15 @@ PFN_vkDestroyImageView realDestroyImageView = nullptr;
 PFN_vkCmdClearColorImage realClearColorImage = nullptr;
 PFN_vkCmdCopyImage realCopyImage = nullptr;
 
+[[noreturn]] void FailViewOutlivesImage() {
+    std::fputs("an MSAA image would be destroyed before one of its views; stopping\n", stderr);
+    std::fflush(stderr);
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 1);
+#endif
+    std::_Exit(1);
+}
+
 [[noreturn]] void FailPendingImage() {
     std::fputs("an unsubmitted MSAA image would be destroyed; stopping without submitting it\n", stderr);
     std::fflush(stderr);
@@ -104,6 +114,7 @@ VKAPI_ATTR void VKAPI_CALL CountDestroyImage(VkDevice device, VkImage image, con
         for (const auto& [pending, generation] : pendingImages) {
             if (pending == image && images.at(image).generation == generation) FailPendingImage();
         }
+        if (std::any_of(views.begin(), views.end(), [&](const auto& entry) { return entry.second == image; })) FailViewOutlivesImage();
         realDestroyImage(device, image, callbacks);
         images.erase(image);
         ++destroyed;
@@ -254,11 +265,11 @@ private:
     bool mapped = false;
 };
 
-ColorTarget Target(const GuestBlock& block) {
+ColorTarget Target(const GuestBlock& block, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM) {
     ColorTarget target{};
     target.address = target.surfaceAddress = block.Address();
     target.extent = target.surfaceExtent = {Side, Side};
-    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.format = format;
     target.elementBytes = 4;
     target.samples = 4;
     target.tileMode = ColorTileMode::RenderTarget;
@@ -407,6 +418,51 @@ public:
         AwaitImages(0, "sampled MSAA targets were not fully released");
     }
 
+    void OrderRemap() {
+        const auto locations = context.sampleLocationSampleCounts;
+        const auto grid = context.sampleLocationGridSampleCounts;
+        context.sampleLocationSampleCounts |= VK_SAMPLE_COUNT_4_BIT;
+        context.sampleLocationGridSampleCounts &= ~static_cast<VkSampleCountFlags>(VK_SAMPLE_COUNT_4_BIT);
+        GuestBlock block;
+        const auto target = Target(block);
+        if (!MayReorderSamples(context, target.samples) || SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) == VK_FORMAT_UNDEFINED) {
+            context.sampleLocationSampleCounts = locations;
+            context.sampleLocationGridSampleCounts = grid;
+            std::puts("the device has no multisampled storage view for the sample-order target; its retirement case is skipped");
+            return;
+        }
+        SampleOrderTarget order;
+        VkImage oldImage = VK_NULL_HANDLE;
+        Image old{};
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            order = MultisampleTargetOrderTarget(context, target);
+            old = ImageFor(MultisampleTargetView(context, target), &oldImage);
+            Require(order.image == oldImage, "the sample-order target does not name its target's image");
+        }
+        Sync();
+        block.Unmap();
+        block.Map();
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto replacement = ImageFor(MultisampleTargetView(context, target));
+            CheckPendingImages();
+            Require(replacement.generation != old.generation, "a remapped reordered MSAA target reused its retired owner");
+            Require(Alive(oldImage, old), "a held sample-order target lost its image when its MSAA target retired");
+            context.recorder->Keep(order.keep);
+            order = {};
+            Require(Alive(oldImage, old), "recorded sample-order work lost its image when its MSAA target retired");
+        }
+        Sync();
+        AwaitImages(1, "a retired sample-order target survives its last batch");
+        Require(!Alive(oldImage, old), "a retired reordered MSAA parent survives its last batch");
+        block.Unmap();
+        Clear();
+        context.sampleLocationSampleCounts = locations;
+        context.sampleLocationGridSampleCounts = grid;
+        AwaitImages(0, "reordered MSAA targets were not fully released");
+    }
+
     void StorageRemap() {
         GuestBlock block;
         const auto target = Target(block);
@@ -469,6 +525,67 @@ public:
         AwaitImages(0, "promoted MSAA targets were not fully released");
     }
 
+    void StorageTwin() {
+        GuestBlock block;
+        const auto target = Target(block);
+        auto twin = target;
+        twin.format = VK_FORMAT_R8G8B8A8_SRGB;
+        const auto resource = Resource(block);
+        VkImage renderedImage = VK_NULL_HANDLE, twinImage = VK_NULL_HANDLE, promotedImage = VK_NULL_HANDLE, promotedTwinImage = VK_NULL_HANDLE;
+        Image rendered{}, promoted{};
+        VkImageView twinView = VK_NULL_HANDLE;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            rendered = ImageFor(MultisampleTargetView(context, target), &renderedImage);
+            twinView = MultisampleTargetView(context, twin);
+            ImageFor(twinView, &twinImage);
+            Require(twinImage == renderedImage, "an sRGB use of an MSAA surface rendered as UNORM does not reach its samples");
+        }
+        Sync();
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            promoted = ImageFor(MultisampleTargetStorageView(context, resource), &promotedImage);
+            Require(promoted.generation != rendered.generation, "MSAA storage promotion kept the rendered image");
+            const auto promotedTwin = MultisampleTargetView(context, twin);
+            ImageFor(promotedTwin, &promotedTwinImage);
+            Require(promotedTwinImage == promotedImage, "after storage promotion an sRGB use of the MSAA surface still views the retired image");
+        }
+        Sync();
+        block.Unmap();
+        Clear();
+        AwaitImages(0, "MSAA targets with twin views were not fully released");
+    }
+
+    void StorageSrgbTwin() {
+        if (!context.storageImageMultisample || HostStorageFormat(context, VK_FORMAT_R8G8B8A8_SRGB) != VK_FORMAT_R8G8B8A8_UNORM) {
+            std::puts("the device has no UNORM storage form for a multisampled sRGB target; its storage twin case is skipped");
+            return;
+        }
+        GuestBlock block;
+        const auto target = Target(block, VK_FORMAT_R8G8B8A8_SRGB);
+        auto resource = Resource(block);
+        VkImageView storageView = VK_NULL_HANDLE;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            MultisampleTargetView(context, target);
+            storageView = MultisampleTargetStorageView(context, resource);
+            Require(storageView != VK_NULL_HANDLE, "a UNORM storage access to a multisampled sRGB target has no view");
+            Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated UNORM storage access to a multisampled sRGB target changed its view");
+            resource.format = 60;
+            bool refused = false;
+            try {
+                MultisampleTargetStorageView(context, resource);
+            } catch (const std::exception&) {
+                refused = true;
+            }
+            Require(refused, "a storage access in an unrelated format reached a multisampled sRGB target");
+        }
+        Sync();
+        block.Unmap();
+        Clear();
+        AwaitImages(0, "the sRGB storage twin targets were not fully released");
+    }
+
 private:
     AgcDriver::VulkanDevice& device;
     Context context;
@@ -487,7 +604,10 @@ int main() {
         run.RecordedRemap();
         run.SampledRemap();
         run.StorageRemap();
-        std::puts("retired MSAA allocations stay bounded, recorded clears and storage promotions retain their images, and sampled aliases release their parents after the last batch");
+        run.StorageSrgbTwin();
+        run.OrderRemap();
+        if (context.storageImageMultisample) run.StorageTwin();
+        std::puts("retired MSAA allocations stay bounded, recorded clears and storage promotions retain their images, sampled aliases release their parents after the last batch, and sample-order targets keep their retired images until their batch completes");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -21,18 +21,12 @@
 #include <vector>
 
 #include "SceTypes.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 
 namespace savedata {
-
-extern "C" {
-int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, std::uint32_t attr,
-                                       std::uint64_t init_pattern, const void* param);
-int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
-int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern);
-int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
-}
 
 namespace {
 
@@ -498,14 +492,14 @@ int mount_internal(const SceSaveDataDirName* dir_name, std::uint32_t mount_mode,
         created = true;
         if (write_u64(save_blocks_path(directory), blocks) != SD_OK) {
             std::error_code cleanup;
-            std::filesystem::remove_all(directory, cleanup);
+            RemoveTree(directory, cleanup);
             return SD_ERROR_INTERNAL;
         }
         SaveDataParam initial {};
         std::strncpy(initial.title, "Saved Data", sizeof(initial.title) - 1);
         if (!write_blob(save_param_path(directory), &initial, sizeof(initial))) {
             std::error_code cleanup;
-            std::filesystem::remove_all(directory, cleanup);
+            RemoveTree(directory, cleanup);
             return SD_ERROR_INTERNAL;
         }
     }
@@ -574,7 +568,7 @@ int delete_internal(std::int32_t user_id, const SceSaveDataDirName* dir_name,
     if (!std::filesystem::exists(directory, error) || error) {
         return SD_ERROR_NOT_FOUND;
     }
-    std::filesystem::remove_all(directory, error);
+    RemoveTree(directory, error);
     RecordWrittenPath_nid_no_patch(directory);
     if (error) {
         return SD_ERROR_INTERNAL;

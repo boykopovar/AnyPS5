@@ -186,7 +186,17 @@ std::uint32_t embeddedFetchDstSize(const RdnaInstruction& inst) {
 std::uint32_t scalarOperandWidth(const RdnaInstruction& inst, std::uint32_t operandIndex) {
     switch (inst.family) {
     case RdnaInstructionFamily::SMEM:
-        return operandIndex == 0u ? 4u : 1u;
+        if (operandIndex != 0u) return 1u;
+        switch (inst.op) {
+        case RdnaOpcode::SLoadDword:
+        case RdnaOpcode::SLoadDwordx2:
+        case RdnaOpcode::SLoadDwordx4:
+        case RdnaOpcode::SLoadDwordx8:
+        case RdnaOpcode::SLoadDwordx16:
+            return 2u;
+        default:
+            return 4u;
+        }
     case RdnaInstructionFamily::MUBUF:
     case RdnaInstructionFamily::MTBUF:
         return operandIndex == 1u ? 4u : 1u;
@@ -215,6 +225,39 @@ bool touchesSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
         if (sgpr >= first && sgpr < first + std::max(inst.is64Bit ? 2u : 1u, decodedDstSize(inst))) return true;
     }
     return false;
+}
+
+bool killsSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
+    if (!isScalarOperand(inst.destination)) return false;
+    const auto first = scalarSlot(inst.destination);
+    switch (inst.op) {
+    case RdnaOpcode::SCmovB32:
+    case RdnaOpcode::SCmovB64:
+    case RdnaOpcode::SBitset0B32:
+    case RdnaOpcode::SBitset0B64:
+    case RdnaOpcode::SBitset1B32:
+    case RdnaOpcode::SBitset1B64:
+    case RdnaOpcode::SMovreldB32:
+    case RdnaOpcode::SMovreldB64:
+        return false;
+    case RdnaOpcode::SMovkI32:
+    case RdnaOpcode::VReadlaneB32:
+    case RdnaOpcode::VReadfirstlaneB32:
+        return sgpr == first;
+    case RdnaOpcode::SLoadDword:
+    case RdnaOpcode::SLoadDwordx2:
+    case RdnaOpcode::SLoadDwordx4:
+    case RdnaOpcode::SLoadDwordx8:
+    case RdnaOpcode::SLoadDwordx16:
+    case RdnaOpcode::SBufferLoadDword:
+    case RdnaOpcode::SBufferLoadDwordx2:
+    case RdnaOpcode::SBufferLoadDwordx4:
+    case RdnaOpcode::SBufferLoadDwordx8:
+    case RdnaOpcode::SBufferLoadDwordx16:
+        return sgpr >= first && sgpr < first + decodedDstSize(inst);
+    default:
+        return (inst.family == RdnaInstructionFamily::SOP1 || inst.family == RdnaInstructionFamily::SOP2) && sgpr == first;
+    }
 }
 
 bool isVectorAlu(const RdnaInstruction& inst) {
@@ -350,6 +393,12 @@ bool writesExec(const RdnaInstruction& inst) {
     }
 }
 
+bool setsExecAllOnes(const RdnaInstruction& inst) {
+    const bool allOnes = inst.source0.kind == RdnaOperandKind::IntegerInlineConstant && inst.source0.signedVal == -1;
+    if (!allOnes || inst.destination.kind != RdnaOperandKind::ExecLo) return false;
+    return inst.op == RdnaOpcode::SMovB64;
+}
+
 bool writesSgprMask(const RdnaInstruction& inst, std::uint32_t sgpr, std::uint32_t waveSize) {
     const auto covers = [&](const RdnaOperand& operand, std::uint32_t width) { return isScalarOperand(operand) && sgpr >= scalarSlot(operand) && sgpr < scalarSlot(operand) + width; };
     return covers(inst.destination2, 2u) || (isVectorAlu(inst) && covers(inst.destination, waveSize == 64u ? 2u : 1u));
@@ -357,6 +406,8 @@ bool writesSgprMask(const RdnaInstruction& inst, std::uint32_t sgpr, std::uint32
 
 bool carryObserved(const RdnaProgram& program, std::size_t addIndex, std::uint32_t waveSize) {
     const auto& add = program.instructions[addIndex];
+    if (add.op == RdnaOpcode::VAddNcU32) return false;
+    if (add.op == RdnaOpcode::VSadU32) return false;
     if (add.destination2.kind == RdnaOperandKind::None || add.destination2.kind == RdnaOperandKind::Null) return false;
     if (!isScalarOperand(add.destination2)) return true;
     const auto first = scalarSlot(add.destination2);
@@ -408,8 +459,9 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
         const bool vertexIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == 0u || (userDataBaseRegister == 8u && inst.destination.reg == kVertexIndexVgpr));
         const bool instanceIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == (userDataBaseRegister == 8u ? kInstanceIndexVgpr : 3u));
         std::uint32_t sadZero = 0u;
+        const bool plainNoCarryAdd = inst.op == RdnaOpcode::VAddNcU32 && inst.family == RdnaInstructionFamily::VOP2 && inst.wordCount == 1u;
         const bool indexOffsetAdd = (vertexIndexAccumulator || instanceIndexAccumulator) && isScalarOperand(inst.source0) &&
-            ((inst.op == RdnaOpcode::VAddI32 && isVectorOperand(inst.source1) && inst.source1.reg == inst.destination.reg) ||
+            (((inst.op == RdnaOpcode::VAddI32 || plainNoCarryAdd) && isVectorOperand(inst.source1) && inst.source1.reg == inst.destination.reg) ||
              (userDataBaseRegister == 8u && (inst.destination.reg == kVertexIndexVgpr || inst.destination.reg == kInstanceIndexVgpr) &&
               inst.op == RdnaOpcode::VSadU32 && isVectorOperand(inst.source2) && inst.source2.reg == inst.destination.reg &&
               tryConstantOperand(sgprs, inst.source1, sadZero) && sadZero == 0u));
@@ -604,9 +656,41 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     plan.instanceOffsetConflict = instanceOffsetConflict;
     const auto shared = [&](std::int32_t sgpr, const std::vector<std::uint32_t>& addPcs) {
         if (sgpr < 0) return false;
+        const auto reg = static_cast<std::uint32_t>(sgpr);
+        const auto isAdd = [&](const RdnaInstruction& inst) { return std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end(); };
+        const auto loopsBack = [&](std::size_t from, std::uint32_t pc) {
+            for (std::size_t i = from; i < program.instructions.size(); i++) {
+                const auto& inst = program.instructions[i];
+                if (IsDirectBranchOpcode(inst.op) && inst.branchTarget <= pc) return true;
+                if (inst.op != RdnaOpcode::SEndpgm && !IsDirectBranchOpcode(inst.op) && leavesStraightLine(inst)) return true;
+            }
+            return false;
+        };
+        std::uint32_t skippedUntil = 0u;
+        for (std::size_t i = 0; i < program.instructions.size(); i++) {
+            const auto& inst = program.instructions[i];
+            if (isAdd(inst)) continue;
+            if (inst.op == RdnaOpcode::SMovrelsB32 || inst.op == RdnaOpcode::SMovrelsB64 || inst.op == RdnaOpcode::SMovrelsd2B32 || inst.op == RdnaOpcode::SMovreldB32 || inst.op == RdnaOpcode::SMovreldB64) return true;
+            if (readsSgprRange(inst, reg, 1u)) return true;
+            if (killsSgpr(inst, reg)) {
+                if (inst.programCounter < skippedUntil) continue;
+                return std::any_of(addPcs.begin(), addPcs.end(), [&](std::uint32_t pc) { return pc > inst.programCounter; }) || loopsBack(i + 1u, inst.programCounter);
+            }
+            if (touchesSgpr(inst, reg)) return true;
+            if (IsDirectBranchOpcode(inst.op)) {
+                if (inst.branchTarget <= inst.programCounter) break;
+                skippedUntil = std::max(skippedUntil, inst.branchTarget);
+                continue;
+            }
+            if (inst.op == RdnaOpcode::SEndpgm) {
+                if (inst.programCounter >= skippedUntil) return false;
+                continue;
+            }
+            if (leavesStraightLine(inst)) break;
+        }
         for (const auto& inst : program.instructions) {
-            if (std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end()) continue;
-            if (touchesSgpr(inst, static_cast<std::uint32_t>(sgpr))) return true;
+            if (isAdd(inst)) continue;
+            if (touchesSgpr(inst, reg)) return true;
         }
         return false;
     };
@@ -622,7 +706,7 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
         if (add == program.instructions.end() || add->destination.reg != indexVgpr || add->destination.clamp || add->clampResult) return true;
         if (std::any_of(program.instructions.begin(), program.instructions.end(), [&](const RdnaInstruction& inst) { return inst.programCounter != add->programCounter && writesSgprMask(inst, static_cast<std::uint32_t>(sgpr), waveSize); })) return true;
         const auto reg = add->destination.reg;
-        if (std::any_of(program.instructions.begin(), add, [&](const RdnaInstruction& inst) { return writesExec(inst) || mayReachVgpr(inst, reg); })) return true;
+        if (std::any_of(program.instructions.begin(), add, [&](const RdnaInstruction& inst) { return (writesExec(inst) && !setsExecAllOnes(inst)) || mayReachVgpr(inst, reg); })) return true;
         return carryObserved(program, static_cast<std::size_t>(add - program.instructions.begin()), waveSize);
     };
     plan.vertexIndexObserved = observed(plan.vertexOffsetSgpr, vertexAddPcs, kVertexIndexVgpr);

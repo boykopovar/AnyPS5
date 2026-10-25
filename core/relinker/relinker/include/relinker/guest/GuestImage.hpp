@@ -52,10 +52,12 @@ struct GuestImage {
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
     std::uint64_t Init = 0;
+    bool HasInit = false;
     std::uint64_t Fini = 0;
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
+    std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {

@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/DcbState/include/ContextState.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -6,10 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" std::uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
 
 namespace {
 

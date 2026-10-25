@@ -46,6 +46,7 @@ struct DrawParameters {
         std::uint32_t drawIndexLocation;
         bool drawIndexEnabled;
         std::uint32_t indxOffset;
+        bool indexLimitKnown = true;
         enum class Rule : std::uint8_t { InPlace, Constant };
         Rule vertexRule = Rule::Constant;
         Rule instanceRule = Rule::Constant;
@@ -89,7 +90,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue);
 void Execute(std::span<const std::uint32_t> packet, QueueState& queue);
 inline bool IndirectRegisterOpcode(std::uint32_t opcode) { return opcode == 0x63 || opcode == 0x64 || opcode == 0x9f; }
 std::vector<std::uint32_t> ReadIndirectRegisters(std::span<const std::uint32_t> packet);
-void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue);
+bool IndirectRegistersValid(std::span<const std::uint32_t> pairs);
+void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue, bool skipInvalid = false);
 bool AccessesMemory(std::uint32_t header);
 // Whether an ACQUIRE_MEM packet asks only for GPU cache actions (no CPU-visible memory
 // synchronization): such a packet needs a pipeline barrier, not a device drain.
@@ -153,6 +155,7 @@ inline bool CopyDataImmediate(std::uint32_t source) { return source >= 10 && sou
 inline bool CopyDataToRegister(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) == 0; }
 inline std::size_t CopyDataBytes(std::span<const std::uint32_t> packet) { return (packet[1] & 0x10000u) != 0 ? 8 : 4; }
 inline constexpr std::uint32_t RewindValid = 0x80000000u;
+inline constexpr std::uint32_t RewindOffloadEnable = 0x01000000u;
 struct WaitFields {
     std::uint32_t function;
     std::uint64_t address;

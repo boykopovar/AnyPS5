@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
@@ -342,6 +343,32 @@ void SetBudgets() {
 #endif
 }
 
+#ifdef _WIN32
+bool WindowsImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& context) {
+    if (context.hostImportAlignment == 0) return true;
+    const auto probe = AgcDriver::Graphics::ProbeImportWriteProtection(context);
+    if (probe.failure == nullptr && probe.writtenAfterSubmit == 0) return true;
+    if (probe.failure != nullptr) {
+        std::printf("skipped, the host import probe failed at %s (%d)\n", probe.failure, static_cast<int>(probe.result));
+    } else {
+        std::printf(
+            "skipped, host imports on this device report %u of %u pages written at the import and "
+            "%u after a GPU read, so a watched imported table cannot be vouched for\n",
+            probe.writtenAtImport, probe.pages, probe.writtenAfterSubmit);
+    }
+    return false;
+}
+#else
+bool ImportsStayWatchedThroughReads(const AgcDriver::Graphics::Context& context) {
+    if (context.hostImportAlignment == 0) return true;
+    const auto probe = AgcDriver::Graphics::ProbeImportWriteProtection(context);
+    if (probe.failure == nullptr && probe.writtenAfterSubmit == 0) return true;
+    if (probe.failure != nullptr) std::printf("skipped, the device reports no host import probe result: it failed at %s (%d)\n", probe.failure, static_cast<int>(probe.result));
+    else std::printf("skipped, the device reports %u of %u host-imported pages written after a GPU read, so a watched imported table cannot be vouched for\n", probe.writtenAfterSubmit, probe.pages);
+    return false;
+}
+#endif
+
 }
 
 int main(int argc, char** argv) {
@@ -350,6 +377,12 @@ int main(int argc, char** argv) {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+#ifdef _WIN32
+            if (argc == 2 && std::string(argv[1]) == "--vouched-lookups" &&
+                !WindowsImportsStayWatchedThroughReads(device->graphicsContext())) return VulkanTestSkipped;
+#else
+            if (argc == 2 && std::string(argv[1]) == "--vouched-lookups" && !ImportsStayWatchedThroughReads(device->graphicsContext())) return VulkanTestSkipped;
+#endif
         }
         GuestBlock block;
         Prepare(block);

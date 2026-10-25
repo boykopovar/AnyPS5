@@ -1,4 +1,6 @@
+import contextlib
 import copy
+import io
 import json
 import sys
 import unittest
@@ -38,6 +40,9 @@ class TitleIdTests(unittest.TestCase):
             ("- [x] Unblocks: PPSA01325 #3232\n", {"PPSA01325"}),
             ("- [ ] Unblocks: **PPSA01325 #3232, CUSA12345 #1**", {"PPSA01325", "CUSA12345"}),
             ("- [ ] Unblocks: none\nSeen on PPSA01325.\n", set()),
+            ("- [x] Unblocks: none by itself; foundation for PPSA27836 in #6570\n", set()),
+            ("- [x] Unblocks: None (PPSA03912 #5146 is already in game; this is a speedup)\n", set()),
+            ("- [x] Unblocks: PPSA01325 #3232 (none of the others)\n", {"PPSA01325"}),
             ("- [ ] Unblocks:\n  - PPSA01325 #3232\n  - PPSA00001\n- [ ] Depends on: none\n", {"PPSA01325", "PPSA00001"}),
             ("- [ ] Unblocks:\n- [ ] Depends on: PPSA01325\n", set()),
             ("- [ ] Unblocks: <!-- PPSA01325 -->\n", set()),
@@ -72,6 +77,7 @@ class NumbersTests(unittest.TestCase):
             (summary("a") + "\n{not json", False),
             ("{}\n{}", False),
             ("```json\n" + json.dumps(json.loads(summary("a")), indent=2) + "\n```\n```json\n" + summary("b") + "\n```", True),
+            ("~~~json\n" + json.dumps(json.loads(summary("a")), indent=2) + "\n~~~\n~~~json\n" + summary("b") + "\n~~~", True),
             ("<!-- " + summary("a") + " -->\n" + summary("b"), False),
             (summary("a") + "\r\n" + summary("b") + "\r\n", True),
             (summary("a") + "\n{" + "[" * 100000 + "\n" + summary("b"), True),
@@ -170,11 +176,49 @@ class MainTests(unittest.TestCase):
             return ""
 
         with patch.object(pr_labels, "gh", side_effect=fake), patch.object(pr_labels, "WRITE_PAUSE", 0), \
-                patch.object(sys, "argv", ["pr_labels.py", "--all"]), patch.dict(pr_labels.os.environ, {"GITHUB_REPOSITORY": "o/r"}):
+                patch.dict(pr_labels.os.environ, {"GITHUB_REPOSITORY": "o/r"}):
             with self.assertRaises(SystemExit) as raised:
-                pr_labels.main()
+                pr_labels.main(["--all"])
         self.assertEqual(edited, ["1", "2"])
         self.assertIn("#1", str(raised.exception.code))
+
+    def test_main_handles_called_process_error_when_fetching_pr(self):
+        def fake(*args):
+            raise pr_labels.subprocess.CalledProcessError(1, "gh", stderr="PR not found")
+
+        with patch.object(pr_labels, "gh", side_effect=fake), \
+                patch.dict(pr_labels.os.environ, {"GITHUB_REPOSITORY": "o/r"}), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                pr_labels.main(["--pr", "999"])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(pr_labels.sys, "stdout", out), patch.object(pr_labels.sys, "stderr", err):
+            try:
+                pr_labels.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

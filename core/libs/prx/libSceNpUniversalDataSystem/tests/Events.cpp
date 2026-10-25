@@ -1,7 +1,9 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "NpUniversalDataSystem.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <clocale>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,40 +13,6 @@
 #include <string>
 #include <tuple>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemDestroyContext(int);
-int APS5_VABI sceNpUniversalDataSystemCreateEvent(const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEvent**, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent*);
-int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(NpUniversalDataSystemEventPropertyObject*, const char*, const char*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject*, const char*, int32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(NpUniversalDataSystemEventPropertyObject*, const char*, uint32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(NpUniversalDataSystemEventPropertyObject*, const char*, int64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(NpUniversalDataSystemEventPropertyObject*, const char*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(NpUniversalDataSystemEventPropertyObject*, const char*, float);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(NpUniversalDataSystemEventPropertyObject*, const char*, double);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(NpUniversalDataSystemEventPropertyObject*, const char*, bool);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(NpUniversalDataSystemEventPropertyObject*, const char*, const void*, size_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(NpUniversalDataSystemEventPropertyObject*, const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(NpUniversalDataSystemEventPropertyObject*, const char*, const NpUniversalDataSystemEventPropertyArray*, NpUniversalDataSystemEventPropertyArray**);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyArray(NpUniversalDataSystemEventPropertyArray**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyArray(NpUniversalDataSystemEventPropertyArray*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(NpUniversalDataSystemEventPropertyArray*, const char*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt32(NpUniversalDataSystemEventPropertyArray*, int32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt32(NpUniversalDataSystemEventPropertyArray*, uint32_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt64(NpUniversalDataSystemEventPropertyArray*, int64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt64(NpUniversalDataSystemEventPropertyArray*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat32(NpUniversalDataSystemEventPropertyArray*, float);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat64(NpUniversalDataSystemEventPropertyArray*, double);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBool(NpUniversalDataSystemEventPropertyArray*, bool);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBinary(NpUniversalDataSystemEventPropertyArray*, const void*, size_t);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetObject(NpUniversalDataSystemEventPropertyArray*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetArray(NpUniversalDataSystemEventPropertyArray*, const NpUniversalDataSystemEventPropertyArray*, NpUniversalDataSystemEventPropertyArray**);
-}
 
 namespace {
 
@@ -171,6 +139,7 @@ void testEvents() {
     check(throwsInvalidArgument([] {
         NpUniversalDataSystemEvent* unnamed = nullptr;
         sceNpUniversalDataSystemCreateEvent(nullptr, nullptr, &unnamed, nullptr);
+
     }), "an event without a name was created");
 }
 
@@ -231,6 +200,40 @@ void testStatEvent() {
     }
 }
 
+void testLocaleIndependentNumberFormatting() {
+    const char* previous = std::setlocale(LC_NUMERIC, nullptr);
+    check(previous != nullptr, "the current locale could not be read");
+    const std::string saved = previous;
+    struct RestoreLocale {
+        std::string saved;
+        ~RestoreLocale() { std::setlocale(LC_NUMERIC, saved.c_str()); }
+    } restore{saved};
+    bool commaDecimal = false;
+    for (const auto* name : {"French", "French_France.1252", "fr_FR.UTF-8", "de_DE.UTF-8"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::string(std::localeconv()->decimal_point) == ",") {
+            commaDecimal = true;
+            break;
+        }
+    }
+    if (!commaDecimal) {
+#ifdef _WIN32
+        throw std::runtime_error("No Windows comma-decimal locale available for regression");
+#else
+        std::puts("Comma-decimal locale regression unavailable on this host");
+        return;
+#endif
+    }
+    NpUniversalDataSystemEvent event;
+    event.properties.Set("float", 0.1f);
+    event.properties.Set("double", 0.1);
+    check(Uds::Describe(event.properties) == R"({"float":0.100000001,"double":0.10000000000000001})",
+          "described event properties changed with the numeric locale");
+    const auto converted = Uds::StatEvent(event);
+    check(converted.properties.size() == 2, "float and double event properties were lost");
+    check(converted.properties[0].text == "0.100000001", "float property text changed with the numeric locale");
+    check(converted.properties[1].text == "0.10000000000000001", "double property text changed with the numeric locale");
+}
+
 struct Unlocks {
     int count = 0;
 };
@@ -286,6 +289,7 @@ int main() {
         testEvents();
         testRecognition();
         testStatEvent();
+        testLocaleIndependentNumberFormatting();
         testPostingIgnoredEvents();
         std::puts("UDS event tests passed");
         return 0;

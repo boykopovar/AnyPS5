@@ -1,3 +1,4 @@
+#include "prx/libSceErrorDialog/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -21,6 +22,7 @@ constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80ED0001u);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80ED0002u);
 constexpr int kErrParam = static_cast<int>(0x80ED0003u);
+constexpr int kErrUnexpectedFatal = static_cast<int>(0x80ED0004u);
 constexpr int kErrInvalidState = static_cast<int>(0x80ED0005u);
 
 constexpr std::size_t kParamSize = 16;
@@ -90,6 +92,14 @@ int APS5_VABI sceErrorDialogTerminate(void) {
  if (g_status == kStatusNone) return kErrNotInitialized;
  g_status = kStatusNone;
  return kErrOk;
+}
+
+int APS5_VABI sceErrorDialogOpenDetail() {
+    return kErrUnexpectedFatal;
+}
+
+int APS5_VABI sceErrorDialogOpenWithReport() {
+    return kErrUnexpectedFatal;
 }
 
 }

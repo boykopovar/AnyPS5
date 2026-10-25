@@ -33,18 +33,42 @@ namespace ShaderRecompiler {
 
 std::filesystem::path ShaderCacheDirectory();
 
+#ifdef _WIN32
+inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
+    auto native = path;
+    native.make_preferred();
+    if (native.native().starts_with(L"\\\\?\\") || native.native().starts_with(L"\\\\.\\")) return native;
+    const auto capacity = GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
+    if (capacity == 0) { error = std::error_code(GetLastError(), std::system_category()); return {}; }
+    std::wstring absolute(capacity, L'\0');
+    const auto size = GetFullPathNameW(native.c_str(), capacity, absolute.data(), nullptr);
+    if (size == 0 || size >= capacity) {
+        error = std::error_code(size == 0 ? GetLastError() : ERROR_INSUFFICIENT_BUFFER, std::system_category());
+        return {};
+    }
+    absolute.resize(size);
+    if (absolute.starts_with(L"\\\\")) return std::filesystem::path(L"\\\\?\\UNC\\" + absolute.substr(2));
+    return std::filesystem::path(L"\\\\?\\" + absolute);
+}
+#endif
+
 inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<const std::byte> bytes) {
     std::error_code error;
-    std::filesystem::create_directories(path.parent_path(), error);
+#ifdef _WIN32
+    const auto destination = NativeCachePath_nid_no_patch(path, error);
+    if (error) return false;
+#else
+    const auto& destination = path;
+#endif
+    std::filesystem::create_directories(destination.parent_path(), error);
     static std::atomic<std::uint64_t> serial{0};
     const auto unique = std::hash<std::thread::id>{}(std::this_thread::get_id()) ^ static_cast<std::size_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-    auto temporary = path;
+    auto temporary = destination;
     temporary += ".tmp." + std::to_string(unique) + "." + std::to_string(serial.fetch_add(1, std::memory_order_relaxed));
 #ifdef _WIN32
     struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
     static_assert(sizeof(RenameInfo) == sizeof(FILE_RENAME_INFO) && offsetof(RenameInfo, name) == offsetof(FILE_RENAME_INFO, FileName));
-    const auto destination = std::filesystem::absolute(path, error);
-    if (error || destination.native().size() > (MAXDWORD - sizeof(RenameInfo)) / sizeof(wchar_t)) return false;
+    if (destination.native().size() > (MAXDWORD - sizeof(RenameInfo)) / sizeof(wchar_t)) return false;
     const auto nameBytes = destination.native().size() * sizeof(wchar_t);
     std::vector<std::byte> renameBuffer(sizeof(RenameInfo) + nameBytes);
     auto* rename = reinterpret_cast<RenameInfo*>(renameBuffer.data());
@@ -89,7 +113,7 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
         return false;
     }
 #endif
-    std::filesystem::rename(temporary, path, error);
+    std::filesystem::rename(temporary, destination, error);
     if (error) {
         std::filesystem::remove(temporary, error);
         return false;
@@ -101,7 +125,10 @@ inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::by
     bytes.clear();
     try {
 #ifdef _WIN32
-        const auto file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        std::error_code error;
+        const auto native = NativeCachePath_nid_no_patch(path, error);
+        if (error) return false;
+        const auto file = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) return false;
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};

@@ -1,11 +1,13 @@
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_compile
@@ -14,6 +16,69 @@ TOOL = Path(__file__).resolve().parents[1] / "check_compile.py"
 
 
 class CheckCompileTests(unittest.TestCase):
+    def test_unexpanded_response_files_cannot_rewrite_build_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to check compilation-fragment side effects")
+        source = self.source("unit.c")
+        outputs = [self.build / name for name in ("unit.o", "unit.d", "fragment.json")]
+        response = self.build / "unit flags.rsp"
+        response.write_text(" ".join('"' + argument + '"' for argument in
+                                    ("-c", source.as_posix(), "-MMD", "-MF", outputs[1].as_posix(),
+                                     "-MJ", outputs[2].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
+        arguments = [compiler, "@" + str(response)]
+        original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+        self.assertEqual(original.returncode, 0, original.stderr)
+        preserved = {path: path.read_bytes() for path in [source, response, *outputs]}
+        for field in ("arguments", "command"):
+            for jobs in ("1", "2"):
+                with self.subTest(field=field, jobs=jobs):
+                    command = (subprocess.list2cmdline(arguments) if os.name == "nt" else
+                               " ".join(shlex.quote(argument) for argument in arguments))
+                    self.manifest([{"directory": str(self.build), "file": str(source),
+                                    field: arguments if field == "arguments" else command}])
+                    result = self.tool("--jobs", jobs, "unit.c")
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("unexpanded response file", result.stderr)
+                    self.assertIn(str(response), result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    for path, content in preserved.items():
+                        self.assertEqual(path.read_bytes(), content)
+
+    def test_dependency_options_do_not_make_syntax_checks_fail_or_rewrite_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to check unused dependency options with -Werror")
+        source = self.source("unit.c")
+        object_file = self.build / "unit.o"
+        dependency_file = self.build / "unit.d"
+        for option in ("-MF", "-MT", "-MQ"):
+            for joined in (False, True):
+                with self.subTest(option=option, joined=joined):
+                    source.write_text("int x;\n", encoding="utf-8")
+                    value = str(dependency_file) if option == "-MF" else "target with spaces.o"
+                    flags = [option + value] if joined else [option, value]
+                    if option != "-MF":
+                        flags += ["-MF", str(dependency_file)]
+                    arguments = [compiler, "-Werror", "-MMD", *flags,
+                                 "-c", str(source), "-o", str(object_file)]
+                    original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+                    self.assertEqual(original.returncode, 0, original.stderr)
+                    outputs = {path: path.read_bytes() for path in (object_file, dependency_file)}
+                    self.manifest([{"directory": str(self.build), "file": str(source),
+                                    "arguments": arguments}])
+                    result = self.tool("unit.c")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("1 translation units compile", result.stdout)
+                    for path, content in outputs.items():
+                        self.assertEqual(path.read_bytes(), content)
+                    source.write_text("#error syntax_check_must_fail\n", encoding="utf-8")
+                    result = self.tool("unit.c")
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertIn("syntax_check_must_fail", result.stderr)
+                    for path, content in outputs.items():
+                        self.assertEqual(path.read_bytes(), content)
+
     def test_ninja_response_file_is_expanded_before_syntax_rewriting(self):
         compiler = shutil.which("clang") or shutil.which("gcc")
         if compiler is None or shutil.which("ninja") is None:
@@ -23,7 +88,7 @@ class CheckCompileTests(unittest.TestCase):
         (self.build / "build.ninja").write_text(
             "rule cc\n  command = " + command + " @$out.rsp\n"
             "  rspfile = $out.rsp\n  rspfile_content = -DREQUIRED -c $in -o $out -MD -MF $out.d\n"
-            "build unit.o: cc ../unit.c\n", encoding="utf-8")
+            "build order: phony\nbuild unit.o: cc ../unit.c || order\n", encoding="utf-8")
         self.assertFalse((self.build / "unit.o.rsp").exists())
         result = self.tool("unit.c")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -31,6 +96,43 @@ class CheckCompileTests(unittest.TestCase):
         self.assertFalse((self.build / "unit.o").exists())
         self.assertFalse((self.build / "unit.o.d").exists())
         self.assertFalse((self.build / "unit.o.rsp").exists())
+
+    def test_ninja_commands_in_a_non_ascii_build_directory_are_found(self):
+        compiler = shutil.which("clang") or shutil.which("gcc")
+        if compiler is None or shutil.which("ninja") is None:
+            self.skipTest("needs Ninja and a C compiler")
+        name = "ação"
+        build = self.root / name
+        if os.name == "nt":
+            try:
+                str(build).encode("mbcs", "strict")
+            except UnicodeEncodeError:
+                self.skipTest("the ANSI code page cannot represent the build directory")
+        build.mkdir()
+        self.source("unit.c")
+        command = subprocess.list2cmdline([compiler]) if os.name == "nt" else '"' + compiler + '"'
+        (build / "build.ninja").write_text(
+            "rule cc\n  command = " + command + " -c $in -o $out\nbuild unit.o: cc ../unit.c\n", encoding="utf-8")
+        result = self.tool("--build", name, "unit.c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+
+    def test_windows_ninja_output_is_decoded_in_its_declared_build_file_encoding(self):
+        cases = (("Build file encoding: UTF-8\n", 0, "utf-8"), ("Build file encoding: ANSI\n", 0, "mbcs"),
+                 ("Build file encoding: OEM\n", 0, None), ("", 1, None))
+        for declared, status, expected in cases:
+            with self.subTest(declared=declared, status=status):
+                result = subprocess.CompletedProcess([], status, declared, "ninja: error: unknown tool" if status else "")
+                with patch.object(check_compile.sys, "platform", "win32"), \
+                        patch.object(check_compile, "capture", return_value=result):
+                    if expected is None:
+                        with self.assertRaises(ValueError):
+                            check_compile.ninja_encoding("ninja")
+                    else:
+                        self.assertEqual(check_compile.ninja_encoding("ninja"), expected)
+        with patch.object(check_compile.sys, "platform", "linux"), \
+                patch.object(check_compile, "capture", side_effect=AssertionError("queried Ninja")):
+            self.assertEqual(check_compile.ninja_encoding("ninja"), "utf-8")
 
     def test_syntax_check_preserves_existing_clang_compilation_fragment(self):
         compiler = shutil.which("clang")
@@ -113,6 +215,15 @@ class CheckCompileTests(unittest.TestCase):
         result = self.tool("unit.cpp")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(seen.read_text(encoding="utf-8")), ["-fsyntax-only", str(source)])
+
+    def test_compile_commands_accepts_utf8_bom(self):
+        source = self.source("unit.cpp")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        entry = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"')
+        (self.build / "compile_commands.json").write_text("\ufeff" + json.dumps([entry]), encoding="utf-8")
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("1 translation units compile", result.stdout)
 
     def test_every_configuration_is_checked_and_each_source_is_counted_once(self):
         source = self.source("unit.cpp")
@@ -243,6 +354,37 @@ class CheckCompileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 translation units compile", result.stdout)
 
+    def test_a_generated_translation_unit_outside_the_checkout_is_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve() / "generated unit.cpp"
+            source.write_text("int x;\n", encoding="utf-8")
+            seen = self.root / "arguments.json"
+            script = self.compiler(
+                "import json\nimport sys\nfrom pathlib import Path\n"
+                "Path(sys.argv[1]).write_text(json.dumps(sys.argv[3:]))\n"
+                "if sys.argv[2] == '1': sys.stderr.write('external source: error: no\\n')\n"
+                "sys.exit(int(sys.argv[2]))\n")
+            for relative in (False, True):
+                for status in (0, 1):
+                    with self.subTest(relative=relative, status=status):
+                        self.manifest([{
+                            "directory": str(self.build),
+                            "file": os.path.relpath(source, self.build) if relative else str(source),
+                            "arguments": [sys.executable, str(script), str(seen), str(status),
+                                          "-c", "-o", "generated.o", str(source)],
+                        }])
+                        path = os.path.relpath(source, self.root) if relative else str(source)
+                        result = self.tool(path)
+                        self.assertNotIn("no compile command", result.stderr)
+                        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                        self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
+                                         ["-fsyntax-only", str(source)])
+                        if status:
+                            self.assertIn("external source: error: no", result.stderr)
+                            self.assertIn("1 of 1 translation units did not compile", result.stderr)
+                        else:
+                            self.assertIn("1 translation units compile", result.stdout)
+
     def test_a_changed_file_with_a_non_ascii_name_is_checked(self):
         self.failing("caf\u00e9.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "caf\u00e9.cpp"], check=True)
@@ -327,14 +469,17 @@ class CheckCompileTests(unittest.TestCase):
         bin = self.root / "bin"
         bin.mkdir()
         stub = bin / "ninja_stub.py"
-        stub.write_text("import json\nprint(json.dumps(%r))\n" % [entry], encoding="utf-8")
+        stub.write_text("import json\nimport sys\n"
+                        "if sys.argv[1:] == ['-t', 'wincodepage']:\n    print('Build file encoding: UTF-8')\n"
+                        "else:\n    print(json.dumps(%r))\n" % [entry], encoding="utf-8")
         if os.name == "nt":
-            (bin / "ninja.cmd").write_text(f'@"{sys.executable}" "{stub}"\n', encoding="utf-8")
+            (bin / "ninja.cmd").write_text('@"%NINJA_STUB_PYTHON%" "%~dp0ninja_stub.py" %*\n', encoding="ascii")
         else:
             ninja = bin / "ninja"
             ninja.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stub}"\n', encoding="utf-8")
             ninja.chmod(0o755)
-        result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}"})
+        result = self.tool("unit.cpp", env={"PATH": f"{bin}{os.pathsep}{os.environ['PATH']}",
+                                            "NINJA_STUB_PYTHON": sys.executable})
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
 
@@ -369,6 +514,90 @@ class CheckCompileTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("arguments must be a nonempty list of strings with an executable", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_compilation_databases_are_rejected_without_a_traceback(self):
+        for database in ({}, {"file": "unit.cpp"}, None, 42, "commands"):
+            with self.subTest(database=database):
+                self.manifest(database)
+                result = self.tool("unit.cpp")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_entries_are_rejected_before_any_compiler_runs(self):
+        source = self.source("unit.cpp")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        valid = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"')
+        cases = [(value, "expected a command object") for value in (None, [], 42, "command")]
+        for field in ("directory", "file"):
+            missing = dict(valid)
+            del missing[field]
+            cases.append((missing, f"missing {field}"))
+            cases.extend(({**valid, field: value}, f"{field} must be a nonempty string")
+                         for value in (None, [], 42, ""))
+        cases.append(({key: value for key, value in valid.items() if key != "command"},
+                      "expected arguments or command"))
+        cases.extend(({**valid, "command": value}, "command must be a nonempty string")
+                     for value in (None, [], 42, "", " \t"))
+        cases.append(({**valid, "arguments": []},
+                      "arguments must be a nonempty list of strings with an executable"))
+        for invalid, message in cases:
+            with self.subTest(invalid=invalid):
+                self.manifest([valid, invalid])
+                result = self.tool("--jobs", "2", "unit.cpp")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"compile_commands.json: entry 1: {message}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+
+    def test_invalid_ninja_databases_are_validated_before_compilation(self):
+        source = self.source("unit.cpp")
+        cases = (({}, "expected an array of command objects"),
+                 ([self.entry("unit.cpp", "compiler"), None], "entry 1: expected a command object"))
+        for database, message in cases:
+            with self.subTest(database=database), \
+                    patch.object(check_compile.shutil, "which", return_value="ninja"), \
+                    patch.object(check_compile, "ninja_encoding", return_value="utf-8"), \
+                    patch.object(check_compile, "capture", return_value=subprocess.CompletedProcess(
+                        [], 0, json.dumps(database), "")), \
+                    patch.object(check_compile.subprocess, "run") as compiler:
+                with self.assertRaisesRegex(ValueError, "ninja -t compdb: " + message):
+                    check_compile.check(self.root, self.build, [source])
+                compiler.assert_not_called()
+
+    def test_parallel_checks_overlap_but_diagnostics_keep_source_order(self):
+        barrier = self.root / "barrier"
+        barrier.mkdir()
+        compiler = self.compiler(
+            "import sys, time\nfrom pathlib import Path\n"
+            "root, name = Path(sys.argv[1]), sys.argv[2]\n"
+            "(root / name).touch()\n"
+            "deadline = time.monotonic() + 5\n"
+            "while not all((root / value).exists() for value in ('first', 'second')):\n"
+            "    if time.monotonic() > deadline: sys.exit('checks did not overlap')\n"
+            "    time.sleep(0.01)\n"
+            "if name == 'second': (root / 'second.done').touch()\n"
+            "while name == 'first' and not (root / 'second.done').exists():\n"
+            "    if time.monotonic() > deadline: sys.exit('second did not finish')\n"
+            "    time.sleep(0.01)\n"
+            "sys.exit(name + ': diagnostic')\n")
+        entries = []
+        for name in ("first", "second"):
+            source = self.source(name + ".c")
+            entries.append(self.entry(name + ".c", f'"{sys.executable}" "{compiler}" "{barrier}" {name} "{source}"'))
+        self.manifest(entries)
+        result = self.tool("--jobs", "2", "first.c", "second.c")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("2 of 2 translation units did not compile", result.stderr)
+        self.assertLess(result.stderr.index("first: diagnostic"), result.stderr.index("second: diagnostic"))
+        self.assertNotIn("did not overlap", result.stderr)
+        for jobs in ("0", "-1"):
+            with self.subTest(jobs=jobs):
+                result = self.tool("--jobs", jobs, "first.c")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("positive integer", result.stderr)
+
 
 
 if __name__ == "__main__":

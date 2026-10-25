@@ -257,6 +257,11 @@ RelinkResult RelinkerPipeline::Relink() {
     if (dynRelaOffset > raw.size() || dynRelaSize > raw.size() - dynRelaOffset)
         throw RelinkerException("Relocation table is out of bounds", dynRelaOffset);
 
+    if (dynRelaSize != 0 && dynJmpRelSize != 0
+        && dynRelaOffset < dynJmpRelOffset + dynJmpRelSize && dynJmpRelOffset < dynRelaOffset + dynRelaSize
+        && dynRelaOffset % relaEntSize != dynJmpRelOffset % relaEntSize)
+        throw RelinkerException("Unaligned overlapping relocation tables", dynJmpRelOffset);
+
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
             throw RelinkerException("Dynamic string offset is outside DT_STRSZ", strOff);
@@ -326,9 +331,11 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
-    auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
+    auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
+            if (!plt && pos >= dynJmpRelOffset && pos - dynJmpRelOffset < dynJmpRelSize)
+                continue;
 
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
@@ -339,8 +346,13 @@ RelinkResult RelinkerPipeline::Relink() {
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
+            validationPolicy->ValidateRelocationTypeSupported(relType, pos);
+
             if (relType == R_X86_64_NONE)
                 continue;
+
+            if (plt && relType != R_X86_64_JUMP_SLOT)
+                throw RelinkerException("Unsupported PLT relocation type", pos);
 
             if (relType == 8) {
                 if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
@@ -367,21 +379,21 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     };
 
-    extractRela(dynRelaOffset, dynRelaSize);
-    extractRela(dynJmpRelOffset, dynJmpRelSize);
-
-    for (const auto& ref : nidRefs)
-        validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
+    extractRela(dynRelaOffset, dynRelaSize, false);
+    extractRela(dynJmpRelOffset, dynJmpRelSize, true);
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
+    std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
     if (std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; })) {
         const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
         for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
-        for (auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
+        for (std::size_t index = 0; index < executableSegments.size(); ++index) {
+            auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
             static_cast<void>(segmentFileOffset);
             if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
                 segment.resize(*codeEnd - segmentVAddr);
+            segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
         }
     }
 
@@ -397,7 +409,7 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
-        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size())) {
+        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index])) {
             if (offset > segment.size() || segment.size() - offset < 2u)
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
             segment[offset] = scanSegment[offset] = 0x0F;
@@ -508,9 +520,11 @@ RelinkResult RelinkerPipeline::Relink() {
         std::memcpy(buf.data() + pos + 16, &addend, 8);
     };
 
-    auto extractLocal = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
+    auto extractLocal = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
+            if (!plt && pos >= dynJmpRelOffset && pos - dynJmpRelOffset < dynJmpRelSize)
+                continue;
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
             std::memcpy(&rOffset, raw.data() + pos, 8);
@@ -540,8 +554,8 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     };
 
-    extractLocal(dynRelaOffset, dynRelaSize);
-    extractLocal(dynJmpRelOffset, dynJmpRelSize);
+    extractLocal(dynRelaOffset, dynRelaSize, false);
+    extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());
@@ -562,7 +576,7 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         const auto& segmentVAddr = std::get<1>(executableSegments[index]);
         for (auto& entry : entries) {
-            auto segmentSites = callSiteResolver->ResolveCallSites(scanSegments[index], segmentVAddr, entry.TargetOffset, 8);
+            auto segmentSites = callSiteResolver->ResolveCallSites(scanSegments[index], segmentVAddr, entry.TargetOffset, 8, segmentUnwindRanges[index]);
             entry.CallSites.insert(entry.CallSites.end(), segmentSites.begin(), segmentSites.end());
             entry.CallSitesResolved = !entry.CallSites.empty();
         }

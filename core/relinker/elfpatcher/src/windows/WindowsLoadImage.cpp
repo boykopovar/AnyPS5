@@ -39,13 +39,10 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
     pageFlags.resize(static_cast<std::size_t>(size / SectionAlignment));
     for (const auto& segment : segments) {
         const auto offset = static_cast<std::size_t>(segment.MappedAddress - firstAddress);
-        const auto blockStart = offset / SectionAlignment * SectionAlignment;
-        const auto blockEnd = static_cast<std::size_t>(AlignRva(offset + segment.MemorySize));
-        if (blocks.empty() || blocks.back().Offset + blocks.back().Bytes.size() < blockStart)
-            blocks.push_back({blockStart, {}});
-        auto& block = blocks.back();
-        block.Bytes.resize(blockEnd - block.Offset);
-        std::copy_n(source.begin() + static_cast<std::ptrdiff_t>(segment.Offset), static_cast<std::size_t>(segment.FileSize), block.Bytes.begin() + static_cast<std::ptrdiff_t>(offset - block.Offset));
+        if (segment.FileSize != 0) {
+            auto& block = backBlock(offset, segment.FileSize);
+            std::copy_n(source.begin() + static_cast<std::ptrdiff_t>(segment.Offset), static_cast<std::size_t>(segment.FileSize), block.Bytes.begin() + static_cast<std::ptrdiff_t>(offset - block.Offset));
+        }
         std::uint32_t flags = 0;
         if ((segment.Flags & 1) != 0)
             flags |= SectionExecute | SectionRead;
@@ -91,16 +88,30 @@ std::uint64_t WindowsLoadImage::GetImageBase() const {
     return imageBase;
 }
 
-WindowsLoadImage::Block& WindowsLoadImage::findBlock(const std::uint64_t offset) {
-    const auto next = std::upper_bound(blocks.begin(), blocks.end(), offset, [](const std::uint64_t value, const Block& block) { return value < block.Offset; });
-    if (next == blocks.begin() || offset - std::prev(next)->Offset >= std::prev(next)->Bytes.size())
-        throw Domain::RelinkerException("ELF image offset is not backed by PT_LOAD memory", offset);
-    return *std::prev(next);
+WindowsLoadImage::Block& WindowsLoadImage::backBlock(const std::uint64_t offset, const std::uint64_t length) {
+    const auto start = offset / SectionAlignment * SectionAlignment;
+    const auto end = AlignRva(offset + length);
+    auto index = static_cast<std::size_t>(std::upper_bound(blocks.begin(), blocks.end(), offset, [](const std::uint64_t value, const Block& block) { return value < block.Offset; }) - blocks.begin());
+    if (index == 0 || blocks[index - 1].Offset + blocks[index - 1].Bytes.size() < start)
+        blocks.insert(blocks.begin() + static_cast<std::ptrdiff_t>(index), Block{start, {}});
+    else
+        --index;
+    auto& block = blocks[index];
+    if (block.Offset + block.Bytes.size() < end)
+        block.Bytes.resize(end - block.Offset);
+    while (index + 1 < blocks.size() && blocks[index + 1].Offset <= block.Offset + block.Bytes.size()) {
+        const auto& next = blocks[index + 1];
+        const auto nextOffset = static_cast<std::size_t>(next.Offset - block.Offset);
+        block.Bytes.resize(std::max(block.Bytes.size(), nextOffset + next.Bytes.size()));
+        std::copy(next.Bytes.begin(), next.Bytes.end(), block.Bytes.begin() + static_cast<std::ptrdiff_t>(nextOffset));
+        blocks.erase(blocks.begin() + static_cast<std::ptrdiff_t>(index + 1));
+    }
+    return block;
 }
 
 void WindowsLoadImage::WritePointer(const std::uint64_t address, const std::uint64_t value) {
     const auto offset = GetRva(address, 8) - LoadRva;
-    auto& block = findBlock(offset);
+    auto& block = backBlock(offset, 8);
     Io::WriteU64(block.Bytes, offset - block.Offset, value);
 }
 
@@ -119,18 +130,19 @@ std::vector<PeSection> WindowsLoadImage::BuildSections() const {
         while (block != blocks.end() && block->Offset + block->Bytes.size() <= first * SectionAlignment)
             ++block;
         const auto backed = block != blocks.end() && block->Offset <= first * SectionAlignment;
-        const auto runEnd = backed ? (block->Offset + block->Bytes.size()) / SectionAlignment : block != blocks.end() ? block->Offset / SectionAlignment : pageFlags.size();
+        const auto dataEnd = backed ? static_cast<std::size_t>((block->Offset + block->Bytes.size()) / SectionAlignment) : first;
+        const auto following = backed ? std::next(block) : block;
+        const auto stop = following != blocks.end() ? following->Offset / SectionAlignment : pageFlags.size();
         auto last = first + 1;
-        while (last < runEnd && pageFlags[last] == pageFlags[first])
+        while (last < stop && pageFlags[last] == pageFlags[first])
             ++last;
         const auto characteristics = pageFlags[first] | ((pageFlags[first] & SectionExecute) != 0 ? 0x20u : 0x40u);
-        const auto rva = CheckedRva(LoadRva + first * SectionAlignment);
+        PeSection section{".elf" + std::to_string(sections.size()), CheckedRva(LoadRva + first * SectionAlignment), characteristics, {}, CheckedRva((last - first) * SectionAlignment)};
         if (backed) {
             const auto begin = block->Bytes.begin() + static_cast<std::ptrdiff_t>(first * SectionAlignment - block->Offset);
-            sections.push_back({".elf" + std::to_string(sections.size()), rva, characteristics, {begin, begin + static_cast<std::ptrdiff_t>((last - first) * SectionAlignment)}});
-        } else {
-            sections.push_back({".elf" + std::to_string(sections.size()), rva, characteristics, {}, CheckedRva((last - first) * SectionAlignment)});
+            section.Data.assign(begin, begin + static_cast<std::ptrdiff_t>((std::min(last, dataEnd) - first) * SectionAlignment));
         }
+        sections.push_back(std::move(section));
         first = last;
     }
     return sections;

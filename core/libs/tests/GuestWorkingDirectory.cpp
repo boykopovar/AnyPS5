@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -8,11 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
-extern "C" {
-int APS5_VABI chdir_nid_postfix(const char*);
-char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static int allocations = 0;
 static int releases = 0;

@@ -1,9 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -14,6 +17,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,8 +40,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size);
 
 namespace {
 
@@ -186,16 +188,22 @@ void testRegisterFile() {
 
 void testContextAndBases() {
     AgcDriver::QueueState state;
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
+    check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
+    execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
+    check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
     execute(state, makePacket(0x12, {0}));
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore stencil defaults");
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
+    check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
     execute(state, makePacket(0x10, {3, 0}, 0x68));
     check(state.context == AgcDriver::InitialContextRegisters() && state.shader.at(0x20c) == 2, "push-clear reset wrong state");
     expectFailure([&] { execute(state, makePacket(0x10, {1, 0}, 0x68)); }, "already pushed");
     execute(state, makePacket(0x69, {0x10, 19}));
+    execute(state, makePacket(0x69, {0x280, 0x00100010u, 0x00800010u}));
     execute(state, makePacket(0x10, {2, 0}, 0x68));
+    check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "context pop did not restore saved point size and limits");
     check(state.context.at(0x10) == 17, "pop did not restore context");
     expectFailure([&] { execute(state, makePacket(0x10, {2, 0}, 0x68)); }, "not been pushed");
     alignas(8) std::array<std::uint32_t, 4> arguments{7, 8, 9, 0};
@@ -313,6 +321,45 @@ void testIndexedDraw() {
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "guest");
 }
 
+void testIndirectDrawRange() {
+    AgcDriver::QueueState state;
+    alignas(4) std::array<std::uint32_t, 1> indices{};
+    state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
+    state.indexBufferSize = 1;
+    state.indexType = 1;
+    state.userConfig[0x24a] = 0;
+    for (const auto opcode : {0x24u, 0x25u, 0x2cu, 0x38u}) {
+        const bool indexed = opcode == 0x25 || opcode == 0x38;
+        const bool multi = opcode == 0x2c || opcode == 0x38;
+        const std::uint32_t recordBytes = indexed ? 20u : 16u;
+        const std::uint32_t initiator = indexed ? 0u : 2u;
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        const auto wrapping = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, 1, 0, 0, recordBytes, initiator})
+                                    : makePacket(opcode, {0, 0x280, 0x280, initiator});
+        expectFailure([&] { AgcDriver::Pm4::ResolveDraw(wrapping, state); }, "record range overflow");
+        for (const auto count : {1u, 3u, std::numeric_limits<std::uint32_t>::max()}) {
+            if (!multi && count != 1) continue;
+            for (const auto stride : {recordBytes, 64u, 0xfffffffcu}) {
+                if (!multi && stride != recordBytes) continue;
+                const auto packet = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, count, 0, 0, stride, initiator})
+                                          : makePacket(opcode, {0, 0x280, 0x280, initiator});
+                const auto bytes = static_cast<std::uint64_t>(count - 1) * stride + recordBytes;
+                state.drawIndirectBase = (std::numeric_limits<std::uint64_t>::max() - bytes) & ~std::uint64_t{3};
+                const auto draw = AgcDriver::Pm4::ResolveDraw(packet, state);
+                check(draw.indirect.has_value() && draw.indirect->RangeBytes() == bytes, "indirect draw rejected or changed a fitting record range");
+                state.drawIndirectBase += 4;
+                expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "record range overflow");
+            }
+        }
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        if (multi) {
+            const auto empty = makePacket(opcode, {0, 0x280, 0x280, 0x280, 0, 0, 0, recordBytes, initiator});
+            const auto draw = AgcDriver::Pm4::ResolveDraw(empty, state);
+            check(draw.indirect.has_value() && draw.indirect->RangeBytes() == 0, "empty indirect draw consumed a record");
+        }
+    }
+}
+
 void testIndirectDraw() {
     check(AgcDriver::Pm4::AccessesMemory(0xc0032400u) && AgcDriver::Pm4::AccessesMemory(0xc0083800u), "indirect draws must synchronize guest memory");
     check(AgcDriver::Pm4::UnsupportedReason(0xc0032400u).empty() && AgcDriver::Pm4::UnsupportedReason(0xc0082c00u).empty(), "indirect draws are rejected");
@@ -354,8 +401,17 @@ void testIndirectDraw() {
     alignas(4) std::array<std::uint16_t, 8> indices{};
     state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
     state.indexType = 0;
+    state.indexBufferSize.reset();
+    const auto unlimited = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
+    check(unlimited.indexed && unlimited.indirect && !unlimited.indirect->indexLimitKnown && unlimited.indexCount == 0 && unlimited.indexAddress == state.indexBase && unlimited.indexSize == 2 && unlimited.indirect->recordBytes == 20, "an indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    const auto unlimitedMulti = AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state);
+    check(unlimitedMulti.indirect && !unlimitedMulti.indirect->indexLimitKnown && unlimitedMulti.indirect->count == 3 && unlimitedMulti.indirect->stride == 20, "a multi indexed indirect draw without INDEX_BUFFER_SIZE did not resolve with an unknown limit");
+    execute(state, makePacket(0x13, {0}));
+    check(state.indexBufferSize.has_value() && *state.indexBufferSize == 0, "INDEX_BUFFER_SIZE of zero was not recorded as written");
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state); }, "INDEX_BUFFER_SIZE");
+    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x38, {0, 0x8c, 0x280, 0x280, 3, 0, 0, 20, 0}), state); }, "INDEX_BUFFER_SIZE");
     state.indexBufferSize = 8;
+    check(AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state).indirect->indexLimitKnown, "a written INDEX_BUFFER_SIZE resolved with an unknown limit");
     const auto indexed = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state);
     check(indexed.indexed && indexed.indexAddress == state.indexBase && indexed.indexCount == 8 && indexed.indexSize == 2 && indexed.indirect->recordBytes == 20 && indexed.indirect->stride == 20 && indexed.firstVertex == 0 && indexed.indirect->indxOffset == 0, "indexed indirect draw mismatch");
     check(indexed.indirect->VertexDwordOffset() == 12 && indexed.indirect->InstanceDwordOffset() == 16, "indexed record geometry mismatch");
@@ -1005,6 +1061,55 @@ void testRegisterListsReadAtSubmission() {
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register list rewritten after submission was read by the worker");
 }
 
+void testInvalidRegisterListEntries() {
+    std::array<std::uint32_t, 6> pairs{0x038f038fu, 0xc8e9037eu, 0x10, 41, 0x11, 42};
+    const auto packet = makePacket(0x9f, {low(pairs.data()), high(pairs.data()), 0x80000000, 3});
+    check(!AgcDriver::Pm4::IndirectRegistersValid(pairs), "an offset dword with bits 16-27 set was taken as a register offset");
+    check(!AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 2>{0xffffffffu, 0}), "the sentinel was taken as a register offset");
+    check(AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 4>{0x10, 1, 0x70000011u, 2}), "a valid register list was rejected");
+    AgcDriver::QueueState state;
+    const auto initial = state.context;
+    expectFailure([&] { AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state); }, "extended register");
+    check(state.context == initial, "a rejected register list partially changed state");
+    AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state, true);
+    check(state.context.at(0x10) == 41 && state.context.at(0x11) == 42 && !state.context.contains(0x38f), "skipping an invalid entry lost the valid ones or wrote the invalid one");
+}
+
+void testPartlyUpdatedRegisterListSkipsOnlyItsInvalidEntries() {
+#ifdef _WIN32
+    check(_putenv_s("APS5_SKIP_INVALID_INDIRECT_REGISTERS", "1") == 0, "cannot enable skipping invalid register list entries");
+#else
+    check(setenv("APS5_SKIP_INVALID_INDIRECT_REGISTERS", "1", 1) == 0, "cannot enable skipping invalid register list entries");
+#endif
+    alignas(8) static std::uint32_t gate = 0;
+    alignas(8) static std::uint32_t copied = 0;
+    static std::array<std::uint32_t, 4> registers{0x038f038fu, 5, 0x11, 9};
+    auto words = joinPackets({
+        makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19}),
+        makePacket(0x9f, {low(registers.data()), high(registers.data()), 0x80000000, 2}),
+        makePacket(0x40, {0x100, 0xa010, 0, low(&copied), high(&copied)})});
+    submitWords(words);
+    registers = {0x10, 77, 0x03900390u, 6};
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(copied).load() == 77, "a register list partly updated before its packet ran lost the current valid entries");
+}
+
+void testRegisterListReadAgainAtExecution() {
+    alignas(8) static std::uint32_t gate = 0;
+    static std::uint32_t done = 0;
+    static std::array<std::uint32_t, 2> registers{0x038f038fu, 74};
+    auto words = joinPackets({
+        makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19}),
+        makePacket(0x9f, {low(registers.data()), high(registers.data()), 0x80000000, 1}),
+        writeWord(done, 1)});
+    submitWords(words);
+    registers[0] = 0x10;
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "a register list invalid at submission and valid at execution was not read again");
+}
+
 void testIndexAttributesReadAtExecution() {
     alignas(8) static std::uint32_t gate = 0;
     static std::uint32_t done = 0;
@@ -1020,6 +1125,72 @@ void testIndexAttributesReadAtExecution() {
     std::atomic_ref<std::uint32_t>(gate).store(1);
     AgcDriverWaitIdle_nid_postfix();
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "INDEX_ATTRIBUTES_INDIRECT did not read its record when the packet ran");
+}
+
+void testReleaseMemDataSelects() {
+    alignas(8) static std::uint64_t target = 0;
+    const auto release = [](std::uint32_t select) { return makePacket(0x49, {0x0030c514, select << 29u, low(&target), high(&target), 1, 0, 0}); };
+    for (std::uint32_t select = 0; select <= 3; ++select) AgcDriver::Pm4::Validate(release(select), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(4), 0); }, "64-bit system counter (DATA_SEL 4)");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(5), 0); }, "GDS RELEASE_MEM data");
+    for (const auto select : {6u, 7u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(select), 0); }, "reserved RELEASE_MEM DATA_SEL");
+}
+
+void testMemSemaphore() {
+    alignas(8) static std::uint64_t semaphore = 0;
+    alignas(8) static std::uint32_t marker = 0;
+    const auto packet = [](std::uint32_t control) { return makePacket(0x39, {low(&semaphore), high(&semaphore), control}); };
+    check(AgcDriver::Pm4::AccessesMemory(packet(0xc0100000u)[0]), "MEM_SEMAPHORE must synchronize guest memory");
+    for (const auto queue : {0u, 0x20u}) {
+        AgcDriver::Pm4::Validate(packet(0xc0100000u), queue);
+        AgcDriver::Pm4::Validate(packet(0xe0000000u), queue);
+    }
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xe0010000u), 0); }, "mailbox");
+    expectFailure([&] { AgcDriver::Pm4::Validate(packet(0xa0000000u), 0); }, "MEM_SEMAPHORE operation");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore), high(&semaphore), 0xc0100000u, 0}), 0); }, "packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {0, 0, 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x39, {low(&semaphore) + 4, high(&semaphore), 0xc0100000u}), 0); }, "MEM_SEMAPHORE address");
+
+    semaphore = 0x500000000ull;
+    auto words = packet(0xc0100000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE signal of type 1 did not write 1");
+
+    semaphore = 5;
+    words = packet(0xc0000000u);
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 6, "a MEM_SEMAPHORE signal of type 0 did not increment");
+
+    constexpr std::uint64_t queueSignals = 2000, cpuSignals = 200000;
+    semaphore = 0;
+    std::vector<std::uint32_t> graphicsWords, computeWords;
+    for (std::uint64_t index = 0; index < queueSignals; ++index) {
+        const auto signal = packet(0xc0000000u);
+        graphicsWords.insert(graphicsWords.end(), signal.begin(), signal.end());
+        computeWords.insert(computeWords.end(), signal.begin(), signal.end());
+    }
+    std::thread cpu([] {
+        for (std::uint64_t index = 0; index < cpuSignals; ++index) std::atomic_ref<std::uint64_t>(semaphore).fetch_add(1);
+    });
+    submitWords(graphicsWords);
+    submitWords(computeWords, 0x20);
+    cpu.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 2 * queueSignals + cpuSignals, "competing MEM_SEMAPHORE signals of type 0 lost an increment");
+
+    semaphore = 0;
+    marker = 0;
+    words = joinPackets({packet(0xe0000000u), makePacket(0x49, {0x0030c514, 0x20000000, low(&marker), high(&marker), 1, 0, 0})});
+    submitWords(words);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 0, "a MEM_SEMAPHORE wait passed a zero semaphore");
+    std::atomic_ref<std::uint64_t>(semaphore).store(2);
+    for (int waited = 0; waited < 2000 && std::atomic_ref<std::uint32_t>(marker).load() == 0; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 1, "work after a signalled MEM_SEMAPHORE wait never ran");
+    check(std::atomic_ref<std::uint64_t>(semaphore).load() == 1, "a MEM_SEMAPHORE wait did not take one from the semaphore");
 }
 
 void testSuspendPointWritesQueuedLabels() {
@@ -1102,6 +1273,11 @@ void testConditionalSubmission() {
     rejected(joinPackets({sentinel, indirectBuffer(unaligned)}), "ends inside a packet");
     rejected(joinPackets({sentinel, indirectBuffer(overlong), writeWord(results[13], 1)}), "exceeds its command buffer");
     check(results[13] == 0, "a rejected conditional submission executed a guarded packet");
+}
+
+void testRewindPayloadBits() {
+    for (const auto payload : {0x00000000u, 0x80000000u, 0x01000000u, 0x81000000u}) AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0);
+    for (const auto payload : {0x82000000u, 0x80000001u, 0x00800000u}) expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0); }, "unsupported REWIND payload bits");
 }
 
 void testNopPadSubmission() {
@@ -1575,6 +1751,53 @@ void testStallWatchdogRewind() {
     check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 REWIND 00000000") != std::string::npos; }), "the stall dump does not decode the stalled REWIND");
 }
 
+void testRewindTailTrace() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    if (DrawPipeline::Depth() == 0) throw std::runtime_error("the REWIND trace test needs the pipelined draw path");
+    check(AgcDriver::PerformanceTrace::Configured(), "the REWIND trace test runs without a trace window");
+    const char* directory = std::getenv("APS5_TRACE_DIR");
+    check(directory != nullptr, "the REWIND trace test has no APS5_TRACE_DIR");
+    const auto summaryPath = std::filesystem::path(directory) / "aps5-summary.jsonl";
+    std::filesystem::remove(summaryPath);
+    alignas(8) static std::uint32_t started = 0;
+    static auto warm = joinPackets({writeWord(started, 1)});
+    submitWords(warm);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(started).load() == 1, "the queue worker did not start");
+    constexpr std::size_t Tails = 12;
+    alignas(8) static std::array<std::uint32_t, Tails> gates{};
+    alignas(8) static std::uint32_t done = 0;
+    static std::vector<std::uint32_t> words;
+    words.clear();
+    for (std::size_t index = 0; index < Tails; ++index) {
+        const auto rewind = makePacket(0x59, {0x80000000u});
+        const auto wait = makePacket(0x3c, {0x13, low(&gates[index]), high(&gates[index]), 1, 0xffffffffu, 0x19});
+        words.insert(words.end(), rewind.begin(), rewind.end());
+        words.insert(words.end(), wait.begin(), wait.end());
+    }
+    const auto last = writeWord(done, 1);
+    words.insert(words.end(), last.begin(), last.end());
+    AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+    submitWords(words);
+    for (auto& gate : gates) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the last REWIND tail did not run");
+    AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+    AgcDriver::PerformanceTrace::StopOutput();
+    std::ifstream summary(summaryPath);
+    std::string line;
+    check(static_cast<bool>(std::getline(summary, line)), "the trace window wrote no summary line");
+    const std::string_view key = "\"worker_busy_pct\":{\"queue worker 0x0\":";
+    const auto at = line.find(key);
+    check(at != std::string::npos, "the summary line has no busy share for queue worker 0x0");
+    const double busy = std::strtod(line.c_str() + at + key.size(), nullptr);
+    std::printf("queue worker 0x0 busy over %zu released REWIND tails: %.1f%%\n", Tails, busy);
+    check(busy <= 150.0, "the queue worker's busy share counts nested REWIND tails more than once");
+}
+
 struct RenderingGateState {
     std::mutex mutex;
     std::condition_variable changed;
@@ -1664,6 +1887,129 @@ void testUnwrittenUserData() {
     expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::readRegister(shader, 0x95)); }, "required shader register");
 }
 
+void testWaitRegMemMasking() {
+    alignas(8) static std::uint32_t mem32[4] = {0x12345678u, 0x9abcdef0u, 0x55555555u, 0xaaaaaaaau};
+    const auto base32 = reinterpret_cast<std::uintptr_t>(&mem32[0]);
+    for (std::uint32_t offset = 0; offset < 4; ++offset) {
+        const auto misaligned = base32 + offset;
+        const auto packet = makePacket(0x3c, {0x13, static_cast<std::uint32_t>(misaligned), static_cast<std::uint32_t>(misaligned >> 32u), 0x12345678u, 0xffffffffu, 0});
+        AgcDriver::Pm4::Validate(packet, 0);
+        AgcDriver::Pm4::Validate(packet, 0x20);
+        const auto decoded = AgcDriver::Pm4::DecodeWait(packet);
+        check(decoded.address == base32, "WAIT_REG_MEM did not mask low 2 address bits");
+        check(decoded.bytes == 4, "WAIT_REG_MEM awaited bytes mismatch");
+        check(AgcDriver::Pm4::WaitSatisfied(packet), "WAIT_REG_MEM satisfied check failed with misaligned address");
+        check(AgcDriver::Pm4::WaitSatisfiedUnchecked(packet), "WAIT_REG_MEM satisfied unchecked failed with misaligned address");
+    }
+
+    alignas(8) static std::uint64_t mem64[2] = {0x0123456789abcdefull, 0xfedcba9876543210ull};
+    const auto base64 = reinterpret_cast<std::uintptr_t>(&mem64[0]);
+    for (std::uint32_t offset = 0; offset < 8; ++offset) {
+        const auto misaligned = base64 + offset;
+        const auto packet = makePacket(0x93, {0x13, static_cast<std::uint32_t>(misaligned), static_cast<std::uint32_t>(misaligned >> 32u), 0x89abcdefu, 0x01234567u, 0xffffffffu, 0xffffffffu, 0});
+        AgcDriver::Pm4::Validate(packet, 0);
+        AgcDriver::Pm4::Validate(packet, 0x20);
+        const auto decoded = AgcDriver::Pm4::DecodeWait(packet);
+        check(decoded.address == base64, "WAIT_REG_MEM_64 did not mask low 3 address bits");
+        check(decoded.bytes == 8, "WAIT_REG_MEM_64 awaited bytes mismatch");
+        check(AgcDriver::Pm4::WaitSatisfied(packet), "WAIT_REG_MEM_64 satisfied check failed with misaligned address");
+        check(AgcDriver::Pm4::WaitSatisfiedUnchecked(packet), "WAIT_REG_MEM_64 satisfied unchecked failed with misaligned address");
+    }
+
+    const auto misaligned4 = base64 + 4;
+    for (std::uint32_t offset = 0; offset < 4; ++offset) {
+        const auto misaligned = misaligned4 + offset;
+        const auto packet = makePacket(0x93, {0x13, static_cast<std::uint32_t>(misaligned), static_cast<std::uint32_t>(misaligned >> 32u), 0x01234567u, 0, 0xffffffffu, 0, 0});
+        AgcDriver::Pm4::Validate(packet, 0);
+        AgcDriver::Pm4::Validate(packet, 0x20);
+        const auto decoded = AgcDriver::Pm4::DecodeWait(packet);
+        check(decoded.address == misaligned4, "WAIT_REG_MEM_64 with zero high mask did not mask to 4-byte alignment");
+        check(decoded.bytes == 4, "WAIT_REG_MEM_64 with zero high mask expected 4 awaited bytes");
+        check(AgcDriver::Pm4::WaitSatisfied(packet), "WAIT_REG_MEM_64 zero high mask satisfied check failed");
+        check(AgcDriver::Pm4::WaitSatisfiedUnchecked(packet), "WAIT_REG_MEM_64 zero high mask unchecked check failed");
+    }
+}
+
+void waitDrawPipelineIdle() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() != 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+void testWaitRegMemPipelineDrain() {
+    alignas(8) static std::uint32_t satisfiedTarget = 42;
+    alignas(8) static std::uint32_t pendingTarget = 0;
+    const auto pendingAddr = reinterpret_cast<std::uintptr_t>(&pendingTarget);
+
+    std::atomic<bool> blockerHold{true};
+    std::atomic<bool> blockerStarted{false};
+    AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+        blockerStarted.store(true);
+        while (blockerHold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, { {pendingAddr, pendingAddr + 4} });
+
+    while (!blockerStarted.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() == 1, "draw pipeline should have 1 item");
+
+    auto nonOverlappingWords = makePacket(0x3c, {0x13, low(&satisfiedTarget), high(&satisfiedTarget), 42, 0xffffffffu, 0});
+    submitWords(nonOverlappingWords, 0);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() < 2 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() >= 2, "non-overlapping wait did not elide pipeline drain");
+
+    blockerHold.store(false);
+    AgcDriverWaitIdle_nid_postfix();
+    waitDrawPipelineIdle();
+    check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() == 0, "draw pipeline should be idle");
+
+    std::atomic<bool> blocker2Hold{true};
+    std::atomic<bool> blocker2Started{false};
+    AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+        blocker2Started.store(true);
+        while (blocker2Hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, { {pendingAddr, pendingAddr + 4} });
+
+    while (!blocker2Started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    auto overlappingWords = makePacket(0x3c, {0x13, low(&pendingTarget), high(&pendingTarget), 99, 0xffffffffu, 0});
+    submitWords(overlappingWords, 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() == 1, "overlapping wait proceeded past drain while pipeline held");
+
+    std::atomic_ref<std::uint32_t>(pendingTarget).store(99);
+    blocker2Hold.store(false);
+
+    AgcDriverWaitIdle_nid_postfix();
+    waitDrawPipelineIdle();
+    check(AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding() == 0, "pipeline should be idle after overlapping wait drain");
+}
+
+void testWaitRegMem64ZeroHighMaskDrain() {
+    alignas(8) static std::uint32_t qword[2] = {42, 0};
+    const auto base = reinterpret_cast<std::uintptr_t>(&qword[0]);
+    const auto packetAddr = base + 4;
+    std::atomic<bool> hold{true};
+    std::atomic<bool> started{false};
+    AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+        started.store(true);
+        while (hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, { {base, base + 4} });
+    while (!started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto words = makePacket(0x93, {0x13, static_cast<std::uint32_t>(packetAddr), static_cast<std::uint32_t>(packetAddr >> 32u), 42, 0, 0xffffffffu, 0, 0});
+    submitWords(words, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto outstanding = AgcDriver::DriverDetail::DrawPipeline::Queue0().Outstanding();
+    std::atomic_ref<std::uint32_t>(qword[1]).store(42);
+    hold.store(false);
+    AgcDriverWaitIdle_nid_postfix();
+    check(outstanding == 1, "WAIT_REG_MEM_64 with zero high mask at 4 mod 8 skipped the drain of a pending write to the dword it compares");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "failure") {
@@ -1679,7 +2025,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
@@ -1700,6 +2046,7 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();
         testRegisters();
@@ -1707,6 +2054,7 @@ int main(int argc, char** argv) {
         testContextAndBases();
         testIndexedDraw();
         testAutoDraw();
+        testIndirectDrawRange();
         testIndirectDraw();
         testIndexAttributesIndirect();
         testMemory();
@@ -1717,6 +2065,7 @@ int main(int argc, char** argv) {
         testConditionalValidation();
         testConditionReadSynchronization();
         testEventWrite();
+        testReleaseMemDataSelects();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();
@@ -1724,12 +2073,19 @@ int main(int argc, char** argv) {
         testUnwrittenUserData();
         testDriverSubmission();
         testRegisterListsReadAtSubmission();
+        testInvalidRegisterListEntries();
+        testPartlyUpdatedRegisterListSkipsOnlyItsInvalidEntries();
+        testRegisterListReadAgainAtExecution();
         testIndexAttributesReadAtExecution();
         testPredicatedSubmission();
         testConditionalSubmission();
         testSuspendPointWritesQueuedLabels();
+        testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
+        testWaitRegMemMasking();
+        testWaitRegMemPipelineDrain();
+        testWaitRegMem64ZeroHighMaskDrain();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;

@@ -30,6 +30,25 @@ class DatabaseCacheTests(unittest.TestCase):
                         else:
                             self.assertEqual(result.stdout.split(), ["NAME", "NID"])
 
+    def test_environment_variable_selects_the_database_and_help_names_it(self):
+        script = str(Path(nid_names.__file__))
+        helped = subprocess.run([sys.executable, script, "--help"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(helped.returncode, 0, helped.stderr)
+        self.assertIn("ANYPS5_NID_DB", " ".join(helped.stdout.split()))
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "nid database.csv"
+            nid = nid_names.compute_nid("sceExample")
+            database.write_text(f"{nid} sceExample\n", encoding="utf-8")
+            scratch = str(Path(directory) / "scratch")
+            Path(scratch).mkdir()
+            environment = {**os.environ, "ANYPS5_NID_DB": str(database), "TEMP": scratch, "TMP": scratch, "TMPDIR": scratch}
+            result = subprocess.run([sys.executable, script, "--nid", nid, "--json"], capture_output=True, text=True,
+                                    env=environment, timeout=20)
+            self.assertEqual(list(Path(scratch).iterdir()), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("downloading", result.stderr)
+        self.assertIn("sceExample", result.stdout)
+
     def test_interrupted_download_does_not_publish_a_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "cache" / "aerolib.csv"
@@ -210,6 +229,29 @@ class NidArgumentTests(unittest.TestCase):
         rows = json.loads(printed.call_args.args[0])["rows"]
         self.assertEqual({row["nid"]: row["suggestion"] for row in rows}, database)
 
+    def test_symbol_files_and_stdin_compute_nids_without_a_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = Path(directory) / "symbols.txt"
+            symbols = ["sceExample", "-leading-dash", "  literal spaces  ", "unicode_Ω", "sceExample"]
+            names.write_bytes(("\ufeff" + "\r\n".join(symbols) + "\r\n\r\n").encode("utf-8"))
+            for source in (str(names), "-"):
+                with self.subTest(source=source), patch("sys.stdin", io.StringIO(names.read_text(encoding="utf-8-sig"))), \
+                        patch.object(nid_names, "load_db", side_effect=AssertionError("database used")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(nid_names.main(["--name", "first", "--from-file", source, "--json"]), 0)
+                rows = json.loads(output.getvalue())["symbols"]
+                self.assertEqual(rows, [{"name": name, "nid": nid_names.compute_nid(name)} for name in ["first", *symbols]])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+                nid_names.main(["--from-file", str(names), "--nid"])
+            self.assertEqual(exited.exception.code, 2)
+            with patch.object(nid_names, "load_db", side_effect=AssertionError("database used")), \
+                    contextlib.redirect_stdout(io.StringIO()) as output, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+                nid_names.main(["--from-file", str(names.parent / "missing"), "--json"])
+            self.assertEqual(exited.exception.code, 2)
+            self.assertEqual(output.getvalue(), "")
+
+
 
 class SourceCollectionTests(unittest.TestCase):
     def setUp(self):
@@ -280,6 +322,16 @@ auto example = "APS5_ASM_FUNCTION(\"sceQuoted_nid_postfix\")";
         self.assertEqual(nid_names.collect_real_names(), {
             "sceAsmCall", "sceAsmCall_nid_postfix",
             "sigAsmCall", "sigAsmCall_nid_postfix",
+        })
+
+    def test_disambiguated_definitions_are_real_names_of_their_symbol(self):
+        self.write_source('int APS5_VABI fstat_nid_disambig1_nid_postfix(int fd) { return 0; }\n'
+                          'int APS5_VABI pwrite_nid_disambig12(int fd) { return 0; }\n'
+                          'int APS5_VABI sceKeep_nid_disambigA() { return 0; }\n')
+        self.assertEqual(nid_names.collect_real_names(), {
+            "fstat", "fstat_nid_disambig1_nid_postfix",
+            "pwrite", "pwrite_nid_disambig12",
+            "sceKeep_nid_disambigA",
         })
 
     def test_formatted_alias_macro_is_detected(self):
@@ -372,6 +424,33 @@ int APS5_VABI sceReal() { return 0; }
     def test_spliced_line_comment_and_macro_tokens(self):
         self.write_source('// continued \\\nAPS5_EXPORT("AAAAAAAAAAA", exampleUnknown00);\nAPS5_EX\\\nPORT("BBBBBBBBBBB", exampleUnknown01);\n')
         self.assertEqual(nid_names.collect_unknowns(), {"BBBBBBBBBBB": "core/libs/prx/libSceExample/Export.cpp:exampleUnknown01"})
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(nid_names.sys, "stdout", out), patch.object(nid_names.sys, "stderr", err):
+            try:
+                nid_names.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 

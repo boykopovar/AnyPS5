@@ -1,13 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const char* name);
-void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
-int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -33,9 +27,11 @@ int main() {
     Require(_Mtx_lock_nid_postfix(&mutex) == busy);
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     _Mtx_destroy_nid_postfix(&mutex);
+
     Require(mutex == nullptr);
 
     RequireThrows<std::invalid_argument>([] {
         _Mtx_init_with_name_nid_postfix(nullptr, plain, "NullHandle");
+
     });
 }

@@ -136,7 +136,6 @@ void testFlipAndBoundary() {
     expectFailure([&] { AgcDriverRegisterVideoOutput_nid_postfix(7, output); });
     std::array<std::uint32_t, 6> words{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
     Packet packet{words.data(), 6, 0, {}};
-    expectFailure([&] { sceAgcDriverSubmitAcb(0x20, &packet); });
     words[0] = 0xc004105d;
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     words[0] = 0xc004105c;
@@ -322,6 +321,18 @@ void testComputeRenderingWait() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+void testComputeFlip() {
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    std::array<std::uint32_t, 6> words{0xc004105c, 7, 0xfffffffeu, 1, 0x76543211u, 0xfedcba98u};
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "compute flip submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->state->ready == 1 && output->state->failed == 0, "a flip submitted on a compute queue was not handed to its output");
+    check(output->state->last.argument == -0x123456789abcdefLL && output->state->last.index == -2 && output->state->last.mode == 1, "decoded compute flip arguments changed");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 void testFailure() {
     auto output = std::make_shared<Output>();
     output->state->fail = true;
@@ -344,7 +355,11 @@ void testFailureLog() {
     std::fflush(stderr);
     const int saved = APS5_DUP(APS5_FILENO(stderr));
     check(saved >= 0, "stderr could not be saved");
-    check(std::freopen(path.string().c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+#ifdef _WIN32
+    check(_wfreopen(path.wstring().c_str(), L"wb", stderr) != nullptr, "stderr could not be redirected");
+#else
+    check(std::freopen(path.c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+#endif
     std::string message;
     std::string error;
     try {
@@ -423,7 +438,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2) testReset(std::string(argv[1]) == "compute");
-        else { testFlipAndBoundary(); testFlipHold(); testComputeRenderingWait(); testFailure(); }
+        else { testFlipAndBoundary(); testFlipHold(); testComputeRenderingWait(); testComputeFlip(); testFailure(); }
         const auto shutdown = expectFailure([] { LibcRunShutdown_nid_postfix(); });
         check(shutdown.find(argc == 2 ? (std::string(argv[1]) == "compute" ? "not readable" : "required shader register") : "intentional flip failure") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC flip and suspend tests passed");

@@ -1,3 +1,4 @@
+#include "prx/libSceUsbd/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -28,35 +29,8 @@ constexpr std::uint8_t TRANSFER_TYPE_BULK = 2;
 constexpr std::uint8_t TRANSFER_TYPE_INTERRUPT = 3;
 constexpr std::int32_t CONTROL_SETUP_SIZE = 8;
 constexpr std::uint8_t SUPPORTED_TRANSFER_FLAGS = LIBUSB_TRANSFER_SHORT_NOT_OK | LIBUSB_TRANSFER_ADD_ZERO_PACKET;
-
-struct UsbdTimeval {
-    std::int64_t seconds;
-    std::int64_t microseconds;
-};
-
-struct UsbdIsoPacketDescriptor {
-    std::uint32_t length;
-    std::uint32_t actualLength;
-    std::int32_t status;
-};
-
-using UsbdTransferCallback = void (APS5_VABI*)(struct UsbdTransfer*);
-
-struct UsbdTransfer {
-    void* deviceHandle;
-    std::uint8_t flags;
-    std::uint8_t endpoint;
-    std::uint8_t type;
-    std::uint32_t timeout;
-    std::int32_t status;
-    std::int32_t length;
-    std::int32_t actualLength;
-    UsbdTransferCallback callback;
-    void* userData;
-    std::uint8_t* buffer;
-    std::int32_t numIsoPackets;
-    UsbdIsoPacketDescriptor isoPacketDescriptors[1];
-};
+constexpr std::uint16_t STRING_DESCRIPTOR_SIZE = 255;
+constexpr std::uint32_t STRING_DESCRIPTOR_TIMEOUT = 1000;
 
 static_assert(offsetof(UsbdTransfer, timeout) == 12 && offsetof(UsbdTransfer, callback) == 32 && offsetof(UsbdTransfer, numIsoPackets) == 56 && offsetof(UsbdTransfer, isoPacketDescriptors) == 60);
 static_assert(sizeof(libusb_device_descriptor) == 18);
@@ -139,6 +113,13 @@ void LIBUSB_CALL CompleteTransfer(libusb_transfer* host) {
     }
     libusb_free_transfer(host);
     if (guest->callback != nullptr) guest->callback(guest);
+}
+
+bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* descriptor) {
+    std::memset(descriptor, 0, STRING_DESCRIPTOR_SIZE);
+    const auto value = static_cast<std::uint16_t>(LIBUSB_DT_STRING << 8 | descriptorIndex);
+    const int result = libusb_control_transfer(handle, LIBUSB_ENDPOINT_IN, LIBUSB_REQUEST_GET_DESCRIPTOR, value, languageId, descriptor, STRING_DESCRIPTOR_SIZE, STRING_DESCRIPTOR_TIMEOUT);
+    return result >= 0 && descriptor[1] == LIBUSB_DT_STRING;
 }
 
 }
@@ -532,6 +513,147 @@ void APS5_VABI sceUsbdUnrefDevice(void* device) {
     auto* host = static_cast<libusb_device*>(device);
     DropDeviceReference(state, host);
     libusb_unref_device(host);
+}
+
+std::int32_t APS5_VABI sceUsbdClearHalt(void* deviceHandle, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdDetachKernelDriver(void* deviceHandle, int interfaceNumber) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdEventHandlerActive() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config) {
+    if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    libusb_config_descriptor* host = nullptr;
+    const int result = libusb_get_config_descriptor_by_value(KnownDevice(device, __func__), configurationValue, &host);
+    *config = nullptr;
+    if (result != 0) return ToGuestError(result);
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    state.configs.insert(host);
+    *config = host;
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration) {
+    if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    int host = 0;
+    const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
+    if (result == 0) *configuration = host;
+    return ToGuestError(result);
+}
+
+std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
+    if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
+    if (length > 65535) length = 65535;
+    return ToGuestError(libusb_get_descriptor(handle, descriptorType, descriptorIndex, data, length));
+}
+
+void* APS5_VABI sceUsbdGetDevice(void* deviceHandle) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceUsbdGetDeviceSpeed(void* device) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetMaxIsoPacketSize(void* device, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetMaxPacketSize(void* device, std::uint8_t endpoint) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
+    if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
+    if (length > 65535) length = 65535;
+    data[0] = 0;
+    std::uint8_t descriptor[STRING_DESCRIPTOR_SIZE];
+    if (!RequestStringDescriptor(handle, 0, 0, descriptor)) return SCE_USBD_ERROR_OTHER;
+    const auto languageId = static_cast<std::uint16_t>(descriptor[2] | descriptor[3] << 8);
+    if (!RequestStringDescriptor(handle, descriptorIndex, languageId, descriptor) || descriptor[0] < 2) return SCE_USBD_ERROR_OTHER;
+    std::int32_t units = descriptor[0] / 2 - 1;
+    if (units > length - 1) units = length - 1;
+    std::uint8_t byteOrder = 3;
+    std::int32_t written = 0;
+    for (std::int32_t unit = 0; unit < units; ++unit) {
+        const auto code = static_cast<std::uint16_t>(descriptor[2 * unit + 2] | descriptor[2 * unit + 3] << 8);
+        std::uint8_t character;
+        if ((code & 0xFF00) == 0 && (byteOrder & 1) != 0) {
+            character = static_cast<std::uint8_t>(code);
+            byteOrder = 1;
+        } else if ((code & 0x00FF) == 0 && (byteOrder & 2) != 0) {
+            character = static_cast<std::uint8_t>(code >> 8);
+            byteOrder = 2;
+        } else {
+            continue;
+        }
+        if (character < 0x20 || character > 0x7E || character == '<' || character == '>') continue;
+        data[written++] = character;
+    }
+    data[written] = 0;
+    return written;
+}
+
+std::int32_t APS5_VABI sceUsbdHandleEvents() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdHandleEventsLocked(UsbdTimeval* timeout) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI sceUsbdLockEventWaiters() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI sceUsbdLockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void* APS5_VABI sceUsbdOpenDeviceWithVidPid(std::uint16_t vendorId, std::uint16_t productId) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdSetInterfaceAltSetting(void* deviceHandle, int interfaceNumber, int alternateSetting) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::int32_t APS5_VABI sceUsbdTryLockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI sceUsbdUnlockEventWaiters() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI sceUsbdUnlockEvents() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+std::int32_t APS5_VABI sceUsbdWaitForEvent(UsbdTimeval* timeout) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

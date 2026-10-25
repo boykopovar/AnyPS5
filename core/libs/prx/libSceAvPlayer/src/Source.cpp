@@ -137,15 +137,21 @@ private:
 class Clock {
 public:
     double Now() const {
+        if (overrideTime >= 0.0) return overrideTime;
         if (!running || paused) return base;
         const std::chrono::duration<double, std::milli> elapsed = std::chrono::steady_clock::now() - wall;
         return std::max(0.0, base + elapsed.count() * speed / NormalSpeed);
+    }
+
+    void SetOverrideForTest(double milliseconds) {
+        overrideTime = milliseconds;
     }
 
     void Rebase(double milliseconds) {
         base = milliseconds;
         wall = std::chrono::steady_clock::now();
         running = true;
+        if (overrideTime >= 0.0) overrideTime = milliseconds;
     }
 
     void Reset(double milliseconds) {
@@ -176,6 +182,7 @@ private:
     std::int32_t speed = NormalSpeed;
     bool running = false;
     bool paused = false;
+    double overrideTime = -1.0;
 };
 
 enum class PacketKind { Data, Flush, Drain, End, Reopen };
@@ -321,7 +328,8 @@ public:
         return true;
     }
 
-    int Start() override {
+    int Start(std::uint64_t startTime) override {
+        if (duration != 0 && startTime > duration) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         if (video.stream < 0 && audio.stream < 0) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         for (auto* decoder : {&video, &audio}) {
             if (decoder->stream < 0) continue;
@@ -332,7 +340,7 @@ public:
             }
         }
         addVideoDecodeAheadBuffers();
-        const auto start = startOffset;
+        const auto start = startTime != 0 ? startTime : startOffset;
         startOffset = 0;
         seek(start);
         {
@@ -347,6 +355,9 @@ public:
             audioDriving = false;
             presented = false;
             lastPresented = 0;
+            audioHasTimestamp = false;
+            lastAudioTimestamp = 0.0;
+            reconciledAudioClock = false;
             presentationClock.Reset(static_cast<double>(start));
             for (auto* decoder : {&video, &audio}) {
                 decoder->switchTo = -1;
@@ -432,6 +443,39 @@ public:
         condition.notify_all();
     }
 
+    void SetClockTimeForTest(double milliseconds) override {
+        std::lock_guard lock(mutex);
+        presentationClock.SetOverrideForTest(milliseconds);
+    }
+
+    void SetHoldAudioEofForTest(bool hold) override {
+        std::lock_guard lock(mutex);
+        holdAudioEof = hold;
+        condition.notify_all();
+    }
+
+    bool AudioEofHeldForTest() override {
+        std::lock_guard lock(mutex);
+        return audioEofHeld;
+    }
+
+    bool AudioEndedForTest() override {
+        std::lock_guard lock(mutex);
+        return audio.stream >= 0 && audio.ended;
+    }
+
+    int QueuedAudioForTest() override {
+        std::lock_guard lock(mutex);
+        return static_cast<int>(audio.frames.size());
+    }
+
+    bool NextQueuedAudioTimestampForTest(std::uint64_t& timestamp) override {
+        std::lock_guard lock(mutex);
+        if (audio.frames.empty()) return false;
+        timestamp = audio.frames.front().info.timestamp;
+        return true;
+    }
+
     bool GetVideoData(AvPlayerFrameInfoEx& info) override {
         bool taken = false;
         {
@@ -463,6 +507,7 @@ public:
 
     std::uint64_t CurrentTime() override {
         std::lock_guard lock(mutex);
+        reconcileExhaustedAudioClock();
         return clockMillis();
     }
 
@@ -498,6 +543,34 @@ private:
         return duration != 0 ? std::min(milliseconds, duration) : milliseconds;
     }
 
+    bool audioExhausted() const {
+        return audioHasTimestamp && demuxEnded && !reposition && audio.ended && audio.packets.empty() && audio.frames.empty();
+    }
+
+    bool audioClockReconciled() const {
+        return reconciledAudioClock && reconciledAudioEpoch == clockEpoch;
+    }
+
+    void markAudioClockReconciled() {
+        reconciledAudioClock = true;
+        reconciledAudioEpoch = clockEpoch;
+    }
+
+    void reconcileExhaustedAudioClock() {
+        if (!audioDriving || !audioExhausted() || audioClockReconciled()) return;
+        presentationClock.Rebase(lastAudioTimestamp);
+        markAudioClockReconciled();
+    }
+
+    void waitBeforeAudioEof() {
+        std::unique_lock lock(mutex);
+        if (!holdAudioEof || stopping) return;
+        audioEofHeld = true;
+        condition.notify_all();
+        condition.wait(lock, [&] { return stopping || !holdAudioEof; });
+        audioEofHeld = false;
+    }
+
     bool takeVideo(AvPlayerFrameInfoEx& info) {
         if (!started || video.stream < 0 || speed < 0) return false;
         if (speed != NormalSpeed) dropLateAudio();
@@ -507,7 +580,7 @@ private:
         while (!frames.empty() && frames.front().epoch < stale) recycleFront(video);
         if (frames.empty()) return false;
         const auto& front = frames.front();
-        if (paused && front.epoch <= clockEpoch) return false;
+        if (paused && presented && front.epoch <= clockEpoch) return false;
         if (front.epoch > clockEpoch) {
             if (synced && audioDriving && speed == NormalSpeed) return false;
             if (synced && front.seamless && presented && presentationClock.Now() < static_cast<double>(lastPresented + frameDuration())) return false;
@@ -516,7 +589,8 @@ private:
         }
         if (synced || audioDriving) {
             const auto now = presentationClock.Now();
-            if (synced && static_cast<double>(front.info.timestamp) > now) return false;
+            const double syncTolerance = static_cast<double>(frameDuration()) * 0.75;
+            if (synced && static_cast<double>(front.info.timestamp) > now + syncTolerance) return false;
             while (frames.size() > 1 && frames[1].epoch == frames.front().epoch && static_cast<double>(frames[1].info.timestamp) <= now) recycleFront(video);
         }
         present(video, info);
@@ -529,12 +603,23 @@ private:
         if (!started || paused || audio.stream < 0 || speed != NormalSpeed) return false;
         auto& frames = audio.frames;
         while (!frames.empty() && frames.front().epoch < minEpoch) recycleFront(audio);
-        if (frames.empty()) return false;
+        if (frames.empty()) {
+            reconcileExhaustedAudioClock();
+            return false;
+        }
         const auto epoch = frames.front().epoch;
         present(audio, info);
+        const auto currentClock = presentationClock.Now();
+        const auto timestamp = static_cast<double>(info.timestamp);
+        lastAudioTimestamp = timestamp;
+        audioHasTimestamp = true;
+        const bool drifted = currentClock > timestamp + 50.0 || timestamp > currentClock + 50.0;
+        const bool exhausted = audioExhausted() && !audioClockReconciled();
+        const bool shouldRebase = !audioDriving || epoch > clockEpoch || drifted || exhausted;
         audioDriving = true;
         clockEpoch = std::max(clockEpoch, epoch);
-        presentationClock.Rebase(static_cast<double>(info.timestamp));
+        if (shouldRebase) presentationClock.Rebase(timestamp);
+        if (exhausted) markAudioClockReconciled();
         return true;
     }
 
@@ -782,6 +867,7 @@ private:
                     pushAll(PacketKind::Flush, demuxEpoch, requested->target);
                     demuxEnded = false;
                     audioDriving = false;
+                    reconciledAudioClock = false;
                 }
                 condition.notify_all();
                 if (requested->announce) events.OnWarning(SCE_AVPLAYER_ERROR_WAR_JUMP_COMPLETE);
@@ -876,9 +962,11 @@ private:
                     receiveFrames(decoder, frame);
                     avcodec_flush_buffers(decoder.context);
                 }
+                if (item.kind == PacketKind::End && !decoder.video) waitBeforeAudioEof();
                 std::lock_guard lock(mutex);
                 if (item.kind == PacketKind::End) {
                     decoder.ended = true;
+                    if (!decoder.video) reconcileExhaustedAudioClock();
                 } else {
                     decoder.epoch = item.epoch;
                     decoder.skipBefore = 0;
@@ -1085,6 +1173,12 @@ private:
     std::uint64_t clockEpoch = 0;
     std::deque<std::uint64_t> loopEpochs;
     bool audioDriving = false;
+    bool audioHasTimestamp = false;
+    double lastAudioTimestamp = 0.0;
+    bool reconciledAudioClock = false;
+    std::uint64_t reconciledAudioEpoch = 0;
+    bool holdAudioEof = false;
+    bool audioEofHeld = false;
     bool presented = false;
     std::uint64_t lastPresented = 0;
     Clock presentationClock;

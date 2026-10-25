@@ -15,10 +15,12 @@
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtTape.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SavedExecMaskLoop.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -29,6 +31,7 @@
 #include "ShaderDiskCache.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
+#include <set>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -167,7 +170,6 @@ void verifyFrontendIdentity() {
     require((preparation.AcquireFrontend(partial) == first) == reuse, "frontend pair: partial-thread state changed the frontend identity");
     auto target = request;
     target.target.subgroupSize = 64u;
-    target.context.waveSize = 32u;
     target.context.compute->numThreads = {32u, 2u, 1u};
     require((preparation.AcquireFrontend(target) == first) == reuse, "frontend pair: translation-only state changed the frontend identity");
     const std::array<std::uint32_t, 2> changedUserData{1u, 2u};
@@ -196,6 +198,10 @@ void verifyFrontendIdentity() {
     changed.context.userDataBaseRegister = 4u;
     verifyMiss(changed, "frontend pair: changed user-data base reused the frontend");
     changed = request;
+    changed.context.waveSize = 32u;
+    changed.context.compute->numThreads = {32u, 2u, 1u};
+    verifyMiss(changed, "frontend pair: a different wave size reused the frontend");
+    changed = request;
     changed.context.userData = std::span<const std::uint32_t>(userData).first(1u);
     verifyMiss(changed, "frontend pair: changed user-data count reused the frontend");
     changed = request;
@@ -219,6 +225,25 @@ void verifyFrontendIdentity() {
     }
     require(failed, "frontend pair: invalid code did not fail during frontend construction");
     require((preparation.AcquireFrontend(request) == first) == reuse, "frontend pair: a failed miss replaced the prior frontend");
+}
+
+void verifyFrontendWaveSizeCalls() {
+    using namespace ShaderRecompiler;
+    const std::vector<std::uint32_t> code{
+        0xbb0e0005u,
+        0xd4c2000eu, 0x00020300u,
+        0xd5010002u, 0x003a0300u,
+        0xbf820001u,
+        0xbe80200eu,
+        0xbf810000u};
+    const std::array<std::uint32_t, 2> userData{};
+    for (const std::uint32_t waveSize : {32u, 64u}) {
+        auto request = FrontendRequest(code, userData);
+        request.context.waveSize = waveSize;
+        request.context.compute->numThreads = {waveSize, 1u, 1u};
+        ShaderPreparationContext preparation;
+        require(preparation.AcquireFrontend(request) != nullptr, "frontend wave size: a mask write that reuses the link pair and its v_cndmask read were refused");
+    }
 }
 
 void verifyFrontendProgram(const ShaderRecompiler::IrProgram& reused, const ShaderRecompiler::IrProgram& fresh) {
@@ -255,6 +280,7 @@ void verifyFrontendProgram(const ShaderRecompiler::IrProgram& reused, const Shad
 void verifyFrontendPair() {
     using namespace ShaderRecompiler;
     verifyFrontendIdentity();
+    verifyFrontendWaveSizeCalls();
     const bool reuse = std::getenv("APS5_NO_PERF_FRONTEND_PAIR") == nullptr;
     const std::vector<std::uint32_t> code{0xe0700000u, 0x80000000u, 0xbf810000u};
     const std::array<std::uint32_t, 4> buffer{0x10000000u, 0u, 0x40u, 0x00027facu};
@@ -317,7 +343,7 @@ void verifyFrontendPair() {
         const auto freshChanged = PrepareResourceProgram(translated);
         verifyFrontendProgram(changed, freshChanged);
         require(changed.WaveSize() != freshFull.WaveSize(), "frontend pair: changed translation inputs were ignored");
-        require((preparation.AcquireFrontend(request) == retained) == reuse, "frontend pair: translating a variant replaced the frontend");
+        require(preparation.AcquireFrontend(request) != retained, "frontend pair: a variant with another wave size reused the frontend");
     }
 
     for (const bool partialFirst : {false, true}) {
@@ -541,6 +567,297 @@ void verifyRegisterSources() {
     require(!EquivalentValue(plan, &samplerRegister, &firstVector), "different register types were merged");
 }
 
+void verifyPlanConditionPruning() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto equal = [&](IrValue& left, IrValue& right) -> IrValue& {
+        auto& compare = make(IrOpcode::IEqual32, IrType::Bool);
+        compare.AddArgument(&left);
+        compare.AddArgument(&right);
+        return compare;
+    };
+    constexpr std::uint32_t Additions = 64;
+    IrValue* address = &userData(0);
+    for (std::uint32_t index = 0; index < Additions; ++index) {
+        auto& sum = make(IrOpcode::IAdd32, IrType::U32);
+        sum.AddArgument(address);
+        sum.AddArgument(&constant(4));
+        address = &sum;
+    }
+    auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+    load.AddArgument(address);
+    auto& pair = make(IrOpcode::CompositeConstructU32x2, IrType::U32x2);
+    pair.AddArgument(&userData(1));
+    pair.AddArgument(&load);
+    auto& low = make(IrOpcode::CompositeExtractU32x2, IrType::U32);
+    low.AddArgument(&pair);
+    low.AddArgument(&constant(0));
+    static std::uint32_t word = 5;
+    const auto wordAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&word));
+    auto& handle = make(IrOpcode::CompositeConstructU64, IrType::U64);
+    handle.AddArgument(&userData(2));
+    handle.AddArgument(&userData(3));
+    auto& read = make(IrOpcode::LoadAddressU32, IrType::U32);
+    read.SetFlags(MemoryFlags{0, 0});
+    read.AddArgument(&handle);
+    read.AddArgument(&constant(0));
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    resources.controlFlow.push_back({&equal(load, constant(0)), {1, 2}, {}, {}});
+    resources.controlFlow.push_back({&equal(low, constant(7)), {3, 4}, {}, {}});
+    resources.controlFlow.push_back({&equal(read, constant(5)), {5, 6}, {}, {}});
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&equal(userData(4), constant(0)));
+    choice.AddArgument(&load);
+    choice.AddArgument(&constant(1));
+    resources.controlFlow.push_back({&equal(choice, constant(1)), {7, 8}, {}, {}});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    const auto copied = std::ranges::count_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::IAdd32; });
+    require(copied == 0, "plan pruning: the address computation under a load the evaluator cannot read was copied");
+    require(plan.controlFlow[0].condition == nullptr && plan.controlFlow[3].condition == nullptr, "plan pruning: a condition the evaluator can never read was kept");
+    require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
+    const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
+    require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
+    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == value.ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
+    const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
+    SrtRuntime runtime{data};
+    Detail::Evaluator evaluator(plan, runtime);
+    std::uint32_t result = 0;
+    require(evaluator.Evaluate(Detail::IrNode(plan.controlFlow[1].condition), result) && result == 1u, "plan pruning: a condition read through an extracted pair was not evaluated");
+    require(evaluator.Evaluate(Detail::IrNode(plan.controlFlow[2].condition), result) && result == 1u, "plan pruning: a condition on a raw read lost its handle");
+}
+
+struct PlanWalk {
+    std::vector<ShaderRecompiler::DescriptorValue> results;
+    std::vector<std::uint32_t> flat;
+    std::vector<std::uint8_t> active;
+};
+
+PlanWalk walkPlan(const ShaderRecompiler::IrResourcePlan& plan, std::span<const std::uint32_t> sources, std::span<const std::uint8_t> cleanFlatSlots, const ShaderRecompiler::SrtRuntime& runtime) {
+    PlanWalk walk;
+    ShaderRecompiler::SrtWalker{}.EvaluateRuntimeSources(plan, sources, runtime, walk.results, walk.flat, cleanFlatSlots, walk.active);
+    return walk;
+}
+
+bool readFive(void*, std::uint64_t, std::uint32_t* value) {
+    *value = 5u;
+    return true;
+}
+
+void verifyPlanRetention() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto binary = [&](IrOpcode opcode, IrType type, IrValue& left, IrValue& right) -> IrValue& {
+        auto& value = make(opcode, type);
+        value.AddArgument(&left);
+        value.AddArgument(&right);
+        return value;
+    };
+    constexpr std::uint32_t Chain = 64;
+    IrValue* address = &userData(4);
+    for (std::uint32_t step = 0; step < Chain; ++step) address = &binary(IrOpcode::IAdd32, IrType::U32, *address, constant(1));
+    auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+    load.AddArgument(address);
+    auto& low = binary(IrOpcode::CompositeExtractU32x2, IrType::U32, binary(IrOpcode::CompositeConstructU32x2, IrType::U32x2, userData(1), load), constant(0));
+    auto& mask = binary(IrOpcode::IEqual32, IrType::Bool, userData(5), constant(0));
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&mask);
+    choice.AddArgument(&userData(6));
+    choice.AddArgument(&load);
+    auto& offset = binary(IrOpcode::ReadFirstLane, IrType::U32, choice, mask);
+    auto& read = binary(IrOpcode::LoadAddressU32, IrType::U32, binary(IrOpcode::CompositeConstructU64, IrType::U64, userData(2), userData(3)), offset);
+    read.SetFlags(MemoryFlags{0, 0});
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    for (std::uint32_t source = 0; source < 2u; ++source) {
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 4;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &userData(10u + source * 4u + dword);
+        resources.descriptorSources.push_back(descriptor);
+        BufferResource buffer;
+        buffer.source = source;
+        resources.info.buffers.push_back(buffer);
+    }
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, low, constant(7)), {1, 2}, {0}, {}});
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, read, constant(5)), {3, 4}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {1}, {}});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    constexpr std::size_t Read = 40;
+    require(plan.valueStorage.Size() == Read, ("plan retention: the plan keeps " + std::to_string(plan.valueStorage.Size()) + " values; its conditions and descriptor sources read " + std::to_string(Read)).c_str());
+    require(std::ranges::none_of(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::IAdd32; }), "plan retention: the address under a vector load was copied");
+    const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
+    require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan retention: the vector load was not kept as a leaf");
+    std::array<std::uint32_t, 18> userWords{};
+    userWords[1] = 7u;
+    userWords[2] = 0x1000u;
+    userWords[6] = 8u;
+    for (std::uint32_t word = 10; word < userWords.size(); ++word) userWords[word] = 0x100u + word;
+    SrtRuntime runtime{userWords};
+    runtime.readMemory = readFive;
+    runtime.readSpecializationMemory = readFive;
+    const auto copiedWalk = walkPlan(plan, plan.materializationSources, plan.cleanFlatSlots, runtime);
+    const std::array<std::uint32_t, 2> sources{0u, 1u};
+    const auto wholeWalk = walkPlan(program.Resources(), sources, {}, runtime);
+    require(wholeWalk.active == std::vector<std::uint8_t>{1u, 0u}, "plan retention: the program's walk did not decide both conditions");
+    require(copiedWalk.active == wholeWalk.active && copiedWalk.results == wholeWalk.results && copiedWalk.flat == wholeWalk.flat, "plan retention: the plan's walk differs from the program's");
+}
+
+void verifyPlanRetentionChains() {
+    using namespace ShaderRecompiler;
+    std::vector<std::size_t> kept;
+    std::vector<std::size_t> conditions;
+    for (const std::uint32_t chain : {1u, 16u, 64u}) {
+        std::vector<std::uint32_t> code{0xf4080600u, 0xfa000060u, 0xbf8cc07fu, 0x7e140300u};
+        code.insert(code.end(), chain, 0x4a141481u);
+        code.insert(code.end(), {0x34141482u, 0xe0301000u, 0x80060b0au, 0xbf8c0000u, 0x7e28050bu, 0xf4000540u, 0x28000000u, 0xf4080700u, 0xfa000020u, 0xbf8c0000u, 0xbf078015u, 0xbf840002u, 0xe0700000u, 0x80070000u, 0xbf810000u});
+        const std::array<std::uint32_t, 2> userData{0x10000u, 0u};
+        const auto plan = GetResourcePlan(FrontendRequest(code, userData));
+        kept.push_back(plan->valueStorage.Size());
+        conditions.push_back(static_cast<std::size_t>(std::ranges::count_if(plan->controlFlow, [](const ResourceBlock& block) { return block.condition != nullptr; })));
+    }
+    require(conditions.front() != 0u, "plan retention: the program's plan keeps no branch condition, so the test does not reach the condition's values");
+    require(kept[0] == kept[1] && kept[1] == kept[2], ("plan retention: the plan keeps " + std::to_string(kept[0]) + ", " + std::to_string(kept[1]) + " and " + std::to_string(kept[2]) + " values for vector chains of 1, 16 and 64 steps before the scalar load its branch condition reads; it must keep only what the condition's evaluation can reach").c_str());
+}
+
+void verifyPlanCopyAnswers() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::vector<std::unique_ptr<IrBlock>> blocks;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto binary = [&](IrOpcode opcode, IrType type, IrValue& left, IrValue& right) -> IrValue& {
+        auto& value = make(opcode, type);
+        value.AddArgument(&left);
+        value.AddArgument(&right);
+        return value;
+    };
+    const auto vectorLoad = [&](IrValue& address) -> IrValue& {
+        auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+        load.AddArgument(&address);
+        return load;
+    };
+    const auto rawRead = [&](IrValue& low, IrValue& high, IrValue& offset) -> IrValue& {
+        auto& read = binary(IrOpcode::LoadAddressU32, IrType::U32, binary(IrOpcode::CompositeConstructU64, IrType::U64, low, high), offset);
+        read.SetFlags(MemoryFlags{0, 0});
+        return read;
+    };
+    const auto walks = [&](IrProgram& program, IrValue& read, const std::array<std::uint32_t, 14>& userWords, std::uint8_t expected, const char* what) {
+        auto& resources = program.Resources();
+        resources.srtPlanComplete = true;
+        resources.resourceTrackingComplete = true;
+        MemoryInfo memory;
+        memory.kind = ResourceKind::ScalarAddress;
+        resources.memoryInfo.push_back(memory);
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 4;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &userData(10u + dword);
+        resources.descriptorSources.push_back(descriptor);
+        BufferResource buffer;
+        resources.info.buffers.push_back(buffer);
+        resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, read, constant(5)), {1, 2}, {}, {}});
+        resources.controlFlow.push_back({nullptr, {}, {}, {}});
+        resources.controlFlow.push_back({nullptr, {}, {0}, {}});
+        const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+        SrtRuntime runtime{userWords};
+        runtime.readMemory = readFive;
+        runtime.readSpecializationMemory = readFive;
+        const std::array<std::uint32_t, 1> sources{0u};
+        const auto whole = walkPlan(resources, sources, {}, runtime);
+        const auto taped = walkPlan(plan, plan.materializationSources, plan.cleanFlatSlots, runtime);
+        const auto interpreted = walkPlan(plan, sources, {}, runtime);
+        require(whole.active == std::vector<std::uint8_t>{expected}, what);
+        require(taped.active == whole.active && taped.results == whole.results, what);
+        require(interpreted.active == whole.active && interpreted.results == whole.results, what);
+    };
+    std::array<std::uint32_t, 14> userWords{};
+    for (std::uint32_t word = 10; word < userWords.size(); ++word) userWords[word] = 0x100u + word;
+
+    IrProgram phiProgram;
+    auto& shared = userData(1);
+    const auto low = [&](IrValue& hidden) -> IrValue& {
+        return binary(IrOpcode::CompositeExtractU32x2, IrType::U32, binary(IrOpcode::CompositeConstructU32x2, IrType::U32x2, shared, hidden), constant(0));
+    };
+    auto& left = *blocks.emplace_back(std::make_unique<IrBlock>(1u));
+    auto& right = *blocks.emplace_back(std::make_unique<IrBlock>(2u));
+    auto& phi = make(IrOpcode::Phi, IrType::U32);
+    phi.AddPhiOperand(&left, &low(vectorLoad(userData(4))));
+    phi.AddPhiOperand(&right, &low(vectorLoad(userData(5))));
+    userWords[1] = 8u;
+    userWords[2] = 0x1000u;
+    walks(phiProgram, rawRead(userData(2), userData(3), phi), userWords, 1u, "plan copy: a phi whose incoming values differ below a vector load resolved in the plan, not in the program");
+
+    IrProgram rootProgram;
+    auto& mask = binary(IrOpcode::IEqual32, IrType::Bool, userData(5), constant(0));
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&mask);
+    choice.AddArgument(&userData(2));
+    choice.AddArgument(&vectorLoad(rawRead(userData(8), userData(9), constant(0))));
+    userWords[1] = 0u;
+    userWords[2] = 0u;
+    walks(rootProgram, rawRead(binary(IrOpcode::ReadFirstLane, IrType::U32, choice, mask), userData(3), constant(0)), userWords, 0u, "plan copy: a read from a null base loaded from memory only below a vector load counted as a null root in the plan, not in the program");
+}
+
 void verifySignedMinimum() {
     using namespace ShaderRecompiler;
     IrResourcePlan plan;
@@ -603,6 +920,10 @@ void verifyMayEvaluate() {
     auto& firstLane = make(IrOpcode::ReadFirstLane, IrType::U32, {&lane, &varying});
     auto& firstActive = make(IrOpcode::ReadFirstLane, IrType::U32, {&make(IrOpcode::SelectU32, IrType::U32, {&varying, &input, &lane}), &varying});
     auto& firstInactive = make(IrOpcode::ReadFirstLane, IrType::U32, {&make(IrOpcode::SelectU32, IrType::U32, {&varying, &lane, &input}), &varying});
+    auto& conjMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&varying, &uniform});
+    auto& firstActiveConjunct = make(IrOpcode::ReadFirstLane, IrType::U32, {&make(IrOpcode::SelectU32, IrType::U32, {&varying, &input, &lane}), &conjMask});
+    auto& otherCond = make(IrOpcode::IEqual32, IrType::Bool, {&lane, &constant(5)});
+    auto& firstNotImplied = make(IrOpcode::ReadFirstLane, IrType::U32, {&make(IrOpcode::SelectU32, IrType::U32, {&otherCond, &input, &lane}), &conjMask});
     plan.srtReads = {{&input, 0u}, {&lane, 4u}, {nullptr, 8u}};
     auto& constInput = make(IrOpcode::ReadConst, IrType::U32, {&constant(0), &constant(0)});
     auto& constLane = make(IrOpcode::ReadConst, IrType::U32, {&constant(0), &constant(1)});
@@ -617,7 +938,7 @@ void verifyMayEvaluate() {
     plan.srtReads[3].value = &make(IrOpcode::ReadFirstLane, IrType::U32, {&constFirstItself, &varying});
     std::array<std::uint32_t, 1> data{4};
     SrtRuntime runtime{data};
-    for (const auto& [value, expected, name] : std::array<std::tuple<IrValue*, bool, const char*>, 21>{{
+    for (const auto& [value, expected, name] : std::array<std::tuple<IrValue*, bool, const char*>, 23>{{
              {&constant(3), true, "a constant"},
              {&input, true, "user data"},
              {&uniform, true, "a comparison of user data"},
@@ -633,6 +954,8 @@ void verifyMayEvaluate() {
              {&firstLane, false, "a first-lane read of a vector register"},
              {&firstActive, true, "a first-lane read of a select whose active arm is user data"},
              {&firstInactive, false, "a first-lane read of a select whose active arm is a vector register"},
+             {&firstActiveConjunct, true, "a first-lane read of a select whose condition is implied by a conjunct mask"},
+             {&firstNotImplied, false, "a first-lane read of a select whose condition is not implied by the mask"},
              {&constInput, true, "a constant read whose slot holds user data"},
              {&constLane, false, "a constant read whose slot holds a vector register"},
              {&constOutside, false, "a constant read past the last slot"},
@@ -645,6 +968,16 @@ void verifyMayEvaluate() {
         std::uint32_t result = 0;
         require(evaluator.Evaluate(Detail::IrNode(value), result) == expected, (std::string("MayEvaluate disagreed with the evaluator on ") + name).c_str());
     }
+    require(SrtWalker().ValidateRuntimeValue(plan, &firstActiveConjunct), "ValidateRuntimeValue rejects select on a conjunct of active mask");
+    require(!SrtWalker().ValidateRuntimeValue(plan, &firstNotImplied), "ValidateRuntimeValue accepts select not implied by active mask");
+    auto& countBits = make(IrOpcode::BitCount32, IrType::U32, {&input});
+    auto& findILsb = make(IrOpcode::FindILsb32, IrType::U32, {&input});
+    auto& findUMsb = make(IrOpcode::FindUMsb32, IrType::U32, {&input});
+    Detail::Evaluator bitEvaluator(plan, runtime);
+    std::uint32_t bitResult = 0;
+    require(bitEvaluator.Evaluate(Detail::IrNode(&countBits), bitResult) && bitResult == 1u, "Evaluator evaluated BitCount32 incorrectly");
+    require(bitEvaluator.Evaluate(Detail::IrNode(&findILsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindILsb32 incorrectly");
+    require(bitEvaluator.Evaluate(Detail::IrNode(&findUMsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindUMsb32 incorrectly");
     const std::array<IrOpcode, 7> takenAsEvaluable{IrOpcode::Identity, IrOpcode::Phi, IrOpcode::Void, IrOpcode::GetUserData, IrOpcode::GetShaderBase, IrOpcode::LoadAddressU32, IrOpcode::ReadConstBuffer};
     for (std::uint16_t raw = 0; raw < static_cast<std::uint16_t>(IrOpcode::Count); ++raw) {
         const auto opcode = static_cast<IrOpcode>(raw);
@@ -834,7 +1167,8 @@ void verifyOutOfRangeConstantReads() {
     require(plan->info.images.size() == 2u && plan->info.samplers.size() == 1u, "out-of-range s_buffer_load: the two T#s were not planned as one image each");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
-    request.context.memory = memory.Regions();
+    const auto memoryRegions = memory.Regions();
+    request.context.memory = memoryRegions;
     static_cast<void>(Recompile(request, *capture));
     const auto holds = [&](const std::array<std::uint32_t, 8>& words) {
         return std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
@@ -927,6 +1261,135 @@ void verifyPureFlatSlots() {
     require(Detail::ComputePureFlatSlots(plan) == Pure{0, 0, 0, 0}, "pure flat slots: an incomplete plan was classified");
 }
 
+void verifyLaneMaskGuardedDescriptorSources() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    constexpr std::uint32_t Zero = 0x00000000u;
+    constexpr std::uint32_t NegativeZero = 0x80000000u;
+    constexpr std::uint32_t One = 0x3f800000u;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture texture;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const std::array<std::uint32_t, 8> valid{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 8> invalid{0x43700000u, 0x43070000u, 0x3b888889u, 0x3bf2b9d6u, 0x3b088889u, 0x3b72b9d6u, 0x3f7f7777u, 0x3f7f0d46u};
+    const std::array<std::uint32_t, 4> sampler{0u, 0u, 0u, 0u};
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    std::array<std::uint32_t, 32> srt{};
+    const auto fill = [&](const std::array<std::uint32_t, 8>& image, std::uint32_t mode) {
+        std::copy(image.begin(), image.end(), srt.begin());
+        std::copy(sampler.begin(), sampler.end(), srt.begin() + 8);
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = mode;
+    };
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    const std::vector<std::uint32_t> code{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xd40d006au, 0x00002080u, 0xbf860006u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    request.shader = {ShaderStage::Compute, 0x24000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+
+    fill(invalid, Zero);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.samplers.size() == 1u, "lane-mask guarded sources: the image and its sampler were not planned");
+    require(!plan->controlFlow.empty() && std::ranges::any_of(plan->controlFlow, [](const ResourceBlock& block) { return block.condition != nullptr; }), "lane-mask guarded sources: the VCC branch around the image kept no condition");
+    for (const auto mode : {Zero, NegativeZero}) {
+        fill(invalid, mode);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && std::ranges::all_of(capture->snapshot.images[0].dwords, [](std::uint32_t word) { return word == 0u; }), "lane-mask guarded sources: the T# behind a branch no lane takes was not left null");
+    }
+    fill(invalid, One);
+    {
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(request)); }, "runtime image descriptor is invalid", "lane-mask guarded sources: an invalid T# behind a branch the lanes may take was accepted");
+    }
+    fill(valid, One);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.images[0].dwords.begin()), "lane-mask guarded sources: the T# behind a branch the lanes may take was not read");
+    }
+}
+
+void verifyExecGuardedDescriptorSources() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture texture;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const std::array<std::uint32_t, 8> valid{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 8> invalid{0x43700000u, 0x43070000u, 0x3b888889u, 0x3bf2b9d6u, 0x3b088889u, 0x3b72b9d6u, 0x3f7f7777u, 0x3f7f0d46u};
+    const std::array<std::uint32_t, 4> sampler{0u, 0u, 0u, 0u};
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    std::array<std::uint32_t, 32> srt{};
+    const auto fill = [&](const std::array<std::uint32_t, 8>& image, std::uint32_t mode) {
+        std::copy(image.begin(), image.end(), srt.begin());
+        std::copy(sampler.begin(), sampler.end(), srt.begin() + 8);
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = mode;
+    };
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    const std::vector<std::uint32_t> code{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0x7da80010u, 0xbf880006u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    request.shader = {ShaderStage::Compute, 0x24000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+
+    fill(invalid, 0u);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.samplers.size() == 1u, "exec guarded sources: the image and its sampler were not planned");
+    require(!plan->controlFlow.empty() && std::ranges::any_of(plan->controlFlow, [](const ResourceBlock& block) { return block.condition != nullptr; }), "exec guarded sources: the EXEC branch around the image kept no condition");
+    {
+        fill(invalid, 0u);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && std::ranges::all_of(capture->snapshot.images[0].dwords, [](std::uint32_t word) { return word == 0u; }), "exec guarded sources: the T# behind a branch no lane takes was not left null");
+    }
+    fill(invalid, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(request)); }, "runtime image descriptor is invalid", "exec guarded sources: an invalid T# behind a branch the lanes may take was accepted");
+    }
+    fill(valid, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.images[0].dwords.begin()), "exec guarded sources: the T# behind a branch the lanes may take was not read");
+    }
+}
+
 void verifyGuardedDescriptorSources() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -1009,8 +1472,10 @@ void verifyGuardedDescriptorSources() {
         fill(valid, mode);
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(storeRequest);
-        storeRequest.context.memory = memory.Regions();
-        return Recompile(storeRequest, *capture);
+        const auto memoryRegions = memory.Regions();
+        auto compileRequest = storeRequest;
+        compileRequest.context.memory = memoryRegions;
+        return Recompile(compileRequest, *capture);
     };
     const auto storePlan = GetResourcePlan(storeRequest);
     require(storePlan->info.images.size() == 2u && storePlan->descriptorSources.size() == 1u, "guarded images: the two stores were not planned as two images of one T#");
@@ -1228,6 +1693,7 @@ constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
 constexpr std::uint32_t TableFormat11_11_10UInt = 34;
+constexpr std::uint32_t TableFormat32_32UInt = 62;
 constexpr std::uint32_t TableType2D = 9;
 constexpr std::uint32_t TableType3D = 10;
 
@@ -1308,6 +1774,41 @@ std::array<std::uint32_t, 8> TableSelected(const ShaderRecompiler::ImageTableSna
     const auto& column = tables.tables.at(table);
     require(column.records == 1u && column.keys == 1u && column.codes.size() == 1u && (column.codes[0] & Abi::PoisonFlag) == 0u, message);
     return column.words.at(column.codes[0]).dwords;
+}
+
+void verifyTargetFeatureKey() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64;
+    const std::vector<std::uint32_t> capabilities{1u, 4448u, 5347u};
+    const std::vector<std::string_view> extensions{"SPV_KHR_8bit_storage", "SPV_KHR_physical_storage_buffer"};
+    const auto build = [&](std::span<const std::uint32_t> capabilityList, std::span<const std::string_view> extensionList) {
+        auto keyed = request;
+        keyed.target.supportedCapabilities = capabilityList;
+        keyed.target.supportedExtensions = extensionList;
+        std::vector<std::uint64_t> key;
+        RecompileCacheKey::Build(keyed, key);
+        return key;
+    };
+    const auto base = build(capabilities, extensions);
+    const std::vector<std::uint32_t> capabilityCopy = capabilities;
+    const std::vector<std::string> extensionStorage{"SPV_KHR_8bit_storage", "SPV_KHR_physical_storage_buffer"};
+    const std::vector<std::string_view> extensionCopy{extensionStorage[0], extensionStorage[1]};
+    require(build(capabilityCopy, extensionCopy) == base, "target feature key: equal capability and extension lists in other storage gave another key");
+    auto renamed = extensionStorage;
+    renamed[1].back() = 'X';
+    const std::vector<std::string_view> renamedViews{renamed[0], renamed[1]};
+    require(build(capabilities, renamedViews) != base, "target feature key: an extension name that differs in its last byte gave the same key");
+    const std::vector<std::string_view> moved{"SPV_KHR_8bit_storageS", "PV_KHR_physical_storage_buffer"};
+    require(build(capabilities, moved) != base, "target feature key: a byte moved between two extension names gave the same key");
+    const std::vector<std::uint32_t> more{1u, 4448u, 5347u, 11u};
+    require(build(more, extensions) != base, "target feature key: an added capability gave the same key");
+    std::vector<std::string> many;
+    for (std::uint32_t index = 0; index < 40u; ++index) many.push_back("SPV_EXT_descriptor_indexing_" + std::to_string(index));
+    const std::vector<std::string_view> manyViews(many.begin(), many.end());
+    require(build(capabilities, manyViews).size() == base.size(), "target feature key: the key grows with the device's extension names");
 }
 
 void verifyImageTableKeys() {
@@ -2853,7 +3354,17 @@ void verifyImageTableRegistration() {
     const auto* storeTable = TableBinding(*store.result, DescriptorRole::ImageStorageTable);
     require((storeFault & Abi::PoisonFlag) == 0u && storeTable != nullptr && storeTable->count != 0u && std::all_of(storeTable->imageWritten.begin(), storeTable->imageWritten.end(), [](bool written) { return written; }), "image table registration: the store's table was not bound as written storage elements");
     require(TableBinding(*store.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*store.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: a store-only table bound sampled elements");
-    const std::array<std::pair<std::uint32_t, const char*>, 3> unsupportedStores{{{0xf0240f08u, "image_store_mip"}, {0xf0280f08u, "image_store_pck"}, {0xf0440108u, "image_atomic_add"}}};
+    auto atomicCode = storeCode;
+    atomicCode[8] = 0xf0440108u;
+    const auto atomic = CompileTable(TableRequest(atomicCode, userData));
+    const auto& atomicPlan = *atomic.capture->plan;
+    require(atomicPlan.info.images.size() == 1u && atomicPlan.info.images[0].table == 0u && atomicPlan.info.images[0].tableOperation == TableOperation::Supported, "image table registration: a table T# feeding image_atomic_add was not a supported table operation");
+    const auto& atomicMap = TableMap(*atomic.result);
+    const auto atomicFault = atomicMap[Abi::TableHeader(0) + Abi::TableFault];
+    const auto* atomicTable = TableBinding(*atomic.result, DescriptorRole::ImageStorageTable);
+    require((atomicFault & Abi::PoisonFlag) == 0u && atomicTable != nullptr && atomicTable->count != 0u && atomicTable->imageAtomic.size() == atomicTable->count && std::all_of(atomicTable->imageWritten.begin(), atomicTable->imageWritten.end(), [](bool written) { return written; }) && std::all_of(atomicTable->imageAtomic.begin(), atomicTable->imageAtomic.end(), [](bool atomic) { return atomic; }), "image table registration: the image_atomic_add table was not bound as atomic storage elements");
+    require(TableBinding(*atomic.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*atomic.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: an atomic-only table bound sampled elements");
+    const std::array<std::pair<std::uint32_t, const char*>, 2> unsupportedStores{{{0xf0240f08u, "image_store_mip"}, {0xf0280f08u, "image_store_pck"}}};
     for (const auto& [instruction, name] : unsupportedStores) {
         auto code = storeCode;
         code[8] = instruction;
@@ -3042,6 +3553,18 @@ void verifyPointerImageTable() {
     require(!TableTouched(narrowTable.regions, root + (Palette + 32u) / 4u, 32u) && !TableTouched(narrowTable.regions, root + Committed / 4u, Reserved - Committed), "pointer image table: a record outside the key domain was read");
     const std::vector<std::pair<std::uint64_t, std::uint64_t>> narrowReads{{base + Palette, 32u}, {base + Palette + 2u * 32u, 32u}, {base + Palette + 255u * 32u, 32u}, {base + Palette + 0x102u * 32u, 32u}};
     require(narrowSnapshot.readRanges == narrowReads && narrowTable.result->imageTableReadRanges.size() == 1u && narrowTable.result->imageTableReadRanges[0] == narrowReads, "pointer image table: consumed ranges include skipped keys or the key-domain buffer");
+
+    auto phiCode = maskedCode;
+    phiCode.erase(phiCode.begin() + 8, phiCode.begin() + 10);
+    phiCode.insert(phiCode.begin() + 8, {
+        0xbf068010u, 0xbf850003u, 0xf4200444u, 0x20000000u, 0xbf820002u, 0xf4200444u, 0x20000000u
+    });
+    const auto phiRequest = request(phiCode, 0x36000u);
+    const auto phiPlan = GetResourcePlan(phiRequest);
+    require(phiPlan->info.images.size() == 1u && phiPlan->info.images[0].table == 0u, "pointer image table: a pointer read through a phi was not planned as a table");
+    const auto phiTable = CompileTable(phiRequest);
+    require(phiTable.capture->snapshot.tables.tables.at(0).codes == snapshot.codes, "pointer image table: a pointer read through a phi captured different records");
+
     keys = {};
 #ifdef _WIN32
     VirtualFree(block, 0, MEM_RELEASE);
@@ -3259,7 +3782,7 @@ void verifySelectedRecordDirectOperations() {
     FillTableSrt(guest, heap.data(), 32u, 4u);
     guest.srt[16] = 2u;
     const auto userData = TableUserData(guest);
-    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 4> operations{{{"image_store", 0xf0200f08u, TableFormat32UInt}, {"image_atomic_add", 0xf0440108u, TableFormat32UInt}, {"image_load_pck", 0xf0080f08u, TableFormat32UInt}, {"image_load_by2", 0xf1080308u, TableFormat16UNorm}}};
+    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 5> operations{{{"image_store", 0xf0200f08u, TableFormat32UInt}, {"image_atomic_add", 0xf0440108u, TableFormat32UInt}, {"image_atomic64_add", 0xf0440308u, TableFormat32_32UInt}, {"image_load_pck", 0xf0080f08u, TableFormat32UInt}, {"image_load_by2", 0xf1080308u, TableFormat16UNorm}}};
     for (const auto& [name, word0, format] : operations) {
         const auto what = std::string("selected record direct operations: ") + name;
         heap[2] = TableT(textures[1].bytes.data(), format, TableType2D);
@@ -3267,11 +3790,11 @@ void verifySelectedRecordDirectOperations() {
         const auto request = TableRequest(code, userData);
         const auto plan = GetResourcePlan(request);
         require(plan->info.images.size() == 1u && plan->info.images[0].table == NoTable && !plan->descriptorSources.at(plan->info.images[0].source).tableColumn.has_value(), (what + " through a T# whose record the CPU evaluates was planned through an image table").c_str());
-        const auto compiled = CompileTable(request);
-        require(TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2])), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
+        const auto compiled = word0 == 0xf0440308u ? TableCompiled{} : CompileTable(request);
+        require(word0 == 0xf0440308u || (TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2]))), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
         const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
         const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
-        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u || word0 == 0xf0440108u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
     }
     const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
     const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
@@ -3445,6 +3968,163 @@ void verifyPointerChainImageTable() {
     static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
 #endif
     store(links[1].data() + 4u, address(descriptors[1].data()));
+
+    auto phiCode = code;
+    phiCode.erase(phiCode.begin() + 15, phiCode.begin() + 17);
+    phiCode.insert(phiCode.begin() + 15, {
+        0xbf068010u, 0xbf850003u, 0xf4240b02u, 0x24000008u, 0xbf820002u, 0xf4240b02u, 0x24000008u
+    });
+    auto phiRequest = TableRequest(phiCode, userData);
+    phiRequest.shader.codeAddress = 0x38000u;
+    const auto phiPlan = GetResourcePlan(phiRequest);
+    require(phiPlan->info.images.size() == 1u && phiPlan->info.images[0].table == 0u, "pointer chain image table: a pointer read through a phi was not planned as a table");
+    const auto phiTable = CompileTable(phiRequest);
+    require(phiTable.capture->snapshot.tables.tables.at(0).codes == snapshot.codes, "pointer chain image table: a pointer read through a phi captured different records");
+
+    auto divergentCode = code;
+    divergentCode.erase(divergentCode.begin() + 15, divergentCode.begin() + 17);
+    divergentCode.insert(divergentCode.begin() + 15, {
+        0xbf068010u, 0xbf850003u, 0xf4240b02u, 0x24000008u, 0xbf820002u, 0xf4240b02u, 0x24000018u
+    });
+    auto divergentRequest = TableRequest(divergentCode, userData);
+    divergentRequest.shader.codeAddress = 0x39000u;
+    expectFailure([&] { static_cast<void>(GetResourcePlan(divergentRequest)); }, "GetImageResource dword 0 is not a valid runtime value", "pointer chain image table: a phi reading different table offsets was planned as a table");
+
+    auto nonTableCode = code;
+    nonTableCode.erase(nonTableCode.begin() + 15, nonTableCode.begin() + 17);
+    nonTableCode.insert(nonTableCode.begin() + 15, {
+        0xbf068010u, 0xbf850003u, 0xf4240b02u, 0x24000008u, 0xbf820002u, 0xbe960380u, 0xbe970380u
+    });
+    auto nonTableRequest = TableRequest(nonTableCode, userData);
+    nonTableRequest.shader.codeAddress = 0x3a000u;
+    expectFailure([&] { static_cast<void>(GetResourcePlan(nonTableRequest)); }, "GetImageResource dword 0 is not a valid runtime value", "pointer chain image table: a phi with a non-table branch was planned as a table");
+
+    auto armOffsetCode = code;
+    armOffsetCode.erase(armOffsetCode.begin() + 14, armOffsetCode.begin() + 17);
+    armOffsetCode.insert(armOffsetCode.begin() + 14, {
+        0xbf068010u, 0xbf850004u, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xbf820003u, 0x8f128411u, 0xf4240b02u, 0x24000008u
+    });
+    auto armOffsetRequest = TableRequest(armOffsetCode, userData);
+    armOffsetRequest.shader.codeAddress = 0x3b000u;
+    expectFailure([&] { static_cast<void>(GetResourcePlan(armOffsetRequest)); }, "GetImageResource dword 0 is not a valid runtime value", "pointer chain image table: a phi whose arms compute their own table offset was planned as a table");
+}
+
+void verifyWaterfallImageTable() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(256) static std::array<std::uint32_t, 0x3000> root{};
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root.begin());
+    std::copy(outputV.begin(), outputV.end(), root.begin() + 4);
+    const auto at = [&](std::uint32_t offset, std::array<std::uint32_t, 8> words) {
+        std::copy(words.begin(), words.end(), root.begin() + offset / 4u);
+    };
+    at(0x40u + 2u * 32u, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    at(0x40u + 4u * 32u, TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D));
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const std::vector<std::uint32_t> code{0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e220500u, 0x8f128511u, 0xf40c0900u, 0x24000040u,
+        0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto request = TableRequest(code, userData);
+    request.shader.codeAddress = 0x38000u;
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "waterfall image table: the T# was not planned as a table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.address && column.stride == 32u && column.offset == 0x40u && column.dwordCount == 8u && column.unkeyed, "waterfall image table: the column is wrong");
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    require(snapshot.keys == Abi::MaxKeys && (snapshot.codes[2] & Abi::PoisonFlag) == 0u && (snapshot.codes[4] & Abi::PoisonFlag) == 0u, "waterfall image table: the snapshot failed");
+    auto boundedCode = code;
+    boundedCode.insert(boundedCode.begin() + 4, {0x7d8a0080u, 0x7e020284u, 0x02000282u});
+    auto boundedRequest = TableRequest(boundedCode, userData);
+    boundedRequest.shader.codeAddress = 0x39000u;
+    const auto boundedPlan = GetResourcePlan(boundedRequest);
+    require(boundedPlan->info.images.size() == 1u && boundedPlan->info.images[0].table == 0u, "waterfall image table: bounded key was not planned as a table");
+    const auto& boundedColumn = *boundedPlan->descriptorSources.at(boundedPlan->info.images[0].source).tableColumn;
+    require(boundedColumn.maxKey == 6u, "waterfall image table: bounded key maxKey is wrong");
+    const auto boundedCompiled = CompileTable(boundedRequest);
+    const auto& boundedSnapshot = boundedCompiled.capture->snapshot.tables.tables.at(0);
+    require(boundedSnapshot.keys == 7u && boundedSnapshot.keys < Abi::MaxKeys && (boundedSnapshot.codes[2] & Abi::PoisonFlag) == 0u && (boundedSnapshot.codes[4] & Abi::PoisonFlag) == 0u, "waterfall image table: bounded key snapshot failed");
+    IrResourcePlan planA;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t val) -> IrValue& {
+        auto& leaf = make(IrOpcode::Void, IrType::U32);
+        leaf.SetImmediateU32(val);
+        return leaf;
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    auto& condA = make(IrOpcode::IEqual32, IrType::Bool, {&input, &constant(4)});
+    auto& condB = make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane});
+    auto& conjMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&condB, &condA});
+    auto& selectConj = make(IrOpcode::SelectU32, IrType::U32, {&condB, &input, &lane});
+    auto& firstConj = make(IrOpcode::ReadFirstLane, IrType::U32, {&selectConj, &conjMask});
+    require(SrtWalker().ValidateRuntimeValue(planA, &firstConj), "waterfall image table: conjunct select was refused by validator");
+    planA.srtPlanComplete = true;
+    planA.descriptorSources.push_back({});
+    planA.descriptorSources.back().dwordCount = 1;
+    planA.descriptorSources.back().dwords[0] = &firstConj;
+    planA.materializationSources.push_back(0);
+    const std::array<std::uint32_t, 1> userDataA{42u};
+    SrtRuntime runtimeA{userDataA};
+    const auto* tapeA = Detail::SrtTape::For(planA);
+    require(tapeA != nullptr, "waterfall image table: tape was not built for conjunct select");
+    std::vector<DescriptorValue> resultsA;
+    std::vector<std::uint32_t> flatA;
+    std::vector<std::uint8_t> activeA;
+    require(tapeA->Run(planA, runtimeA, resultsA, flatA, activeA), "waterfall image table: tape failed to run conjunct select");
+    require(!resultsA.empty() && resultsA[0].dwords[0] == 42u, "waterfall image table: tape evaluated conjunct select to wrong value");
+    auto& otherCond = make(IrOpcode::IEqual32, IrType::Bool, {&lane, &constant(5)});
+    auto& selectOther = make(IrOpcode::SelectU32, IrType::U32, {&otherCond, &input, &lane});
+    auto& firstOther = make(IrOpcode::ReadFirstLane, IrType::U32, {&selectOther, &conjMask});
+    require(!SrtWalker().ValidateRuntimeValue(planA, &firstOther), "waterfall image table: non-implied condition was accepted by validator");
+}
+
+void verifySplitWaterfallImageTable() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture texture;
+    alignas(256) static std::array<std::uint32_t, 0x3000> root{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(outputV.begin(), outputV.end(), root.begin() + 4);
+    const auto descriptor = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D);
+    std::copy(descriptor.begin(), descriptor.end(), root.begin() + 0x40u / 4u);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const auto code = [](std::uint32_t addend) {
+        return std::vector<std::uint32_t>{0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7da80086u, 0x7e220500u, 0xd7460001u, 0x00010b00u | (addend << 18u), 0x7e260501u, 0x8f128511u,
+            0xf4080900u, 0x24000040u, 0xf4080a00u, 0x26000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    };
+    const auto split = code(0x90u);
+    auto request = TableRequest(split, userData);
+    request.shader.codeAddress = 0x3a000u;
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "split waterfall image table: the T# was not planned as a table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.address && column.stride == 32u && column.offset == 0x40u && column.dwordCount == 8u && column.foldedCarry == 16u, "split waterfall image table: the column is wrong");
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    require((snapshot.codes[0] & Abi::PoisonFlag) == 0u && snapshot.words.at(snapshot.codes[0]).dwords == descriptor, "split waterfall image table: record 0 was not read whole");
+    for (const std::uint32_t addend : {0xa0u, 0x88u}) {
+        const auto otherCode = code(addend);
+        auto other = TableRequest(otherCode, userData);
+        other.shader.codeAddress = 0x3b000u + addend * 0x100u;
+        expectFailure([&] { static_cast<void>(GetResourcePlan(other)); }, "GetImageResource dword 0 is not a valid runtime value", "split waterfall image table: a second half outside the record was accepted");
+    }
 }
 
 void verifyDescriptorPhis() {
@@ -3514,7 +4194,8 @@ void verifyDescriptorPhis() {
         require(plan->info.images.size() == images && plan->info.samplers.size() == samplers && plan->info.sampledPairs.size() == 2u, "descriptor Phi: the edges were not given one resource each");
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         const auto compiled = Recompile(request, *capture);
         require(countOps(compiled->spirv, OpImageSampleExplicitLod) == 2u, "descriptor Phi: the specialized SPIR-V does not sample once per edge");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -3545,7 +4226,8 @@ void verifyDescriptorPhis() {
     auto twoLane = makeRequest(samplerCode, 64u);
     AgcDriver::ShaderMemory twoLaneMemory({});
     const auto twoLaneCapture = twoLaneMemory.Capture(twoLane);
-    twoLane.context.memory = twoLaneMemory.Regions();
+    const auto twoLaneRegions = twoLaneMemory.Regions();
+    twoLane.context.memory = twoLaneRegions;
     require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv, OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
 
     auto dynamic = makeRequest(dynamicCode);
@@ -3567,7 +4249,8 @@ void verifyDescriptorPhis() {
     require(sequentialPlan->info.images.size() == 2u && sequentialPlan->info.samplers.size() == 2u, "descriptor Phi: a T# and an S# chosen in separate blocks were not split into their SRT descriptors");
     AgcDriver::ShaderMemory sequentialMemory({});
     const auto sequentialCapture = sequentialMemory.Capture(sequential);
-    sequential.context.memory = sequentialMemory.Regions();
+    const auto sequentialRegions = sequentialMemory.Regions();
+    sequential.context.memory = sequentialRegions;
     static_cast<void>(Recompile(sequential, *sequentialCapture));
 
     const auto planRestoredSampler = [&](std::span<const std::uint32_t> code, const char* message) {
@@ -3576,7 +4259,8 @@ void verifyDescriptorPhis() {
         require(plan->info.samplers.size() == 1u && plan->info.sampledPairs.size() == 1u, message);
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         static_cast<void>(Recompile(request, *capture));
     };
     std::vector<std::uint32_t> restoredSamplerCode{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbe930380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20400u, 0xbe900380u, 0xbe910380u, 0xbe9c0414u, 0xbe9e0416u, 0xbf068011u, 0xbf850001u, 0x80128112u, 0xbe94041cu, 0xbe96041eu, 0x80118111u, 0xbf0a8211u, 0xbf85fff6u, 0xf09c0f08u, 0x00a20000u, 0x80108110u, 0xbf0a8210u, 0xbf85fff0u, 0x80138113u, 0xbf0a8213u, 0xbf85ffecu, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xe0700000u, 0x80060400u, 0x7d880090u, 0xbea23c6au, 0x4a020081u, 0xe0700000u, 0x80060100u, 0xbf810000u};
@@ -3750,7 +4434,8 @@ void verifyLaneSelectedDescriptors() {
     require(plan->info.images.size() == 2u && plan->info.samplers.size() == 1u, "lane-selected T#: the T#s selected per lane were not planned as one image each");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
-    request.context.memory = memory.Regions();
+    const auto memoryRegions = memory.Regions();
+    request.context.memory = memoryRegions;
     static_cast<void>(Recompile(request, *capture));
     const auto holds = [&](const std::array<std::uint32_t, 8>& words) {
         return std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
@@ -3796,7 +4481,8 @@ void verifyProgramCounterRelativeData() {
     };
     AgcDriver::ShaderMemory memory({});
     static_cast<void>(memory.Capture(request));
-    request.context.memory = memory.Regions();
+    const auto memoryRegions = memory.Regions();
+    request.context.memory = memoryRegions;
     const auto first = Recompile(request);
     require(dataBase(first) == codeAddress + 56u, "program counter data: the V# does not name the data at the shader's address");
     auto relocated = request;
@@ -3856,6 +4542,51 @@ void verifyLanesOutsideHostSubgroup() {
     require(pixel(waterfall, 32u) && pixel(waterfall, 8u), "host lanes: an s_ff1_i32_b64 waterfall reading a lane in a register did not build");
     expectFailure([&] { static_cast<void>(pixel(permlanex16, 8u)); }, "v_permlanex16_b32 from lanes 16-31 is outside the 8-lane host subgroup", "host lanes: v_permlanex16_b32 read lanes 16-31 of an 8-lane subgroup");
     require(pixel(permlanex16, 32u) && pixel(permlane16, 8u), "host lanes: a v_permlane16_b32 row that the host subgroup may hold did not build");
+}
+
+void verifyFusedExactArithmetic() {
+    using namespace ShaderRecompiler;
+    const auto pixel = [](bool fused) {
+        static const std::vector<std::uint32_t> code{0x7e000200u, 0x10020100u, 0x06040101u, 0x08060302u, 0x7e000303u, 0xf800180fu, 0u, 0xbf810000u};
+        ShaderPixelStageInfo info{};
+        info.inputAddr = PixelInputBit(PixelInput::PositionX);
+        info.posX = true;
+        info.targetOutputMode[0] = 9u;
+        info.targetExportMapping.fill(0xe4u);
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.pixel = info;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64;
+        request.target.fusedExactArithmetic = fused;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    struct Counts {
+        std::uint32_t exactArithmetic = 0;
+        std::uint32_t fmas = 0;
+    };
+    const auto count = [](std::span<const std::uint32_t> spirv) {
+        std::set<std::uint32_t> exact;
+        std::vector<std::uint32_t> arithmetic;
+        Counts result;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            const auto words = spirv[cursor] >> 16u;
+            if (op == spv::OpDecorate && words == 3u && spirv[cursor + 2] == spv::DecorationNoContraction) exact.insert(spirv[cursor + 1]);
+            if (op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFMul) arithmetic.push_back(spirv[cursor + 2]);
+            if (op == spv::OpExtInst && words >= 5u && spirv[cursor + 4] == 50u) ++result.fmas;
+        }
+        result.exactArithmetic = static_cast<std::uint32_t>(std::count_if(arithmetic.begin(), arithmetic.end(), [&](std::uint32_t id) { return exact.contains(id); }));
+        return result;
+    };
+    const auto plain = count(pixel(false));
+    const auto fused = count(pixel(true));
+    require(plain.exactArithmetic >= 3u, "fused exact arithmetic: the f32 multiply, add and subtract were not exact operations without the flag");
+    require(fused.exactArithmetic == 0u && fused.fmas >= plain.fmas + 3u, "fused exact arithmetic: the f32 multiply, add and subtract did not become fused multiply-adds with the flag");
 }
 
 void verifyHalfWaveReduction() {
@@ -3944,6 +4675,18 @@ void verifyHalfWaveReduction() {
         {0u, 0x38000000u, 0x88000000u, spv::OpGroupNonUniformBitwiseOr, "half-wave reduction: the wave64 OR scan did not read lane 31 as a subgroup OR on 32 lanes"},
     }};
     for (const auto& reduction : scans) require(reductions(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 32u, true), reduction.reduce) == 1u, reduction.message);
+    auto loopScan = scan(0xffffffffu, 0x26000000u, 0x83800000u);
+    const auto savedMaskLoop = AgcTest::SavedExecMaskLoop(8u);
+    loopScan.insert(loopScan.begin(), savedMaskLoop.begin(), savedMaskLoop.end());
+    auto helperLoop = loopScan;
+    helperLoop[0] = 0xbea204c1u;
+    expectFailure([&] { static_cast<void>(pixel(helperLoop, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a loop initialized with helper lanes was proven to exclude them");
+    auto upperHelperLoop = loopScan;
+    upperHelperLoop[0] = 0xbea2037eu;
+    upperHelperLoop.insert(upperHelperLoop.begin() + 1, 0xbea303c1u);
+    expectFailure([&] { static_cast<void>(pixel(upperHelperLoop, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: the low-word loop proof was reused for helper-inclusive upper lanes");
+    require(reductions(pixel(loopScan, 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: a loop-carried saved EXEC mask exhausted the entry-lane proof on 32 lanes");
+    require(halves(pixel(loopScan, 64u, true), spv::OpGroupNonUniformUMin, 0xffffffffu), "half-wave reduction: a loop-carried saved EXEC mask did not preserve the two half-wave UMin reductions");
     auto comparedScan = scan(0u, 0x38000000u, 0x88000000u);
     *std::find(comparedScan.begin(), comparedScan.end(), 0xbe98047eu) = 0x8a986a7eu;
     comparedScan.insert(comparedScan.begin(), 0x7c080080u);
@@ -4356,13 +5099,15 @@ void verifyMeshConfiguration() {
     RecompileCacheKey::Build(other, key);
     require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh configuration");
     require(mesh.outputPrimitiveSize == 3u && replay.request.graphics->mesh->outputPrimitiveSize == 3u, "a mesh configuration does not output triangles by default");
-    otherMesh = mesh;
-    otherMesh.outputPrimitiveSize = 2u;
-    other.graphics = GraphicsCompileContext{0u, {}, otherMesh, std::nullopt, {}};
-    const auto lineReplay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(other));
-    require(lineReplay.request.graphics.has_value() && lineReplay.request.graphics->mesh.has_value() && lineReplay.request.graphics->mesh->outputPrimitiveSize == 2u, "the mesh output primitive size was lost in serialization");
-    RecompileCacheKey::Build(other, key);
-    require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh output primitive size");
+    for (const auto primitiveSize : {1u, 2u}) {
+        otherMesh = mesh;
+        otherMesh.outputPrimitiveSize = primitiveSize;
+        other.graphics = GraphicsCompileContext{0u, {}, otherMesh, std::nullopt, {}};
+        const auto primitiveReplay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(other));
+        require(primitiveReplay.request.graphics.has_value() && primitiveReplay.request.graphics->mesh.has_value() && primitiveReplay.request.graphics->mesh->outputPrimitiveSize == primitiveSize, "the mesh output primitive size was lost in serialization");
+        RecompileCacheKey::Build(other, key);
+        require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh output primitive size");
+    }
     RecompileRequest hull{};
     hull.shader = {ShaderStage::TessellationControl, 0x10000u, code, 0, {}};
     hull.context.waveSize = 64;
@@ -4637,7 +5382,7 @@ void verifyPixelRequestSerialization() {
                         value.posZ, value.posW, value.frontFace, value.frontFaceAllBits, value.ancillary, value.sampleShading,
                         value.noPerspective, value.linearCentroid, value.pixelKillEnable, value.depthExportEnable,
                         value.sampleMaskExportEnable, value.earlyZ, value.executeOnNoop, value.conservativeZExport, value.orderedPixelShader,
-                        value.targetOutputMode, value.targetExportMapping, value.alphaToCoverage, value.stencilRefExportEnable, value.rasterPrimitive, value.layerExported, value.ditheredAlphaToCoverage, value.reversedBlend);
+                        value.targetOutputMode, value.targetExportMapping, value.alphaToCoverage, value.stencilRefExportEnable, value.rasterPrimitive, value.layerExported, value.ditheredAlphaToCoverage, value.reversedBlend, value.targetMerge);
     };
     const std::array<std::uint32_t, 1> code{0xbf810000u};
     const std::array<std::uint32_t, 3> userData{0x12345678u, 0xabcdef01u, 0x87654321u};
@@ -4685,6 +5430,7 @@ void verifyPixelRequestSerialization() {
     pixel.stencilRefExportEnable = true;
     pixel.ditheredAlphaToCoverage = true;
     pixel.reversedBlend = 0x570001u;
+    pixel.targetMerge = {1u, 0x0ff0u, 1u, {0x100u, 0x2u, 0x3u, 0x4u, 0x5u, 0x6u, 0x7u, 0x8u}};
     const std::array<std::array<std::uint8_t, 8>, 3> mappings{{
         {0x00u, 0xe4u, 0xc6u, 0x1bu, 0xffu, 0x80u, 0x55u, 0xaau},
         {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u},
@@ -4717,6 +5463,22 @@ void verifyPixelRequestSerialization() {
         withoutReversedBlend.context.pixel->reversedBlend = 0u;
         RecompileCacheKey::Build(withoutReversedBlend, replayKey);
         require(key == replayKey && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(withoutReversedBlend), "the reversed-order blend code changed the static shader identity");
+        auto movedMerge = request;
+        movedMerge.context.pixel->targetMerge.descriptor[0] = 0x200u;
+        RecompileCacheKey::Build(movedMerge, replayKey);
+        require(key == replayKey, "the merged target's descriptor changed the static shader identity");
+        auto depthWritingMerge = request;
+        depthWritingMerge.context.pixel->targetMerge.depthStencilWrites = true;
+        RecompileCacheKey::Build(depthWritingMerge, replayKey);
+        require(key != replayKey, "the merge draw's depth or stencil writes did not change the static shader identity");
+        auto depthTestingMerge = request;
+        depthTestingMerge.context.pixel->targetMerge.depthStencilTests = true;
+        RecompileCacheKey::Build(depthTestingMerge, replayKey);
+        require(key != replayKey, "the merge draw's depth or stencil tests did not change the static shader identity");
+        auto withoutMerge = request;
+        withoutMerge.context.pixel->targetMerge = {};
+        RecompileCacheKey::Build(withoutMerge, replayKey);
+        require(key != replayKey, "a color target merge did not change the static shader identity");
         auto withoutCoverage = request;
         withoutCoverage.context.pixel->alphaToCoverage = false;
         RecompileCacheKey::Build(withoutCoverage, replayKey);
@@ -4739,7 +5501,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQSQAAAA=", "new requests did not use serialization version 36");
+    require(requestPrefix(encoded, 8u) == "NVNQQS4AAAA=", "new requests did not use serialization version 46");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -4857,7 +5619,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQSUAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQS8AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -4948,6 +5710,9 @@ void verifyVertexInfoVersion19() {
     require(offset + 4u <= plain.size() && flagged[offset] == 0xefu && flagged[offset + 1u] == 0xcdu && flagged[offset + 2u] == 0xabu && flagged[offset + 3u] == 0x89u, "PA_CL_VS_OUT_CNTL is not the four bytes the version 20 vertex info adds");
     require(std::equal(plain.begin() + offset + 4u, plain.end(), flagged.begin() + offset + 4u), "PA_CL_VS_OUT_CNTL moved the fields after it");
     auto version20Vertex = flagged;
+    version20Vertex.resize(version20Vertex.size() - sizeof(std::uint32_t));
+    version20Vertex.pop_back();
+    version20Vertex.pop_back();
     version20Vertex.pop_back();
     version20Vertex.pop_back();
     version20Vertex[4] = 20u;
@@ -4958,6 +5723,9 @@ void verifyVertexInfoVersion19() {
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
     auto legacy = plain;
+    legacy.resize(legacy.size() - sizeof(std::uint32_t));
+    legacy.pop_back();
+    legacy.pop_back();
     legacy.pop_back();
     legacy.pop_back();
     legacy.erase(legacy.begin() + offset, legacy.begin() + offset + 4u);
@@ -4995,8 +5763,65 @@ void verifyVertexInfoVersion19() {
     while (allBitsOffset < plainPixel.size() && plainPixel[allBitsOffset] == allBitsBytes[allBitsOffset]) ++allBitsOffset;
     require(allBitsOffset == flagOffset + 2u, "the front-face all-bits flag does not follow the dithered coverage flag");
     require(blendOffset == allBitsOffset + 18u, "the reversed-order blend code is not serialized after the front-face all-bits flag, quad pixel mask and quad sample masks");
+    constexpr std::size_t iterationBytes = 35u;
+    constexpr std::size_t sampleOrderBytes = 16u;
+    constexpr std::size_t mergeBytes = 40u;
     constexpr std::size_t sampleMaskBytes = 16u;
-    constexpr std::size_t iterationBytes = 34u;
+    const auto orderOffset = blendOffset + 4u + iterationBytes;
+    const auto mergeOffset = static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes);
+    auto merging = pixel;
+    merging.context.pixel->targetMerge = {3u, 0xf00fu, 2u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, true, true};
+    const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
+    require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 40 bytes the version 46 pixel info adds after the sample order");
+    require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "a serialized request lost its color target merge");
+    // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag or storage size at the end.
+    const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
+        require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
+        bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 2u);
+        return bytes;
+    };
+    auto version42 = version43Bytes(plainPixel);
+    version42[4] = 42u;
+    const auto replay42 = serializer.Deserialize(encodeBase64(version42));
+    require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->targetMerge == TargetMerge{} && serializer.Serialize(replay42.request) == encodedPixel, "a version 42 request read a color target merge or misread the fields after it");
+    auto version39 = version42;
+    version39.pop_back();
+    version39.erase(version39.begin() + static_cast<std::ptrdiff_t>(orderOffset), version39.begin() + mergeOffset);
+    version39[4] = 39u;
+    const auto replay39 = serializer.Deserialize(encodeBase64(version39));
+    require(replay39.request.context.pixel.has_value() && replay39.request.context.pixel->targetMerge == TargetMerge{} && replay39.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && serializer.Serialize(replay39.request) == encodedPixel, "a version 39 request read a sample order or color target merge, or misread the fields after them");
+    auto ordered = pixel;
+    ordered.context.pixel->sampleOrder = {0x76543210u, 0x76543210u, 0x76543201u, 0x76543201u};
+    const auto orderedBytes = decodeBase64(serializer.Serialize(ordered));
+    require(orderedBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + static_cast<std::ptrdiff_t>(orderOffset), orderedBytes.begin()) && orderedBytes[orderOffset] == 0x10u && orderedBytes[orderOffset + 11u] == 0x76u && orderedBytes[orderOffset + 12u] == 0x01u && std::equal(plainPixel.begin() + static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes), plainPixel.end(), orderedBytes.begin() + static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes)), "the sample order is not the four words the version 42 pixel info adds after the stencil operation value export flag");
+    auto orderedVersion34 = version43Bytes(orderedBytes);
+    orderedVersion34.pop_back();
+    orderedVersion34.pop_back();
+    orderedVersion34.pop_back();
+    orderedVersion34.erase(orderedVersion34.begin() + static_cast<std::ptrdiff_t>(orderOffset - 1u), orderedVersion34.begin() + static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes));
+    orderedVersion34[4] = 34u;
+    const auto orderedReplay34 = serializer.Deserialize(encodeBase64(orderedVersion34));
+    require(orderedReplay34.request.context.pixel.has_value() && orderedReplay34.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && serializer.Serialize(orderedReplay34.request) == encodedPixel, "a version 34 request read a sample order, or misread the fields after its pixel iteration fields");
+    auto orderedVersion30 = version43Bytes(orderedBytes);
+    orderedVersion30.resize(orderedVersion30.size() - 4u);
+    orderedVersion30.erase(orderedVersion30.begin() + static_cast<std::ptrdiff_t>(blendOffset + 4u), orderedVersion30.begin() + static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes));
+    orderedVersion30[4] = 30u;
+    const auto orderedReplay30 = serializer.Deserialize(encodeBase64(orderedVersion30));
+    require(orderedReplay30.request.context.pixel.has_value() && orderedReplay30.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && serializer.Serialize(orderedReplay30.request) == encodedPixel, "a version 30 request read a sample order, or misread the fields after its reversed-order blend code");
+    auto orderedSpanned = ordered;
+    orderedSpanned.target.spannedWaves = true;
+    auto orderedVersion32 = version43Bytes(decodeBase64(serializer.Serialize(orderedSpanned)));
+    orderedVersion32.pop_back();
+    require(orderedVersion32.size() > 2u && orderedVersion32.back() == 0u && orderedVersion32[orderedVersion32.size() - 2u] == 0u && orderedVersion32[orderedVersion32.size() - 3u] == 1u, "the spanned-waves flag is not the byte before the depth remap flag");
+    orderedVersion32.pop_back();
+    orderedVersion32.pop_back();
+    orderedVersion32.erase(orderedVersion32.begin() + static_cast<std::ptrdiff_t>(blendOffset + 4u), orderedVersion32.begin() + static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes));
+    orderedVersion32[4] = 32u;
+    const auto orderedReplay32 = serializer.Deserialize(encodeBase64(orderedVersion32));
+    auto unordered = pixel;
+    unordered.target.spannedWaves = true;
+    require(orderedReplay32.request.context.pixel.has_value() && orderedReplay32.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && orderedReplay32.request.target.spannedWaves && serializer.Serialize(orderedReplay32.request) == serializer.Serialize(unordered), "a version 32 request read a sample order or lost its spanned-waves flag");
     auto maskedPixel = pixel;
     maskedPixel.context.pixel->quadPixelMask = 0x2u;
     const auto maskedBytes = decodeBase64(serializer.Serialize(maskedPixel));
@@ -5007,53 +5832,65 @@ void verifyVertexInfoVersion19() {
     sampledPixel.context.pixel->quadSampleMask = {0x1u, 0x2u, 0x4u, 0x8u};
     const auto sampledBytes = decodeBase64(serializer.Serialize(sampledPixel));
     require(std::equal(maskedBytes.begin(), maskedBytes.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), sampledBytes.begin()) && sampledBytes[maskOffset + 1u] == 0x1u && sampledBytes[maskOffset + 5u] == 0x2u && sampledBytes[maskOffset + 9u] == 0x4u && sampledBytes[maskOffset + 13u] == 0x8u, "the quad sample masks are not the four words after the quad pixel mask");
-    auto version30 = sampledBytes;
+    auto version30 = version43Bytes(sampledBytes);
     version30.pop_back();
     version30.pop_back();
     version30.pop_back();
-    version30.erase(version30.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u), version30.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes));
+    version30.pop_back();
+    version30.erase(version30.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u), version30.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
     version30[4] = 30u;
     const auto replay30 = serializer.Deserialize(encodeBase64(version30));
     require(replay30.request.context.pixel.has_value() && !replay30.request.context.pixel->iteratesSamples && replay30.request.context.pixel->positionLocation == PixelPositionLocation::Center && replay30.request.context.pixel->sampleLocations == std::array<std::uint8_t, 32>{} && decodeBase64(serializer.Serialize(replay30.request)) == sampledBytes, "a version 30 request read pixel iteration, a position location or sample locations, or misread the fields after its reversed-order blend code");
     auto spanned = sampledPixel;
     spanned.target.spannedWaves = true;
-    auto version32 = decodeBase64(serializer.Serialize(spanned));
+    auto version32 = version43Bytes(decodeBase64(serializer.Serialize(spanned)));
+    version32.pop_back();
     require(version32.size() > 2u && version32.back() == 0u && version32[version32.size() - 2u] == 0u && version32[version32.size() - 3u] == 1u, "the spanned-waves flag is not the byte before the depth remap flag");
     version32.pop_back();
     version32.pop_back();
-    version32.erase(version32.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u), version32.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes));
+    version32.erase(version32.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u), version32.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
     version32[4] = 32u;
     const auto replay32 = serializer.Deserialize(encodeBase64(version32));
     require(replay32.request.context.pixel.has_value() && !replay32.request.context.pixel->iteratesSamples && replay32.request.context.pixel->sampleLocations == std::array<std::uint8_t, 32>{} && replay32.request.target.spannedWaves && serializer.Serialize(replay32.request) == serializer.Serialize(spanned), "a version 32 request read pixel iteration or sample locations, or lost its spanned-waves flag");
-    auto version29 = sampledBytes;
+    auto version29 = version43Bytes(sampledBytes);
     version29.pop_back();
     version29.pop_back();
     version29.pop_back();
-    version29.erase(version29.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes), version29.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes));
+    version29.pop_back();
+    version29.erase(version29.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes), version29.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
+    auto version36 = version43Bytes(sampledBytes);
+    version36.pop_back();
+    version36.erase(version36.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes - 1u), version36.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
+    version36[4] = 36u;
+    const auto replay36 = serializer.Deserialize(encodeBase64(version36));
+    require(replay36.request.context.pixel.has_value() && !replay36.request.context.pixel->stencilOperationValueExport && decodeBase64(serializer.Serialize(replay36.request)) == sampledBytes, "a version 36 request read a stencil operation value export or misread the fields after the sample locations");
     version29[4] = 29u;
     const auto replay29 = serializer.Deserialize(encodeBase64(version29));
     require(replay29.request.context.pixel.has_value() && replay29.request.context.pixel->quadSampleMask == std::array<std::uint16_t, 4>{0x1u, 0x2u, 0x4u, 0x8u} && replay29.request.context.pixel->reversedBlend == 0u && decodeBase64(serializer.Serialize(replay29.request)) == sampledBytes, "a version 29 request read a reversed-order blend code or misread the fields after the quad sample masks");
-    auto version28 = sampledBytes;
+    auto version28 = version43Bytes(sampledBytes);
     version28.pop_back();
     version28.pop_back();
     version28.pop_back();
-    version28.erase(version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes));
+    version28.pop_back();
+    version28.erase(version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
     version28[4] = 28u;
     const auto replay28 = serializer.Deserialize(encodeBase64(version28));
     require(replay28.request.context.pixel.has_value() && replay28.request.context.pixel->quadPixelMask == 0x2u && replay28.request.context.pixel->quadSampleMask == std::array<std::uint16_t, 4>{0xffffu, 0xffffu, 0xffffu, 0xffffu} && replay28.request.context.pixel->reversedBlend == 0u && decodeBase64(serializer.Serialize(replay28.request)) == maskedBytes, "a version 28 request read quad sample masks or a reversed-order blend code, or misread the fields after them");
-    auto version27 = maskedBytes;
+    auto version27 = version43Bytes(maskedBytes);
     version27.pop_back();
     version27.pop_back();
     version27.pop_back();
-    version27.erase(version27.begin() + static_cast<std::ptrdiff_t>(maskOffset), version27.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes));
+    version27.pop_back();
+    version27.erase(version27.begin() + static_cast<std::ptrdiff_t>(maskOffset), version27.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
     version27[4] = 27u;
     const auto replay27 = serializer.Deserialize(encodeBase64(version27));
     require(replay27.request.context.pixel.has_value() && replay27.request.context.pixel->quadPixelMask == 0xfu && replay27.request.context.pixel->reversedBlend == 0u && serializer.Serialize(replay27.request) == encodedPixel, "a version 27 request read a quad pixel mask or reversed-order blend code, or misread the fields after it");
-    auto legacyPixel = plainPixel;
+    auto legacyPixel = version43Bytes(plainPixel);
     legacyPixel.pop_back();
     legacyPixel.pop_back();
     legacyPixel.pop_back();
-    legacyPixel.erase(legacyPixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset), legacyPixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset + 2u + sampleMaskBytes + 4u + iterationBytes));
+    legacyPixel.pop_back();
+    legacyPixel.erase(legacyPixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset), legacyPixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset + 2u + sampleMaskBytes + 4u + iterationBytes + sampleOrderBytes));
     legacyPixel[4] = 26u;
     const auto replay26 = serializer.Deserialize(encodeBase64(legacyPixel));
     require(replay26.request.context.pixel.has_value() && replay26.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replay26.request.context.pixel->frontFaceAllBits && replay26.request.context.pixel->reversedBlend == 0u, "a version 26 request lost its pixel primitive class or read a front-face all-bits flag");
@@ -5099,24 +5936,33 @@ void verifyDepthRemapRequests() {
     const auto replay = serializer.Deserialize(remapped);
     require(replay.request.target.depthRangeRemap && replay.request.context.vertex.has_value() && replay.request.context.vertex->paClVsOutCntl == 0x89abcdefu, "the depth remap target flag or the vertex info did not round-trip");
     require(replay.request.context.vertex->depthRemapMode == 2u, "the depth remap mode did not round-trip");
-    require(serializer.Serialize(replay.request) == remapped, "a version 35 depth remap request changed on re-serialization");
+    require(serializer.Serialize(replay.request) == remapped, "the depth remap request changed on re-serialization");
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 5u && std::equal(plainBytes.begin(), plainBytes.end() - 6, remappedBytes.begin()), "the depth remap flag and mode are not the last 6 bytes before the f32 flush flag of a vertex request");
+    constexpr std::size_t pointTailBytes = 13u;
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 13u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 13 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 6 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 6 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag and the pixel function storage size of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
+        legacyBytes.pop_back();
+        legacyBytes.pop_back();
+        legacyBytes.pop_back();
         legacyBytes[4] = legacyVersion;
-        legacyBytes.resize(legacyBytes.size() - 6u);
+        legacyBytes.resize(legacyBytes.size() - 6u - pointTailBytes);
         const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
         require(!legacy.request.target.depthRangeRemap && legacy.request.context.vertex.has_value() && legacy.request.context.vertex->depthRemapMode == 0u, ("a version " + std::to_string(legacyVersion) + " vertex request read depth remap fields").c_str());
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
-    version35[4] = 35u;
+    version35.resize(version35.size() - sizeof(std::uint32_t));
     version35.pop_back();
+    version35.pop_back();
+    version35.pop_back();
+    version35[4] = 35u;
+    version35.resize(version35.size() - 1u - pointTailBytes);
     const auto replay35 = serializer.Deserialize(encodeBase64(version35));
     require(replay35.request.target.depthRangeRemap && replay35.request.context.vertex->depthRemapMode == 2u && !replay35.request.target.float32FlushToZero && serializer.Serialize(replay35.request) == remapped, "a version 35 request misread the depth remap fields or read an f32 flush flag");
-    auto truncated = remappedBytes;
+    auto truncated = version35;
     truncated.resize(truncated.size() - 2u);
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(truncated))); }, "truncated data", "a truncated depth remap mode was accepted");
     auto trailing = remappedBytes;
@@ -5136,6 +5982,47 @@ void verifyDepthRemapRequests() {
     zeroToOne.context.vertex->depthRemapMode = 1u;
     RecompileCacheKey::Build(zeroToOne, other);
     require(key != other, "the depth remap mode did not change the shader cache key");
+}
+
+void verifyMergedHullConfiguration() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
+    const RequestSerializer serializer;
+    RecompileRequest request{};
+    request.shader = {ShaderStage::TessellationControl, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
+    const auto separate = serializer.Serialize(request);
+    std::vector<std::uint64_t> separateKey;
+    RecompileCacheKey::Build(request, separateKey);
+    request.graphics->tessellation->mergedHull = true;
+    const auto merged = serializer.Serialize(request);
+    std::vector<std::uint64_t> mergedKey;
+    RecompileCacheKey::Build(request, mergedKey);
+    const auto replay = serializer.Deserialize(merged);
+    require(replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() && replay.request.graphics->tessellation->mergedHull, "a merged hull configuration was lost in serialization");
+    require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
+    constexpr std::size_t pointTailBytes = 13u;
+    auto legacy = decodeBase64(merged);
+    require(legacy.size() > 54u + pointTailBytes && legacy[4] == 46u, "a merged hull request did not use serialization version 46");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 2u - pointTailBytes);
+    legacy.pop_back();
+    require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
+    legacy.erase(legacy.end() - 52);
+    for (const auto version : {30u, 31u, 32u, 34u, 35u, 36u, 37u, 38u}) {
+        auto older = legacy;
+        older[4] = static_cast<std::uint8_t>(version);
+        if (version < 38u) older.erase(older.end() - 31);
+        if (version < 36u) older.pop_back();
+        if (version < 35u) older.resize(older.size() - 5u);
+        if (version < 32u) older.pop_back();
+        const auto upgraded = serializer.Deserialize(encodeBase64(older));
+        const auto what = "a main version " + std::to_string(version) + " tessellation request";
+        require(upgraded.request.graphics.has_value() && upgraded.request.graphics->tessellation.has_value() && !upgraded.request.graphics->tessellation->mergedHull, (what + " read a merged hull flag").c_str());
+        require(serializer.Serialize(upgraded.request) == separate, (what + " misread the fields after its tessellation configuration").c_str());
+    }
+    require(mergedKey != separateKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(serializer.Deserialize(separate).request), "the cache keys ignore whether the hull program is merged");
 }
 
 void verifyLegacyPixelRequests() {
@@ -5465,7 +6352,8 @@ void verifyComputedTexelOffsets() {
         request.useCache = false;
         AgcDriver::ShaderMemory memory({});
         static_cast<void>(memory.Capture(request));
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         return Recompile(request).spirv;
     };
     const auto sampleOperands = [](std::span<const std::uint32_t> words) {
@@ -5515,7 +6403,8 @@ void verifyShaderClockScopes() {
         request.useCache = false;
         AgcDriver::ShaderMemory memory({});
         static_cast<void>(memory.Capture(request));
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         const auto words = Recompile(request).spirv;
         std::map<std::uint32_t, std::uint32_t> constants;
         std::vector<std::uint32_t> scopeIds;
@@ -5587,10 +6476,10 @@ void verifyInt64AtomicCapabilities() {
     require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
 }
 
-void verifySpecializedBufferAtomicBindings() {
+void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {
     using namespace ShaderRecompiler;
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
-    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityInt64Atomics};
     alignas(256) static std::array<std::uint32_t, 64> buffer{};
     const auto bufferAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(buffer.data()));
     const std::array<std::uint32_t, 16> userData{
@@ -5598,8 +6487,8 @@ void verifySpecializedBufferAtomicBindings() {
         static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
         0u, 0u, 0u, 0u,
         0u, 0u, 0u, 0u};
-    const std::vector<std::uint32_t> code{0xe0f05000u, 0x80012803u, 0xbf810000u};
-    const auto compile = [&](std::span<const std::uint32_t> supported) {
+    const auto compile = [&](std::span<const std::uint32_t> supported, std::uint32_t opcode = 0xe0f05000u) {
+        const std::array<std::uint32_t, 3> code{opcode, 0x80012803u, 0xbf810000u};
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x58800u, code, 0, {}};
         request.context.waveSize = 32;
@@ -5617,6 +6506,16 @@ void verifySpecializedBufferAtomicBindings() {
         request.useCache = false;
         return Recompile(request);
     };
+    if (finalAbiOnly) {
+        for (const auto opcode : {0xe0f05000u, 0xe1705000u}) {
+            const auto result = compile(capabilities, opcode);
+            const auto faults = std::ranges::count_if(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; });
+            require(faults <= 1, "specialized buffer atomic: duplicate fault buffers");
+            require(result.bdaAbiVersion == (faults == 0 ? 0u : BdaAbi::Version), "specialized buffer atomic: final fault binding and BDA ABI disagree");
+            if (opcode == 0xe1705000u) require(faults == 1, "specialized buffer atomic: a 64-bit atomic lost its live fault buffer");
+        }
+        return;
+    }
     const auto result = compile(capabilities);
     std::size_t tables = 0;
     std::size_t faults = 0;
@@ -5829,7 +6728,8 @@ void verifyUnnormalizedSamplers() {
         request.layout.pushConstantSizeBytes = 128;
         AgcDriver::ShaderMemory memory({});
         static_cast<void>(memory.Capture(request));
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         return Recompile(request);
     };
     const auto flags = [](const RecompileResult& result, DescriptorRole role) {
@@ -6252,7 +7152,8 @@ void verifyTwoLaneUniformValues() {
         request.layout.pushConstantSizeBytes = 128;
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
-        request.context.memory = memory.Regions();
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
         const auto words = Recompile(request, *capture)->spirv;
         std::size_t count = 0;
         for (std::size_t cursor = 5; cursor < words.size();) {
@@ -6728,6 +7629,10 @@ void verifySrtReadPatching() {
     const auto* replacement = repeatedUse.Argument(0);
     require(replacement->Opcode() == IrOpcode::ReadConst, "SRT read patching: the uses do not reference a flat read");
     require(repeatedUse.Argument(1) == replacement && secondUser.Argument(0) == replacement, "SRT read patching: not every operand uses the same replacement");
+    const std::vector<const IrValue*> order(block.Instructions().begin(), block.Instructions().end());
+    const auto readAt = std::find(order.begin(), order.end(), &read);
+    require(readAt != order.end() && readAt - order.begin() >= 2 && *(readAt - 1) == replacement && *(readAt - 2) == replacement->Argument(0) && (*(readAt - 2))->Opcode() == IrOpcode::GetSrtResource, "SRT read patching: the flat read is not right before the original read");
+    require(order.back()->Opcode() == IrOpcode::ReferenceU32 && order.back()->Argument(0) == &read, "SRT read patching: the planning reference is not at the end of the block");
     const auto& remainingUses = read.OperandUses();
     require(remainingUses.size() == 1u && remainingUses.front().user->Opcode() == IrOpcode::ReferenceU32, "SRT read patching: the original read retains non-planning uses");
 }
@@ -6789,6 +7694,161 @@ bool GuardRecords(const ShaderRecompiler::ResourceCapture& capture) {
     return true;
 }
 
+void verifyGuardedDirectRoot() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t Reserved = 0x10000;
+    void* reserved = nullptr;
+#ifdef _WIN32
+    reserved = VirtualAlloc(nullptr, Reserved, MEM_RESERVE, PAGE_NOACCESS);
+#else
+    reserved = mmap(nullptr, Reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserved == MAP_FAILED) reserved = nullptr;
+#endif
+    require(reserved != nullptr, "guarded direct root: cannot reserve an inaccessible range");
+    const auto unmapped = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved));
+    alignas(256) static std::array<std::uint32_t, 64> output{};
+    alignas(256) static std::array<std::uint32_t, 16> root{};
+    static std::uint32_t payload = 0x3f800000u;
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto rootAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const auto payloadAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&payload));
+    root = {static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(output)), 0x30027facu, 1u};
+    const std::vector<std::uint32_t> branchCode{0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xbe8a0302u, 0xbe8b0303u, 0xbe8c03ffu, 0x11111111u,
+        0xbf8cc07fu, 0xbf068008u, 0xbf850003u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u};
+    for (const auto index : {4u, 5u}) {
+        const auto move = DecodeRdnaInstruction(index * 4u, branchCode, index);
+        require(move.op == RdnaOpcode::SMovB32 && move.destination.kind == RdnaOperandKind::ScalarRegister && move.destination.reg == index + 6u &&
+            move.source0.kind == RdnaOperandKind::ScalarRegister && move.source0.reg == index - 2u, "guarded direct root: the fixture does not move the user-data pointer to s10:s11");
+    }
+    const auto compare = DecodeRdnaInstruction(0x24u, branchCode, 9u);
+    require(compare.op == RdnaOpcode::SCmpEqU32 && compare.source0.kind == RdnaOperandKind::ScalarRegister && compare.source0.reg == 8u &&
+        compare.source1.kind == RdnaOperandKind::IntegerInlineConstant && compare.source1.value == 0u, "guarded direct root: the fixture does not compare the branch word with zero");
+    const auto condition = DecodeRdnaInstruction(0x28u, branchCode, 10u);
+    require(condition.op == RdnaOpcode::SCbranchScc1 && condition.branchTarget == 0x38u, "guarded direct root: the fixture does not skip the scalar load when the branch word is zero");
+    NestedRequest branch(branchCode, root.data());
+    std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u),
+        static_cast<std::uint32_t>(payloadAddress), static_cast<std::uint32_t>(payloadAddress >> 32u)};
+    branch.request.context.userData = userData;
+    AgcDriver::ShaderMemory validMemory({});
+    const auto valid = validMemory.Capture(branch.request);
+    require(valid->snapshot.srtPoison.empty(), "guarded direct root: a mapped direct pointer was poisoned");
+    const auto read = std::find_if(valid->plan->srtReads.begin(), valid->plan->srtReads.end(), [](const auto& candidate) { return candidate.value->template Flags<MemoryFlags>().pc == 0x2cu; });
+    require(read != valid->plan->srtReads.end(), "guarded direct root: the scalar read was not planned");
+    require(!Detail::LoadedFromMemory(*read->value->Argument(0)), "guarded direct root: the pointer was classified as loaded from memory");
+    require(valid->snapshot.flattenedSrt.at(read->flatOffset) == payload, "guarded direct root: the mapped scalar read has the wrong word");
+    const auto validRegions = validMemory.Regions();
+    branch.request.context.memory = validRegions;
+    const auto validResult = Recompile(branch.request, *valid);
+    require(validResult->poisonedSrtReads == 0u, "guarded direct root: the mapped program reports poison");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(validResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+#endif
+    std::cout << "guarded direct root: mapped taken load passed\n";
+    root[4] = 0u;
+    branch.request.context.memory = {};
+    AgcDriver::ShaderMemory mappedSkippedMemory({});
+    const auto mappedSkipped = mappedSkippedMemory.Capture(branch.request);
+    const auto mappedSkippedRegions = mappedSkippedMemory.Regions();
+    branch.request.context.memory = mappedSkippedRegions;
+    const auto mappedSkippedResult = Recompile(branch.request, *mappedSkipped);
+    require(mappedSkippedResult->poisonedSrtReads == 0u, "guarded direct root: the mapped skipped program reports poison");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(mappedSkippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+#endif
+    std::cout << "guarded direct root: mapped skipped load passed\n";
+    root[4] = 1u;
+    userData[2] = static_cast<std::uint32_t>(unmapped);
+    userData[3] = static_cast<std::uint32_t>(unmapped >> 32u);
+    branch.request.context.memory = {};
+    expectFailure([&] {
+        AgcDriver::ShaderMemory memory({});
+        static_cast<void>(memory.Capture(branch.request));
+    }, "guest memory is not readable", "guarded direct root: a taken inaccessible load was accepted");
+    std::cout << "guarded direct root: inaccessible taken load rejected\n";
+    root[4] = 0u;
+    std::vector<std::byte> encodedPlan;
+    require(ShaderDiskCache::EncodePlan(*valid->plan, encodedPlan), "guarded direct root: cannot encode the resource plan");
+    IrResourcePlan decodedPlan;
+    require(ShaderDiskCache::DecodePlan(encodedPlan, decodedPlan), "guarded direct root: cannot decode the resource plan");
+    require(!valid->plan->controlFlow.empty() && decodedPlan.controlFlow.size() == valid->plan->controlFlow.size(), "guarded direct root: the scalar branch was not retained in the plan");
+    for (std::size_t block = 0; block < decodedPlan.controlFlow.size(); ++block) {
+        require(decodedPlan.controlFlow[block].flatSlots == valid->plan->controlFlow[block].flatSlots, "guarded direct root: cached control flow lost its flat slots");
+    }
+    IrResourcePlan decodedIrPlan;
+    require(ShaderDiskCache::DecodePlan(encodedPlan, decodedIrPlan), "guarded direct root: cannot decode the IR control plan");
+    decodedIrPlan.compact = {};
+    struct ReadContext {
+        std::uint64_t root;
+        std::uint64_t payload;
+        bool guardReadable;
+        std::uint32_t invalidReads = 0;
+        SrtMemoryReader reader = nullptr;
+    };
+    const auto walk = [&](const IrResourcePlan& plan, bool tape, bool guardReadable) {
+        ReadContext context{rootAddress, payloadAddress, guardReadable};
+        context.reader = [](void* opaque, std::uint64_t address, std::uint32_t* value) {
+            auto& context = *static_cast<ReadContext*>(opaque);
+            if (!((address >= context.root && address - context.root <= sizeof(root) - sizeof(*value)) || address == context.payload)) {
+                ++context.invalidReads;
+                return false;
+            }
+            std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+            return true;
+        };
+        SrtRuntime runtime{userData};
+        runtime.userContext = &context;
+        runtime.readMemory = context.reader;
+        runtime.readSpecializationMemory = [](void* opaque, std::uint64_t address, std::uint32_t* value) {
+            auto& context = *static_cast<ReadContext*>(opaque);
+            if (!context.guardReadable && address == context.root + 16u) return false;
+            return context.reader(opaque, address, value);
+        };
+        const std::vector<std::uint32_t> sourceCopy(plan.materializationSources.begin(), plan.materializationSources.end());
+        const std::vector<std::uint8_t> cleanCopy(plan.cleanFlatSlots.begin(), plan.cleanFlatSlots.end());
+        const auto sources = tape ? std::span<const std::uint32_t>(plan.materializationSources) : std::span<const std::uint32_t>(sourceCopy);
+        const auto clean = tape ? std::span<const std::uint8_t>(plan.cleanFlatSlots) : std::span<const std::uint8_t>(cleanCopy);
+        std::vector<DescriptorValue> descriptors;
+        std::vector<std::uint32_t> flat;
+        std::vector<std::uint8_t> active;
+        std::vector<SrtReadPoison> poison;
+        const auto* compiled = tape ? Detail::SrtTape::For(plan) : nullptr;
+        if (tape) require(compiled != nullptr, "guarded direct root: the plan has no SRT tape");
+        const bool ok = tape ? compiled->Run(plan, runtime, descriptors, flat, active) : Detail::EvaluateRuntimeSourcesImpl(plan, sources, runtime, descriptors, flat, true, clean, active, &poison, nullptr);
+        require(ok == guardReadable, "guarded direct root: a known skipped load failed, or an unresolved guard silently succeeded");
+        if (guardReadable) require(context.invalidReads == 0u && poison.empty(), "guarded direct root: the walker touched a known skipped load");
+    };
+    for (const IrResourcePlan* plan : {valid->plan.get(), static_cast<const IrResourcePlan*>(&decodedPlan), static_cast<const IrResourcePlan*>(&decodedIrPlan)}) {
+        for (const bool tape : {false, true}) {
+            walk(*plan, tape, true);
+            walk(*plan, tape, false);
+        }
+    }
+    auto repeatedCode = branchCode;
+    repeatedCode.insert(repeatedCode.begin() + 14, {0xf4000305u, 0xfa000000u, 0xbf8cc07fu});
+    NestedRequest repeated(std::move(repeatedCode), root.data());
+    repeated.request.context.userData = userData;
+    expectFailure([&] {
+        AgcDriver::ShaderMemory memory({});
+        static_cast<void>(memory.Capture(repeated.request));
+    }, "guest memory is not readable", "guarded direct root: an unconditional repeated load was skipped with its guarded use");
+    AgcDriver::ShaderMemory skippedMemory({});
+    const auto skipped = skippedMemory.Capture(branch.request);
+    const auto skippedRegions = skippedMemory.Regions();
+    require(skipped->snapshot.srtPoison.empty() && !RegionsTouch(skippedRegions, unmapped, 4u), "guarded direct root: a skipped scalar load was captured or poisoned");
+    branch.request.context.memory = skippedRegions;
+    const auto skippedResult = Recompile(branch.request, *skipped);
+    require(skippedResult->poisonedSrtReads == 0u, "guarded direct root: the skipped program reports poison");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(skippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+#endif
+    std::cout << "guarded direct root: inaccessible skipped load passed\n";
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    munmap(reserved, Reserved);
+#endif
+}
+
 void verifyGuardedNullPointers() {
     using namespace ShaderRecompiler;
     constexpr std::size_t Reserved = 0x10000;
@@ -6826,6 +7886,28 @@ void verifyGuardedNullPointers() {
     const auto samePipeline = [](const RecompileResult& left, const RecompileResult& right) {
         return left.variantId == right.variantId && left.specializationId == right.specializationId && left.PipelineVariantId() == right.PipelineVariantId() && left.spirv == right.spirv;
     };
+    const auto guardSites = [](const RecompileResult& result) {
+        const auto words = result.spirv.Words();
+        std::map<std::uint32_t, std::string> names;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::vector<std::uint32_t> guardWords;
+        std::string function;
+        std::size_t calls = 0;
+        std::size_t stores = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            const auto opcode = words[cursor] & 0xffffu;
+            require(count != 0 && count <= words.size() - cursor, "guarded pointer: truncated SPIR-V instruction");
+            if (opcode == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+            if (opcode == spv::OpConstant && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (opcode == spv::OpFunction) function = names[words[cursor + 2]];
+            if (opcode == spv::OpAccessChain && count == 6u && names[words[cursor + 3]] == "fault_buffer" && constants.contains(words[cursor + 5]) && constants[words[cursor + 5]] == BdaAbi::SrtGuardWord) guardWords.push_back(words[cursor + 2]);
+            if (function == "main" && opcode == spv::OpFunctionCall && names[words[cursor + 3]] == "record_bda_fault") ++calls;
+            if (function == "main" && opcode == spv::OpAtomicStore && std::find(guardWords.begin(), guardWords.end(), words[cursor + 1]) != guardWords.end()) ++stores;
+            cursor += count;
+        }
+        return std::pair{calls, stores};
+    };
 
     NestedRequest branch(branchCode, root.data());
     point(payloadAddress);
@@ -6833,9 +7915,12 @@ void verifyGuardedNullPointers() {
     const auto valid = validMemory.Capture(branch.request);
     require(valid->snapshot.srtPoison.empty() && valid->plan->guardedSrtSlots.size() == 1u && slotPc(*valid->plan, valid->plan->guardedSrtSlots[0]) == 0x2cu && GuardRecords(*valid), "guarded pointer: a mapped nested pointer was poisoned, or its read has no guard");
     require(valid->snapshot.flattenedSrt.at(valid->plan->guardedSrtSlots[0]) == payload, "guarded pointer: a mapped nested read does not hold its word");
-    branch.request.context.memory = validMemory.Regions();
+    const auto validRegions = validMemory.Regions();
+    branch.request.context.memory = validRegions;
     const auto validResult = Recompile(branch.request, *valid);
     require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a guarded program has no fault buffer");
+    const auto [branchCalls, branchStores] = guardSites(*validResult);
+    require(branchCalls == 0u && branchStores == 1u, ("guarded pointer: a guarded read calls record_bda_fault " + std::to_string(branchCalls) + " times in main and stores its record to the fault buffer's guard word " + std::to_string(branchStores) + " times, expected one store and no call").c_str());
 
     for (const auto pointer : {std::uint64_t{0}, unmapped}) {
         for (const auto condition : {1u, 0u}) {
@@ -6845,16 +7930,16 @@ void verifyGuardedNullPointers() {
             AgcDriver::ShaderMemory memory({});
             const auto capture = memory.Capture(branch.request);
             const auto& poison = capture->snapshot.srtPoison;
-            require(poison.size() == 1u && poison[0].pc == 0x2cu && poison[0].address == pointer && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: the nested read was not poisoned at its pc and address");
+            require(condition == 0u ? poison.empty() : poison.size() == 1u && poison[0].pc == 0x2cu && poison[0].address == pointer && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: a skipped nested read was poisoned, or an executed read has the wrong poison record");
             require(GuardRecords(*capture), "guarded pointer: the poison record is not where the guard reads it");
             const auto regions = memory.Regions();
             require(!RegionsTouch(regions, pointer, 4u) && RegionsCover(regions, root.data() + 6, 8u), "guarded pointer: the captured regions are wrong");
             branch.request.context.memory = regions;
             const auto result = Recompile(branch.request, *capture);
-            require(result->poisonedSrtReads == 1u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: the poisoned capture does not report through the fault buffer");
+            require(result->poisonedSrtReads == condition && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: the capture has the wrong poison count or no fault buffer");
             require(samePipeline(*result, *validResult), "guarded pointer: poison changed the variant, the specialization or the module");
             const auto replay = Recompile(branch.request);
-            require(replay.poisonedSrtReads == 1u && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
+            require(replay.poisonedSrtReads == condition && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
             verifyResult(*result, replay);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
             static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
@@ -6875,22 +7960,27 @@ void verifyGuardedNullPointers() {
         const bool throughPointer = own == 0x38u && poison.address == unmapped;
         require(poison.pc == 0x2cu && (pointerWord || throughPointer), "guarded pointer: a derived poison does not name the inaccessible read");
     }
-    chain.request.context.memory = chainMemory.Regions();
+    const auto chainRegions = chainMemory.Regions();
+    chain.request.context.memory = chainRegions;
     const auto chainResult = Recompile(chain.request, *chained);
     indirect = 0;
     point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&indirect)));
     AgcDriver::ShaderMemory nullChainMemory({});
     const auto nullChain = nullChainMemory.Capture(chain.request);
     require(nullChain->snapshot.srtPoison.size() == 1u && nullChain->snapshot.srtPoison[0].pc == 0x38u && nullChain->snapshot.srtPoison[0].address == 0u && GuardRecords(*nullChain), "guarded pointer: a null pointer read from memory did not poison the read through it");
-    chain.request.context.memory = nullChainMemory.Regions();
+    const auto nullChainRegions = nullChainMemory.Regions();
+    chain.request.context.memory = nullChainRegions;
     const auto nullChainResult = Recompile(chain.request, *nullChain);
     indirect = payloadAddress;
     AgcDriver::ShaderMemory mappedChainMemory({});
     const auto mappedChain = mappedChainMemory.Capture(chain.request);
     require(mappedChain->snapshot.srtPoison.empty() && mappedChain->plan->guardedSrtSlots.size() == 3u && GuardRecords(*mappedChain), "guarded pointer: a mapped pointer chain was poisoned, or its reads have no guards");
-    chain.request.context.memory = mappedChainMemory.Regions();
+    const auto mappedChainRegions = mappedChainMemory.Regions();
+    chain.request.context.memory = mappedChainRegions;
     const auto mappedChainResult = Recompile(chain.request, *mappedChain);
     require(chainResult->poisonedSrtReads == 3u && nullChainResult->poisonedSrtReads == 1u && mappedChainResult->poisonedSrtReads == 0u, "guarded pointer: a chain result does not count its poisoned reads");
+    const auto [chainCalls, chainStores] = guardSites(*mappedChainResult);
+    require(chainCalls == 0u && chainStores == mappedChain->plan->guardedSrtSlots.size(), ("guarded pointer: a chain's guarded reads call record_bda_fault " + std::to_string(chainCalls) + " times in main and store to the guard word " + std::to_string(chainStores) + " times, expected one store per guard and no call").c_str());
     require(samePipeline(*chainResult, *mappedChainResult) && samePipeline(*nullChainResult, *mappedChainResult), "guarded pointer: a chain's poison changed the variant, the specialization or the module");
 
     const auto poisonedWords = [](const ResourceCapture& capture, std::uint32_t pc, std::uint64_t base) {
@@ -6911,7 +8001,8 @@ void verifyGuardedNullPointers() {
     AgcDriver::ShaderMemory zeroMemory({});
     const auto zeroCapture = zeroMemory.Capture(descriptor.request);
     require(zeroCapture->snapshot.srtPoison.empty() && zeroBuffer(*zeroCapture) && GuardRecords(*zeroCapture), "guarded pointer: a zero V# read from mapped memory was poisoned or not read");
-    descriptor.request.context.memory = zeroMemory.Regions();
+    const auto zeroRegions = zeroMemory.Regions();
+    descriptor.request.context.memory = zeroRegions;
     const auto zeroResult = Recompile(descriptor.request, *zeroCapture);
     for (const auto pointer : {std::uint64_t{0}, unmapped}) {
         point(pointer);
@@ -6953,11 +8044,11 @@ void verifyGuardedNullPointers() {
         vertex.request.context.memory = {};
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(vertex.request);
-        require(poisonedWords(*capture, 0x20u, 0x10u), "guarded pointer: a vertex V# behind a branch and a null pointer did not poison its four words at its pc");
+        require(guard == 0u ? capture->snapshot.srtPoison.empty() && GuardRecords(*capture) : poisonedWords(*capture, 0x20u, 0x10u), "guarded pointer: a skipped vertex V# was poisoned, or an executed read has the wrong poison record");
         const auto regions = memory.Regions();
         vertex.request.context.memory = regions;
         const auto result = Recompile(vertex.request, *capture);
-        require(result->poisonedSrtReads == 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture with a poisoned V# has no fault buffer");
+        require(result->poisonedSrtReads == guard * 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture has the wrong poison count or no fault buffer");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
 #endif
@@ -6967,7 +8058,8 @@ void verifyGuardedNullPointers() {
     const auto rootlessCapture = rootlessMemory.Capture(rootless.request);
     require(rootlessCapture->snapshot.nullRootReads != 0u && GuardRecords(*rootlessCapture), "guarded pointer: reads through a null user-data pointer were not counted");
     require(std::all_of(rootlessCapture->snapshot.buffers.begin(), rootlessCapture->snapshot.buffers.end(), [](const DescriptorValue& value) { return std::all_of(value.dwords.begin(), value.dwords.end(), [](std::uint32_t word) { return word == 0u; }); }), "guarded pointer: a V# read through a null user-data pointer is not zero");
-    rootless.request.context.memory = rootlessMemory.Regions();
+    const auto rootlessRegions = rootlessMemory.Regions();
+    rootless.request.context.memory = rootlessRegions;
     const auto rootlessResult = Recompile(rootless.request, *rootlessCapture);
     require(rootlessResult->poisonedSrtReads >= rootlessCapture->snapshot.nullRootReads, "guarded pointer: a capture through a null user-data pointer is cacheable");
     point(0u);
@@ -7040,8 +8132,19 @@ void verifyFmaskImageMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
-    for (std::uint32_t format = 156u; format <= 168u; ++format) {
-        if (format == 166u) continue;
+    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 163u, 165u}) {
+        descriptor.dwords[1] = format << 20u;
+        const auto expanded = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
+    }
+    require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
+    for (const auto format : {161u, 166u}) {
+        descriptor.dwords[1] = format << 20u;
+        descriptor.dwords[3] = 0x91800005u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
+    }
+    descriptor.dwords[3] = 0x91800004u;
+    for (const auto format : {162u, 164u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK format is not implemented", "an unsupported FMASK format was accepted");
     }
@@ -7081,6 +8184,13 @@ void verifyVolumeArrayLoadMode() {
     require(modes[selected].dimension == RdnaImageDimension::Dim3D && !modes[selected].cube, "2D-array image load on a 3D T# did not select a volume runtime mode");
     image.fmaskCompatible = false;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "incompatible with the static runtime image interface", "2D-array image sample on a 3D T# was accepted");
+    image.volumeArraySampleCompatible = true;
+    const auto sampleModes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto& sampled = sampleModes[ResourceMaterializer::RuntimeImageMode(image, descriptor, sampleModes)];
+    require(sampled.dimension == RdnaImageDimension::Dim3D && !sampled.cube, "2D-array image sample on a 3D T# did not select a volume runtime mode");
+    const DescriptorValue arrayDescriptor{{0x02466600u, 0x01400000u, 0u, 0xd0500204u, 1u, 0x00700000u, 0u, 0u}, 8u};
+    require(sampleModes[ResourceMaterializer::RuntimeImageMode(image, arrayDescriptor, sampleModes)].dimension == RdnaImageDimension::Dim2DArray, "2D-array image sample on a 2D-array T# no longer selects the 2D-array runtime mode");
+    image.volumeArraySampleCompatible = false;
     ImageResource store{};
     store.resourceClass = ImageResourceClass::Storage;
     store.dimension = RdnaImageDimension::Dim2DArray;
@@ -7090,6 +8200,37 @@ void verifyVolumeArrayLoadMode() {
     require(storeModes[ResourceMaterializer::RuntimeImageMode(store, descriptor, storeModes)].dimension == RdnaImageDimension::Dim3D, "2D-array image store on a 3D T# did not select a volume runtime mode");
     store.atomic = true;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, descriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "2D-array image atomic on a 3D T# was accepted");
+}
+
+void verifyMultisamplePlaneReadMode() {
+    using namespace ShaderRecompiler;
+    const DescriptorValue descriptor{{0x02754d00u, 0xc3800000u, 0x00cbc167u, 0xe1b20facu, 0u, 0x00700020u, 0u, 0u}, 8u};
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+    require(modes[selected].dimension == RdnaImageDimension::Dim2D && !modes[selected].cube && modes[selected].numericClass == IrTextureNumericClass::Float, "a 2D read of a 2D MSAA T# (PPSA18216's) did not select a 2D runtime mode");
+    for (const auto& [word1, word3, word5, numericClass] : std::array<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, IrTextureNumericClass>, 4>{{{0xc0100000u, 0xe1b20facu, 0x00700020u, IrTextureNumericClass::Float}, {0xc0500000u, 0xe1810facu, 0x00700010u, IrTextureNumericClass::Uint}, {0xc0c00000u, 0xe1b20facu, 0x00700020u, IrTextureNumericClass::Sint}, {0xc0d00000u, 0xe1830facu, 0x00700030u, IrTextureNumericClass::Float}}}) {
+        const DescriptorValue narrow{{0x02754d00u, word1, 0x00cbc167u, word3, 0u, word5, 0u, 0u}, 8u};
+        const auto mode = ResourceMaterializer::RuntimeImageMode(image, narrow, modes);
+        require(modes[mode].dimension == RdnaImageDimension::Dim2D && !modes[mode].cube && modes[mode].numericClass == numericClass, "a 2D read of a 2D MSAA T# with 8-bit or 16-bit texels did not select a 2D runtime mode");
+    }
+    const DescriptorValue depthBits{{0x02754d00u, 0xc0b00000u, 0x00cbc167u, 0xe1820facu, 0u, 0x00700020u, 0u, 0u}, 8u};
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, depthBits, modes)); }, "incompatible with the static runtime image interface", "a 2D read of a 16_UINT SW_64KB_Z_X 2D MSAA T#, read as depth bits, was accepted");
+    const auto refused = [&](const ImageResource& access, const char* what) {
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(access, descriptor, ResourceMaterializer::RuntimeImageModes(access))); }, "incompatible with the static runtime image interface", what);
+    };
+    auto other = image;
+    other.cubeFaceCompatible = false;
+    refused(other, "a 2D read of a 2D MSAA T# through a mip, gather, bias, gradient or offset access was accepted");
+    other = image;
+    other.depthCompare = true;
+    refused(other, "a 2D depth comparison of a 2D MSAA T# was accepted");
+    other = image;
+    other.resourceClass = ImageResourceClass::Storage;
+    other.written = true;
+    refused(other, "a 2D storage access to a 2D MSAA T# was accepted");
 }
 
 void verifyVolumeBiasTableRejection() {
@@ -7135,6 +8276,85 @@ void verifyVolumeBiasTableRejection() {
     }
 }
 
+void verifySamplerTableDeduplication() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    SamplerResource sampler0{};
+    sampler0.table = 0u;
+    SamplerResource sampler1{};
+    sampler1.table = 1u;
+    ShaderInfo info{};
+    info.samplers.push_back(sampler0);
+    info.samplers.push_back(sampler1);
+    ResourceSnapshot snapshot{};
+    snapshot.tables.tables.resize(2u);
+    const DescriptorValue s0{{0x00000600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u};
+    const DescriptorValue s1{{0x00000700u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u};
+    const DescriptorValue s2{{0x00000800u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u};
+    std::vector<std::uint32_t> codes(300u);
+    for (std::size_t i = 0; i < 300u; ++i) codes[i] = static_cast<std::uint32_t>(i % 3u);
+    for (std::uint32_t table = 0u; table < 2u; ++table) {
+        auto& column = snapshot.tables.tables[table];
+        column.records = 300u;
+        column.keys = 300u;
+        column.codes = SharedValues<std::uint32_t>(codes);
+        column.words = SharedValues<DescriptorValue>(std::vector<DescriptorValue>{s0, s1, s2});
+    }
+    const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+    require(resolved.samplers.size() == (3u + 1u) * Abi::SamplerEntryElements, "sampler table deduplication: duplicate sampler entries across tables were not deduplicated");
+    for (std::uint32_t table = 0u; table < 2u; ++table) {
+        const auto mapStart = resolved.map.at(Abi::TableHeader(table) + Abi::TableMapStart);
+        for (std::uint32_t key = 0; key < 300u; ++key) {
+            const auto record = resolved.map.at(mapStart + key);
+            const auto element = resolved.map.at(record + Abi::SamplerRecordElement);
+            require(element == (key % 3u) * Abi::SamplerEntryElements, "sampler table deduplication: record points to the wrong deduplicated sampler element");
+            require((resolved.map.at(record + Abi::SamplerRecordFlags) & Abi::PoisonFlag) == 0u, "sampler table deduplication: deduplicated sampler was poisoned");
+        }
+    }
+
+    constexpr std::uint32_t MaxUnique = Abi::SamplerElementBudget / Abi::SamplerEntryElements;
+    std::vector<DescriptorValue> budgetWords;
+    budgetWords.reserve(MaxUnique + 1u);
+    for (std::uint32_t i = 0; i < MaxUnique + 1u; ++i) {
+        budgetWords.push_back(DescriptorValue{{0x00000600u, 0x00fff000u, 0x06f03fa0u, i + 1u}, 4u});
+    }
+    std::vector<std::uint32_t> budgetCodes(MaxUnique + 2u);
+    for (std::uint32_t i = 0; i < MaxUnique; ++i) budgetCodes[i] = i;
+    budgetCodes[MaxUnique] = 0u;
+    budgetCodes[MaxUnique + 1u] = MaxUnique;
+
+    ShaderInfo budgetInfo{};
+    SamplerResource budgetSampler{};
+    budgetSampler.table = 0u;
+    budgetInfo.samplers.push_back(budgetSampler);
+    ResourceSnapshot budgetSnapshot{};
+    budgetSnapshot.tables.tables.resize(1u);
+    auto& budgetColumn = budgetSnapshot.tables.tables[0];
+    budgetColumn.records = static_cast<std::uint32_t>(budgetCodes.size());
+    budgetColumn.keys = static_cast<std::uint32_t>(budgetCodes.size());
+    budgetColumn.codes = SharedValues<std::uint32_t>(budgetCodes);
+    budgetColumn.words = SharedValues<DescriptorValue>(budgetWords);
+
+    const auto budgetResolved = ResourceMaterializer::ResolveImageTables(budgetInfo, budgetSnapshot);
+    require(budgetResolved.samplers.size() == Abi::SamplerElementBudget, "sampler table budget: valid unique samplers did not fill budget");
+    const auto budgetMapStart = budgetResolved.map.at(Abi::TableHeader(0) + Abi::TableMapStart);
+
+    const auto dupRecord = budgetResolved.map.at(budgetMapStart + MaxUnique);
+    const auto dupFlags = budgetResolved.map.at(dupRecord + Abi::SamplerRecordFlags);
+    require((dupFlags & Abi::PoisonFlag) == 0u, "sampler table budget: duplicate of existing sampler was poisoned when budget is full");
+    require(budgetResolved.map.at(dupRecord + Abi::SamplerRecordElement) == 0u, "sampler table budget: duplicate sampler did not reuse existing element");
+
+    const auto overflowRecord = budgetResolved.map.at(budgetMapStart + MaxUnique + 1u);
+    const auto overflowFlags = budgetResolved.map.at(overflowRecord + Abi::SamplerRecordFlags);
+    require((overflowFlags & Abi::PoisonFlag) != 0u, "sampler table budget: exceeding sampler budget did not poison record");
+    require(budgetResolved.poison.at(overflowFlags & ~Abi::PoisonFlag).reason == Abi::PoisonReason::Budget, "sampler table budget: poisoned reason is not Budget");
+
+    const auto outsideRecord = budgetResolved.map.at(Abi::TableHeader(0) + Abi::TableOutsideCode);
+    const auto outsideFlags = budgetResolved.map.at(outsideRecord + Abi::SamplerRecordFlags);
+    require((outsideFlags & Abi::PoisonFlag) != 0u, "sampler table budget: TableOutsideCode did not poison when budget is full");
+    require(budgetResolved.poison.at(outsideFlags & ~Abi::PoisonFlag).reason == Abi::PoisonReason::Budget, "sampler table budget: TableOutsideCode poisoned reason is not Budget");
+}
+
 void verifyDynamicStorageMipChain() {
     using namespace ShaderRecompiler;
     ImageResource image{};
@@ -7152,6 +8372,24 @@ void verifyDynamicStorageMipChain() {
     auto allLevels = tenLevels;
     allLevels.dwords[3] |= 0xf0000u;
     require(ResourceMaterializer::TryRuntimeImageMode(image, allLevels, modes).mode.has_value(), "a dynamic-mip storage image with sixteen levels was rejected");
+}
+
+void verifyArrayVolumeStoreMode() {
+    using namespace ShaderRecompiler;
+    const DescriptorValue descriptor{{0x11800100u, 0xc3800000u, 0x0003c003u, 0xd0900facu, 0u, 0x00700000u, 0u, 0u}, 8u};
+    ImageResource store{};
+    store.resourceClass = ImageResourceClass::Storage;
+    store.dimension = RdnaImageDimension::Dim3D;
+    store.written = true;
+    store.fmaskCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(store);
+    require(modes[ResourceMaterializer::RuntimeImageMode(store, descriptor, modes)].dimension == RdnaImageDimension::Dim2DArray, "3D image store on a 2D-array T# did not select an array runtime mode");
+    store.read = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, descriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image load and store on a 2D-array T# was accepted");
+    store.read = false;
+    store.atomic = true;
+    const DescriptorValue uintDescriptor{{0x11800100u, 0xc1400000u, 0x0003c003u, 0xd0900facu, 0u, 0x00700000u, 0u, 0u}, 8u};
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, uintDescriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image atomic on a 2D-array T# was accepted");
 }
 
 void verifySrgbDepthCompareModes() {
@@ -7180,6 +8418,11 @@ int main(int argc, char** argv) {
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
+            verifySpecializedBufferAtomicBindings(true);
+            std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {
             verifyQuadMaskNeighbourReads();
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
@@ -7222,6 +8465,8 @@ int main(int argc, char** argv) {
             verifySelectedRecordUniformIndex();
             verifyChainedTableOffset();
             verifyPointerChainImageTable();
+            verifyWaterfallImageTable();
+            verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -7274,8 +8519,15 @@ int main(int argc, char** argv) {
         verifySignedMinimum();
         verifyMayEvaluate();
         verifyPureFlatSlots();
+        verifyPlanConditionPruning();
+        verifyPlanRetention();
+        verifyPlanRetentionChains();
+        verifyPlanCopyAnswers();
         verifyGuardedDescriptorSources();
+        verifyLaneMaskGuardedDescriptorSources();
+        verifyExecGuardedDescriptorSources();
         verifySrtTape();
+        verifyTargetFeatureKey();
         verifyImageTableKeys();
         verifyImageTables();
         verifyImageTableRegistration();
@@ -7284,12 +8536,15 @@ int main(int argc, char** argv) {
         verifyPointerTableOffsetCarry();
         verifyChainedTableOffset();
         verifyPointerChainImageTable();
+        verifyWaterfallImageTable();
+        verifySplitWaterfallImageTable();
         verifyDescriptorPhis();
         verifyUniformTableImage();
         verifyLaneSelectedDescriptors();
         verifyProgramCounterRelativeData();
         verifyLanesOutsideHostSubgroup();
         verifyHalfWaveReduction();
+        verifyFusedExactArithmetic();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
         verifyMeshConfiguration();
@@ -7298,6 +8553,7 @@ int main(int argc, char** argv) {
         verifyPixelRequestSerialization();
         verifyVertexInfoVersion19();
         verifyDepthRemapRequests();
+        verifyMergedHullConfiguration();
         verifyPositionExportComponents();
         verifyLegacyPixelRequests();
         verifyPixelExportReplay();
@@ -7318,11 +8574,15 @@ int main(int argc, char** argv) {
         verifyFunctionLdsBound();
         verifyFunctionLdsUpdates();
         verifySrtReadPatching();
+        verifyGuardedDirectRoot();
         verifyGuardedNullPointers();
         verifyFmaskImageMode();
         verifyCubeDepthCompareMode();
         verifyVolumeArrayLoadMode();
+        verifyArrayVolumeStoreMode();
+        verifyMultisamplePlaneReadMode();
         verifyVolumeBiasTableRejection();
+        verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
         verifySrgbDepthCompareModes();
         verifyQuadMaskNeighbourReads();
@@ -7449,6 +8709,13 @@ int main(int argc, char** argv) {
         std::vector<std::uint64_t> float32FlushKey;
         RecompileCacheKey::Build(float32Flush, float32FlushKey);
         require(plainKey != float32FlushKey, "f32 hardware flush did not change the cache key");
+        auto float32Preserve = uncached;
+        float32Preserve.target.float32DenormPreserve = true;
+        require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(float32Preserve)).request.target.float32DenormPreserve, "f32 denormal preservation was lost in serialization");
+        require(!RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(uncached)).request.target.float32DenormPreserve, "f32 denormal preservation appeared from nowhere in serialization");
+        std::vector<std::uint64_t> float32PreserveKey;
+        RecompileCacheKey::Build(float32Preserve, float32PreserveKey);
+        require(plainKey != float32PreserveKey && float32FlushKey != float32PreserveKey, "f32 denormal preservation did not change the cache key");
         auto changedLayout = request;
         changedLayout.layout.pushConstantSizeBytes = 64;
         require(!Recompile(changedLayout).cacheHit, "binding layout change reused an incompatible variant");
@@ -7464,6 +8731,20 @@ int main(int argc, char** argv) {
         expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00400000u, 0x00010600u)); }, "unsupported Vulkan/SPIR-V target", "incompatible target accepted");
         expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00405000u, 0x00010600u)); }, "unsupported Vulkan target", "unknown Vulkan target accepted");
 #endif
+        const auto readOnly = [&](const char* name) {
+            std::optional<std::uint32_t> id;
+            bool decorated = false;
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                const auto opcode = first.spirv[at] & 0xffffu;
+                if (opcode == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&first.spirv[at + 2u]), name) == 0) id = first.spirv[at + 1u];
+            }
+            for (std::size_t at = 5; id && at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                decorated = decorated || ((first.spirv[at] & 0xffffu) == spv::OpDecorate && first.spirv[at + 1u] == *id && first.spirv[at + 2u] == spv::DecorationNonWritable);
+            }
+            return std::pair{id.has_value(), decorated};
+        };
+        require(readOnly("flattened_srt") == std::pair{true, true}, "the flattened SRT is not decorated NonWritable");
+        for (const auto* table : {"bda_pagetable", "table_map"}) require(!readOnly(table).first || readOnly(table).second, "a read-only BDA page table or image table map is not decorated NonWritable");
         payload = 0x40000000u;
         AgcDriver::ShaderMemory updatedMemory({});
         const auto updatedCapture = updatedMemory.Capture(request);
@@ -7485,7 +8766,8 @@ int main(int argc, char** argv) {
             const auto changedCapture = changedMemory.Capture(request);
             auto changed = updated;
             changed.useCache = true;
-            changed.context.memory = changedMemory.Regions();
+            const auto changedRegions = changedMemory.Regions();
+            changed.context.memory = changedRegions;
             auto before = updated;
             before.useCache = true;
             before.context.memory = updatedRegions;
@@ -7548,7 +8830,8 @@ int main(int argc, char** argv) {
         AgcDriver::ShaderMemory nullRoot({});
         const auto nullRootCapture = nullRoot.Capture(request);
         require(nullRootCapture->snapshot.nullRootReads != 0u, "reads through a null user-data pointer were not counted");
-        request.context.memory = nullRoot.Regions();
+        const auto nullRootRegions = nullRoot.Regions();
+        request.context.memory = nullRootRegions;
         require(Recompile(request, *nullRootCapture)->poisonedSrtReads >= nullRootCapture->snapshot.nullRootReads, "a capture through a null user-data pointer is cacheable");
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;

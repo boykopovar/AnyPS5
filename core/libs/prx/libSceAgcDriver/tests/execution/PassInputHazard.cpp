@@ -223,7 +223,7 @@ int main() {
             std::memcpy(indices, triangle.data(), sizeof(triangle));
             const auto variant = std::string(readDepth == nullptr ? "without depth" : writeDepth == nullptr ? "with depth on the reader" : "with a depth target each");
             Draw(*device, reader, read, readDepth, indices);
-            Require(WriterFenced(inputs.Address(), sizeof(triangle)), "pass input hazard " + variant + ": a pass writing the indices an open pass reads in place took no barrier");
+            if (device->DrawInputsInPlace()) Require(WriterFenced(inputs.Address(), sizeof(triangle)), "pass input hazard " + variant + ": a pass writing the indices an open pass reads in place took no barrier");
             Draw(*device, reader, read, readDepth, indices);
             Draw(*device, writer, written, writeDepth, nullptr);
             Require(Covered(*device, read) == all, "pass input hazard " + variant + ": the draw reading its indices in place did not cover its target, a later pass overwrote them first");

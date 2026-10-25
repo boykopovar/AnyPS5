@@ -1,6 +1,7 @@
 #include <NativeModules.hpp>
 #include <io/FileReader.hpp>
 #include <io/NativePath.hpp>
+#include <io/FileIdentity.hpp>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -64,7 +65,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
                 continue;
             }
             if (!entry.is_regular_file()) continue;
-            if (std::filesystem::equivalent(entry.path(), inputPath)) continue;
+            if (Io::SameFile(entry.path(), inputPath)) continue;
             bool self = false;
             if (isElf(entry.path(), self)) paths.push_back(entry.path());
             else if (self)
@@ -81,7 +82,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     std::map<std::size_t, std::string> sonames;
     const auto soname = [&](std::size_t index) -> const std::string& {
         const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(result.Modules[index].Path, result.Modules[index].Bytes).Soname;
+        if (inserted) found->second = GuestImageReader().Read(result.Modules[index].Path, result.Modules[index].Bytes, true).Soname;
         return found->second;
     };
     std::vector<bool> copies(result.Modules.size());

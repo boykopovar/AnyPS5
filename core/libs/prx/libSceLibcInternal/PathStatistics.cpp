@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -18,7 +19,6 @@
 #endif
 
 struct LibcStatvfs;
-extern "C" int APS5_VABI fstatvfs_nid_postfix(int, LibcStatvfs*);
 
 namespace {
 int Fail(int error) {
@@ -140,7 +140,7 @@ int OpenMetadata(const std::filesystem::path& path, bool directory) {
 }
 
 extern "C" int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output) {
-    if (path == nullptr) return Fail(14);
+    if (path == nullptr || output == nullptr) return Fail(14);
     if (*path == '\0') return Fail(2);
     const int saved = errno;
     const auto last = std::string_view(path).back();

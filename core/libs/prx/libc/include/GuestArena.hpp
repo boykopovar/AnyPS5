@@ -8,6 +8,12 @@
 // absolute address and breaks on host addresses outside that range.
 namespace GuestArena {
 
+#ifdef ANYPS5_ENABLE_ASAN
+inline constexpr std::uintptr_t GuestAddressOffset = 0x0000100000000000ull;
+#else
+inline constexpr std::uintptr_t GuestAddressOffset = 0;
+#endif
+
 #ifndef _WIN32
 using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
 using SharedBackingWriter = bool (*)(std::uintptr_t address, const void* source, std::size_t bytes);
@@ -21,6 +27,7 @@ void* GuestArenaAllocate_nid_postfix(std::size_t bytes, std::size_t alignment);
 void* GuestArenaAllocateAtOrAbove_nid_postfix(std::uintptr_t hint, std::size_t bytes, std::size_t alignment);
 void* GuestArenaAllocateFromHint_nid_postfix(std::uintptr_t hint, std::size_t bytes, std::size_t alignment);
 std::uintptr_t GuestArenaHighestFree_nid_no_patch(std::size_t bytes, std::size_t alignment);
+bool GuestArenaNextUsed_nid_no_patch(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end);
 void GuestArenaMarkUsed_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestArenaRelease_nid_postfix(const void* pointer, std::size_t bytes);
 // The reserved range, and whether it was reserved with page write watching (Windows MEM_WRITE_WATCH).
@@ -48,7 +55,14 @@ void GuestArenaMapFile_nid_postfix(void* pointer, std::size_t bytes, void* secti
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);
 bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end);
+void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
+void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
 void GuestArenaForgetSection_nid_postfix(void* section);
+bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes);
+void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes);
+bool GuestArenaForgetReusableSection_nid_no_patch(void* section);
 #else
 void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver);
 void GuestArenaSetSharedBackingWriter_nid_no_patch(SharedBackingWriter writer);
@@ -77,6 +91,23 @@ private:
     std::size_t bytes;
     bool open;
 };
+
+#ifdef _WIN32
+class HostImportAccess {
+public:
+    HostImportAccess(void* pointer, std::size_t bytes) : pointer(pointer), bytes(bytes), open(GuestArenaBeginHostImport_nid_no_patch(pointer, bytes)) {}
+    ~HostImportAccess() {
+        if (open) GuestArenaEndHostImport_nid_no_patch(pointer, bytes);
+    }
+    HostImportAccess(const HostImportAccess&) = delete;
+    HostImportAccess& operator=(const HostImportAccess&) = delete;
+
+private:
+    void* pointer;
+    std::size_t bytes;
+    bool open;
+};
+#endif
 
 }
 

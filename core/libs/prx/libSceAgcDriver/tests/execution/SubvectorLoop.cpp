@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "../SubvectorLoopFixture.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -17,6 +18,7 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
+using SubvectorLoopFixture::ExecKeptCode;
 
 constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Columns = 9;
@@ -24,16 +26,6 @@ constexpr std::uint32_t Ones = 0xffffffffu;
 constexpr std::uint32_t Marker = 0x5a5a5a5au;
 alignas(256) std::array<std::uint32_t, Threads> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Columns> Output{};
-
-alignas(256) constexpr std::array<std::uint32_t, 49> ExecKeptCode{
-    0x34020082, 0xe0301000, 0x80000401, 0xbf8c3f70, 0x7e140280, 0x7e160280, 0x7e180280, 0x7e1a0280,
-    0x7e1c0280, 0xbe940380, 0xbea603ff, 0x5a5a5a5a, 0x7daa0880, 0xbda6000a, 0x80148114, 0x4a141481,
-    0x7e160214, 0x7e180226, 0xbe96047e, 0x7e1a0216, 0x7e1c0217, 0xbf098414, 0xbf850001, 0xbe26fff6,
-    0xbe98047e, 0xbefe04c1, 0x7e1e0226, 0x7e200218, 0x7e220219, 0x7e240214, 0xe0701000, 0x80010a01,
-    0xe0701100, 0x80010b01, 0xe0701200, 0x80010c01, 0xe0701300, 0x80010d01, 0xe0701400, 0x80010e01,
-    0xe0701500, 0x80010f01, 0xe0701600, 0x80011001, 0xe0701700, 0x80011101, 0xe0701800, 0x80011201,
-    0xbf810000,
-};
 
 alignas(256) constexpr std::array<std::uint32_t, 50> ExecResetCode{
     0x34020082, 0xe0301000, 0x80000401, 0xbf8c3f70, 0x7e140280, 0x7e160280, 0x7e180280, 0x7e1a0280,

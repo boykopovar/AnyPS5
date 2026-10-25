@@ -49,6 +49,33 @@ class ReleasePackageTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
+    def test_ajm_vibration_decoder_license_in_archives(self):
+        (self.source / "core/libs/prx/libSceAjm.native").mkdir()
+        (self.build / "core/libs/libs/libSceAjm.native.prx").write_bytes(b"ajm")
+        license_file = self.source / "3rdparty/vgmstream/COPYING"
+        license_file.parent.mkdir(parents=True)
+        license_file.write_bytes(b"decoder license")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/licenses/vgmstream.txt"), b"decoder license")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/licenses/vgmstream.txt").read(), b"decoder license")
+
+    def test_vorbis_decoder_licenses_in_archives(self):
+        (self.source / "core/libs/prx/libSceVorbisDec").mkdir()
+        (self.build / "core/libs/libs/libSceVorbisDec.prx").write_bytes(b"vorbis")
+        for name in ("ogg", "vorbis"):
+            license_file = self.source / f"3rdparty/{name}/COPYING"
+            license_file.parent.mkdir(parents=True)
+            license_file.write_bytes(f"{name} license".encode())
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/licenses/ogg.txt"), b"ogg license")
+            self.assertEqual(archive.read("libs/licenses/vorbis.txt"), b"vorbis license")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
+            self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
+
     def test_windows_runtime_follows_the_configured_compiler_directory(self):
         runtime = self.root / "custom toolchain" / "bin"
         runtime.mkdir(parents=True)
@@ -71,6 +98,25 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(archive.extractfile("libs/" + name).read(), name.encode())
         self.assertEqual((self.output / "relinker-v1.exe").read_bytes(), b"Windows executable")
 
+    def test_opus_library_archives_include_the_bundled_license(self):
+        (self.source / "core/libs/prx/libSceOpusDec").mkdir()
+        (self.library.parent / "libSceOpusDec.prx").write_bytes(b"Opus library bytes")
+        license_file = self.source / "3rdparty/opus/COPYING"
+        license_file.parent.mkdir(parents=True)
+        license_file.write_bytes(b"Opus redistribution notice\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/licenses/opus.txt"), license_file.read_bytes())
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/licenses/opus.txt").read(), license_file.read_bytes())
+
+    def test_opus_release_without_its_license_is_rejected(self):
+        (self.source / "core/libs/prx/libSceOpusCeltDec").mkdir()
+        (self.library.parent / "libSceOpusCeltDec.prx").write_bytes(b"CELT library bytes")
+        with self.assertRaisesRegex(RuntimeError, "COPYING"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
     def test_windows_package_without_configured_compiler_preserves_existing_output(self):
         (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=compiler-NOTFOUND\n", encoding="utf-8")
         (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
@@ -81,6 +127,17 @@ class ReleasePackageTests(unittest.TestCase):
             package_release.package("windows", self.build, self.output, "v1")
         self.assertEqual(list(self.output.iterdir()), [previous])
         self.assertEqual(previous.read_bytes(), b"existing output")
+
+    def test_windows_runtime_decodes_cmake_cache_with_utf8_bom(self):
+        compiler = self.root / "custom toolchain" / "bin" / "g++.exe"
+        (self.build / "CMakeCache.txt").write_bytes(b"\xef\xbb\xbfCMAKE_CXX_COMPILER:STRING=" + compiler.as_posix().encode("utf-8") + b"\n")
+        self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
+
+    def test_tracy_runtime_decodes_cmake_cache_with_utf8_bom(self):
+        client = self.build / "core/libs/libs/libTracyClient.dll"
+        client.write_bytes(b"client")
+        (self.build / "CMakeCache.txt").write_bytes(b"\xef\xbb\xbfAPS5_ENABLE_TRACY:BOOL=ON\n")
+        self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
     def test_tracy_packages_include_only_the_target_platform_client(self):
         directory = self.build / "core/libs/libs"
@@ -327,9 +384,19 @@ class ReleasePackageTests(unittest.TestCase):
             package_release.package("linux", self.build, self.output, "../v1.0")
         self.assertFalse(self.output.exists())
 
+    def test_windows_runtime_missing_cmake_cache_raises_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "Missing CMakeCache.txt"):
+                package_release.windows_runtime(Path(tmp))
+
 
 
 class DocumentationAssetsTests(unittest.TestCase):
+    def test_source_not_directory_raises_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "not a directory"):
+                package_release.collect_docs(Path(tmp) / "nonexistent", Path(tmp) / "assets")
+
     def test_unique_nested_documents_are_flattened(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
@@ -417,6 +484,39 @@ class ReleaseAssetsTests(unittest.TestCase):
             self.assertEqual(sorted(file.name for file in output.iterdir()), sorted(names))
             for name in names:
                 self.assertEqual((output / name).read_bytes(), b"old " + name.encode())
+
+
+class ReleaseNoteDestinationsTests(unittest.TestCase):
+    def test_directory_body_preserves_existing_full_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = root / "notes.json", root / "body", root / "full.md"
+            source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+            body.mkdir()
+            full.write_bytes(b"previous full notes")
+            with self.assertRaises(OSError):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(full.read_bytes(), b"previous full notes")
+            self.assertEqual(list(body.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "nt", "Windows read-only output semantics")
+    def test_readonly_output_preserves_both_note_files(self):
+        for target in ("body.md", "full.md"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, body, full = root / "notes.json", root / "body.md", root / "full.md"
+                source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+                body.write_bytes(b"previous body")
+                full.write_bytes(b"previous full notes")
+                readonly = root / target
+                readonly.chmod(stat.S_IREAD)
+                try:
+                    with self.assertRaises(OSError):
+                        prepare_release_notes.prepare_notes(source, body, full)
+                    self.assertEqual(body.read_bytes(), b"previous body")
+                    self.assertEqual(full.read_bytes(), b"previous full notes")
+                finally:
+                    readonly.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
 class ReleaseNotesTests(unittest.TestCase):
@@ -523,9 +623,10 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
             directory = Path(directory)
             source_path = directory / "source.json"
             source_path.write_text(source, encoding="utf-8")
-            body_path = directory / "nested" / "body.md"
-            full_path = directory / "nested" / "full.md"
+            body_path = directory / "nested_body" / "body.md"
+            full_path = directory / "nested_full" / "full.md"
             prepare_release_notes.prepare_notes(source_path, body_path, full_path)
+            self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
             self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
 
     def test_body_over_limit_without_whats_changed_is_returned_unchanged(self):
@@ -542,6 +643,49 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
         result = prepare_release_notes.release_body(notes + "x" * (prepare_release_notes.BODY_LIMIT + 1))
         self.assertNotIn("What's Changed", result)
         self.assertIn("Full Changelog", result)
+
+
+class ReleaseMainTests(unittest.TestCase):
+    def test_main_with_docs_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = Path(tmp) / "docs"
+            docs.mkdir()
+            (docs / "guide.md").write_text("# Guide", encoding="utf-8")
+            output = Path(tmp) / "out"
+            result = package_release.main(["--docs", str(docs), "--output", str(output)])
+            self.assertEqual(result, 0)
+            self.assertEqual((output / "guide.md").read_text(encoding="utf-8"), "# Guide")
+
+    def test_main_reports_packaging_error_via_parser_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "out"
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                package_release.main(["--docs", str(Path(tmp) / "nonexistent"), "--output", str(output)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("not a directory", stderr.getvalue())
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+        out, err = Stream(), Stream()
+        with patch.object(package_release.sys, "stdout", out), patch.object(package_release.sys, "stderr", err):
+            with tempfile.TemporaryDirectory() as tmp:
+                docs = Path(tmp) / "docs"
+                docs.mkdir()
+                (docs / "doc.md").write_text("text", encoding="utf-8")
+                package_release.main(["--docs", str(docs), "--output", str(Path(tmp) / "out")])
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

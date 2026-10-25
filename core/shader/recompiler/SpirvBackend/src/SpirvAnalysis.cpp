@@ -75,6 +75,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::DataConsume:
     case IrOpcode::LoadVectorWindow:
     case IrOpcode::DataOrderedCount:
+    case IrOpcode::DataOrderedSwap:
         return true;
     case IrOpcode::GetBuiltin: {
         const auto* kind = value.Argument(0)->Resolve();
@@ -344,7 +345,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             if (IsImageAtomic64Opcode(inst->Opcode())) {
                 requirements.imageInt64Atomics = true;
             }
-            if (IsFloat64Opcode(inst->Opcode())) {
+            if (inst->Opcode() == IrOpcode::FPInterpolateF32 || inst->Opcode() == IrOpcode::FPInterpolateF16) {
+                requirements.float64Interpolation = true;
+            } else if (IsFloat64Opcode(inst->Opcode())) {
                 requirements.float64 = true;
             }
             if (addressAccess != AddressAccess::None) {
@@ -373,6 +376,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
                 requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
+                const bool pair = inst->Opcode() == IrOpcode::LoadBufferU32x2 || inst->Opcode() == IrOpcode::StoreBufferU32x2;
+                requirements.coherentBufferPairs = requirements.coherentBufferPairs || (pair && memory.coherent && !memory.gpuDescriptor);
                 if (!memory.planningOnly) {
                     requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }

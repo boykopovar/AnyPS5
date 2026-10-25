@@ -1,9 +1,12 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "zlib.h"
+#include <atomic>
+#include <condition_variable>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 
 namespace {
 
@@ -346,6 +349,175 @@ void IntervalDroppedThreads() {
     Check(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos && line.find("events_full_after_s") == std::string::npos, "an interval without presents printed a loss time");
 }
 
+void SummaryMachineFields() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    summary.commit = "abc";
+    summary.dirty = false;
+    summary.gpu = "GPU";
+    summary.driver = "Driver 1";
+    summary.os = "OS 1";
+    summary.width = 1920;
+    summary.height = 1080;
+    summary.window = "summary_every 30";
+    summary.host = AgcDriver::TraceHost{"CPU \"X\"", 16, 32000};
+    summary.title = AgcDriver::TraceTitle{"PPSA00000", "Example", "01.002.000"};
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16)};
+    const auto line = TraceFormat::Summary(summary, {}, presents);
+    Check(line.find("\"os\":\"OS 1\",\"cpu\":\"CPU \\\"X\\\"\",\"cpu_threads\":16,\"memory_mib\":32000,\"title_id\":\"PPSA00000\",\"title\":\"Example\",\"content_version\":\"01.002.000\",\"resolution\":\"1920x1080\"") != std::string::npos, "the summary line did not name the machine and title");
+    summary.title.reset();
+    Check(TraceFormat::Summary(summary, {}, presents).find("title_id") == std::string::npos, "a summary without param.json named a title");
+    summary.host.reset();
+    const auto bare = TraceFormat::Summary(summary, {}, presents);
+    Check(bare.find("\"os\":\"OS 1\",\"resolution\":\"1920x1080\"") != std::string::npos && bare.find("cpu") == std::string::npos, "a summary on a host without a CPU name changed its fields");
+}
+
+void FrameMicroseconds() {
+    const auto origin = Clock::now();
+    const std::vector<Clock::time_point> presents{origin, origin + microseconds(16667), origin + microseconds(50000), origin + microseconds(50000)};
+    Check(TraceFormat::FrameMicroseconds(presents) == std::vector<std::uint32_t>{16667, 33333, 0}, "frame intervals in microseconds changed");
+    Check(TraceFormat::FrameMicroseconds({}).empty(), "no presents gave frame intervals");
+}
+
+void BenchFormat() {
+    AgcDriver::TraceSummary summary;
+    summary.commit = "abc";
+    summary.environment = {{"APS5_TRACE_BENCH", "1"}};
+    summary.gpu = "GPU";
+    summary.driver = "Driver 1";
+    summary.os = "OS 1";
+    summary.host = AgcDriver::TraceHost{"CPU", 8, 16000};
+    const AgcDriver::TraceBenchIntervals intervals{
+        std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{0, 30.5, 0, 1920, 1080, 120.25, {16667, 16666}}),
+        std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{30.5, 61, 1830, 2560, 1440, 98.5, {}}),
+    };
+    const std::string expected =
+        "{\"format\":\"aps5-bench/1\",\"commit\":\"abc\",\"dirty\":null,\"env\":{\"APS5_TRACE_BENCH\":\"1\"},\"gpu\":\"GPU\",\"driver\":\"Driver 1\",\"os\":\"OS 1\","
+        "\"cpu\":\"CPU\",\"cpu_threads\":8,\"memory_mib\":16000,\"intervals_dropped\":3,\"intervals\":[\n"
+        "{\"start_s\":0.000,\"end_s\":30.500,\"first_present\":0,\"resolution\":\"1920x1080\",\"gpu_busy_ms\":120.250,\"frame_us\":[16667,16666]},\n"
+        "{\"start_s\":30.500,\"end_s\":61.000,\"first_present\":1830,\"resolution\":\"2560x1440\",\"gpu_busy_ms\":98.500,\"frame_us\":[]}\n]}\n";
+    Check(TraceFormat::Bench(summary, intervals, 3) == expected, "benchmark file changed");
+}
+
+void BenchRotation() {
+    AgcDriver::TraceBenchIntervals kept;
+    std::uint64_t dropped = 0;
+    for (std::size_t index = 0; index < AgcDriver::TraceBench::MaximumIntervals; ++index) AgcDriver::TraceBench::Keep(kept, std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{static_cast<double>(index)}), dropped);
+    Check(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 0, "intervals were dropped before the file was full");
+    for (std::size_t index = 0; index < 5; ++index) AgcDriver::TraceBench::Keep(kept, std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{static_cast<double>(AgcDriver::TraceBench::MaximumIntervals + index)}), dropped);
+    Check(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 5, "a full file did not drop one interval per new one");
+    Check(kept.front()->startS == 5 && kept.back()->startS == static_cast<double>(AgcDriver::TraceBench::MaximumIntervals + 4), "the file did not keep the newest intervals");
+    const auto file = TraceFormat::Bench({}, kept, dropped);
+    Check(file.find("\"intervals_dropped\":5,") != std::string::npos && file.find("{\"start_s\":5.000,") != std::string::npos && file.find("{\"start_s\":4.000,") == std::string::npos, "the file does not match the kept intervals");
+}
+
+void BenchWriterKeepsNewest() {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool release = false;
+    std::vector<std::uint64_t> written;
+    AgcDriver::TraceBenchWriter writer([&](const AgcDriver::TraceBenchSnapshot& snapshot) {
+        std::unique_lock lock(mutex);
+        written.push_back(snapshot.dropped);
+        entered = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return release; });
+    });
+    writer.Write({{}, {}, 1});
+    {
+        std::unique_lock lock(mutex);
+        changed.wait(lock, [&] { return entered; });
+    }
+    writer.Write({{}, {}, 2});
+    writer.Write({{}, {}, 3});
+    writer.Write({{}, {}, 4});
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    writer.Flush();
+    writer.Stop();
+    Check(written == std::vector<std::uint64_t>{1, 4}, "a benchmark snapshot was written after a newer one replaced it");
+    Check(writer.Superseded() == 2, "replaced benchmark snapshots were not counted");
+}
+
+void BenchWriterStopWrites() {
+    std::vector<std::uint64_t> written;
+    {
+        AgcDriver::TraceBenchWriter writer([&](const AgcDriver::TraceBenchSnapshot& snapshot) { written.push_back(snapshot.dropped); });
+        writer.Write({{}, {}, 7});
+    }
+    Check(written == std::vector<std::uint64_t>{7}, "stopping the benchmark writer lost its pending snapshot");
+}
+
+std::string ReadGzip(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    Check(bytes.size() > 18, "the gzip file is truncated");
+    std::size_t size = 0;
+    for (unsigned index = 0; index < 4; ++index) size |= static_cast<std::size_t>(bytes[bytes.size() - 4 + index]) << (8 * index);
+    z_stream stream{};
+    Check(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
+    std::string inflated(size, 0);
+    stream.next_in = const_cast<Bytef*>(bytes.data() + 10);
+    stream.avail_in = static_cast<uInt>(bytes.size() - 18);
+    stream.next_out = reinterpret_cast<Bytef*>(inflated.data());
+    stream.avail_out = static_cast<uInt>(inflated.size());
+    const int status = inflate(&stream, Z_FINISH);
+    inflateEnd(&stream);
+    Check(status == Z_STREAM_END && stream.avail_out == 0, "the gzip file does not inflate to its size");
+    return inflated;
+}
+
+void ReplaceGzipFile() {
+    const auto directory = std::filesystem::temp_directory_path() / ("aps5-bench-test-" + std::to_string(Clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "aps5-bench.json.gz";
+    auto temporary = path;
+    temporary += ".tmp";
+    AgcDriver::TraceFile::ReplaceGzip(path, "{\"first\":1}\n");
+    AgcDriver::TraceFile::ReplaceGzip(path, "{\"second\":2}\n");
+    Check(ReadGzip(path) == "{\"second\":2}\n" && !std::filesystem::exists(temporary), "the benchmark file was not replaced");
+    const auto blocked = directory / "aps5-bench-blocked.json.gz";
+    auto blockedTemporary = blocked;
+    blockedTemporary += ".tmp";
+    std::filesystem::create_directory(blocked);
+    bool failed = false;
+    try { AgcDriver::TraceFile::ReplaceGzip(blocked, "{\"third\":3}\n"); } catch (const std::system_error&) { failed = true; }
+    const bool blockedKept = std::filesystem::is_directory(blocked);
+    const bool temporaryLeft = std::filesystem::exists(blockedTemporary);
+    const auto kept = ReadGzip(path);
+#ifndef _WIN32
+    // A directory at <name>.tmp makes the write itself fail, which is the case ReplaceGzip exists
+    // for: the previous file must survive, so an in-place rewrite fails this check. The failure is
+    // a std::ios_base::failure thrown inside libstdc++'s ofstream, which MinGW builds could not
+    // unwind to this catch, so the case runs on the other platforms only.
+    std::filesystem::create_directory(temporary);
+    bool writeFailed = false;
+    try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
+    const auto keptAfterWrite = ReadGzip(path);
+#endif
+    std::filesystem::remove_all(directory);
+    Check(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
+    Check(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
+#ifndef _WIN32
+    Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
+#endif
+}
+
+void BenchSwitch() {
+    Check(!AgcDriver::TraceBench::Parse(nullptr, false), "the benchmark file was enabled without its switch");
+    Check(AgcDriver::TraceBench::Parse("1", true), "APS5_TRACE_BENCH=1 was not accepted");
+    for (const auto& [text, every] : {std::pair{"1", false}, std::pair{"0", true}, std::pair{"yes", true}, std::pair{"", true}}) {
+        bool rejected = false;
+        try { AgcDriver::TraceBench::Parse(text, every); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        Check(rejected, "a malformed or unsupported APS5_TRACE_BENCH was accepted");
+    }
+}
+
 void GzipFile() {
     std::string text;
     for (int index = 0; index < 20000; ++index) text += "{\"name\":\"Driver.Packet\",\"ph\":\"X\",\"ts\":" + std::to_string(index) + "}\n";
@@ -413,7 +585,15 @@ int main() {
         TotalsSince();
         IntervalSummaryFields();
         IntervalDroppedThreads();
+        SummaryMachineFields();
+        FrameMicroseconds();
+        BenchFormat();
+        BenchRotation();
+        BenchWriterKeepsNewest();
+        BenchWriterStopWrites();
+        BenchSwitch();
         GzipFile();
+        ReplaceGzipFile();
         AppendLines();
         std::cout << "performance trace tests passed\n";
         return 0;

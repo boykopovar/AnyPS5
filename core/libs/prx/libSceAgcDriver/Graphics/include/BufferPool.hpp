@@ -2,8 +2,11 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BUFFERPOOL_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <chrono>
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdint>
 #include <deque>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -24,6 +27,7 @@ struct BufferAllocation {
     VkDeviceSize offset = 0;
     bool slab = false;
     std::size_t bufferBytes = 0;
+    std::uint32_t memoryType = 0;
 };
 
 struct SlabSlot {
@@ -62,9 +66,14 @@ public:
     // The size a buffer for `bytes` is created with: its size class, or `bytes` itself when large.
     static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
-    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr);
+    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr, bool newImage = false);
+    static VkDeviceSize ImageBudget(VkDeviceSize deviceBudget);
+    VkDeviceMemory TakeImageMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr, bool newImage = false);
+    void PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept;
+    std::size_t RetainedImages();
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
+    VkDeviceSize ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now);
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
     static VkDeviceSize SlabBlockBytes(std::size_t capacity);
     SlabSlot TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable);
@@ -82,6 +91,7 @@ private:
     };
     struct Slab {
         std::vector<SlabBlock*> available;
+        std::size_t blocks = 0;
         std::size_t emptyBlocks = 0;
     };
     static std::uint64_t SlabKey(std::uint32_t memoryType, std::size_t capacity, bool addressable);
@@ -89,16 +99,18 @@ private:
     struct Slot {
         BufferAllocation allocation;
         std::uint64_t lastUse;
+        std::list<Slot*>::iterator order;
     };
     struct SlotKey {
         std::size_t bytes;
         VkBufferUsageFlags usage;
         VkMemoryPropertyFlags properties;
+        std::uint32_t memoryType = 0;
         bool operator==(const SlotKey&) const = default;
     };
     struct SlotKeyHash {
         std::size_t operator()(const SlotKey& key) const noexcept {
-            return std::hash<std::size_t>{}(key.bytes) ^ (static_cast<std::size_t>(key.usage) << 32u) ^ (static_cast<std::size_t>(key.properties) << 48u);
+            return std::hash<std::size_t>{}(key.bytes) ^ (static_cast<std::size_t>(key.usage) << 32u) ^ (static_cast<std::size_t>(key.properties) << 48u) ^ (static_cast<std::size_t>(key.memoryType) << 56u);
         }
     };
     // One retention tier: its slots by key (each list oldest first), their count and bytes, the
@@ -126,23 +138,42 @@ private:
     // caller destroys those after releasing the mutex, so builds taking buffers on other threads
     // do not wait behind the Vulkan destroy calls. Nothing changes when the vector cannot grow.
     void evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted);
+    bool evictOldestImage(std::vector<BufferAllocation>& evicted);
+    bool imagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const;
+    bool heapOverBudget();
     // The retained-slot bound of each tier (APS5_BUFFER_POOL_SLOTS, default `defaultSlots`), read once.
     static std::size_t MaxSlots();
     std::size_t maxSlots;
-    VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes);
+    VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage);
     VkDevice device;
     PFN_vkUnmapMemory unmap;
     PFN_vkDestroyBuffer destroyBuffer;
     PFN_vkFreeMemory freeMemory;
     PFN_vkAllocateMemory allocateMemory;
     PFN_vkMapMemory mapMemory;
-    std::mutex mutex;
+    VkPhysicalDevice physical = VK_NULL_HANDLE;
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
+    AgcDriver::Mutex mutex;
     // Not `small`/`large`: <rpcndr.h> (via <windows.h>) defines `small` as a macro.
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
+    std::chrono::steady_clock::time_point heapRead{};
+    bool heapOver = false;
+    VkDeviceSize imageBudget = 0;
+    VkDeviceSize imageBytes = 0;
+    std::size_t imageSlots = 0;
+    std::uint64_t imageHits = 0;
+    std::uint64_t imageMisses = 0;
+    std::uint64_t imageEvictions = 0;
+    std::list<Slot*> imageOrder;
     std::uint64_t clock = 0;
-    std::mutex slabMutex;
+    std::optional<std::chrono::steady_clock::time_point> idleRead;
+    std::uint64_t idleClock = 0;
+    std::uint64_t reclaimBefore = 0;
+    std::uint64_t scannedIdleClock = 0;
+    AgcDriver::Mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;
     std::unordered_map<VkDeviceMemory, std::unique_ptr<SlabBlock>> slabBlocks;
     static constexpr VkDeviceSize budget = 512ull * 1024 * 1024;
@@ -156,7 +187,8 @@ private:
 };
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
-VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation);
+VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, std::uint32_t* allocatedType = nullptr, bool newImage = false);
+void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept;
 
 }
 

@@ -1,13 +1,9 @@
+#include "prx/libSceDiscMap/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-std::int32_t APS5_VABI sceDiscMapIsRequestOnHDD(const char* path, std::int64_t offset, std::int64_t size, std::int32_t* result);
-std::int32_t APS5_VABI sceDiscMapUnknown_ioKMruft1ek(const char* path, std::int64_t offset, std::int64_t size, void* flags, void* out1, void* out2);
-}
 
 namespace {
 

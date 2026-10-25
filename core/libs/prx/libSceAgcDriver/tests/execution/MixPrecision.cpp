@@ -18,7 +18,6 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Float64Capability = 10;
 constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
@@ -286,11 +285,6 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), Float64Capability) == capabilities.end()) {
-            std::puts("skipped, v_fma_mixlo_f16 and v_fma_mixhi_f16 are computed in f64 and the device has no shaderFloat64");
-            return VulkanTestSkipped;
-        }
         FillInput();
         Run(*device, MixCode);
         Check();

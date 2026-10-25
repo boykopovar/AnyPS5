@@ -225,8 +225,16 @@ IrU64 TranslationContext::float64OrderKey(const std::array<IrU32, 2>& bits) {
 }
 
 void TranslationContext::emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater, bool unordered, bool cmpx) {
-    const std::array<IrU32, 2> lhs = readF64Bits(sourceAt(inst, 0u));
-    const std::array<IrU32, 2> rhs = readF64Bits(sourceAt(inst, 1u));
+    std::array<std::array<IrU32, 2>, 2> bits{readF64Bits(sourceAt(inst, 0u)), readF64Bits(sourceAt(inst, 1u))};
+    if (floatMode.has_value() && (floatMode->floatMode & 0x40u) == 0u) {
+        for (auto& value : bits) {
+            const IrU1 zeroExponent(ir.IEqual(ir.BitwiseAnd(value[1].Value(), ir.Constant(0x7ff00000u)), ir.Constant(0u)));
+            value[0] = IrU32(ir.Select(zeroExponent.Value(), ir.Constant(0u), value[0].Value()));
+            value[1] = IrU32(ir.Select(zeroExponent.Value(), ir.BitwiseAnd(value[1].Value(), ir.Constant(0x80000000u)), value[1].Value()));
+        }
+    }
+    const auto& lhs = bits[0];
+    const auto& rhs = bits[1];
     const IrU1 lhsNan = float64IsNan(lhs);
     const IrU1 rhsNan = float64IsNan(rhs);
     IrValue& isUnordered = ir.LogicalOr(lhsNan.Value(), rhsNan.Value());

@@ -1,3 +1,4 @@
+#include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -70,6 +71,55 @@ int APS5_VABI sceNpGameIntentVshInitialize(void) {
 }
 
 int APS5_VABI sceNpGameIntentVshTerminate(void) {
+    return 0;
+}
+
+int APS5_VABI sceNpAppLauncherInitialize(const void* initParam) {
+    (void)initParam;
+    return 0;
+}
+
+int APS5_VABI sceNpAppLauncherLaunchApp() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpAppLauncherTerminate() {
+    return 0;
+}
+
+int APS5_VABI sceNpGameIntentGetUdsNpComId() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpGameIntentLaunchApp() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpGameIntentLaunchApp2() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSessionServiceGetJoinedPartySession() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

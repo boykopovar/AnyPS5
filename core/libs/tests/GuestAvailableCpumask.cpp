@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstddef>
@@ -8,28 +10,6 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
-
-extern "C" {
-KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask);
-int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, void* mask);
-int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, const void* mask);
-int APS5_VABI getpid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
-Pthread APS5_VABI pthread_self_nid_postfix(void);
-int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset);
-int APS5_VABI pthread_setaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, const void* cpuset);
-int APS5_VABI scePthreadGetthreadid(void);
-int APS5_VABI sceKernelGetCurrentCpu(void);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr int PS5_LOGICAL_CPUS = 16;
@@ -120,6 +100,7 @@ static void* APS5_VABI SetCpuset(void* arg) {
     std::uint64_t set[4] = {cpu | (1ull << 40), 0, 0, 0};
     result->results[0] = cpuset_setaffinity_nid_postfix(3, 1, -1, 8, set);
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[0]);
+
     set[1] = 1;
     result->results[1] = cpuset_setaffinity_nid_postfix(3, 1, -1, 16, set) == -1 && *__error_nid_postfix() == 22;
     set[1] = 0;
@@ -130,9 +111,11 @@ static void* APS5_VABI SetCpuset(void* arg) {
     const std::uint64_t unavailable[1] = {1ull << 40};
     result->results[6] = cpuset_setaffinity_nid_postfix(3, 1, -1, 8, unavailable) == -1 && *__error_nid_postfix() == 11;
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[1]);
+
     const std::uint64_t process[1] = {cpu};
     result->results[7] = cpuset_setaffinity_nid_postfix(3, 2, getpid_nid_postfix(), 8, process);
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[2]);
+
     return nullptr;
 }
 

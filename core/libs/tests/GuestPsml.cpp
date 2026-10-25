@@ -1,3 +1,4 @@
+#include "prx/libScePsml_debug/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -5,44 +6,25 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement1100(void* requirement, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrCreateContext1100(void** context, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1100(void* context, void* commandBuffer, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2(void* requirement, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrCreateContext800M3_2(void** context, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrCreateContext1300(void** context, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900(void* context, void* commandBuffer, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1000(void* context, void* commandBuffer, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1300(void* context, void* commandBuffer, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrInit();
-std::int32_t APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement(void* requirement, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, const void* param);
-std::int32_t APS5_VABI scePsmlMfsrReleaseSharedResources(void* sharedResources);
-std::int32_t APS5_VABI scePsmlMfsrReleaseContext(void* context);
-}
+#include <vector>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
 constexpr std::int32_t kErrNotInitialized = static_cast<std::int32_t>(0x8A810001);
+constexpr std::int32_t kErrInvalidArgument = static_cast<std::int32_t>(0x8A810005);
+constexpr std::int32_t kErrNullOutput = static_cast<std::int32_t>(0x8A810009);
 
-struct CommandBuffer {
-    std::uint32_t* cursor;
-    std::uint32_t sizeInDwords;
-};
-
-using CreateContext = std::int32_t (APS5_VABI*)(void**, const void*);
 using GetDispatchPacket = std::int32_t (APS5_VABI*)(void*, void*, const void*);
 
-void CreateContextUntouched(CreateContext create) {
+template <typename TParam>
+void CreateContextUntouched(std::int32_t (APS5_VABI* create)(void**, const TParam*)) {
     std::array<std::uint8_t, 0x158> param{};
     std::uint64_t contextStorage = 0;
     void* const sentinel = &contextStorage;
     void* context = sentinel;
-    Require(create(&context, param.data()) == kErrNotInitialized);
+    Require(create(&context, reinterpret_cast<const TParam*>(param.data())) == kErrNotInitialized);
     Require(context == sentinel);
     Require(create(nullptr, nullptr) == kErrNotInitialized);
 }
@@ -53,7 +35,7 @@ void DispatchPacketUntouched(GetDispatchPacket dispatch) {
     std::array<std::uint32_t, 64> dwords;
     dwords.fill(0xa5a5a5a5u);
     const auto untouchedDwords = dwords;
-    CommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
+    MfsrCommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
     Require(dispatch(&contextStorage, &commandBuffer, param.data()) == kErrNotInitialized);
     Require(dispatch(nullptr, &commandBuffer, nullptr) == kErrNotInitialized);
     Require(commandBuffer.cursor == dwords.data());
@@ -71,37 +53,27 @@ bool Throws(TCall call, const char* text) {
     return false;
 }
 
-struct Requirement {
-    std::uint64_t blockBytes;
-    std::uint64_t alignment;
-    std::uint64_t blockCount;
-};
-
-struct Block {
-    std::uint64_t address;
-    std::uint64_t bytes;
-};
-
-struct SharedParam {
-    std::uint32_t type;
-    std::uint32_t reserved;
-    const Block* blocks;
-    std::uint64_t blockCount;
-    std::uint64_t reserved2;
-};
-
 struct ContextParam {
     std::array<std::uint8_t, 0x60> bytes{};
 
-    void Set(const Block* blocks, std::uint64_t count, void* shared) {
+    void Set(const MfsrBlock* blocks, std::uint64_t count, void* shared) {
         std::memcpy(bytes.data() + 0x08, &blocks, sizeof(blocks));
         std::memcpy(bytes.data() + 0x10, &count, sizeof(count));
         std::memcpy(bytes.data() + 0x38, &shared, sizeof(shared));
     }
+
+    void SetInputDimensions(std::uint16_t width, std::uint16_t height) {
+        std::memcpy(bytes.data() + 0x18, &width, sizeof(width));
+        std::memcpy(bytes.data() + 0x1a, &height, sizeof(height));
+    }
+
+    void SetDescriptor0(const void* descriptor) {
+        std::memcpy(bytes.data() + 0x20, &descriptor, sizeof(descriptor));
+    }
 };
 
-std::array<Block, 4> Blocks(const Requirement& requirement, std::uint64_t first) {
-    std::array<Block, 4> blocks{};
+std::vector<MfsrBlock> Blocks(const MfsrRequirement& requirement, std::uint64_t first) {
+    std::vector<MfsrBlock> blocks(requirement.blockCount);
     for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = {first + i * requirement.blockBytes, requirement.blockBytes};
     return blocks;
 }
@@ -110,24 +82,34 @@ void SetupBeforeInit() {
     std::uint64_t storage = 0;
     void* const sentinel = &storage;
     void* handle = sentinel;
-    Requirement requirement{1, 2, 3};
-    SharedParam sharedParam{};
+    MfsrRequirement requirement{1, 2, 3};
+    MfsrSharedResourcesParam sharedParam{};
     Require(scePsmlMfsrGetSharedResourcesInitRequirement(&requirement, &sharedParam) == kErrNotInitialized);
     Require(requirement.blockBytes == 1 && requirement.alignment == 2 && requirement.blockCount == 3);
     Require(scePsmlMfsrCreateSharedResources(&handle, &sharedParam) == kErrNotInitialized);
     Require(handle == sentinel);
     Require(scePsmlMfsrReleaseContext(sentinel) == kErrNotInitialized);
     Require(scePsmlMfsrReleaseSharedResources(sentinel) == kErrNotInitialized);
+
+    std::uint32_t packetDwords = 0xa5a5a5a5;
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(sentinel, &packetDwords) == kErrNotInitialized);
+    Require(packetDwords == 0xa5a5a5a5);
+    float bias = 0.5f;
+    Require(scePsmlMfsrGetMipmapBias(sentinel, &bias, 3840) == kErrNotInitialized);
+    Require(bias == 0.5f);
+    Require(scePsmlMfsrSelectConfig(sentinel) == kErrNotInitialized);
+    Require(scePsmlMfsrRequestCapture(sentinel) == kErrNotInitialized);
+    Require(scePsmlMfsrIsCaptureInProgress(sentinel) == kErrNotInitialized);
 }
 
 void SetupAfterInit() {
     Require(scePsmlMfsrInit() == 0);
     Require(scePsmlMfsrInit() == 0);
 
-    SharedParam sharedParam{};
-    Requirement shared{};
+    MfsrSharedResourcesParam sharedParam{};
+    MfsrRequirement shared{};
     Require(scePsmlMfsrGetSharedResourcesInitRequirement(&shared, &sharedParam) == 0);
-    Require(shared.blockBytes == 0x200000 && shared.alignment == 0x200000 && shared.blockCount == 4);
+    Require(shared.blockBytes == 0x200000 && shared.alignment == 0x200000 && shared.blockCount == 52);
 
     const auto sharedBlocks = Blocks(shared, 0x10000000);
     sharedParam.blocks = sharedBlocks.data();
@@ -138,15 +120,63 @@ void SetupAfterInit() {
 
     ContextParam contextParam;
     contextParam.Set(nullptr, 0, sharedResources);
-    Requirement context{};
-    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(&context, contextParam.bytes.data()) == 0);
+    MfsrRequirement context{};
+    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(&context, reinterpret_cast<const MfsrContextParam*>(contextParam.bytes.data())) == 0);
     Require(context.blockBytes == 0x200000 && context.alignment == 0x200000 && context.blockCount == 4);
 
     const auto contextBlocks = Blocks(context, 0x20000000);
     contextParam.Set(contextBlocks.data(), contextBlocks.size(), sharedResources);
     void* mfsrContext = nullptr;
-    Require(scePsmlMfsrCreateContext800M3_2(&mfsrContext, contextParam.bytes.data()) == 0);
+    Require(scePsmlMfsrCreateContext800M3_2(&mfsrContext, reinterpret_cast<const MfsrContextParam*>(contextParam.bytes.data())) == 0);
     Require(mfsrContext != nullptr && mfsrContext != sharedResources);
+
+    std::uint32_t packetDwords = 0;
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(mfsrContext, &packetDwords) == 0);
+    Require(packetDwords == 0x600);
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(mfsrContext, nullptr) == kErrNullOutput);
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(sharedResources, &packetDwords) == 0);
+
+    std::uint64_t foreign = 0;
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(&foreign, &packetDwords) == kErrInvalidArgument);
+    Require(scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(nullptr, &packetDwords) == kErrInvalidArgument);
+
+    float bias = 42.0f;
+    Require(scePsmlMfsrGetMipmapBias(mfsrContext, &bias, 3840) == kErrInvalidArgument);
+    Require(bias == 42.0f);
+    Require(scePsmlMfsrGetMipmapBias(&foreign, &bias, 3840) == kErrInvalidArgument);
+    Require(scePsmlMfsrGetMipmapBias(sharedResources, &bias, 3840) == kErrInvalidArgument);
+
+    Require(scePsmlMfsrSelectConfig(mfsrContext) == 0);
+    Require(scePsmlMfsrSelectConfig(&foreign) == kErrInvalidArgument);
+    Require(scePsmlMfsrRequestCapture(mfsrContext) == 0);
+    Require(scePsmlMfsrRequestCapture(nullptr) == kErrInvalidArgument);
+    Require(scePsmlMfsrIsCaptureInProgress(mfsrContext) == 0);
+    Require(scePsmlMfsrIsCaptureInProgress(&foreign) == kErrInvalidArgument);
+
+    ContextParam dimensionsParam;
+    dimensionsParam.Set(contextBlocks.data(), contextBlocks.size(), sharedResources);
+    dimensionsParam.SetInputDimensions(1920, 1080);
+    void* dimensionContext = nullptr;
+    Require(scePsmlMfsrCreateContext800M3_2(&dimensionContext, reinterpret_cast<const MfsrContextParam*>(dimensionsParam.bytes.data())) == 0);
+    Require(scePsmlMfsrGetMipmapBias(dimensionContext, &bias, 3840) == 0);
+    Require(bias == 0.0f);
+    Require(scePsmlMfsrGetMipmapBias(dimensionContext, &bias, 1920) == 0);
+    Require(bias == -1.0f);
+    Require(scePsmlMfsrGetMipmapBias(dimensionContext, nullptr, 1920) == kErrNullOutput);
+    Require(scePsmlMfsrReleaseContext(dimensionContext) == 0);
+
+    std::array<std::uint8_t, 0x40> descriptor{};
+    const std::uint16_t descriptorWidth = 1280, descriptorHeight = 720;
+    std::memcpy(descriptor.data() + 0x20, &descriptorWidth, sizeof(descriptorWidth));
+    std::memcpy(descriptor.data() + 0x22, &descriptorHeight, sizeof(descriptorHeight));
+    ContextParam descriptorParam;
+    descriptorParam.Set(contextBlocks.data(), contextBlocks.size(), sharedResources);
+    descriptorParam.SetDescriptor0(descriptor.data());
+    void* descriptorContext = nullptr;
+    Require(scePsmlMfsrCreateContext800M3_2(&descriptorContext, reinterpret_cast<const MfsrContextParam*>(descriptorParam.bytes.data())) == 0);
+    Require(scePsmlMfsrGetMipmapBias(descriptorContext, &bias, 2560) == 0);
+    Require(bias == 0.0f);
+    Require(scePsmlMfsrReleaseContext(descriptorContext) == 0);
 
     Require(Throws([&] { scePsmlMfsrReleaseSharedResources(sharedResources); }, "still used by a context"));
     Require(Throws([&] { scePsmlMfsrReleaseContext(sharedResources); }, "not created by this library"));
@@ -156,8 +186,8 @@ void SetupAfterInit() {
 }
 
 void RefusedAfterInit() {
-    SharedParam sharedParam{};
-    Requirement requirement{};
+    MfsrSharedResourcesParam sharedParam{};
+    MfsrRequirement requirement{};
     sharedParam.type = 1;
     Require(Throws([&] { scePsmlMfsrGetSharedResourcesInitRequirement(&requirement, &sharedParam); }, "type 1 is not supported"));
 
@@ -165,7 +195,7 @@ void RefusedAfterInit() {
     Require(scePsmlMfsrGetSharedResourcesInitRequirement(&requirement, &sharedParam) == 0);
     const auto blocks = Blocks(requirement, 0x10000000);
     sharedParam.blocks = blocks.data();
-    sharedParam.blockCount = 3;
+    sharedParam.blockCount = 51;
     void* sharedResources = nullptr;
     Require(Throws([&] { scePsmlMfsrCreateSharedResources(&sharedResources, &sharedParam); }, "fewer memory blocks"));
     auto small = blocks;
@@ -179,12 +209,12 @@ void RefusedAfterInit() {
     ContextParam contextParam;
     contextParam.Set(blocks.data(), blocks.size(), &foreign);
     void* context = nullptr;
-    Require(Throws([&] { scePsmlMfsrCreateContext800M3_2(&context, contextParam.bytes.data()); }, "shared resources handle was not created"));
+    Require(Throws([&] { scePsmlMfsrCreateContext800M3_2(&context, reinterpret_cast<const MfsrContextParam*>(contextParam.bytes.data())); }, "shared resources handle was not created"));
     Require(context == nullptr);
 
     std::array<std::uint8_t, 0x158> param{};
     std::array<std::uint32_t, 64> dwords{};
-    CommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
+    MfsrCommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
     Require(Throws([&] { scePsmlMfsrGetContextBufferRequirement1100(&requirement, param.data()); }, "not implemented"));
     Require(Throws([&] { scePsmlMfsrCreateContext1300(&context, param.data()); }, "not implemented"));
     Require(Throws([&] { scePsmlMfsrGetDispatchMfsrPacket900(&foreign, &commandBuffer, param.data()); }, "not implemented"));
@@ -214,7 +244,7 @@ int main() {
     std::array<std::uint32_t, 64> dwords;
     dwords.fill(0xa5a5a5a5u);
     const auto untouchedDwords = dwords;
-    CommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
+    MfsrCommandBuffer commandBuffer{dwords.data(), static_cast<std::uint32_t>(dwords.size())};
     Require(scePsmlMfsrGetDispatchMfsrPacket1100(&contextStorage, &commandBuffer, param.data()) == kErrNotInitialized);
     Require(commandBuffer.cursor == dwords.data());
     Require(commandBuffer.sizeInDwords == dwords.size());
@@ -226,7 +256,7 @@ int main() {
     std::array<std::uint8_t, 0x18> olderRequirement;
     olderRequirement.fill(0xa5);
     const auto untouchedOlderRequirement = olderRequirement;
-    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(olderRequirement.data(), param.data()) == kErrNotInitialized);
+    Require(scePsmlMfsrGetContextBufferRequirement800M3_2(reinterpret_cast<MfsrRequirement*>(olderRequirement.data()), reinterpret_cast<const MfsrContextParam*>(param.data())) == kErrNotInitialized);
     Require(olderRequirement == untouchedOlderRequirement);
     Require(scePsmlMfsrGetContextBufferRequirement800M3_2(nullptr, nullptr) == kErrNotInitialized);
 

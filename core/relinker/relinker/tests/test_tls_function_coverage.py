@@ -5,8 +5,8 @@ import platform
 import struct
 import subprocess
 import sys
-import tempfile
 
+from guest_import_fixtures import fixture_directory
 from test_optional_plt import fixture
 
 
@@ -58,6 +58,7 @@ def alu_check_body(opcode, register, base, value, result, flags_masked):
         emit(bytes.fromhex("0f 85 00 00 00 00"))
         jumps.append(len(code) - 4)
 
+    emit(b"\x53")
     emit(bytes.fromhex("64 c7 04 25 28 00 00 00") + struct.pack("<I", value & 0xffffffff))
     for target in (0, 1, 3):
         move_immediate(target, base)
@@ -74,8 +75,8 @@ def alu_check_body(opcode, register, base, value, result, flags_masked):
         fail_unless_equal()
     emit(bytes.fromhex("83 fa") + bytes([flags_masked]))
     fail_unless_equal()
-    emit(bytes.fromhex("b8 2a 00 00 00 c3 b8 01 00 00 00 c3"))
-    failure = len(code) - 6
+    emit(bytes.fromhex("b8 2a 00 00 00 5b c3 b8 01 00 00 00 5b c3"))
+    failure = len(code) - 7
     for position in jumps:
         struct.pack_into("<i", code, position, failure - position - 4)
     return bytes(code)
@@ -530,7 +531,7 @@ def add_alias(image, size, begin=0x1200):
 
 def main():
     groups = ("metadata", "padding", "register_loads", "displacement_bounds", "alu_execution",
-              "register_address_loads", "moved_branch", "rejected", "gs_traps")
+              "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit")
     groups += tuple(f"displacement_r{register}" for register in range(16) if register != 4)
     groups += tuple(f"alu_{name}" for name in ALU_READ)
     parser = argparse.ArgumentParser(description="Run Windows guest TLS function coverage fixtures")
@@ -538,7 +539,7 @@ def main():
     parser.add_argument("group", nargs="?", default="all", choices=("all",) + groups)
     args = parser.parse_args()
     relinker = args.relinker.resolve()
-    with tempfile.TemporaryDirectory(prefix=f"anyps5-tls-{args.group}-") as directory:
+    with fixture_directory(prefix=f"anyps5-tls-{args.group}-") as directory:
         work = Path(directory)
 
         def convert(name, image, error=None, tls_address=0x1240, displacement=0, error_offset=None):
@@ -702,7 +703,7 @@ def main():
                         assert expected in stub, (case, expected.hex(), stub.hex())
         if args.group in ("all", "alu_execution"):
             for name, image in alu_execution_cases():
-                convert(name, image)
+                convert(name, image, tls_address=0x1241)
         if args.group in ("all", "register_address_loads"):
             for name, image, address, instruction, register, wide, moved in register_load_cases():
                 convert(name, image, tls_address=address)
@@ -719,14 +720,14 @@ def main():
                 head, tail = register_alu_stub(instruction, opcode, register, wide)
                 assert stub.startswith(head) and tail + moved in stub, (name, head.hex(), (tail + moved).hex(), stub.hex())
         if args.group in ("all", "moved_branch"):
-            prologue = bytes.fromhex("48 c7 c3 f0 ff ff ff 48 31 c0")
-            rel8_body = prologue + bytes.fromhex("64 48 33 03 75 06 31 c0 c3 90 90 90 b8 2a 00 00 00 c3")
-            rel32_body = prologue + bytes.fromhex("64 48 33 03 0f 85") + struct.pack("<i", 0x1259 - 0x1254) + bytes.fromhex("31 c0 c3 90 90 b8 2a 00 00 00 c3")
-            jmp_body = prologue + bytes.fromhex("64 48 33 03 eb 06 b8 01 00 00 00 c3 90 b8 2a 00 00 00 c3")
+            prologue = bytes.fromhex("53 48 c7 c3 f0 ff ff ff 48 31 c0")
+            rel8_body = prologue + bytes.fromhex("64 48 33 03 75 07 31 c0 5b c3 90 90 90 b8 2a 00 00 00 5b c3")
+            rel32_body = prologue + bytes.fromhex("64 48 33 03 0f 85") + struct.pack("<i", 0x125B - 0x1255) + bytes.fromhex("31 c0 5b c3 90 90 b8 2a 00 00 00 5b c3")
+            jmp_body = prologue + bytes.fromhex("64 48 33 03 eb 07 b8 01 00 00 00 5b c3 90 b8 2a 00 00 00 5b c3")
             for name, body, access, target, branch_opcode in (
-                ("moved-rel8-branch", rel8_body, 0x124A, 0x1256, "0f 85"),
-                ("moved-rel32-branch", rel32_body, 0x124A, 0x1259, "0f 85"),
-                ("moved-rel8-jump", jmp_body, 0x124A, 0x1256, "e9"),
+                ("moved-rel8-branch", rel8_body, 0x124B, 0x1258, "0f 85"),
+                ("moved-rel32-branch", rel32_body, 0x124B, 0x125B, "0f 85"),
+                ("moved-rel8-jump", jmp_body, 0x124B, 0x1258, "e9"),
             ):
                 image = make_image("register", "unwind", body=body)
                 convert(name, image, tls_address=access)
@@ -776,14 +777,9 @@ def main():
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
-        if args.group in ("all", "gs_traps"):
-            for name, instruction in {
-                "gs-load-rcx": bytes.fromhex("65 48 8b 0c 25 78 03 00 00"),
-                "gs-load-r13": bytes.fromhex("65 4c 8b 2c 25 30 00 00 00"),
-                "gs-store": bytes.fromhex("65 48 89 04 25 30 00 00 00"),
-                "gs-alu": bytes.fromhex("65 48 33 04 25 28 00 00 00"),
-                "gs-short-register-address": bytes.fromhex("65 48 8b 00"),
-            }.items():
+
+        def check_gs_traps(cases):
+            for name, instruction, trapped in cases:
                 source = work / (name + ".elf")
                 output = source.with_suffix(".exe")
                 source.write_bytes(make_image("register", "unwind", body=instruction + b"\xc3"))
@@ -791,7 +787,23 @@ def main():
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == 0, (name, result.stdout, result.stderr)
                 patched = pe_bytes_at(output.read_bytes(), 0x11240, len(instruction) + 1)
-                assert patched == b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3", (name, patched.hex())
+                if trapped:
+                    expected = b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3"
+                else:
+                    expected = instruction + b"\xc3"
+                assert patched == expected, (name, patched.hex())
+
+        if args.group in ("all", "gs_traps"):
+            check_gs_traps([
+                ("gs-load-rcx", bytes.fromhex("65 48 8b 0c 25 78 03 00 00"), True),
+                ("gs-load-r13", bytes.fromhex("65 4c 8b 2c 25 30 00 00 00"), True),
+                ("gs-store", bytes.fromhex("65 48 89 04 25 30 00 00 00"), True),
+                ("gs-alu", bytes.fromhex("65 48 33 04 25 28 00 00 00"), True),
+                ("gs-short-register-address", bytes.fromhex("65 48 8b 00"), True),
+                ("gs-nop", bytes.fromhex("65 90"), False),
+                ("gs-register-move", bytes.fromhex("65 48 89 c8"), False),
+                ("gs-cpuid", bytes.fromhex("65 0f a2"), False),
+            ])
             instruction = bytes.fromhex("65 48 8b 0c 25 78 03 00 00")
             image = make_image("register", "unwind", body=instruction + b"\xc3")
             struct.pack_into("<I", image, 176, 0)
@@ -803,6 +815,19 @@ def main():
             assert result.returncode == 0, ("gs-without-pt-tls", result.stdout, result.stderr)
             patched = pe_bytes_at(output.read_bytes(), 0x11240, len(instruction) + 1)
             assert patched == b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3", ("gs-without-pt-tls", patched.hex())
+        if args.group in ("all", "gs_traps_implicit"):
+            check_gs_traps([
+                ("gs-maskmovdqu", bytes.fromhex("65 66 0f f7 c1"), True),
+                ("gs-maskmovq", bytes.fromhex("65 0f f7 c1"), True),
+                ("gs-vmaskmovdqu", bytes.fromhex("65 c5 f9 f7 c1"), True),
+                ("gs-monitor", bytes.fromhex("65 0f 01 c8"), True),
+                ("gs-monitorx", bytes.fromhex("65 0f 01 fa"), True),
+                ("gs-clzero", bytes.fromhex("65 0f 01 fc"), True),
+                ("gs-umonitor", bytes.fromhex("65 f3 0f ae f0"), True),
+                ("gs-mwait", bytes.fromhex("65 0f 01 c9"), False),
+                ("gs-rdpru", bytes.fromhex("65 0f 01 fd"), False),
+                ("gs-umwait", bytes.fromhex("65 f2 0f ae f0"), False),
+            ])
     print(f"TLS function coverage integration tests passed: {args.group}")
 
 

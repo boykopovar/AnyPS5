@@ -37,14 +37,23 @@ struct PthreadMutexattrPrivate {
     int pshared = 0;
 };
 
+constexpr int ADAPTIVE_MUTEX_SPINS = 2000;
+
 struct PthreadMutexPrivate {
     std::recursive_timed_mutex _rmtx;
     std::timed_mutex _mtx;
     MutexType _type;
     std::atomic<std::thread::id> _owner;
     int _count;
+    int _spinloops = 0;
+    int _yieldloops = 0;
 
     PthreadMutexPrivate() : _type(MutexType::ErrorCheck), _owner(std::thread::id{}), _count(0) {}
+
+    void SetType(MutexType type) {
+        _type = type;
+        _spinloops = type == MutexType::Adaptive ? ADAPTIVE_MUTEX_SPINS : 0;
+    }
 };
 
 struct PthreadRwlockattrPrivate {
@@ -169,8 +178,12 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos);
 void SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
 bool GuestThreadIsLive(const PthreadPrivate* thread);
+std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
 bool LiveGuestThreadExists(std::int64_t tid);
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask);
+bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority);
 bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);
+extern "C" std::size_t GetDefaultStackSize_nid_no_patch();
+extern "C" bool SetDefaultStackSize_nid_no_patch(std::size_t size);
 
 #endif

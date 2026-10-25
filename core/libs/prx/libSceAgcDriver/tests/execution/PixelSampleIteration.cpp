@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <iostream>
 #include <map>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -99,6 +100,7 @@ struct Pass {
     std::uint32_t barycentricControl = 0;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool customLocations = false;
+    AgcDriver::Graphics::SampleOrder order{};
 };
 
 std::uint8_t CustomLocation(std::uint32_t pixel, std::uint32_t sample) {
@@ -132,9 +134,10 @@ ShaderRecompiler::ShaderPixelStageInfo PassPixel(const Pass& pass, const AgcDriv
     const AgcDriver::Registers context{{0x1b3, pass.inputs}, {0x1b4, pass.inputs}, {0x1b6, 0u}, {0x1b8, pass.barycentricControl}, {0x1c5, 0u}, {0x203, 0u}};
     auto pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     pixel.quadPixelMask = AgcDriver::Graphics::QuadPixelMask(state);
-    pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state);
+    pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state, pass.order);
     pixel.iteratesSamples = state.perSampleShading;
     pixel.sampleLocations = AgcDriver::Graphics::PixelSampleLocations(state, pixel);
+    pixel.sampleOrder = pass.order;
     return pixel;
 }
 
@@ -271,6 +274,9 @@ struct Module {
     std::vector<std::array<float, 2>> offsets;
     std::vector<std::vector<std::array<float, 2>>> tables;
     bool variableOffset = false;
+    std::map<std::uint32_t, spv::BuiltIn> decorations;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::pair<spv::Op, std::vector<std::uint32_t>>> instructions;
 };
 
 Module PixelModule(const Pass& pass, bool interpolationFunctions) {
@@ -292,15 +298,38 @@ Module PixelModule(const Pass& pass, bool interpolationFunctions) {
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     const auto& words = result.spirv.Words();
-    std::map<std::uint32_t, spv::BuiltIn> decorations;
     std::map<std::uint32_t, float> floats;
     std::map<std::uint32_t, std::array<float, 2>> vectors;
     Module module;
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
         const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        const auto count = static_cast<std::size_t>(words[at] >> 16u);
         if (op == spv::OpCapability) module.capabilities.push_back(static_cast<spv::Capability>(words[at + 1]));
-        if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn) decorations[words[at + 1]] = static_cast<spv::BuiltIn>(words[at + 3]);
-        if (op == spv::OpConstant && (words[at] >> 16u) == 4u) floats[words[at + 2]] = std::bit_cast<float>(words[at + 3]);
+        if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn) module.decorations[words[at + 1]] = static_cast<spv::BuiltIn>(words[at + 3]);
+        if (op == spv::OpConstant && count == 4u) {
+            floats[words[at + 2]] = std::bit_cast<float>(words[at + 3]);
+            module.constants[words[at + 2]] = words[at + 3];
+        }
+        switch (op) {
+        case spv::OpConstant:
+        case spv::OpLoad:
+        case spv::OpAccessChain:
+        case spv::OpBitcast:
+        case spv::OpConvertFToU:
+        case spv::OpBitwiseAnd:
+        case spv::OpBitwiseOr:
+        case spv::OpShiftLeftLogical:
+        case spv::OpShiftRightLogical:
+        case spv::OpIAdd:
+        case spv::OpIEqual:
+        case spv::OpSelect:
+        case spv::OpCompositeExtract:
+        case spv::OpExtInst:
+            if (count >= 3u) module.instructions[words[at + 2]] = {op, std::vector<std::uint32_t>(words.begin() + static_cast<std::ptrdiff_t>(at) + 3, words.begin() + static_cast<std::ptrdiff_t>(at) + static_cast<std::ptrdiff_t>(count))};
+            break;
+        default:
+            break;
+        }
         if (op == spv::OpConstantComposite && (words[at] >> 16u) == 5u && floats.contains(words[at + 3]) && floats.contains(words[at + 4])) vectors[words[at + 2]] = {floats[words[at + 3]], floats[words[at + 4]]};
         if (op == spv::OpConstantComposite && (words[at] >> 16u) > 5u && vectors.contains(words[at + 3])) {
             std::vector<std::array<float, 2>> table;
@@ -314,8 +343,8 @@ Module PixelModule(const Pass& pass, bool interpolationFunctions) {
         }
         if (op != spv::OpLoad && op != spv::OpAccessChain && op != spv::OpExtInst) continue;
         const auto pointer = op == spv::OpExtInst ? words[at + 5] : words[at + 3];
-        const auto found = decorations.find(pointer);
-        if (found != decorations.end() && std::ranges::find(module.builtins, found->second) == module.builtins.end()) module.builtins.push_back(found->second);
+        const auto found = module.decorations.find(pointer);
+        if (found != module.decorations.end() && std::ranges::find(module.builtins, found->second) == module.builtins.end()) module.builtins.push_back(found->second);
     }
     return module;
 }
@@ -384,6 +413,136 @@ void ExpectModules() {
     Require(module.offsets.empty() && !Has(module, spv::BuiltInSampleId), "1x: a single-sample pixel shader changed");
 }
 
+const std::pair<spv::Op, std::vector<std::uint32_t>>* Instruction(const Module& module, std::uint32_t id) {
+    const auto found = module.instructions.find(id);
+    return found == module.instructions.end() ? nullptr : &found->second;
+}
+
+bool ConstantIs(const Module& module, std::uint32_t id, std::uint32_t value) {
+    const auto found = module.constants.find(id);
+    return found != module.constants.end() && found->second == value;
+}
+
+std::set<spv::BuiltIn> BuiltinTrace(const Module& module, std::uint32_t id) {
+    std::set<spv::BuiltIn> found;
+    std::set<std::uint32_t> seen;
+    std::vector<std::uint32_t> pending{id};
+    while (!pending.empty()) {
+        const auto cursor = pending.back();
+        pending.pop_back();
+        if (!seen.insert(cursor).second) continue;
+        const auto* instruction = Instruction(module, cursor);
+        if (instruction == nullptr) continue;
+        if ((instruction->first == spv::OpLoad || instruction->first == spv::OpAccessChain) && !instruction->second.empty()) {
+            const auto decoration = module.decorations.find(instruction->second.front());
+            if (decoration != module.decorations.end()) found.insert(decoration->second);
+        }
+        for (const auto argument : instruction->second) pending.push_back(argument);
+    }
+    return found;
+}
+
+std::uint32_t GuestIndexOrderWord(const Module& module, std::uint32_t id) {
+    const auto* masked = Instruction(module, id);
+    if (masked == nullptr || masked->first != spv::OpBitwiseAnd || masked->second.size() != 2u || !ConstantIs(module, masked->second[1], 7u)) return 0u;
+    const auto* shifted = Instruction(module, masked->second[0]);
+    if (shifted == nullptr || shifted->first != spv::OpShiftRightLogical || shifted->second.size() != 2u) return 0u;
+    const auto* shift = Instruction(module, shifted->second[1]);
+    if (shift == nullptr || shift->first != spv::OpShiftLeftLogical || shift->second.size() != 2u || !ConstantIs(module, shift->second[1], 2u)) return 0u;
+    const auto* low = Instruction(module, shift->second[0]);
+    if (low == nullptr || low->first != spv::OpBitwiseAnd || low->second.size() != 2u || !ConstantIs(module, low->second[1], 7u)) return 0u;
+    const auto* bits = Instruction(module, low->second[0]);
+    if (bits == nullptr || bits->first != spv::OpBitcast || bits->second.empty()) return 0u;
+    const auto* loaded = Instruction(module, bits->second[0]);
+    if (loaded == nullptr || loaded->first != spv::OpLoad || loaded->second.empty()) return 0u;
+    const auto decoration = module.decorations.find(loaded->second[0]);
+    if (decoration == module.decorations.end() || decoration->second != spv::BuiltInSampleId) return 0u;
+    return shifted->second[0];
+}
+
+bool OrderWordValues(const Module& module, std::uint32_t id, std::set<std::uint32_t>& values) {
+    const auto constant = module.constants.find(id);
+    if (constant != module.constants.end()) {
+        values.insert(constant->second);
+        return true;
+    }
+    const auto* instruction = Instruction(module, id);
+    if (instruction == nullptr || instruction->first != spv::OpSelect || instruction->second.size() != 3u) return false;
+    return OrderWordValues(module, instruction->second[1], values) && OrderWordValues(module, instruction->second[2], values);
+}
+
+void CheckOrderIndex(const Module& module, const AgcDriver::Graphics::SampleOrder& order, const std::string& what) {
+    std::vector<std::uint32_t> indexes;
+    for (const auto& [id, instruction] : module.instructions) {
+        if (instruction.first != spv::OpExtInst || instruction.second.size() < 4u || instruction.second[1] != GLSLstd450InterpolateAtOffset) continue;
+        const auto* loaded = Instruction(module, instruction.second[3]);
+        if (loaded == nullptr || loaded->first != spv::OpLoad || loaded->second.empty()) continue;
+        const auto* chain = Instruction(module, loaded->second[0]);
+        if (chain == nullptr || chain->first != spv::OpAccessChain || chain->second.size() < 2u) continue;
+        indexes.push_back(chain->second[1]);
+    }
+    Require(!indexes.empty(), what + ": the off-center sample read does not go through the per-sample location table");
+    for (const auto index : indexes) {
+        const auto* joined = Instruction(module, index);
+        Require(joined != nullptr && joined->first == spv::OpBitwiseOr && joined->second.size() == 2u, what + ": the location table index is not guest | (quad << 3)");
+        std::uint32_t quad = 0u;
+        std::uint32_t guest = 0u;
+        for (const auto operand : joined->second) {
+            const auto* instruction = Instruction(module, operand);
+            if (instruction != nullptr && instruction->first == spv::OpShiftLeftLogical && instruction->second.size() == 2u && ConstantIs(module, instruction->second[1], 3u)) quad = operand;
+            else guest = operand;
+        }
+        Require(quad != 0u && guest != 0u, what + ": the location table index is not guest | (quad << 3)");
+        Require(BuiltinTrace(module, quad).contains(spv::BuiltInFragCoord), what + ": the table index's quad term does not come from the position input");
+        const auto word = GuestIndexOrderWord(module, guest);
+        Require(word != 0u, what + ": the table index's low bits are not the order word's nibble at the shader's SampleId");
+        std::set<std::uint32_t> values;
+        Require(OrderWordValues(module, word, values), what + ": the order word in the table index is not selected per 2x2 pixel");
+        for (const auto value : values) {
+            Require(std::ranges::any_of(order, [&](std::uint32_t word32) { return value == (word32 == 0u ? AgcDriver::Graphics::KeptSampleOrder : word32); }), what + ": the table index selects an order word the pass did not carry");
+        }
+    }
+}
+
+void ExpectOrderModules() {
+    const AgcDriver::Graphics::SampleOrder order{0x76543201u, AgcDriver::Graphics::KeptSampleOrder, 0x76543201u, AgcDriver::Graphics::KeptSampleOrder};
+    for (const std::uint32_t samples : {2u, 4u}) {
+        const auto name = std::to_string(samples) + "x";
+        Pass pass;
+        pass.samples = samples;
+        pass.inputs = Village;
+        pass.iterated = true;
+        pass.customLocations = true;
+        pass.order = order;
+        const auto module = PixelModule(pass, true);
+        Require(Has(module, spv::BuiltInSampleId) && Has(module, spv::BuiltInFragCoord), name + ": the reordered offset read lost the per-sample index or the position input");
+        const auto customTable = [&](const std::vector<std::array<float, 2>>& table) {
+            if (table.size() != 32u) return false;
+            for (std::uint32_t index = 0; index < table.size(); ++index) {
+                const auto location = index % 8u < samples ? CustomLocation(index / 8u, index % 8u) : std::uint8_t{0u};
+                if (table[index][0] != ShaderRecompiler::SampleLocationOffset(location, 0u) || table[index][1] != ShaderRecompiler::SampleLocationOffset(location, 1u)) return false;
+            }
+            return true;
+        };
+        Require(std::ranges::any_of(module.tables, customTable), name + ": no 32-entry table of every pixel's custom sample locations");
+        CheckOrderIndex(module, order, name + ": an iterated PERSP_SAMPLE on a reordered pattern varying across the 2x2 grid");
+    }
+    for (const std::uint32_t samples : {2u, 4u}) {
+        const auto name = std::to_string(samples) + "x";
+        for (const bool iterated : {false, true}) {
+            Pass pass;
+            pass.samples = samples;
+            pass.inputs = Ancillary;
+            pass.iterated = iterated;
+            pass.order = order;
+            Require(Has(PixelModule(pass, true), spv::BuiltInFragCoord), name + ": a pixel shader that only reorders its samples was not given the position input");
+            pass.order = {};
+            Require(!Has(PixelModule(pass, true), spv::BuiltInFragCoord), name + ": a pixel shader with nothing needing a position got one anyway");
+        }
+    }
+    std::puts("recompiled modules index each pixel's location table by the guest sample index and the 2x2 quad term, and request the position input for the sample order alone");
+}
+
 void ExpectSampleLocations() {
     Pass pass;
     for (const std::uint32_t samples : {1u, 2u, 4u, 8u}) {
@@ -422,6 +581,7 @@ int main() {
     try {
         ExpectSampleLocations();
         ExpectModules();
+        ExpectOrderModules();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Require(TargetHasCapability(device->Target(), spv::CapabilityInterpolationFunction), "the test device lacks sampleRateShading");

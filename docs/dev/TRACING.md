@@ -11,7 +11,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_APR` | APR file reads, including path, offset, size and destination. |
 | `APS5_TRACE_AUDIOOUT` | Audio output port parameters when a port is opened. |
 | `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries. |
-| `APS5_TRACE_CALLS` | On Windows, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
+| `APS5_TRACE_CALLS` | On Windows and Linux, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports (abort only on Linux) include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
 | `APS5_TRACE_EXIT` | Guest `exit` and `_Exit` calls and process-exit backtraces. |
 | `APS5_TRACE_FIBER` | Fiber initialization, switches and returns. |
 | `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations. |
@@ -35,7 +35,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_COPY_HLE` | Pending host-side copies, their ranges, GPU batches and known writers. |
 | `APS5_TRACE_DCC_KEYS` | Display and storage-image DCC key reads, writes, fills and clears. |
 | `APS5_TRACE_DISPATCH_CACHE` | Compute dispatch cache hits, misses and changed user-data words. |
-| `APS5_TRACE_DISPATCH_IO` | Compute dispatch resources; value `2` also prints small user-data buffers. |
+| `APS5_TRACE_DISPATCH_IO` | Compute dispatch queue, submission serial, shader and resources; value `2` also prints small user-data buffers. |
 | `APS5_TRACE_DRAW_CACHE` | Draw-cache lookups, hits, misses, and key differences, reported every ten seconds. |
 | `APS5_TRACE_DRAWS` | Draw inputs and per-draw timing phases. With `APS5_PROFILE_DRAW`, also prints the detailed draw lines. |
 | `APS5_TRACE_DRAW_PROGRAMS` | One line per draw listing selected shader stages, roles, code addresses and entry addresses. |
@@ -68,6 +68,7 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 | `APS5_TRACE_SUMMARY_EVERY=<seconds>` | Writes periodic summary lines without recording trace events. Can be combined with either window switch. |
 | `APS5_TRACE_EVENTS=<count>` | Sets the per-thread event-buffer capacity for a frame or seconds window (1–4,194,304; default 262,144). |
 | `APS5_TRACE_DIR=<path>` | Writes performance capture and summary files to this directory instead of the working directory. |
+| `APS5_VIDEOOUT_TELEMETRY_DIR=<path>` | Writes the presents and the pad changes of a run to `<path>/videoout.jsonl`; see [Usage](../user/USAGE.md#video-out-and-pad-telemetry). |
 
 ## Shader registers
 

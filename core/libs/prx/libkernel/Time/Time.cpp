@@ -1,5 +1,10 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
@@ -34,8 +39,6 @@
 #include <link.h>
 #endif // __linux__
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
@@ -118,16 +121,6 @@ static const bool g_timerResolutionRaised = [] {
     return raised;
 }();
 
-extern "C" {
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-}
-
 static void ReportTimedWait(const char* name, const std::function<void()>& body) {
     std::vector<double> samples(200);
     for (auto& sample : samples) {
@@ -151,11 +144,13 @@ static const bool g_timerSelfTest = [] {
     scePthreadCondInit(&cond, nullptr, nullptr);
     scePthreadMutexInit(&guestMutex, nullptr, nullptr);
     scePthreadMutexLock(&guestMutex);
+
     ReportTimedWait("scePthreadCondTimedwait(1000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 1000); });
     ReportTimedWait("scePthreadCondTimedwait(13000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 13000); });
     scePthreadMutexUnlock(&guestMutex);
     scePthreadMutexDestroy(&guestMutex);
     scePthreadCondDestroy(&cond);
+
     ReportTimedWait("sceKernelUsleep(1000)", [&] { sceKernelUsleep_nid_postfix(1000); });
     ReportTimedWait("Sleep(1)", [&] { Sleep(1); });
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -176,12 +171,13 @@ std::uint64_t APS5_VABI sceKernelGetProcessTime() {
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter() {
-    const std::uint64_t start = GetStartNanos();
-    return GetMonotonicNanos() - start;
+    const std::uint64_t nanos = GetMonotonicNanos() - GetStartNanos();
+    const std::uint64_t frequency = sceKernelGetTscFrequency();
+    return nanos / 1000000000ULL * frequency + nanos % 1000000000ULL * frequency / 1000000000ULL;
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency() {
-    return 1000000000ULL;
+    return sceKernelGetTscFrequency();
 }
 
 static std::string DescribeCallSite(const void* caller) {
@@ -274,7 +270,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
 
 static void CancellableSleep(std::uint64_t nanos) {
     ThreadCancel::Check();
-    TimedWait::SleepNanos(nanos);
+    SleepWake::Sleep(nanos);
     ThreadCancel::Check();
 }
 
@@ -289,8 +285,9 @@ static int SleepForRequest(const KernelTimespec* rqtp) {
     constexpr int guestInvalid = 22;
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
+    constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
-        CancellableSleep(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
+        CancellableSleep(static_cast<std::uint64_t>(std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) * 1000000000ULL +
                          static_cast<std::uint64_t>(rqtp->tv_nsec));
     }
     return 0;

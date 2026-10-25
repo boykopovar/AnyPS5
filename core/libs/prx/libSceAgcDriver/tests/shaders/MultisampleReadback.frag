@@ -10,7 +10,7 @@ void main() {
     uint y = uint(gl_FragCoord.y);
 #if READ_DEPTH
     uint element = (x + y * params.width + params.layer * params.width * params.height) * params.samples + uint(gl_SampleID);
-    gl_FragDepth = 0.125 + float(element + 1u) / 65536.0;
+    gl_FragDepth = 0.125 + float(element + 1u) / 1048576.0;
 #else
     uint value = x + y * params.width + params.layer * params.width * params.height + uint(gl_SampleID) * 31u;
     color = uvec4(0x91352700u ^ value, 0x45219b00u ^ (value * 3u), 0xc7391d00u ^ (value * 5u), 0x6b43e100u ^ (value * 7u));

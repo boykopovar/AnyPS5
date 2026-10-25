@@ -3,12 +3,13 @@
 
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "Recompiler.hpp"
 
 namespace ShaderRecompiler {
 
 class TessellationLowering {
 public:
-    void Lower(IrProgram& program, const ShaderTessellationInputInfo& tessellation) const;
+    void Lower(IrProgram& program, const ShaderTessellationInputInfo& tessellation, const TessellationTargetLimits* limits = nullptr) const;
 };
 
 }

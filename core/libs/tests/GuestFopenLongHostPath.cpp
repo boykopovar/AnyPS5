@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -10,14 +11,6 @@
 #define NOMINMAX
 #include <windows.h>
 
-extern "C" {
-void* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(void*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, void*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, void*);
-int* APS5_VABI __error_nid_postfix();
-}
-
 namespace {
 
 void Require(bool value, const char* message) {
@@ -29,7 +22,7 @@ std::filesystem::path Extended(const std::filesystem::path& path) {
     return native.starts_with(L"\\\\") ? L"\\\\?\\UNC\\" + native.substr(2) : L"\\\\?\\" + native;
 }
 
-using Stream = std::unique_ptr<void, decltype(&fclose_nid_postfix)>;
+using Stream = std::unique_ptr<FileStream, decltype(&fclose_nid_postfix)>;
 
 Stream Open(const char* path, const char* mode) {
     Stream stream(fopen_nid_postfix(path, mode), fclose_nid_postfix);

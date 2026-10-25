@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include <string>
 #include <algorithm>
 #include <bit>
@@ -463,6 +464,45 @@ bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t leve
         if (mip.tiledOffset + mip.tiledSize > extended.layerBytes) return false;
     }
     return true;
+}
+
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed) {
+    const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
+    if (!layered || viewed.baseArray == 0 || viewed.baseArray > viewed.depthOrLastArray || viewed.dccAddress != 0) return viewed;
+    if (const auto xorMode = XorSwizzleMode(viewed.tileMode); xorMode != 0u) {
+        const auto* equation = FindTextureSwizzleEquation(xorMode, BytesPerElement(viewed.format));
+        if (equation == nullptr) return viewed;
+        std::uint32_t sliceBits = 0;
+        for (const auto bit : equation->bits) sliceBits |= bit >> 24u;
+        const auto sliceMask = sliceBits == 0 ? 0u : (1u << std::bit_width(sliceBits)) - 1u;
+        if ((viewed.baseArray & sliceMask) != 0) return viewed;
+    }
+    const auto geometry = DescribeSurface(viewed);
+    if (geometry.thick || geometry.layers != viewed.depthOrLastArray + 1u) return viewed;
+    auto window = viewed;
+    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(viewed.baseArray);
+    window.depthOrLastArray = viewed.depthOrLastArray - viewed.baseArray;
+    window.baseArray = 0;
+    return window;
+}
+
+GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers) {
+    const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
+    if (viewed.depthOrLastArray < maxArrayLayers || !layered) return viewed;
+    Require(viewed.dimension != TextureDimension::kCube, "an image with more layers than maxImageArrayLayers that is not a 1D or 2D array is not implemented");
+    Require(viewed.baseArray <= viewed.depthOrLastArray, "an image view's first array slice lies past its last");
+    Require(viewed.depthOrLastArray - viewed.baseArray < maxArrayLayers, "an image view of more array slices than maxImageArrayLayers is not implemented");
+    if (const auto xorMode = XorSwizzleMode(viewed.tileMode); xorMode != 0u) {
+        const auto* equation = FindTextureSwizzleEquation(xorMode, BytesPerElement(viewed.format));
+        Require(equation != nullptr && std::none_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0; }), "an image view past maxImageArrayLayers of a swizzle that depends on the slice is not implemented");
+    }
+    const auto geometry = DescribeSurface(viewed);
+    Require(!geometry.thick && geometry.layers == viewed.depthOrLastArray + 1u, "an array past maxImageArrayLayers must be a thin array");
+    auto window = viewed;
+    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(viewed.baseArray);
+    window.depthOrLastArray = viewed.depthOrLastArray - viewed.baseArray;
+    window.baseArray = 0;
+    return window;
 }
 
 std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {

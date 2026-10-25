@@ -13,6 +13,8 @@ namespace Elfpatcher {
 
 namespace {
 
+constexpr std::size_t kExtendedProgramHeaderCount = 0xffff;
+
 bool hasWritableLoadCoverage(
     const std::vector<Domain::ProgramHeader>& headers,
     const Domain::ProgramHeader& relro
@@ -148,8 +150,17 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
     return kept;
 }
 
+std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
+    auto kept = _keptHeaders(originalHeaders);
+    if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
+        kept.push_back(Domain::ProgramHeader{PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
+    if (kept.size() >= kExtendedProgramHeaderCount - kSyntheticProgramHeaderCount)
+        throw Domain::RelinkerException("Extended program header counts are not supported");
+    return kept;
+}
+
 std::size_t ProgramHeaderLayoutBuilder::RequiredProgramHeaderCount(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
-    return _keptHeaders(originalHeaders).size() + kSyntheticProgramHeaderCount;
+    return _outputHeaders(originalHeaders).size() + kSyntheticProgramHeaderCount;
 }
 
 std::uint64_t ProgramHeaderLayoutBuilder::GuestLoadPageEnd(
@@ -163,6 +174,8 @@ std::uint64_t ProgramHeaderLayoutBuilder::GuestLoadPageEnd(
         if (ph.Type != PT_LOAD)
             continue;
         foundLoad = true;
+        if (ph.FileSize > ph.MemorySize)
+            throw Domain::RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
         if (ph.MemorySize > std::numeric_limits<std::uint64_t>::max() - ph.MappedAddress)
             throw Domain::RelinkerException("Load segment virtual range overflowed");
         const std::uint64_t vaddrEnd = ph.MappedAddress + ph.MemorySize;
@@ -180,7 +193,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     std::vector<std::uint8_t>& buf,
     const ProgramHeaderLayoutRequest& request
 ) const {
-    auto kept = _keptHeaders(request.OriginalHeaders);
+    auto kept = _outputHeaders(request.OriginalHeaders);
     const auto frameCount = std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
 
     const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount <= request.PhNum;
@@ -206,8 +219,12 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (tableEnd > buf.size())
         throw Domain::RelinkerException("Program header table exceeds the output file");
     const bool tableInExtraBlock = request.PhOff >= request.ExtraBlockOffset;
-    if (tableInExtraBlock && tableEnd - request.ExtraBlockOffset > request.ExtraBlockSize)
-        throw Domain::RelinkerException("Program header table does not fit within the extra block");
+    if (tableInExtraBlock) {
+        if (tableEnd - request.ExtraBlockOffset > request.ExtraBlockSize)
+            throw Domain::RelinkerException("Program header table does not fit within the extra block");
+    } else if (tableEnd > request.ExtraBlockOffset) {
+        throw Domain::RelinkerException("Program header table overlaps the extra block");
+    }
     const std::uint64_t headerBlockSize = tableInExtraBlock ? kElfHeaderSize : tableEnd;
     if (request.ExtraBlockOffset > buf.size() || request.ExtraBlockSize > buf.size() - request.ExtraBlockOffset)
         throw Domain::RelinkerException("Extra block exceeds the output file");
