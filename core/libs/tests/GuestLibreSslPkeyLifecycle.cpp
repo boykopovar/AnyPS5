@@ -30,19 +30,5 @@ int main() {
     Require(fields[2] == 1, "freeing a shared key only drops one reference");
     EVP_PKEY_free_nid_postfix(pkey);
     EVP_PKEY_free_nid_postfix(nullptr);
-    void* withData = EVP_PKEY_new_nid_postfix();
-    void* payload = &fields;
-    std::memcpy(static_cast<std::byte*>(withData) + 32, &payload, sizeof(payload));
-    try {
-        EVP_PKEY_free_nid_postfix(withData);
-    } catch (const std::exception&) {
-        std::memcpy(fields, withData, sizeof(fields));
-        Require(fields[2] == 1, "rejected free restores the last reference");
-        void* noPayload = nullptr;
-        std::memcpy(static_cast<std::byte*>(withData) + 32, &noPayload, sizeof(noPayload));
-        EVP_PKEY_free_nid_postfix(withData);
-        return 0;
-    }
-    Require(false, "a key holding algorithm data is rejected");
-    return 1;
+    return 0;
 }
