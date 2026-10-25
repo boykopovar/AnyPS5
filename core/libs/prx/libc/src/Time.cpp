@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -11,6 +12,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -18,6 +20,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
@@ -188,6 +191,9 @@ std::recursive_mutex& zoneMutex() {
 
 char** HostZoneNames();
 char* GuestZoneName(int index);
+#ifdef _WIN32
+void refreshGuestZoneNames();
+#endif
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -207,6 +213,7 @@ void applyGuestZone() {
     current = guest;
 #ifdef _WIN32
     _tzset();
+    refreshGuestZoneNames();
 #else
     ::tzset();
 #endif
@@ -410,15 +417,48 @@ char** HostZoneNames() {
 #endif
 }
 
+#ifdef _WIN32
+std::array<std::string, 2>& guestZoneNames() {
+    static std::array<std::string, 2> names;
+    return names;
+}
+
+std::array<std::string, 2>& cachedHostZoneNames() {
+    static std::array<std::string, 2> names;
+    return names;
+}
+
+bool& guestZoneNamesInitialized() {
+    static bool initialized = false;
+    return initialized;
+}
+
+void refreshGuestZoneNames() {
+    char** hostNames = HostZoneNames();
+    auto& cached = cachedHostZoneNames();
+    auto& guestNames = guestZoneNames();
+    for (std::size_t index = 0; index < guestNames.size(); ++index) {
+        const char* hostName = hostNames[index] != nullptr ? hostNames[index] : "";
+        if (cached[index] == hostName) continue;
+        std::string converted = GuestTimeZoneNameToUtf8(hostName, CP_ACP);
+        if (guestNames[index] != converted) guestNames[index] = std::move(converted);
+        cached[index] = hostName;
+    }
+    guestZoneNamesInitialized() = true;
+}
+#endif
+
 char* GuestZoneName(int index) {
     static char unnamed[] = "   ";
-    char** names = HostZoneNames();
 #ifdef _WIN32
+    if (!guestZoneNamesInitialized()) refreshGuestZoneNames();
     const bool daylightSaving = _daylight != 0;
+    return index == 1 && !daylightSaving ? unnamed : guestZoneNames()[static_cast<std::size_t>(index)].data();
 #else
+    char** names = HostZoneNames();
     const bool daylightSaving = ::daylight != 0;
-#endif
     return index == 1 && !daylightSaving ? unnamed : names[index];
+#endif
 }
 }
 
@@ -430,6 +470,9 @@ int daylight_nid_postfix = 0;
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
+#ifdef _WIN32
+    refreshGuestZoneNames();
+#endif
     tzname_nid_postfix[0] = GuestZoneName(0);
     tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
@@ -514,7 +557,7 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
     _get_dstbias(&daylightBias);
     const bool daylight = host.tm_isdst > 0;
     result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
-    result->tm_zone = _tzname[daylight ? 1 : 0];
+    result->tm_zone = GuestZoneName(daylight ? 1 : 0);
 #else
     const std::time_t t = static_cast<std::time_t>(*timer);
     if (localtime_r(&t, &host) == nullptr) {

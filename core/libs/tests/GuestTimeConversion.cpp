@@ -2,6 +2,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
+#endif
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -415,6 +419,41 @@ static void CheckZoneRace() {
 }
 
 #ifdef _WIN32
+static void CheckWindowsZoneNameEncoding() {
+    const char ansi[] = {'C', '\xe4', 'T', '\0'};
+    Require(GuestTimeZoneNameToUtf8(ansi, 1252) == "C\xc3\xa4T", "A CP1252 zone name was not converted to UTF-8");
+    Require(GuestTimeZoneNameToUtf8("UTC", 1252) == "UTC", "An ASCII zone name changed during conversion");
+    Require(GuestTimeZoneNameToUtf8("", 1252).empty(), "An empty zone name was not converted to an empty string");
+    Require(GuestTimeZoneNameToUtf8(nullptr, 1252).empty(), "A null zone name was not converted to an empty string");
+
+    std::string previousZone;
+    const bool hadPreviousZone = CopyGuestEnvironment_nid_no_patch("TZ", previousZone);
+    Require(unsetenv_nid_postfix("TZ") == 0, "Could not use the system time zone");
+    tzset_nid_postfix();
+    std::array<const char*, 2> published{};
+    for (std::size_t index = 0; index < published.size(); ++index) {
+        const std::string expected = index == 1 && _daylight == 0 ? std::string("   ") : GuestTimeZoneNameToUtf8(_tzname[index], CP_ACP);
+        Require(tzname_nid_postfix[index] != nullptr && std::strcmp(tzname_nid_postfix[index], expected.c_str()) == 0,
+            "tzname did not expose the Windows zone name as UTF-8");
+        published[index] = tzname_nid_postfix[index];
+    }
+
+    const std::int64_t moment = 172800;
+    GuestTm local{};
+    Require(localtime_s_nid_postfix(&moment, &local) == &local, "Local conversion in the system time zone failed");
+    const std::size_t zoneIndex = local.tm_isdst > 0 ? 1 : 0;
+    Require(local.tm_zone == published[zoneIndex], "localtime did not use the published zone name");
+    char formatted[64]{};
+    Require(strftime_nid_postfix(formatted, sizeof(formatted), "%Z", &local) != 0, "strftime in the system time zone failed");
+    Require(std::strcmp(formatted, published[zoneIndex]) == 0, "strftime printed another zone name");
+    Require(tzname_nid_postfix[zoneIndex] == published[zoneIndex] && local.tm_zone == published[zoneIndex],
+        "strftime invalidated the zone name of an earlier conversion");
+
+    if (hadPreviousZone) Require(setenv_nid_postfix("TZ", previousZone.c_str(), 1) == 0, "Could not restore the guest time zone");
+    else Require(unsetenv_nid_postfix("TZ") == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+}
+
 static void CheckRejectedZone() {
     const std::int64_t moment = 172800;
     const std::string oversized = "UTC-5" + std::string(40000, 'x');
@@ -523,6 +562,7 @@ int main() {
     CheckRegionZones();
 #ifdef _WIN32
     CheckPosixFormZoneOffsets();
+    CheckWindowsZoneNameEncoding();
 #endif
     CheckLiteralConversions();
 

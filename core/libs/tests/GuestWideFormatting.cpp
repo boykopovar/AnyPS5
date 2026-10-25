@@ -296,6 +296,8 @@ static void CheckAlternateOctalZero() {
 }
 
 int main() {
+    Require(setenv_nid_postfix("TZ", "UTC0", 1) == 0, "Could not set the guest time zone");
+    tzset_nid_postfix();
     CheckAlternateOctalZero();
     CheckBounded();
     CheckPositional();
