@@ -6,6 +6,7 @@
 namespace ShaderRecompiler {
 
 IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
+    arguments.reserve(IrOpcodeOperandCount(opcode));
 }
 
 std::uint32_t IrValue::Id() const {
@@ -14,10 +15,6 @@ std::uint32_t IrValue::Id() const {
 
 const std::vector<IrValue*>& IrValue::Arguments() const {
     return arguments;
-}
-
-const std::vector<IrValue*>& IrValue::Uses() const {
-    return uses;
 }
 
 IrBlock* IrValue::Parent() const {
@@ -33,7 +30,6 @@ void IrValue::AddArgument(IrValue* argument) {
     if (argument == nullptr) {
         return;
     }
-    argument->uses.push_back(this);
     argument->operandUses.push_back(IrUse{this, arguments.size() - 1});
 }
 
@@ -43,10 +39,6 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     }
     IrValue* previous = arguments[index];
     if (previous != nullptr) {
-        const auto useIt = std::find(previous->uses.begin(), previous->uses.end(), this);
-        if (useIt != previous->uses.end()) {
-            previous->uses.erase(useIt);
-        }
         const auto operandIt = std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
             return use.user == this && use.operand == index;
         });
@@ -56,7 +48,6 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     }
     arguments[index] = argument;
     if (argument != nullptr) {
-        argument->uses.push_back(this);
         argument->operandUses.push_back(IrUse{this, index});
     }
 }
@@ -77,17 +68,14 @@ void IrValue::ReplaceAllUsesWith(IrValue* replacement) {
                 list.reserve(std::max(required, grown));
             }
         };
-        reserveAdditional(replacement->uses);
         reserveAdditional(replacement->operandUses);
     }
     for (auto use = operandUses.rbegin(); use != operandUses.rend(); ++use) {
         use->user->arguments[use->operand] = replacement;
         if (replacement != nullptr) {
-            replacement->uses.push_back(use->user);
             replacement->operandUses.push_back(*use);
         }
     }
-    uses.clear();
     operandUses.clear();
 }
 
@@ -113,11 +101,11 @@ bool IrValue::MayHaveSideEffects() const {
 }
 
 bool IrValue::HasUses() const {
-    return !uses.empty();
+    return !operandUses.empty();
 }
 
 std::size_t IrValue::UseCount() const {
-    return uses.size();
+    return operandUses.size();
 }
 
 std::size_t IrValue::PhiBlockCount() const {
@@ -224,7 +212,7 @@ void IrValue::ReplaceOpcode(IrOpcode opcode) {
 }
 
 void IrValue::Invalidate() {
-    if (!uses.empty()) {
+    if (!operandUses.empty()) {
         throw std::runtime_error("IrValue::Invalidate called on a value that still has uses");
     }
     for (std::size_t index = 0; index < arguments.size(); index++) {

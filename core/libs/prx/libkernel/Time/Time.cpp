@@ -1,5 +1,10 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
@@ -34,8 +39,6 @@
 #include <link.h>
 #endif // __linux__
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
@@ -118,16 +121,6 @@ static const bool g_timerResolutionRaised = [] {
     return raised;
 }();
 
-extern "C" {
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-}
-
 static void ReportTimedWait(const char* name, const std::function<void()>& body) {
     std::vector<double> samples(200);
     for (auto& sample : samples) {
@@ -151,11 +144,13 @@ static const bool g_timerSelfTest = [] {
     scePthreadCondInit(&cond, nullptr, nullptr);
     scePthreadMutexInit(&guestMutex, nullptr, nullptr);
     scePthreadMutexLock(&guestMutex);
+
     ReportTimedWait("scePthreadCondTimedwait(1000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 1000); });
     ReportTimedWait("scePthreadCondTimedwait(13000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 13000); });
     scePthreadMutexUnlock(&guestMutex);
     scePthreadMutexDestroy(&guestMutex);
     scePthreadCondDestroy(&cond);
+
     ReportTimedWait("sceKernelUsleep(1000)", [&] { sceKernelUsleep_nid_postfix(1000); });
     ReportTimedWait("Sleep(1)", [&] { Sleep(1); });
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -176,12 +171,13 @@ std::uint64_t APS5_VABI sceKernelGetProcessTime() {
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter() {
-    const std::uint64_t start = GetStartNanos();
-    return GetMonotonicNanos() - start;
+    const std::uint64_t nanos = GetMonotonicNanos() - GetStartNanos();
+    const std::uint64_t frequency = sceKernelGetTscFrequency();
+    return nanos / 1000000000ULL * frequency + nanos % 1000000000ULL * frequency / 1000000000ULL;
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency() {
-    return 1000000000ULL;
+    return sceKernelGetTscFrequency();
 }
 
 static std::string DescribeCallSite(const void* caller) {
@@ -274,7 +270,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
 
 static void CancellableSleep(std::uint64_t nanos) {
     ThreadCancel::Check();
-    TimedWait::SleepNanos(nanos);
+    SleepWake::Sleep(nanos);
     ThreadCancel::Check();
 }
 
@@ -289,8 +285,9 @@ static int SleepForRequest(const KernelTimespec* rqtp) {
     constexpr int guestInvalid = 22;
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
+    constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
-        CancellableSleep(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
+        CancellableSleep(static_cast<std::uint64_t>(std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) * 1000000000ULL +
                          static_cast<std::uint64_t>(rqtp->tv_nsec));
     }
     return 0;
@@ -318,41 +315,54 @@ int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
 }
 
 #ifdef _WIN32
-static std::uint64_t CpuTimeNanos(bool callingThread, bool countKernel) {
+static constexpr int GUEST_EIO = 5;
+static constexpr int GUEST_EPERM = 1;
+
+int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
+    if (error == ERROR_NOACCESS) return GUEST_EFAULT;
+    if (error == ERROR_ACCESS_DENIED) return GUEST_EPERM;
+    return GUEST_EIO;
+}
+
+static bool CpuTimeNanos(bool callingThread, bool countKernel, std::uint64_t* nanos) {
     FILETIME creation{};
     FILETIME exitTime{};
     FILETIME kernel{};
     FILETIME user{};
     if (callingThread) {
-        if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user))
-            throw std::system_error(GetLastError(), std::system_category(), "clock_gettime: GetThreadTimes failed");
+        if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user)) {
+            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+            return false;
+        }
     } else {
-        if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user))
-            throw std::system_error(GetLastError(), std::system_category(), "clock_gettime: GetProcessTimes failed");
+        if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user)) {
+            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+            return false;
+        }
     }
     const auto toTicks = [](const FILETIME& time) {
         return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
     };
-    return (toTicks(user) + (countKernel ? toTicks(kernel) : 0ULL)) * 100ULL;
+    *nanos = (toTicks(user) + (countKernel ? toTicks(kernel) : 0ULL)) * 100ULL;
+    return true;
 }
 
-static std::uint64_t CpuTimeResolutionNanos() {
+static bool CpuTimeResolutionNanos(std::uint64_t* nanos) {
     DWORD adjustment = 0;
     DWORD increment = 0;
     BOOL adjustmentDisabled = FALSE;
-    if (!GetSystemTimeAdjustment(&adjustment, &increment, &adjustmentDisabled))
-        throw std::system_error(GetLastError(), std::system_category(), "clock_getres: GetSystemTimeAdjustment failed");
+    if (!GetSystemTimeAdjustment(&adjustment, &increment, &adjustmentDisabled)) {
+        *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+        return false;
+    }
     if (increment == 0)
         throw std::runtime_error("clock_getres: GetSystemTimeAdjustment reported no clock interrupt period");
-    return static_cast<std::uint64_t>(increment) * 100ULL;
+    *nanos = static_cast<std::uint64_t>(increment) * 100ULL;
+    return true;
 }
 
-static std::uint64_t ProcessCpuNanos(bool countSystem) {
-    return CpuTimeNanos(false, countSystem);
-}
-
-static std::uint64_t ProcessCpuResolutionNanos() {
-    return CpuTimeResolutionNanos();
+static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
+    return CpuTimeResolutionNanos(nanos);
 }
 #else
 static std::uint64_t ClockTicksPerSecond() {
@@ -372,9 +382,10 @@ static std::uint64_t ProcessCpuNanos(bool countSystem) {
     return ticks / rate * 1000000000ULL + ticks % rate * 1000000000ULL / rate;
 }
 
-static std::uint64_t ProcessCpuResolutionNanos() {
+static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
     const std::uint64_t rate = ClockTicksPerSecond();
-    return (1000000000ULL + rate - 1ULL) / rate;
+    *nanos = (1000000000ULL + rate - 1ULL) / rate;
+    return true;
 }
 #endif
 
@@ -390,7 +401,12 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
     if (clockId == 1 || clockId == 2) {
+#ifdef _WIN32
+        std::uint64_t nanos = 0;
+        if (!CpuTimeNanos(false, clockId == 2, &nanos)) return -1;
+#else
         const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
+#endif
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
@@ -423,7 +439,8 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
     if (clockId == 14 || clockId == 15) {
-        const std::uint64_t nanos = CpuTimeNanos(clockId == 14, true);
+        std::uint64_t nanos = 0;
+        if (!CpuTimeNanos(clockId == 14, true, &nanos)) return -1;
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
@@ -514,7 +531,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (IsCpuClock(clockId))
         return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
-        const std::uint64_t nanos = ProcessCpuResolutionNanos();
+        std::uint64_t nanos = 0;
+        if (!ProcessCpuResolutionNanos(&nanos)) return -1;
         res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         res->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
@@ -542,7 +560,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
         return 0;
     }
     if (clockId == 14 || clockId == 15) {
-        const std::uint64_t nanos = CpuTimeResolutionNanos();
+        std::uint64_t nanos = 0;
+        if (!CpuTimeResolutionNanos(&nanos)) return -1;
         res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         res->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;

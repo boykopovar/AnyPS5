@@ -1,8 +1,21 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+Uds::Owned<NpUniversalDataSystemEventPropertyObject>& objects() {
+    static Uds::Owned<NpUniversalDataSystemEventPropertyObject> registry;
+    return registry;
+}
+
+}
 
 extern "C" {
 
@@ -10,12 +23,12 @@ int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataS
     if (new_object == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    *new_object = new NpUniversalDataSystemEventPropertyObject;
+    *new_object = objects().Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject* object) {
-    delete object;
+    objects().Release(object);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -25,6 +38,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(
     if (object == nullptr || key == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, std::string(value));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -34,6 +48,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -43,6 +58,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -52,6 +68,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -61,6 +78,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -70,6 +88,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -79,6 +98,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -88,6 +108,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -97,6 +118,8 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(
     if (object == nullptr || key == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    const auto* bytes = static_cast<const std::uint8_t*>(value);
+    object->Set(key, Uds::Binary(bytes, bytes + value_size));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -109,11 +132,11 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyObject{});
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyObject*>(value)
-            : new NpUniversalDataSystemEventPropertyObject);
+        *value_ptr = child.get();
     }
+    object->Set(key, std::move(child));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -126,11 +149,11 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyArray{});
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyArray*>(value)
-            : new NpUniversalDataSystemEventPropertyArray);
+        *value_ptr = child.get();
     }
+    object->Set(key, std::move(child));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 

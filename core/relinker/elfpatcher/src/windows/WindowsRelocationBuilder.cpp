@@ -3,6 +3,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -25,6 +26,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             const auto symbol = info >> 32;
             if ((plt && type != 7) || (type != 1 && type != 6 && type != 7 && type != 8 && type != 16 && type != 17 && type != 18))
                 throw Domain::RelinkerException("Unsupported Windows relocation type " + std::to_string(type), target);
+            if (target > std::numeric_limits<std::uint64_t>::max() - 8)
+                throw Domain::RelinkerException("Relocation target address overflow", target);
             const auto rva = image.GetRva(target, 8);
             const auto next = ranges.lower_bound(target);
             if ((next != ranges.end() && next->first < target + 8) || (next != ranges.begin() && std::prev(next)->second > target))
@@ -82,8 +85,12 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
 
 std::vector<std::uint8_t> WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const {
     std::map<std::uint32_t, std::vector<std::uint16_t>> pages;
-    for (const auto target : targets)
-        pages[target & ~0xfffu].push_back(static_cast<std::uint16_t>(0xa000u | (target & 0xfffu)));
+    for (const auto target : targets) {
+        auto& entries = pages[target & ~0xfffu];
+        const auto entry = static_cast<std::uint16_t>(0xa000u | (target & 0xfffu));
+        if (std::find(entries.begin(), entries.end(), entry) == entries.end())
+            entries.push_back(entry);
+    }
     std::vector<std::uint8_t> result;
     for (const auto& [page, entries] : pages) {
         Io::AppendU32(result, page);

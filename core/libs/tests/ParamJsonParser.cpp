@@ -81,6 +81,12 @@ static void CheckUserDefinedParams(const std::filesystem::path& path) {
     }
 }
 
+static void CheckContentVersion(const std::filesystem::path& path) {
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":"01.002.000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion == "01.002.000", "Incorrect content version");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A missing content version was not empty");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":1,"localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A content version that is not a string was kept");
+}
+
 static void CheckNesting(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"extra":)";
     const auto nested = [&](std::size_t arrays) {
@@ -226,6 +232,7 @@ int main() {
         }
         CheckLanguages(path);
         CheckUserDefinedParams(path);
+        CheckContentVersion(path);
         CheckOutputPermission(path);
         CheckNesting(path);
     } catch (const std::exception& error) {

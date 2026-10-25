@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
@@ -7,20 +9,8 @@
 #include <cstring>
 #include <initializer_list>
 
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-
 extern "C" {
-int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigfillset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigaddset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigdelset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigismember_nid_postfix(const GuestSignalSet*, int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-[[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
-[[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);
+
 int APS5_VABI JumpKeepingCalleeSaved(std::uint64_t* buffer);
 }
 
@@ -164,9 +154,28 @@ static void CheckSigsetjmp() {
     SetBlockedMask(0);
 }
 
+static void CheckInvalidHow() {
+    SetBlockedMask(0x5u);
+    const GuestSignalSet blocked{{0x30u, 0, 0, 0}};
+    for (const int how : {0, 4, -1, 1000}) {
+        GuestSignalSet previous{{0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u}};
+        *__error_nid_postfix() = 0;
+        Require(_sigprocmask_nid_postfix(how, &blocked, &previous) == -1 && *__error_nid_postfix() == 22);
+        Require(Equals(previous, 0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u));
+        *__error_nid_postfix() = 0;
+        Require(sigprocmask_nid_postfix(how, &blocked, &previous) == -1 && *__error_nid_postfix() == 22);
+        Require(Equals(previous, 0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u, 0xa5a5a5a5u));
+        Require(BlockedMask() == 0x5u);
+        Require(_sigprocmask_nid_postfix(how, nullptr, &previous) == 0);
+        Require(Equals(previous, 0x5u, 0, 0, 0));
+    }
+    SetBlockedMask(0);
+}
+
 int main() {
     CheckSigsetjmp();
     CheckSiglongjmp();
+    CheckInvalidHow();
     static constexpr int Untouched = 5;
     GuestSignalSet set{{0x12345678u, 0x9abcdef0u, 0xffffffffu, 1u}};
     *__error_nid_postfix() = Untouched;

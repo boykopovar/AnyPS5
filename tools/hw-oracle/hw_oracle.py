@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import operator
@@ -17,6 +18,22 @@ CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE
 ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
+RUNTIMES = ("hsa", "hip")
+
+
+def runtime():
+    selected = os.environ.get("HW_ORACLE_RUNTIME") or ("hip" if os.name == "nt" else "hsa")
+    if selected not in RUNTIMES:
+        raise ValueError(f"HW_ORACLE_RUNTIME must be one of {', '.join(RUNTIMES)}")
+    return selected
+
+
+@cache
+def hip_runtime():
+    spec = importlib.util.spec_from_file_location("oracle_hip", HERE / "oracle_hip.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def rocm_root():
@@ -78,7 +95,11 @@ def detected_target(binary, visible_devices):
 
 
 def target():
-    return os.environ.get("HW_ORACLE_TARGET") or detected_target(oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
+    if os.environ.get("HW_ORACLE_TARGET"):
+        return os.environ["HW_ORACLE_TARGET"]
+    if runtime() == "hip":
+        return hip_runtime().target()
+    return detected_target(oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
 
 
 def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round32, round16, fp16_overflow, lds=DEFAULT_LDS):
@@ -97,6 +118,9 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
                        ("@FP16_OVERFLOW@", str(int(fp16_overflow))), ("@LDS@", str(lds)), ("@BODY@", body)):
         text = text.replace(key, value)
     (work / "k.s").write_text(text)
+    if runtime() == "hip":
+        (work / "k.co").write_bytes(hip_runtime().assemble(text.encode("utf-8"), target(), wave64))
+        return work / "k.co"
     subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True, stdout=sys.stderr)
     subprocess.run([tool("ld.lld"), "-m", "elf64_amdgpu", "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True, stdout=sys.stderr)
     return work / "k.co"
@@ -131,10 +155,14 @@ def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, de
         rows_per_dispatch = ROWS_PER_DISPATCH // 2 if wave64 else ROWS_PER_DISPATCH
         for start in range(0, len(padded), rows_per_dispatch):
             chunk = padded[start:start + rows_per_dispatch]
-            (work / "in.bin").write_bytes(b"".join(struct.pack("<4I", *r) for r in chunk) + extra)
-            (work / "out.bin").unlink(missing_ok=True)
-            subprocess.run([oracle(), str(code), str(len(chunk)), str(work / "in.bin"), str(work / "out.bin"), "16"], check=True, env=env, stdout=sys.stderr)
-            data = (work / "out.bin").read_bytes()
+            payload = b"".join(struct.pack("<4I", *r) for r in chunk) + extra
+            if runtime() == "hip":
+                data = hip_runtime().dispatch(Path(code).read_bytes(), len(chunk), payload, 16, coarse)
+            else:
+                (work / "in.bin").write_bytes(payload)
+                (work / "out.bin").unlink(missing_ok=True)
+                subprocess.run([oracle(), str(code), str(len(chunk)), str(work / "in.bin"), str(work / "out.bin"), "16"], check=True, env=env, stdout=sys.stderr)
+                data = (work / "out.bin").read_bytes()
             expected = len(chunk) * 64
             if len(data) != expected:
                 raise ValueError(f"Oracle output size: expected {expected} bytes, got {len(data)}")
@@ -166,7 +194,11 @@ def main():
     parser.add_argument("--extra", type=Path, help="bytes appended after the rows")
     parser.add_argument("--outs", type=int, choices=range(1, 17), default=16, metavar="N", help="print v10..v(10+N-1)")
     parser.add_argument("--json", action="store_true", help="emit inputs, results and run settings as JSON; target is the assembly target, not a GPU model or driver")
+    parser.add_argument("--validate-only", action="store_true",
+                        help="check input rows and report dispatch dimensions without assembling or executing the kernel")
     args = parser.parse_args()
+    if args.lds not in range(MAX_LDS + 1):
+        parser.error(f"lds must be an integer from 0 to {MAX_LDS}")
     try:
         rows = validated_rows(tuple(parse_word(v) for v in line.split())
                               for line in args.rows.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -177,6 +209,18 @@ def main():
     except (OSError, ValueError) as error:
         parser.error(str(error))
     modes = {name: getattr(args, name) for name in ("ieee", "denorm32", "denorm16", "dx10_clamp", "round32", "round16", "fp16_overflow")}
+    if args.validate_only:
+        wave = 64 if args.wave64 else 32
+        padded = (len(rows) + wave - 1) // wave * wave
+        dispatch = ROWS_PER_DISPATCH // 2 if args.wave64 else ROWS_PER_DISPATCH
+        report = {"validation_only": True, "rows": len(rows), "padded_rows": padded,
+                  "dispatches": (padded + dispatch - 1) // dispatch, "wave_size": wave,
+                  "floating_point_modes": modes, "lds_bytes": args.lds,
+                  "memory": "coarse" if args.coarse else "fine", "extra_bytes": len(extra)}
+        print(json.dumps(report, indent=2) if args.json else
+              f"Validated {len(rows)} input rows, {padded} padded rows, {report['dispatches']} dispatches. "
+              "Assembly and GPU execution were not checked.")
+        return 0
     results = run(body, rows, extra, args.wave64, args.coarse, **modes, lds=args.lds)
     if args.json:
         report = {

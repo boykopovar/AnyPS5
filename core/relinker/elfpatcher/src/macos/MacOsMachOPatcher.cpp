@@ -1,5 +1,6 @@
 #include <elfpatcher/macos/MacOsMachOPatcher.hpp>
 #include <elfpatcher/macos/MacOsImage.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
 #include <io/BufferUtils.hpp>
@@ -50,12 +51,17 @@ std::string MachODependency(const std::string& name, const std::string& origin) 
     return "@rpath/" + name;
 }
 
+MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message) : fixedBase(fixedBase), message(std::move(message)) {
+    if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
+        throw Domain::RelinkerException("Invalid fixed macOS guest image base");
+}
+
 std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("macOS target does not support --windows-diagnostics");
     static_cast<void>(lazyBinding);
 
-    Windows::WindowsLoadImage image(sourceElf, originalHeaders);
+    Windows::WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase ? *fixedBase - Windows::LoadRva : Windows::ImageBase);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     const auto relocations = Windows::WindowsRelocationBuilder().Apply(image, dynamicSection, originalHeaders);
@@ -65,6 +71,32 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
     input.Source = &sourceElf;
     input.Headers = &originalHeaders;
     input.Image = &image;
+    input.Message = message;
+    for (std::size_t offset = 24; offset < dynamicSection.DynSymData.size(); offset += 24) {
+        const auto& symbols = dynamicSection.DynSymData;
+        const auto section = Io::ReadU16(symbols, offset + 6);
+        const auto info = symbols[offset + 4];
+        const auto visibility = symbols[offset + 5] & 3;
+        if (section == SHN_UNDEF || (info >> 4) == 0 || visibility == 1 || visibility == 2) continue;
+        if (((info >> 4) != STB_GLOBAL && (info >> 4) != STB_WEAK) ||
+            ((info & 15) != STT_NOTYPE && (info & 15) != 1 && (info & 15) != STT_FUNC && (info & 15) != STT_TLS))
+            throw Domain::RelinkerException("Unsupported macOS executable export attributes");
+        const auto name = "_" + Windows::ReadString(dynamicSection.DynStrData, Io::ReadU32(symbols, offset));
+        if (name.size() == 1) throw Domain::RelinkerException("Empty macOS executable export");
+        const auto value = Io::ReadU64(symbols, offset + 8);
+        const auto flags = (info >> 4) == STB_WEAK ? ExportWeakDefinition : std::uint64_t{0};
+        if ((info & 15) == STT_TLS) {
+            if (section >= SHN_LORESERVE) throw Domain::RelinkerException("Unsupported macOS executable TLS export section: " + name);
+            const auto tls = std::find_if(originalHeaders.begin(), originalHeaders.end(), [](const auto& header) { return header.Type == 7; });
+            if (tls != originalHeaders.end() && (value > tls->MemorySize || Io::ReadU64(symbols, offset + 16) > tls->MemorySize - value))
+                throw Domain::RelinkerException("macOS executable TLS export exceeds PT_TLS: " + name);
+            input.TlsExports.push_back({name, value, flags});
+        } else if (section == SHN_ABS) input.Exports.push_back({name, value, flags | ExportKindAbsolute});
+        else {
+            if (section >= SHN_LORESERVE) throw Domain::RelinkerException("Unsupported macOS executable export section: " + name);
+            input.Exports.push_back({name, image.GetRva(value, std::max<std::uint64_t>(Io::ReadU64(symbols, offset + 16), 1)), flags});
+        }
+    }
     input.Rebases = relocations.BaseRelocations;
     for (const auto& import : relocations.Imports)
         input.Binds.push_back({"_" + import.Name, import.TargetRva, static_cast<std::int64_t>(import.Addend), import.Weak});

@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import debt_split
+
 TOOL = Path(__file__).resolve().parents[1] / "debt_split.py"
 INDEX = "docs/dev/TechnicalDebt.md"
 
@@ -198,6 +201,16 @@ class DebtSplitTests(unittest.TestCase):
                          "\n\n### Functional\n\n" + A_FUNCTIONAL.replace("../../", "../../../") + "\n")
         self.assertEqual(self.read(INDEX), self.git("show", "main:" + INDEX).stdout)
 
+    def test_resolve_places_an_entry_inserted_at_the_top_of_a_later_section(self):
+        added = "- [libSceA](../../core/libs/prx/libSceA/Added.cpp) - `sceAAdded` returns 0"
+        result = self.rebase([A_STUB, B_STUB, C_STUB], [added, A_FUNCTIONAL, SHADER, SHARED])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("rebase", "--continue")
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
+                         "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") +
+                         "\n\n### Functional\n\n" +
+                         "\n".join(entry.replace("../../", "../../../") for entry in (added, A_FUNCTIONAL)) + "\n")
+
     def test_indented_continuation_after_a_blank_line_moves_with_its_entry(self):
         note = "  - sub note about sceAOne"
         self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + A_STUB + "\n\n" + note + "\n")
@@ -211,6 +224,22 @@ class DebtSplitTests(unittest.TestCase):
         self.split()
         self.assertIn(paragraph, self.read(INDEX))
         self.assertNotIn(paragraph, self.read("docs/dev/debt/libSceA.md"))
+
+    def test_read_debt_and_split_accept_utf8_bom(self):
+        self.write("docs/dev/debt/libSceA.md", "\ufeff### Silent stubs\n\n- entry 1\n")
+        sections = debt_split.read_debt(self.root, "libSceA")
+        self.assertEqual(sections, {"Silent stubs": ["- entry 1"]})
+        self.write(INDEX, "\ufeff" + ORIGINAL)
+        self.split()
+        self.assertTrue((self.root / "docs/dev/debt/libSceA.md").is_file())
+        self.assertIn("libSceA technical debt", self.read("docs/dev/debt/libSceA.md"))
+
+    def test_split_keeps_blank_line_between_staying_entry_and_paragraph(self):
+        paragraph = "A paragraph that belongs to no library."
+        self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + A_STUB
+                          + "\n- A toolchain limitation\n\n" + paragraph + "\n")
+        self.split()
+        self.assertIn("- A toolchain limitation\n\n" + paragraph + "\n", self.read(INDEX))
 
 
 if __name__ == "__main__":

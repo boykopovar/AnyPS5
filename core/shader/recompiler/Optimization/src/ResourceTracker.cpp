@@ -83,6 +83,10 @@ std::uint32_t possibleU32Bits(const IrValue* value) {
             const IrValue* shift = value->Argument(1)->Resolve();
             return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32Bits(value->Argument(0)) << (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
         }
+        case IrOpcode::ReadFirstLane:
+            return value->ArgumentCount() >= 1u ? possibleU32Bits(value->Argument(0)) : std::numeric_limits<std::uint32_t>::max();
+        case IrOpcode::SelectU32:
+            return value->ArgumentCount() == 3u ? (possibleU32Bits(value->Argument(1)) | possibleU32Bits(value->Argument(2))) : std::numeric_limits<std::uint32_t>::max();
         default:
             return std::numeric_limits<std::uint32_t>::max();
     }
@@ -190,6 +194,8 @@ private:
         IrValue* offset = nullptr;
         std::vector<std::uint32_t> memory;
         std::vector<const IrValue*> reads;
+        std::vector<std::uint32_t> hopMemory;
+        std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
     };
 
@@ -320,6 +326,12 @@ private:
             }
             block.sources = m_blockSources[index];
             block.images = m_blockImages[index];
+            for (const IrValue* inst : order[index]->Instructions()) {
+                if (inst->Opcode() != IrOpcode::ReadConst || inst->ArgumentCount() != 2u || inst->Argument(0)->Resolve()->Opcode() != IrOpcode::GetSrtResource) continue;
+                const IrValue* slot = inst->Argument(1)->Resolve();
+                if (!slot->HasImmediate() || slot->Type() != IrType::U32 || slot->ImmediateU32() >= m_program.Resources().srtReads.size()) fail("resource control flow has an invalid flat SRT slot");
+                if (std::ranges::find(block.flatSlots, slot->ImmediateU32()) == block.flatSlots.end()) block.flatSlots.push_back(slot->ImmediateU32());
+            }
         }
         std::vector<std::uint8_t> unconditional(order.size());
         for (std::uint32_t index = 0; index < order.size() && unconditional[index] == 0u;) {
@@ -331,6 +343,7 @@ private:
         }
         std::vector<std::uint8_t> reached(m_sources.size());
         std::vector<std::uint8_t> reachedImages(m_info.images.size());
+        std::vector<std::uint8_t> reachedFlat(m_program.Resources().srtReads.size());
         for (std::uint32_t index = 0; index < order.size(); index++) {
             if (unconditional[index] == 0u) {
                 continue;
@@ -341,6 +354,9 @@ private:
             for (const auto image : controlFlow[index].images) {
                 reachedImages[image] = 1u;
             }
+            for (const auto slot : controlFlow[index].flatSlots) {
+                reachedFlat[slot] = 1u;
+            }
         }
         bool guarded = false;
         for (const auto& block : controlFlow) {
@@ -349,6 +365,9 @@ private:
             }
             for (const auto image : block.images) {
                 guarded = guarded || reachedImages[image] == 0u;
+            }
+            for (const auto slot : block.flatSlots) {
+                guarded = guarded || reachedFlat[slot] == 0u;
             }
         }
         if (guarded) {
@@ -558,6 +577,38 @@ private:
         return value;
     }
 
+    struct FirstLaneOffset {
+        const IrValue* lane = nullptr;
+        const IrValue* mask = nullptr;
+        std::uint32_t shift = 0;
+        std::uint32_t addend = 0;
+    };
+
+    static bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) {
+        std::uint32_t addend = 0;
+        value = SplitImmediateAddend(value, addend);
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+            value = SplitImmediateAddend(value->Argument(1), addend);
+        }
+        std::uint32_t shift = 0;
+        if (depth != 0u && value->Opcode() == IrOpcode::ShiftLeftLogical32 && value->ArgumentCount() == 2u && immediateU32(value->Argument(1), shift) && shift < 32u) {
+            if (!ParseFirstLaneOffset(value->Argument(0)->Resolve(), mask, form, depth - 1u) || form.shift + shift >= 32u) return false;
+            form.shift += shift;
+            form.addend <<= shift;
+        } else if (depth != 0u && mask == nullptr && value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
+            if (!ParseFirstLaneOffset(value->Argument(0)->Resolve(), value->Argument(1)->Resolve(), form, depth - 1u)) return false;
+        } else {
+            if (mask == nullptr) return false;
+            form = FirstLaneOffset{value, mask, 0u, 0u};
+        }
+        form.addend += addend;
+        return true;
+    }
+
+    bool SameFirstLaneOffset(const FirstLaneOffset& left, const FirstLaneOffset& right) const {
+        return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
+    }
+
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan) {
         const auto expected = sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler ? 4u : 8u;
@@ -583,8 +634,11 @@ private:
         bool folded = false;
         std::uint32_t first = 0;
         bool address = false;
+        FirstLaneOffset baseLane;
+        bool laneBase = false;
         for (std::uint32_t dword = 0; dword < words; dword++) {
-            IrValue* read = handle.Argument(dword)->Resolve();
+            IrValue* read = ResolveInvariantPhi(m_program.Resources(), handle.Argument(dword));
+            if (read == nullptr) return false;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             const bool addressRead = memory == nullptr && (memory = ScalarAddressMemory(*read, memoryIndex)) != nullptr;
@@ -593,11 +647,20 @@ private:
             }
             std::uint32_t readAddend = 0;
             IrValue* readBase = SplitImmediateAddend(read->Argument(1), readAddend);
+            bool sameBase = dword == 0u || EquivalentValue(m_program.Resources(), base, readBase);
+            if (!sameBase && laneBase) {
+                FirstLaneOffset lane;
+                if (ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, lane, phiSearchDepth) && SameFirstLaneOffset(baseLane, lane)) {
+                    readAddend = lane.addend;
+                    sameBase = true;
+                }
+            }
             if (dword == 0u) {
                 first = memory->offset;
                 address = addressRead;
                 base = readBase;
                 baseAddend = readAddend;
+                laneBase = ParseFirstLaneOffset(read->Argument(1)->Resolve(), nullptr, baseLane, phiSearchDepth) && baseLane.addend == baseAddend;
             } else if (addressRead != address || memory->offset + readAddend != first + baseAddend + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t))) {
                 return false;
             } else if (readAddend != baseAddend) {
@@ -614,7 +677,7 @@ private:
             if (heapHandle == nullptr) heapHandle = currentHandle;
             if (dword == 0u) {
                 offset = read->Argument(1)->Resolve();
-            } else if (!EquivalentValue(m_program.Resources(), base, readBase)) {
+            } else if (!sameBase) {
                 return false;
             }
             plan.memory.push_back(memoryIndex);
@@ -658,7 +721,7 @@ private:
         column.address = address;
         column.foldedAddend = folded ? baseAddend : 0u;
         column.foldedCarry = folded ? carry : 0u;
-        if (!address && !sampler) {
+        if (!address && !sampler && std::ranges::find(m_unselectedHandles, &handle) == m_unselectedHandles.end()) {
             DescriptorSource direct;
             MakeSource(handle, width, false, false, direct);
             DescriptorSource selection;
@@ -688,15 +751,109 @@ private:
         return true;
     }
 
-    bool TryMakeIndirectColumn(IrValue& handle, IrValue& pointer, bool sampler, std::uint32_t words, std::uint32_t descriptorOffset, std::uint32_t descriptorImmediate, TableColumnPlan& plan) {
-        if (pointer.Opcode() != IrOpcode::GetAddressResource || pointer.ArgumentCount() != 2u) {
+    IrValue* UnwrapTableRead(IrValue* value) const {
+        if (value == nullptr) return nullptr;
+        value = value->Resolve();
+        if (!value->IsPhi()) return value;
+        IrValue* candidate = nullptr;
+        std::vector<IrValue*> pending{value};
+        std::unordered_set<const IrValue*> visited;
+        while (!pending.empty()) {
+            auto* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (!visited.insert(current).second) continue;
+            if (current->IsPhi()) {
+                for (std::size_t i = 0; i < current->ArgumentCount(); i++) {
+                    pending.push_back(current->Argument(i));
+                }
+                continue;
+            }
+            std::uint32_t memoryIndex = 0;
+            IrValue* key = nullptr;
+            std::uint32_t stride = 0;
+            std::uint32_t addend = 0;
+            if (ScalarReadMemory(*current, memoryIndex) == nullptr || !MemoryIndexBelongsTo(memoryIndex, *current) ||
+                !MatchAffineOffset(current->Argument(1), key, stride, addend)) {
+                return nullptr;
+            }
+            if (candidate == nullptr) {
+                candidate = current;
+            } else if (!EquivalentValue(m_program.Resources(), candidate, current)) {
+                std::uint32_t candidateIndex = 0;
+                const auto* candMem = ScalarReadMemory(*candidate, candidateIndex);
+                const auto* curMem = ScalarReadMemory(*current, memoryIndex);
+                if (candMem == nullptr || curMem == nullptr || candMem->offset != curMem->offset ||
+                    !EquivalentValue(m_program.Resources(), candidate->Argument(0), current->Argument(0)) ||
+                    !EquivalentValue(m_program.Resources(), candidate->Argument(1), current->Argument(1))) {
+                    return nullptr;
+                }
+            }
+        }
+        return candidate;
+    }
+
+    bool BlockDominates(const IrBlock* dominator, const IrBlock* block) const {
+        if (dominator == block) return true;
+        std::vector<const IrBlock*> pending{block};
+        std::unordered_set<const IrBlock*> visited{block};
+        while (!pending.empty()) {
+            const IrBlock* current = pending.back();
+            pending.pop_back();
+            if (current->Predecessors().empty()) return false;
+            for (const IrBlock* predecessor : current->Predecessors()) {
+                if (predecessor != dominator && visited.insert(predecessor).second) pending.push_back(predecessor);
+            }
+        }
+        return true;
+    }
+
+    bool AvailableAt(IrValue* value, const IrBlock* block) const {
+        value = value->Resolve();
+        if (value->HasImmediate() || value->Parent() == nullptr) return true;
+        return BlockDominates(value->Parent(), block);
+    }
+
+    bool TryMakeIndirectColumn(IrValue& handle, IrValue& descriptorPointer, bool sampler, std::uint32_t words, std::uint32_t descriptorOffset, std::uint32_t descriptorImmediate, TableColumnPlan& plan) {
+        std::vector<PointerHop> hops;
+        IrValue* pointer = &descriptorPointer;
+        while (pointer->Opcode() == IrOpcode::GetAddressResource && pointer->ArgumentCount() == 2u) {
+            std::uint32_t memoryIndex = 0;
+            if (ScalarAddressMemory(*pointer->Argument(0)->Resolve(), memoryIndex) == nullptr) {
+                break;
+            }
+            PointerHop hop;
+            IrValue* next = nullptr;
+            for (std::uint32_t dword = 0; dword < 2u; dword++) {
+                IrValue* read = pointer->Argument(dword)->Resolve();
+                const MemoryInfo* memory = ScalarAddressMemory(*read, memoryIndex);
+                std::uint32_t readOffset = 0;
+                if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read) || !immediateU32(read->Argument(1), readOffset)) {
+                    return false;
+                }
+                IrValue* readPointer = read->Argument(0)->Resolve();
+                if (dword == 0u) {
+                    hop = PointerHop{readOffset, memory->offset};
+                    next = readPointer;
+                } else if (readOffset != hop.offset || memory->offset != hop.immediate + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (readPointer != next && !EquivalentValue(m_program.Resources(), next, readPointer))) {
+                    return false;
+                }
+                plan.hopMemory.push_back(memoryIndex);
+                plan.hopReads.push_back(read);
+            }
+            hops.insert(hops.begin(), hop);
+            pointer = next;
+        }
+        if (pointer->Opcode() != IrOpcode::GetAddressResource || pointer->ArgumentCount() != 2u) {
             return false;
         }
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
-            IrValue* read = pointer.Argument(dword)->Resolve();
+            IrValue* read = UnwrapTableRead(pointer->Argument(dword));
+            if (read == nullptr) {
+                return false;
+            }
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
@@ -709,6 +866,9 @@ private:
             } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1))) {
                 return false;
             }
+        }
+        if (!AvailableAt(offset, handle.Parent())) {
+            return false;
         }
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
@@ -732,6 +892,7 @@ private:
         column.indirect = true;
         column.indirectOffset = descriptorOffset;
         column.indirectImmediate = descriptorImmediate;
+        column.pointerHops = std::move(hops);
         const auto domain = MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
@@ -1292,6 +1453,118 @@ private:
         if (!enabled) {
             return;
         }
+        const auto sources = m_sources;
+        const auto columns = m_tableColumns;
+        const auto reads = m_tablePlanningReads;
+        const auto memory = m_tablePlanningMemory;
+        PlanTableColumnPass();
+        while (!PlannedWithinLimits()) {
+            const auto group = LargestSelectedGroup();
+            if (group.empty()) {
+                return;
+            }
+            m_unselectedHandles.insert(m_unselectedHandles.end(), group.begin(), group.end());
+            m_sources = sources;
+            m_tableColumns = columns;
+            m_tablePlanningReads = reads;
+            m_tablePlanningMemory = memory;
+            PlanTableColumnPass();
+        }
+    }
+
+    bool PlannedWithinLimits() {
+        std::vector<ImageResource> images;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs;
+        std::vector<const IrValue*> directImages;
+        std::vector<std::pair<const IrValue*, bool>> directSamplers;
+        const auto direct = std::numeric_limits<std::uint32_t>::max() / 2u;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
+                if (inst->Opcode() == IrOpcode::ImageBvhIntersectRay || imageInfo.access == ImageAccess::None || imageInfo.resourceClass == ImageResourceClass::None || inst->ArgumentCount() == 0u) {
+                    continue;
+                }
+                const auto flags = inst->Flags<MemoryFlags>();
+                if (flags.index >= m_program.Resources().memoryInfo.size()) {
+                    continue;
+                }
+                const auto& memory = m_program.Resources().memoryInfo[flags.index];
+                if (memory.kind != ResourceKind::Image || memory.planningOnly || IsTablePlanningMemory(flags.index)) {
+                    continue;
+                }
+                const IrValue* handle = inst->Argument(0)->Resolve();
+                const TableColumnPlan* column = FindTableColumn(*handle);
+                std::uint32_t source = 0;
+                if (column != nullptr) {
+                    source = column->source;
+                } else {
+                    const auto found = std::ranges::find_if(directImages, [&](const IrValue* other) { return SameHandle(*other, *handle); });
+                    source = direct + static_cast<std::uint32_t>(found - directImages.begin());
+                    if (found == directImages.end()) directImages.push_back(handle);
+                }
+                const auto key = ImageKey(source, memory, inst->Opcode());
+                const auto image = std::ranges::find_if(images, [&](const ImageResource& other) { return SameImageKey(other, key); });
+                const auto imageIndex = static_cast<std::uint32_t>(image - images.begin());
+                if (image == images.end()) images.push_back(key);
+                if (!imageInfo.needsSampler || inst->ArgumentCount() < 2u) {
+                    continue;
+                }
+                const IrValue* samplerHandle = inst->Argument(1)->Resolve();
+                const TableColumnPlan* samplerColumn = FindTableColumn(*samplerHandle);
+                std::uint32_t sampler = 0;
+                if (samplerColumn != nullptr) {
+                    sampler = samplerColumn->source;
+                } else {
+                    const bool sampleAdjust = (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0;
+                    const auto found = std::ranges::find_if(directSamplers, [&](const auto& other) { return other.second == sampleAdjust && SameHandle(*other.first, *samplerHandle); });
+                    sampler = direct + static_cast<std::uint32_t>(found - directSamplers.begin());
+                    if (found == directSamplers.end()) directSamplers.emplace_back(samplerHandle, sampleAdjust);
+                }
+                if (std::ranges::find(pairs, std::pair{imageIndex, sampler}) == pairs.end()) pairs.emplace_back(imageIndex, sampler);
+            }
+        }
+        return images.size() <= ShaderInfo::MaxImages && pairs.size() <= ShaderInfo::MaxSampledPairs;
+    }
+
+    std::vector<const IrValue*> LargestSelectedGroup() const {
+        const auto unselected = [](TableColumn column) {
+            column.selected = false;
+            column.selection = 0u;
+            return column;
+        };
+        std::vector<std::vector<std::uint32_t>> groups;
+        for (const auto& plan : m_tableColumns) {
+            const auto& column = m_sources[plan.source].tableColumn;
+            if (!column.has_value()) {
+                continue;
+            }
+            const auto group = std::ranges::find_if(groups, [&](const std::vector<std::uint32_t>& members) { return unselected(*m_sources[members.front()].tableColumn) == unselected(*column); });
+            if (group == groups.end()) {
+                groups.push_back({plan.source});
+            } else if (std::ranges::find(*group, plan.source) == group->end()) {
+                group->push_back(plan.source);
+            }
+        }
+        const std::vector<std::uint32_t>* largest = nullptr;
+        for (const auto& group : groups) {
+            const bool selected = std::ranges::any_of(group, [&](std::uint32_t source) { return m_sources[source].tableColumn->selected; });
+            if (selected && group.size() > 1u && (largest == nullptr || group.size() > largest->size())) {
+                largest = &group;
+            }
+        }
+        std::vector<const IrValue*> handles;
+        if (largest == nullptr) {
+            return handles;
+        }
+        for (const auto& plan : m_tableColumns) {
+            if (std::ranges::find(*largest, plan.source) != largest->end()) {
+                handles.push_back(plan.handle);
+            }
+        }
+        return handles;
+    }
+
+    void PlanTableColumnPass() {
         IndexMemoryUsers();
         const auto directImages = DirectImageHandles();
         for (auto& block : m_program.Blocks()) {
@@ -1323,6 +1596,27 @@ private:
                 if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
                     m_tablePlanningReads.push_back(read);
                     m_tablePlanningMemory.push_back(plan.memory[index]);
+                }
+            }
+        }
+        for (bool marked = true; marked;) {
+            marked = false;
+            for (const auto& plan : m_tableColumns) {
+                for (std::size_t index = 0; index < plan.hopReads.size(); index++) {
+                    const IrValue* read = plan.hopReads[index];
+                    if (std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) {
+                        continue;
+                    }
+                    const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* pointer) {
+                        return pointer->Opcode() == IrOpcode::GetAddressResource && std::ranges::all_of(pointer->Uses(), [&](const IrValue* user) {
+                            return std::ranges::find(m_tablePlanningReads, user) != m_tablePlanningReads.end();
+                        });
+                    });
+                    if (planned) {
+                        m_tablePlanningReads.push_back(read);
+                        m_tablePlanningMemory.push_back(plan.hopMemory[index]);
+                        marked = true;
+                    }
                 }
             }
         }
@@ -1481,7 +1775,7 @@ private:
                 continue;
             }
             image.table = next++;
-            if (image.atomic || image.packed || image.byElements != 0u) {
+            if (image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
             }
         }
@@ -1576,13 +1870,32 @@ private:
         resource.scalar = resource.scalar || op == IrOpcode::ReadConstBuffer || memory.kind == ResourceKind::ScalarBuffer;
     }
 
+    static ImageResource ImageKey(std::uint32_t source, const MemoryInfo& memory, IrOpcode op) {
+        ImageResource image;
+        image.source = source;
+        image.resourceClass = ImageOpcodeInfoOf(op).resourceClass;
+        image.depthCompare = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0;
+        image.remappedDepth1D = image.depthCompare && (memory.imageDimension == RdnaImageDimension::Dim1D || memory.imageDimension == RdnaImageDimension::Dim1DArray);
+        image.dimension = image.remappedDepth1D
+            ? (memory.imageDimension == RdnaImageDimension::Dim1D ? RdnaImageDimension::Dim2D : RdnaImageDimension::Dim2DArray)
+            : memory.imageDimension;
+        image.mipMode = image.resourceClass == ImageResourceClass::Storage && memory.imageHasMip ? ImageMipMode::DynamicStorage : ImageMipMode::None;
+        image.r128 = memory.imageR128;
+        image.packed = memory.imagePacked;
+        image.byElements = memory.imageByElements;
+        image.byComponents = memory.imageByElements != 0u ? memory.dataDwords / memory.imageByElements : 0u;
+        return image;
+    }
+
+    static bool SameImageKey(const ImageResource& image, const ImageResource& key) {
+        return image.source == key.source && image.resourceClass == key.resourceClass && image.dimension == key.dimension && image.mipMode == key.mipMode && image.depthCompare == key.depthCompare && image.remappedDepth1D == key.remappedDepth1D && image.r128 == key.r128 && image.packed == key.packed && image.byElements == key.byElements && image.byComponents == key.byComponents;
+    }
+
     std::uint32_t AddImage(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
-        const auto resourceClass = ImageOpcodeInfoOf(op).resourceClass;
-        const auto mip = resourceClass == ImageResourceClass::Storage && memory.imageHasMip ? ImageMipMode::DynamicStorage : ImageMipMode::None;
-        const bool depth = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0;
+        const auto key = ImageKey(source, memory, op);
         for (std::uint32_t i = 0; i < m_info.images.size(); i++) {
             auto& image = m_info.images[i];
-            if (image.source == source && image.resourceClass == resourceClass && image.dimension == memory.imageDimension && image.mipMode == mip && image.depthCompare == depth && image.r128 == memory.imageR128 && image.packed == memory.imagePacked && image.byElements == memory.imageByElements && image.byComponents == (memory.imageByElements != 0u ? memory.dataDwords / memory.imageByElements : 0u)) {
+            if (SameImageKey(image, key)) {
                 Merge(image, memory, op, pc);
                 return i;
             }
@@ -1590,18 +1903,10 @@ private:
         if (m_info.images.size() >= ShaderInfo::MaxImages) {
             return std::numeric_limits<std::uint32_t>::max();
         }
-        ImageResource image;
+        ImageResource image = key;
         image.singleMipPlaneBiasCompatible = m_program.Resources().stage == IrShaderStage::Pixel;
-        image.source = source;
+        image.volumeArraySampleCompatible = true;
         image.firstUsePc = pc;
-        image.resourceClass = resourceClass;
-        image.dimension = memory.imageDimension;
-        image.mipMode = mip;
-        image.depthCompare = depth;
-        image.r128 = memory.imageR128;
-        image.packed = memory.imagePacked;
-        image.byElements = memory.imageByElements;
-        image.byComponents = memory.imageByElements != 0u ? memory.dataDwords / memory.imageByElements : 0u;
         Merge(image, memory, op, pc);
         m_info.images.push_back(image);
         return static_cast<std::uint32_t>(m_info.images.size() - 1);
@@ -1627,7 +1932,9 @@ private:
         image.constantSwizzleCompatible = image.constantSwizzleCompatible && (op == IrOpcode::ImageSampleRaw || op == IrOpcode::ImageGatherRaw);
         const bool cubeFaceLoad = op == IrOpcode::ImageRead && !memory.imageHasMip && memory.imageSampleFlags == 0u;
         const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
-        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample) && !memory.imagePacked && memory.imageByElements == 0u;
+        const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
+        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore) && !memory.imagePacked && memory.imageByElements == 0u;
+        image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
         const bool flatVolumeLoad = op == IrOpcode::ImageRead && memory.imageSampleFlags == 0u;
         const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
         const bool flatVolumeQuery = op == IrOpcode::ImageQueryDimensions;
@@ -1640,10 +1947,14 @@ private:
         const bool flatLineAccess = image.dimension == RdnaImageDimension::Dim2DArray ? flatLineLevelZero || flatLineExplicitLod : flatLineLoad || flatLineSample || flatLineExplicitLod;
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
+        image.dimensionQueryOnly = image.dimensionQueryOnly && op == IrOpcode::ImageQueryDimensions;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
             constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
             if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;
             if ((memory.imageSampleFlags & RdnaImageSampleFlagLevelZero) == 0u) image.emulatedCompare |= EmulatedCompare::RequiresSingleLevel;
+        } else if (ImageOpcodeInfoOf(op).needsSampler) {
+            if (op != IrOpcode::ImageSampleRaw) image.emulatedCompare |= EmulatedCompare::ConvertedSampleUnsupported;
+            if ((memory.imageSampleFlags & RdnaImageSampleFlagLevelZero) == 0u) image.emulatedCompare |= EmulatedCompare::ConvertedSampleRequiresSingleLevel;
         }
     }
 
@@ -1848,6 +2159,7 @@ private:
     std::vector<TableColumnPlan> m_tableColumns;
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
+    std::vector<const IrValue*> m_unselectedHandles;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;

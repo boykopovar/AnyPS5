@@ -34,6 +34,9 @@ int main() {
         Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
         const auto below = Relinker::UnusedNidFilter::ReadExceptionFunctions(belowBytes, {funcSeg, load, eh}, {}, {});
         Require(below.size() == 1 && below[0].Begin == 0x800 && below[0].End == 0x810);
+        auto empty = Fixture();
+        Io::WriteU64(empty, 112, 0);
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
         for (int kind = 0; kind < 10; ++kind) {
             auto bytes = Fixture(); auto segment = load;
             switch (kind) {
@@ -64,6 +67,6 @@ int main() {
             catch (const std::exception&) { rejected = true; }
             Require(rejected);
         }
-        std::cout << "13 unwind record cases passed\n";
+        std::cout << "14 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

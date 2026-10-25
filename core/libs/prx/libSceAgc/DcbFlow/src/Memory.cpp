@@ -53,7 +53,7 @@ std::uint32_t APS5_VABI sceAgcDcbAtomicMemGetSize() {
 }
 
 std::uint32_t APS5_VABI sceAgcDcbAtomicGdsGetSize() {
-    return 36;
+    return 44;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbWriteData(CommandBuffer* buf, std::uint8_t dst, std::uint8_t cachePolicy, std::uint64_t address, const void* data, std::uint32_t numDwords, std::uint8_t increment, std::uint8_t writeConfirm) {

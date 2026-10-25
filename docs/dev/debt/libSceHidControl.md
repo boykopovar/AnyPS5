@@ -1,0 +1,44 @@
+# libSceHidControl technical debt
+
+### Unknown function info
+
+- [sceHidControlEnableMicBeamForming](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetAllVibrationMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetVibrationTriggerEffectWeakForce](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlIsForceUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetRemoteMergeProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetCollaboInputSettingOverrideProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetForceAdvancedVibrationMode](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateIsUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateIsUpdateNeededForMultiDevice](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateIsReady](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateStart](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateGetStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateSendData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateSendAppendixData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateGetReconnectStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswBatteryState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswConsoleMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswSpeakerVolume](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswAllEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswResetSettings](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswDeviceNameForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlConnectPswDeviceForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswDeviceInfo](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlSetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+- [sceHidControlGetPswDeviceIdFromIdxAdd](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature

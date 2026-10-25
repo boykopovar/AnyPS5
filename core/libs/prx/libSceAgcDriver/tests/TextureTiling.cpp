@@ -386,6 +386,124 @@ void RunTextureTilingTests() {
         Require(dense.pitchBytes == 1024 && CoveredMipBytes(TextureTileMode::kLinear, 4, dense) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{0, 3072}}, "linear rows without padding are not one range");
     }
 
+    {
+        const auto* equation = FindTextureSwizzleEquation(XorSwizzleMode(TextureTileMode::kZ64KBX), 4u);
+        Require(equation != nullptr, "missing the 64KB Z_X swizzle equation of 4-byte elements");
+        for (const auto mask : equation->bits) Require((mask & 0x00f80f80u) == 0u, "a 64KB Z_X address bit of a 4-byte element reads x or y bits past one 128x128 tile");
+        GuestTextureResource plane{};
+        plane.width = 3840;
+        plane.height = 2160;
+        plane.mipCount = 1;
+        plane.tileMode = TextureTileMode::kZ64KBX;
+        plane.dimension = TextureDimension::k2D;
+        plane.format = 22;
+        const auto geometry = DescribeSurface(plane);
+        const auto& mip = geometry.mips.front();
+        const auto block = ThinBlockLayout(TextureTileMode::kZ64KBX, 4u);
+        Require(block[0] == 65536u && block[1] == 128u && block[2] == 128u, "a 64KB Z_X tile of 4-byte elements is not 128x128");
+        Require(!mip.tail && mip.tiledOffset == 0u && mip.blocksPerRow == 30u && geometry.guestBytes == 510ull * 65536ull, "a 3840x2160 D32 Z_X plane is not 30x17 tiles");
+        const std::array<std::pair<std::uint32_t, std::uint32_t>, 8> samples{{{0, 0}, {127, 127}, {128, 0}, {3839, 0}, {0, 128}, {1000, 700}, {2047, 1151}, {3839, 2159}}};
+        for (const auto& [x, y] : samples) {
+            const auto offset = mip.tiledOffset + (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0] + equationOffset(*equation, x, y, 0);
+            Require(offset / 65536u == static_cast<std::uint64_t>(y >> 7u) * 30u + (x >> 7u), "element (" + std::to_string(x) + ", " + std::to_string(y) + ") of a 3840x2160 D32 Z_X plane lies outside the 64 KiB unit of its 128x128 tile");
+        }
+    }
+
     reject([] { ComputeSurfaceSize({}, 1); }, "empty mip chain");
     reject([] { ComputeSurfaceSize(ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 1), 0); }, "zero array layers");
+
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000000ull;
+        array.width = 3328;
+        array.height = 1872;
+        array.format = 1;
+        array.mipCount = 2;
+        array.dimension = TextureDimension::k2DArray;
+        array.tileMode = TextureTileMode::kR64KBX;
+        array.depthOrLastArray = 1536;
+        array.baseArray = 1536;
+        const auto layerBytes = DescribeSurface(array).layerBytes;
+        const auto window = ViewedArrayWindow(array);
+        Require(window.baseAddress == array.baseAddress + 1536ull * layerBytes && window.depthOrLastArray == 0 && window.baseArray == 0, "a sampled view of one slice at 1536 of an R_X array must start at that slice");
+        Require(DescribeSurface(window).layerBytes == layerBytes && DescribeSurface(window).layers == 1, "a sampled array window must keep the slice layout");
+
+        auto unaligned = array;
+        unaligned.baseArray = 1530;
+        Require(ViewedArrayWindow(unaligned).baseAddress == array.baseAddress, "an R_X window at a slice the swizzle mixes in must keep the whole array");
+
+        auto plain = array;
+        plain.tileMode = TextureTileMode::kStandard64KB;
+        plain.baseArray = 1530;
+        Require(ViewedArrayWindow(plain).baseAddress == array.baseAddress + 1530ull * DescribeSurface(plain).layerBytes && ViewedArrayWindow(plain).depthOrLastArray == 6, "a non-XOR window may start at any slice");
+
+        auto fromZero = array;
+        fromZero.baseArray = 0;
+        Require(ViewedArrayWindow(fromZero).baseAddress == array.baseAddress && ViewedArrayWindow(fromZero).depthOrLastArray == 1536, "a view from slice 0 keeps its descriptor");
+
+        auto compressed = array;
+        compressed.dccAddress = 0x20000000ull;
+        Require(ViewedArrayWindow(compressed).baseAddress == array.baseAddress, "a view with DCC metadata keeps its descriptor");
+
+        GuestTextureResource cube{};
+        cube.baseAddress = 0x30000000ull;
+        cube.width = 256;
+        cube.height = 256;
+        cube.format = 71;
+        cube.mipCount = 1;
+        cube.dimension = TextureDimension::kCube;
+        cube.tileMode = TextureTileMode::kStandard4KB;
+        cube.depthOrLastArray = 7232;
+        cube.baseArray = 7227;
+        const auto faces = ViewedArrayWindow(cube);
+        Require(faces.baseAddress == cube.baseAddress + 7227ull * DescribeSurface(cube).layerBytes && faces.depthOrLastArray == 5 && faces.baseArray == 0 && faces.dimension == TextureDimension::kCube, "a cube view of six faces at 7227 must start at its first face");
+
+        auto volume = cube;
+        volume.dimension = TextureDimension::k3D;
+        volume.baseArray = 0;
+        Require(ViewedArrayWindow(volume).baseAddress == cube.baseAddress, "a volume keeps its descriptor");
+    }
+
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000000ull;
+        array.width = 16;
+        array.height = 16;
+        array.depthOrLastArray = 3200;
+        array.baseArray = 1536;
+        array.mipCount = 2;
+        array.tileMode = TextureTileMode::kStandard64KB;
+        array.dimension = TextureDimension::k2DArray;
+        array.format = 56;
+        const auto geometry = DescribeSurface(array);
+        const auto window = ArrayLayerWindow(array, 2048);
+        Require(window.baseAddress == array.baseAddress + 1536ull * geometry.layerBytes, "a storage view past maxImageArrayLayers must start at its first viewed slice");
+        Require(window.baseArray == 0 && window.depthOrLastArray == 1664, "a storage view past maxImageArrayLayers must hold exactly its viewed slices");
+        Require(DescribeSurface(window).layerBytes == geometry.layerBytes && DescribeSurface(window).mips[1].tiledOffset == geometry.mips[1].tiledOffset, "a viewed slice must keep the layout of the whole array's slice");
+
+        auto fitting = array;
+        fitting.depthOrLastArray = 2047;
+        const auto kept = ArrayLayerWindow(fitting, 2048);
+        Require(kept.baseAddress == fitting.baseAddress && kept.baseArray == fitting.baseArray && kept.depthOrLastArray == fitting.depthOrLastArray, "an array within maxImageArrayLayers must keep its descriptor");
+
+        auto linear = array;
+        linear.tileMode = TextureTileMode::kLinear;
+        Require(ArrayLayerWindow(linear, 2048).baseAddress == linear.baseAddress + 1536ull * DescribeSurface(linear).layerBytes, "a linear storage view past maxImageArrayLayers must start at its first viewed slice");
+
+        auto wide = array;
+        wide.baseArray = 1000;
+        reject([&] { static_cast<void>(ArrayLayerWindow(wide, 2048)); }, "more array slices than maxImageArrayLayers");
+        auto xorSwizzle = array;
+        xorSwizzle.tileMode = TextureTileMode::kR64KBX;
+        reject([&] { static_cast<void>(ArrayLayerWindow(xorSwizzle, 2048)); }, "depends on the slice");
+        auto volume = array;
+        volume.dimension = TextureDimension::k3D;
+        Require(ArrayLayerWindow(volume, 2048).baseAddress == volume.baseAddress && ArrayLayerWindow(volume, 2048).depthOrLastArray == volume.depthOrLastArray, "a volume deeper than maxImageArrayLayers is not an array and keeps its descriptor");
+        auto flat = array;
+        flat.dimension = TextureDimension::k2D;
+        Require(ArrayLayerWindow(flat, 2048).baseAddress == flat.baseAddress && ArrayLayerWindow(flat, 2048).depthOrLastArray == flat.depthOrLastArray, "a 2D image is one layer whatever its last array field holds and keeps its descriptor");
+        auto cube = array;
+        cube.dimension = TextureDimension::kCube;
+        reject([&] { static_cast<void>(ArrayLayerWindow(cube, 2048)); }, "not a 1D or 2D array");
+    }
 }

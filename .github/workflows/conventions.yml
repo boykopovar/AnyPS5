@@ -18,15 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           persist-credentials: false
       - name: Fetch pull request objects without checking out its code
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: git fetch --no-tags origin "$HEAD_SHA"
-      - name: Check conventions with the trusted base script
+      - name: Check conventions with the current base branch script
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 -I tools/check_conventions.py --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: python3 -I tools/check_conventions.py --base HEAD --head "$HEAD_SHA"

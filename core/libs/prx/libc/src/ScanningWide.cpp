@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <string_view>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
@@ -20,9 +22,6 @@
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
-
-extern "C" int APS5_VABI iswspace_nid_postfix(std::uint32_t c);
-extern "C" std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 
 namespace {
 
@@ -122,29 +121,101 @@ Fit FloatFit(std::string_view text) {
     if (digits == 0) return Fit::Invalid;
     if (Lower(text[index]) != (hex ? 'p' : 'e')) return Fit::Invalid;
     ++index;
-    if (index < text.size() && (text[index] == '+' || text[index] == '-')) ++index;
-    if (index == text.size()) return Fit::Prefix;
+    if (index == text.size()) return Fit::Valid;
+    if (text[index] == '+' || text[index] == '-') ++index;
+    if (index == text.size()) return Fit::Valid;
     for (; index < text.size(); ++index) {
         if (!IsDecimal(text[index])) return Fit::Invalid;
     }
     return Fit::Valid;
 }
 
+class WideInput {
+    const char16_t* const text;
+    FileStream* const stream;
+    std::int32_t next = 0;
+    bool fetched = false;
+    std::int64_t consumed = 0;
+
+public:
+    explicit WideInput(const char16_t* buffer) : text(buffer), stream(nullptr) {}
+    explicit WideInput(FileStream* source) : text(nullptr), stream(source) {}
+
+    std::int32_t Peek() {
+        if (!fetched) {
+            next = stream != nullptr ? fgetwc_nid_postfix(stream) : text[consumed] != 0 ? text[consumed] : -1;
+            fetched = true;
+        }
+        return next;
+    }
+
+    void Advance() {
+        fetched = false;
+        ++consumed;
+    }
+
+    std::int64_t Consumed() const {
+        return consumed;
+    }
+
+    void Release() {
+        if (!fetched || stream == nullptr || next < 0) return;
+        fetched = false;
+        const std::uint32_t code = static_cast<std::uint32_t>(next);
+        unsigned char bytes[4];
+        std::size_t count = 0;
+        if (code < 0x80) {
+            bytes[count++] = static_cast<unsigned char>(code);
+        } else if (code < 0x800) {
+            bytes[count++] = static_cast<unsigned char>(0xc0 | (code >> 6));
+            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+        } else if (code < 0x10000) {
+            bytes[count++] = static_cast<unsigned char>(0xe0 | (code >> 12));
+            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+        } else {
+            bytes[count++] = static_cast<unsigned char>(0xf0 | (code >> 18));
+            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f));
+            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
+            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
+        }
+        while (count != 0) ungetc_nid_postfix(bytes[--count], stream);
+    }
+};
+
+class LockedStream {
+    FileStream* const stream;
+
+public:
+    explicit LockedStream(FileStream* value) : stream(value->IsOpen() ? value : nullptr) {
+        if (stream != nullptr) flockfile_nid_postfix(stream);
+    }
+    ~LockedStream() {
+        if (stream != nullptr) funlockfile_nid_postfix(stream);
+    }
+};
+
 class WideScanner {
     const char* const name;
     const bool sized;
-    const char16_t* const start;
-    const char16_t* input;
+    WideInput input;
     const char16_t* format;
     LibcDetail::FormatArguments args;
     int assigned = 0;
     bool converted = false;
 
 public:
-    WideScanner(const char* function, bool withSizes, const char16_t* buffer, const char16_t* formatText, const void* source)
-        : name(function), sized(withSizes), start(buffer), input(buffer), format(formatText), args(source) {}
+    WideScanner(const char* function, bool withSizes, WideInput source, const char16_t* formatText, const void* arguments)
+        : name(function), sized(withSizes), input(source), format(formatText), args(arguments) {}
 
     int Run() {
+        const int result = Scan();
+        input.Release();
+        return result;
+    }
+
+private:
+    int Scan() {
         while (*format != 0) {
             Outcome outcome = Outcome::Done;
             if (IsSpace(*format)) {
@@ -163,7 +234,6 @@ public:
         return assigned;
     }
 
-private:
     [[noreturn]] void Fail(const std::string& message) const {
         throw std::invalid_argument(std::string(name) + ": " + message);
     }
@@ -177,13 +247,13 @@ private:
     }
 
     void SkipSpace() {
-        while (*input != 0 && IsSpace(*input)) ++input;
+        while (input.Peek() >= 0 && IsSpace(static_cast<char16_t>(input.Peek()))) input.Advance();
     }
 
     Outcome Literal(char16_t expected) {
-        if (*input == 0) return Outcome::Input;
-        if (*input != expected) return Outcome::Matching;
-        ++input;
+        if (input.Peek() < 0) return Outcome::Matching;
+        if (input.Peek() != expected) return Outcome::Matching;
+        input.Advance();
         return Outcome::Done;
     }
 
@@ -228,6 +298,7 @@ private:
         if (*format == u'%') {
             ++format;
             SkipSpace();
+            if (input.Peek() < 0) return Outcome::Input;
             return Literal(u'%');
         }
         const Directive directive = Parse();
@@ -238,41 +309,47 @@ private:
         case u'u': return Integer(directive, 10, false);
         case u'x':
         case u'X': return Integer(directive, 16, false);
+        case u'p': return Pointer(directive);
         case u'a': case u'A': case u'e': case u'E':
         case u'f': case u'F': case u'g': case u'G': return Float(directive);
         case u's':
         case u'c':
         case u'[': return Text(directive);
+        case u'S':
+        case u'C': return Outcome::Matching;
         case u'n': return Count(directive);
         default: Fail("unsupported conversion " + std::to_string(directive.conversion));
         }
     }
 
     template<typename TFit>
-    std::string Field(std::size_t width, TFit fit) const {
+    std::string Field(std::size_t width, TFit fit) {
         std::string field;
         const std::size_t limit = width == 0 ? std::numeric_limits<std::size_t>::max() : width;
         while (field.size() < limit) {
-            const char16_t next = input[field.size()];
-            if (next == 0 || next >= 0x80) break;
+            const std::int32_t next = input.Peek();
+            if (next < 0 || next >= 0x80) break;
             field.push_back(static_cast<char>(next));
             if (fit(field) == Fit::Invalid) {
                 field.pop_back();
                 break;
             }
+            input.Advance();
         }
         return field;
     }
 
     Outcome Integer(const Directive& directive, int base, bool isSigned) {
-        const std::size_t size = IntegerSize(directive.length);
+        return Integer(directive, base, isSigned, IntegerSize(directive.length));
+    }
+
+    Outcome Integer(const Directive& directive, int base, bool isSigned, std::size_t size) {
         void* target = nullptr;
         if (!directive.suppress && (target = args.Next<void*>()) == nullptr) return Outcome::Violation;
         SkipSpace();
-        if (*input == 0) return Outcome::Input;
+        if (input.Peek() < 0) return Outcome::Input;
         const std::string field = Field(directive.width, [base](std::string_view text) { return IntegerFit(text, base); });
         if (IntegerFit(field, base) != Fit::Valid) return Outcome::Matching;
-        input += field.size();
         if (target != nullptr) {
             const std::uint64_t value = isSigned ? static_cast<std::uint64_t>(std::strtoll(field.c_str(), nullptr, base)) : std::strtoull(field.c_str(), nullptr, base);
             std::memcpy(target, &value, size);
@@ -282,6 +359,11 @@ private:
         return Outcome::Done;
     }
 
+    Outcome Pointer(const Directive& directive) {
+        if (!directive.length.empty()) Fail("invalid pointer length modifier " + directive.length);
+        return Integer(directive, 16, false, sizeof(void*));
+    }
+
     Outcome Float(const Directive& directive) {
         static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
         if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
@@ -289,10 +371,9 @@ private:
         void* target = nullptr;
         if (!directive.suppress && (target = args.Next<void*>()) == nullptr) return Outcome::Violation;
         SkipSpace();
-        if (*input == 0) return Outcome::Input;
+        if (input.Peek() < 0) return Outcome::Input;
         const std::string field = Field(directive.width, FloatFit);
         if (FloatFit(field) != Fit::Valid) return Outcome::Matching;
-        input += field.size();
         if (target != nullptr) {
             if (directive.length == "L") {
                 const long double value = std::strtold(field.c_str(), nullptr);
@@ -335,22 +416,25 @@ private:
             if (target == nullptr) return Outcome::Violation;
         }
         if (directive.conversion == u's') SkipSpace();
-        if (*input == 0) return Outcome::Input;
+        if (input.Peek() < 0) return Outcome::Input;
         std::u16string item;
         if (directive.conversion == u'c') {
             const std::size_t count = directive.width == 0 ? 1 : directive.width;
-            while (item.size() < count && input[item.size()] != 0) item.push_back(input[item.size()]);
+            while (item.size() < count && input.Peek() >= 0) {
+                item.push_back(static_cast<char16_t>(input.Peek()));
+                input.Advance();
+            }
             if (item.size() < count) return Outcome::Matching;
         } else {
             const std::size_t limit = directive.width == 0 ? std::numeric_limits<std::size_t>::max() : directive.width;
-            while (item.size() < limit && input[item.size()] != 0) {
-                const char16_t next = input[item.size()];
+            while (item.size() < limit && input.Peek() >= 0) {
+                const char16_t next = static_cast<char16_t>(input.Peek());
                 if (directive.conversion == u's' ? IsSpace(next) : !InSet(directive, next)) break;
                 item.push_back(next);
+                input.Advance();
             }
             if (item.empty()) return Outcome::Matching;
         }
-        input += item.size();
         if (target == nullptr) {
             converted = true;
             return Outcome::Done;
@@ -382,7 +466,7 @@ private:
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
         if (target == nullptr) return Outcome::Violation;
-        const std::int64_t count = input - start;
+        const std::int64_t count = input.Consumed();
         std::memcpy(target, &count, size);
         return Outcome::Done;
     }
@@ -396,7 +480,7 @@ int APS5_VABI swscanf_nid_postfix(const char16_t* buffer, const char16_t* format
     if (buffer == nullptr || format == nullptr) return EOF;
     APS5_VA_BEGIN(format);
     try {
-        const int result = WideScanner("swscanf", false, buffer, format, args).Run();
+        const int result = WideScanner("swscanf", false, WideInput(buffer), format, args).Run();
         APS5_VA_END();
         return result;
     } catch (...) {
@@ -409,7 +493,87 @@ int APS5_VABI swscanf_s_nid_postfix(const char16_t* buffer, const char16_t* form
     if (buffer == nullptr || format == nullptr) return EOF;
     APS5_VA_BEGIN(format);
     try {
-        const int result = WideScanner("swscanf_s", true, buffer, format, args).Run();
+        const int result = WideScanner("swscanf_s", true, WideInput(buffer), format, args).Run();
+        APS5_VA_END();
+        return result;
+    } catch (...) {
+        APS5_VA_END();
+        throw;
+    }
+}
+
+int APS5_VABI vswscanf_nid_postfix(const char16_t* buffer, const char16_t* format, VaList* args) {
+    if (buffer == nullptr || format == nullptr) return EOF;
+    return WideScanner("vswscanf", false, WideInput(buffer), format, args).Run();
+}
+
+int APS5_VABI vswscanf_s_nid_postfix(const char16_t* buffer, const char16_t* format, VaList* args) {
+    if (buffer == nullptr || format == nullptr) return EOF;
+    return WideScanner("vswscanf_s", true, WideInput(buffer), format, args).Run();
+}
+
+extern FileStream* __stdinp_nid_postfix;
+
+int APS5_VABI vfwscanf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
+    if (stream == nullptr || format == nullptr) return EOF;
+    const LockedStream lock(stream);
+    return WideScanner("vfwscanf", false, WideInput(stream), format, args).Run();
+}
+
+int APS5_VABI vfwscanf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
+    if (stream == nullptr || format == nullptr) return EOF;
+    const LockedStream lock(stream);
+    return WideScanner("vfwscanf_s", true, WideInput(stream), format, args).Run();
+}
+
+int APS5_VABI vwscanf_nid_postfix(const char16_t* format, VaList* args) {
+    return vfwscanf_nid_postfix(__stdinp_nid_postfix, format, args);
+}
+
+int APS5_VABI vwscanf_s_nid_postfix(const char16_t* format, VaList* args) {
+    return vfwscanf_s_nid_postfix(__stdinp_nid_postfix, format, args);
+}
+
+int APS5_VABI fwscanf_nid_postfix(FileStream* stream, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    try {
+        const int result = vfwscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+        APS5_VA_END();
+        return result;
+    } catch (...) {
+        APS5_VA_END();
+        throw;
+    }
+}
+
+int APS5_VABI fwscanf_s_nid_postfix(FileStream* stream, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    try {
+        const int result = vfwscanf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+        APS5_VA_END();
+        return result;
+    } catch (...) {
+        APS5_VA_END();
+        throw;
+    }
+}
+
+int APS5_VABI wscanf_nid_postfix(const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    try {
+        const int result = vfwscanf_nid_postfix(__stdinp_nid_postfix, format, reinterpret_cast<VaList*>(args));
+        APS5_VA_END();
+        return result;
+    } catch (...) {
+        APS5_VA_END();
+        throw;
+    }
+}
+
+int APS5_VABI wscanf_s_nid_postfix(const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    try {
+        const int result = vfwscanf_s_nid_postfix(__stdinp_nid_postfix, format, reinterpret_cast<VaList*>(args));
         APS5_VA_END();
         return result;
     } catch (...) {

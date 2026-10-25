@@ -23,7 +23,21 @@ inline int FilesystemError(const std::error_code& error) {
     return 5;
 }
 
-std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, bool replacesFile);
+inline bool HasNonDirectoryPrefix_nid_no_patch(const std::filesystem::path& native) {
+    std::error_code error;
+    const auto trimmed = native.has_filename() ? native : native.parent_path();
+    for (auto prefix = trimmed.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
+        const auto status = std::filesystem::status(prefix, error);
+        if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
+    }
+    return false;
+}
+
+inline int NotFoundError_nid_no_patch(const std::filesystem::path& native) {
+    return HasNonDirectoryPrefix_nid_no_patch(native) ? 20 : 2;
+}
+
+std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, bool replacesExisting);
 
 inline int ResolvePathError_nid_no_patch(const char* path, std::filesystem::path& resolved, bool module = false, bool archived = false) {
     try {

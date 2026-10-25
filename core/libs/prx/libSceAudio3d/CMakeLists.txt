@@ -1,5 +1,6 @@
 add_library(libSceAudio3d SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceAudio3d PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceAudio3d PRIVATE libSceAudioOut)
 configure_windows_unwind(libSceAudio3d)
 
 if(BUILD_TESTING)
@@ -20,5 +21,24 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_audio3d_port PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudio3d>")
+    endif()
+    add_test_executable(guest_audio3d_speaker_array_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dSpeakerArray.cpp)
+    target_include_directories(guest_audio3d_speaker_array_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio3d_speaker_array_tests PRIVATE libSceAudio3d libSceAudioOut libc)
+    configure_windows_unwind(guest_audio3d_speaker_array_tests)
+    add_test(NAME guest_audio3d_speaker_array COMMAND guest_audio3d_speaker_array_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio3d_speaker_array PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudio3d>")
+    endif()
+    add_test_executable(guest_audio3d_mixer_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dMixer.cpp)
+    target_include_directories(guest_audio3d_mixer_tests PRIVATE
+        ${LIBS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_audio3d_mixer_tests PRIVATE libc)
+    configure_windows_unwind(guest_audio3d_mixer_tests)
+    add_test(NAME guest_audio3d_mixer COMMAND guest_audio3d_mixer_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio3d_mixer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

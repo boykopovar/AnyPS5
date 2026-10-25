@@ -1,3 +1,4 @@
+#include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -7,17 +8,15 @@
 #include <cstdlib>
 
 extern "C" {
-int APS5_VABI sceMouseInit();
-int APS5_VABI sceMouseOpen(int, std::int32_t, std::int32_t, const void*);
-int APS5_VABI sceMouseClose(std::int32_t);
-int APS5_VABI sceMouseRead(std::int32_t, MouseData*, std::int32_t);
-int APS5_VABI sceMouseResetAbsolutePosition(std::int32_t, std::uint16_t, std::uint16_t);
+bool MouseIsOpen_nid_no_patch();
+
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     MouseData data[64]{};
+    Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseInit() == MOUSE_OK);
@@ -28,9 +27,13 @@ int main() {
     unsupported.behaviorFlag = 2;
     Require(sceMouseOpen(1, 0, 0, &unsupported) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_HANDLE);
+    Require(MouseIsOpen_nid_no_patch());
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_ALREADY_OPENED);
     Require(sceMouseResetAbsolutePosition(42, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_OK);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1919, 1079) == MOUSE_OK);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1920, 1079) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 1919, 1080) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseRead(42, data, 1) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseRead(MOUSE_HANDLE, nullptr, 1) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseRead(MOUSE_HANDLE, data, 65) == MOUSE_ERROR_INVALID_ARG);
@@ -103,14 +106,17 @@ int main() {
     Require(data[0].x_axis == 6 && data[63].x_axis == 69);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 0);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
+    Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_ERROR_INVALID_HANDLE);
     MouseOpenParam merged{};
     merged.behaviorFlag = MOUSE_OPEN_PARAM_MERGED;
     Require(sceMouseOpen(1, 0, 0, &merged) == MOUSE_HANDLE);
+    Require(MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_OK);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 0);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
+    Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
 }

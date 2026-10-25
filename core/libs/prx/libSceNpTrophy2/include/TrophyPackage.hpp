@@ -89,6 +89,27 @@ struct TrophyPackage {
 
 TrophyPackage ParseTrophyPackage(std::string_view ucp, std::string_view language);
 
+enum class StatType { UInt32, UInt64 };
+
+struct StatDefinition {
+    StatType type = StatType::UInt64;
+    std::uint64_t minimum = 0;
+    std::uint64_t maximum = UINT64_MAX;
+};
+
+struct StatRule {
+    std::string input;
+    std::uint64_t statId = 0;
+};
+
+struct StatRules {
+    std::map<std::uint64_t, StatDefinition> stats;
+    std::map<std::string, std::vector<StatRule>, std::less<>> events;
+    std::vector<std::string> skipped;
+};
+
+StatRules ParseStatRules(std::string_view ucp);
+
 std::string_view LanguageTag(int consoleLanguage);
 
 }

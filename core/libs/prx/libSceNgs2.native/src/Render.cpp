@@ -78,7 +78,10 @@ bool Ngs2FinishBlock(Ngs2Voice& voice) {
         voice.blocks.pop_front();
     }
     const auto revision = voice.waveformRevision;
-    if (voice.callback != nullptr && (voice.callbackFlags & info.flag) != 0) voice.callback(&info);
+    if (voice.callback != nullptr && (voice.callbackFlags & info.flag) != 0) {
+        const Ngs2Unlocked unlocked;
+        voice.callback(&info);
+    }
     return voice.waveformRevision == revision && voice.state == Ngs2PlayState::Playing;
 }
 
@@ -218,10 +221,11 @@ float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::
 
 static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t grain) {
     const auto* matrix = port.matrix < 0 || source.matrices[port.matrix].empty() ? nullptr : &source.matrices[port.matrix];
-    const std::size_t outputs = matrix == nullptr ? voice.channels : std::min<std::size_t>(voice.channels, matrix->size() / source.channels);
+    const auto channels = voice.InputChannels();
+    const std::size_t outputs = matrix == nullptr ? channels : std::min<std::size_t>(channels, matrix->size() / source.channels);
     for (std::size_t dst = 0; dst < outputs; dst++) {
         for (std::uint32_t src = 0; src < source.channels; src++) {
-            const float level = port.volume * (matrix == nullptr ? Ngs2DefaultLevel(source.channels, src, voice.channels, static_cast<std::uint32_t>(dst)) : (*matrix)[dst * source.channels + src]);
+            const float level = port.volume * (matrix == nullptr ? Ngs2DefaultLevel(source.channels, src, channels, static_cast<std::uint32_t>(dst)) : (*matrix)[dst * source.channels + src]);
             if (level == 0.0f) continue;
             for (std::uint32_t i = 0; i < grain; i++) voice.samples[dst * grain + i] += source.samples[src * grain + i] * level;
         }
@@ -248,7 +252,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
         bool& active;
         ~RenderingScope() { active = false; }
     } renderingScope{voice.rendering};
-    voice.samples.assign(static_cast<std::size_t>(grain) * voice.channels, 0.0f);
+    voice.samples.assign(static_cast<std::size_t>(grain) * voice.InputChannels(), 0.0f);
     voice.hasSamples = false;
     if (voice.state == Ngs2PlayState::Playing && voice.channels != 0) {
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_SAMPLER || voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
@@ -260,6 +264,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
         Ngs2ProcessUserFx(voice, grain, systemRate);
     }
+    if (voice.samples.size() != static_cast<std::size_t>(grain) * voice.channels) voice.samples.assign(static_cast<std::size_t>(grain) * voice.channels, 0.0f);
     voice.rendered = true;
 }
 
@@ -333,7 +338,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
     std::vector<std::vector<float>> mixes(numBufferInfo);
     for (auto* voice : voices) {
         RenderVoice(*voice, voices, grain, system.option.sample_rate);
-        if (voice->rack->rackId != SCE_NGS2_RACK_ID_MASTERING || !voice->hasSamples) continue;
+        if ((voice->rack->rackId != SCE_NGS2_RACK_ID_MASTERING && voice->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_MASTERING) || !voice->hasSamples) continue;
         auto& mix = OutputMix(mixes, bufferInfo, numBufferInfo, *voice, grain);
         const std::uint32_t outputChannels = bufferInfo[voice->outputId].num_channels;
         for (std::uint32_t channel = 0; channel < voice->channels; channel++) {

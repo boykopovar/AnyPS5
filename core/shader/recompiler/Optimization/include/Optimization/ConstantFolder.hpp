@@ -17,9 +17,6 @@ public:
     [[nodiscard]] bool FoldVertexLaneBounds(IrProgram& program, std::uint32_t hostSubgroupSize, std::uint32_t spirvVersion) const;
 
     [[nodiscard]] bool ComposePackedAncillary(IrProgram& program) const;
-
-private:
-    [[nodiscard]] bool tryFoldValue(IrProgram& program, IrValue& value) const;
 };
 
 }

@@ -1,12 +1,16 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace ShaderRecompiler {
 
@@ -99,23 +103,6 @@ std::uint32_t EmitBdaByteLoop(SpirvEmitterState& state, std::uint32_t address, s
 std::uint32_t EmitBdaBytes(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, std::uint32_t accessMask) {
     if (bytes == 1u) return EmitBdaByte(state, address, instruction, accessMask);
     return EmitBdaByteLoop(state, address, ConstantU32(state, bytes), instruction, accessMask);
-}
-
-// The dwords of a wide load that the program extracts (all of them when the composite is used
-// whole). Dead-code elimination has dropped the unused extracts, as it dropped unused dword loads
-// when every dword was its own instruction.
-std::uint32_t UsedBdaDwords(const IrValue& inst, std::uint32_t dwords) {
-    const auto all = (1u << dwords) - 1u;
-    if (dwords == 1u) return all;
-    std::uint32_t used = 0;
-    for (const IrValue* user : inst.Uses()) {
-        const auto opcode = user->Opcode();
-        if (opcode != IrOpcode::CompositeExtractU32x2 && opcode != IrOpcode::CompositeExtractU32x3 && opcode != IrOpcode::CompositeExtractU32x4) return all;
-        const IrValue* index = user->ArgumentCount() > 1u ? user->Argument(1) : nullptr;
-        if (index == nullptr || !index->HasImmediate() || index->ImmediateU32() >= dwords) return all;
-        used |= 1u << index->ImmediateU32();
-    }
-    return used;
 }
 
 void EmitBdaStoreAt(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t pointerType, std::uint32_t value, std::uint32_t instruction, std::uint32_t accessMask) {
@@ -375,6 +362,24 @@ bool BdaByteReadsForced() {
     return forced;
 }
 
+std::uint32_t UsedBdaDwords(const IrValue& inst, std::uint32_t dwords) {
+    const auto all = (1u << dwords) - 1u;
+    if (dwords == 1u) return all;
+    std::uint32_t used = 0;
+    for (const IrValue* user : inst.Uses()) {
+        const auto opcode = user->Opcode();
+        if (opcode != IrOpcode::CompositeExtractU32x2 && opcode != IrOpcode::CompositeExtractU32x3 && opcode != IrOpcode::CompositeExtractU32x4) return all;
+        const IrValue* index = user->ArgumentCount() > 1u ? user->Argument(1) : nullptr;
+        if (index == nullptr || !index->HasImmediate() || index->ImmediateU32() >= dwords) return all;
+        used |= 1u << index->ImmediateU32();
+    }
+    return used;
+}
+
+bool RoutesApertures(const SpirvEmitterState& state, const MemoryInfo& mem) {
+    return mem.kind == ResourceKind::Flat && state.program.Resources().stage == IrShaderStage::Compute;
+}
+
 std::uint32_t BdaInstructionPc(SpirvEmitterState& state, const IrValue& inst) {
     return state.bdaPcOverride != 0u ? state.bdaPcOverride : ConstantU32(state, inst.Flags<MemoryFlags>().pc);
 }
@@ -417,6 +422,215 @@ bool BdaInvocationsMayStop(const IrProgram& program) {
     return true;
 }
 
+namespace {
+
+constexpr std::size_t MaxBdaAnchors = 4;
+constexpr std::uint64_t BdaAnchorAddressLimit = ~std::uint64_t{0} << 32u;
+constexpr std::uint64_t BdaAnchorSpanLimit = std::uint64_t{1} << 62u;
+
+std::optional<std::pair<std::uint32_t, std::uint32_t>> UserDataBase(const SpirvEmitterState& state, const IrValue& inst) {
+    if (AddressOpcodeInfoOf(inst.Opcode()).access != AddressAccess::Read || inst.ArgumentCount() < 2u) return std::nullopt;
+    const auto index = inst.Flags<MemoryFlags>().index;
+    const auto& memory = state.program.Resources().memoryInfo;
+    if (index >= memory.size()) return std::nullopt;
+    const auto& info = memory[index];
+    if (info.kind != ResourceKind::ScalarAddress && info.kind != ResourceKind::Flat && info.kind != ResourceKind::Global) return std::nullopt;
+    if (info.planningOnly || info.addressIsFull || RoutesApertures(state, info)) return std::nullopt;
+    const IrValue* handle = inst.Argument(0) != nullptr ? inst.Argument(0)->Resolve() : nullptr;
+    if (handle == nullptr || handle->Opcode() != IrOpcode::GetAddressResource || handle->ArgumentCount() != 2u) return std::nullopt;
+    const auto userData = [](const IrValue* value) -> std::optional<std::uint32_t> {
+        value = value != nullptr ? value->Resolve() : nullptr;
+        if (value == nullptr || value->Opcode() != IrOpcode::GetUserData || value->ArgumentCount() == 0u || value->Argument(0) == nullptr) return std::nullopt;
+        return value->Argument(0)->Register().index;
+    };
+    const auto low = userData(handle->Argument(0));
+    const auto high = userData(handle->Argument(1));
+    if (!low || !high) return std::nullopt;
+    return std::pair{*low, *high};
+}
+
+std::uint32_t EmitElectedBdaRange(SpirvEmitterState& state, std::uint32_t type, std::uint32_t zero, const std::function<std::uint32_t()>& search) {
+    const auto elected = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformElect, TypeBool(state), elected, ConstantU32(state, spv::ScopeSubgroup));
+    const auto before = state.currentLabel;
+    const auto electedLabel = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, elected, electedLabel, merge);
+    EmitLabel(state, electedLabel);
+    const auto found = search();
+    const auto electedExit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, type, value, found, electedExit, zero, before);
+    const auto u64 = TypeScalarU64(state);
+    const auto pair = TypeU32Vector(state, 2);
+    std::array<std::uint32_t, 3> parts{};
+    for (std::uint32_t component = 0; component < parts.size(); ++component) {
+        const auto part = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u64, part, value, component);
+        const auto shared = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, pair, shared, ConstantU32(state, spv::ScopeSubgroup), Unary(state, spv::OpBitcast, pair, part));
+        parts[component] = Unary(state, spv::OpBitcast, u64, shared);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, type, result, parts[0], parts[1], parts[2]);
+    return result;
+}
+
+std::uint32_t BdaAnchorHolds(SpirvEmitterState& state, const SpirvEmitterState::BdaAnchor& anchor, std::uint32_t low, std::int32_t immediate, std::uint32_t bytes, std::uint32_t& translated) {
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    auto offset = Binary(state, spv::OpIAdd, u64, anchor.offset, Unary(state, spv::OpUConvert, u64, low));
+    if (immediate != 0) offset = Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate))));
+    const auto width = BdaConstant(state, bytes);
+    const auto fits = Binary(state, spv::OpUGreaterThanEqual, boolean, anchor.size, width);
+    const auto inside = Binary(state, spv::OpULessThanEqual, boolean, offset, Binary(state, spv::OpISub, u64, anchor.size, width));
+    translated = Binary(state, spv::OpIAdd, u64, anchor.device, offset);
+    return Binary(state, spv::OpLogicalAnd, boolean, fits, inside);
+}
+
+}
+
+void CollectBdaAnchors(SpirvEmitterState& state) {
+    state.bdaAnchors.clear();
+    if (!state.program.Info().usesDma || state.bdaProbeFunction == 0) return;
+    std::vector<std::pair<std::pair<std::uint32_t, std::uint32_t>, std::size_t>> bases;
+    for (const IrValue* inst : BdaReadSites(state)) {
+        const auto base = UserDataBase(state, *inst);
+        if (!base) continue;
+        const auto found = std::find_if(bases.begin(), bases.end(), [&](const auto& entry) { return entry.first == *base; });
+        if (found != bases.end()) ++found->second;
+        else bases.push_back({*base, 1u});
+    }
+    std::stable_sort(bases.begin(), bases.end(), [](const auto& left, const auto& right) { return left.second > right.second; });
+    for (const auto& [base, reads] : bases) {
+        if (reads < 2u || state.bdaAnchors.size() == MaxBdaAnchors) break;
+        state.bdaAnchors.push_back({base.first, base.second});
+    }
+}
+
+void EmitBdaAnchorRange(SpirvEmitterState& state, SpirvEmitterState::BdaAnchor& anchor, std::uint32_t base) {
+    if (state.bdaAnchorFunction == 0) throw std::runtime_error("the BDA anchor search function is missing");
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto rangeType = state.module.Type(spv::OpTypeVector, u64, 3u);
+    const auto search = [&] {
+        const auto range = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, rangeType, range, state.bdaAnchorFunction, base, ConstantU32(state, 1u), ConstantU32(state, 0u));
+        return range;
+    };
+    const auto zero = state.module.Constant(spv::OpConstantComposite, rangeType, BdaConstant(state, 0u), BdaConstant(state, 0u), BdaConstant(state, 0u));
+    const auto range = state.requirements.subgroupBallot ? EmitElectedBdaRange(state, rangeType, zero, search) : search();
+    const auto extract = [&](std::uint32_t component) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u64, value, range, component);
+        return value;
+    };
+    const auto begin = extract(0u);
+    const auto end = extract(1u);
+    anchor.device = extract(2u);
+    anchor.offset = Binary(state, spv::OpISub, u64, base, begin);
+    const auto span = Binary(state, spv::OpISub, u64, end, begin);
+    const auto deviceEnd = Binary(state, spv::OpIAdd, u64, anchor.device, span);
+    auto usable = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpINotEqual, boolean, anchor.device, BdaConstant(state, 0u)), Binary(state, spv::OpUGreaterThan, boolean, deviceEnd, anchor.device));
+    usable = Binary(state, spv::OpLogicalAnd, boolean, usable, Binary(state, spv::OpULessThanEqual, boolean, end, BdaConstant(state, BdaAnchorAddressLimit)));
+    usable = Binary(state, spv::OpLogicalAnd, boolean, usable, Binary(state, spv::OpULessThanEqual, boolean, span, BdaConstant(state, BdaAnchorSpanLimit)));
+    anchor.size = Select(state, u64, usable, span, BdaConstant(state, 0u));
+}
+
+void EmitBdaAnchors(SpirvEmitterState& state) {
+    if (state.bdaAnchors.empty()) return;
+    const auto u64 = TypeScalarU64(state);
+    for (auto& anchor : state.bdaAnchors) {
+        const auto low = Unary(state, spv::OpUConvert, u64, EmitGetUserData(state, static_cast<ScalarReg>(anchor.lowRegister)));
+        const auto high = Unary(state, spv::OpUConvert, u64, EmitGetUserData(state, static_cast<ScalarReg>(anchor.highRegister)));
+        EmitBdaAnchorRange(state, anchor, Binary(state, spv::OpBitwiseOr, u64, low, Binary(state, spv::OpShiftLeftLogical, u64, high, BdaConstant(state, 32u))));
+    }
+}
+
+const SpirvEmitterState::BdaAnchor* FindBdaAnchor(const SpirvEmitterState& state, const IrValue& inst) {
+    if (state.bdaAnchors.empty()) return nullptr;
+    const auto base = UserDataBase(state, inst);
+    if (!base) return nullptr;
+    for (const auto& anchor : state.bdaAnchors) {
+        const bool emitted = anchor.size != 0u;
+        if (emitted && anchor.lowRegister == base->first && anchor.highRegister == base->second) return &anchor;
+    }
+    return nullptr;
+}
+
+std::array<std::uint32_t, 4> EmitAnchoredBdaRead(SpirvEmitterState& state, const IrValue& inst, const SpirvEmitterState::BdaAnchor& anchor, std::uint32_t low, std::int32_t immediate, std::uint32_t bits, std::uint32_t dwords, std::uint32_t usedDwords, const std::function<std::array<std::uint32_t, 4>()>& lookup) {
+    if (bits != 8u && bits != 16u && bits != 32u) throw std::runtime_error("unsupported anchored BDA read width");
+    if (bits == 32u && (dwords == 0u || dwords > 4u)) throw std::runtime_error("unsupported anchored BDA read dword count");
+    const auto used = bits != 32u ? 1u : usedDwords != 0u ? usedDwords : UsedBdaDwords(inst, dwords);
+    if (used == 0u) return lookup();
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    std::uint32_t first = 0;
+    std::uint32_t last = 0;
+    std::uint32_t bytes = bits / 8u;
+    if (bits == 32u) {
+        first = static_cast<std::uint32_t>(std::countr_zero(used));
+        last = 31u - static_cast<std::uint32_t>(std::countl_zero(used));
+        bytes = (last - first + 1u) * 4u;
+    }
+    std::uint32_t translated = 0;
+    auto direct = BdaAnchorHolds(state, anchor, low, static_cast<std::int32_t>(static_cast<std::uint32_t>(immediate) + first * 4u), bytes, translated);
+    if (bits == 32u) direct = Binary(state, spv::OpLogicalAnd, boolean, direct, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, translated)));
+    const auto directLabel = state.module.AllocateId();
+    const auto lookupLabel = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, direct, directLabel, lookupLabel);
+    EmitLabel(state, directLabel);
+    std::array<std::uint32_t, 4> directValues{};
+    const bool coherent = BdaCoherent(state, inst);
+    if (bits == 32u) {
+        for (std::uint32_t dword = first; dword <= last; ++dword) {
+            if ((used & (1u << dword)) == 0u) continue;
+            const auto element = dword == first ? translated : Binary(state, spv::OpIAdd, u64, translated, BdaConstant(state, (dword - first) * 4u));
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, element);
+            directValues[dword] = state.module.AllocateId();
+            if (coherent) state.module.AddFunction(spv::OpAtomicLoad, u32, directValues[dword], pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+            else state.module.AddFunction(spv::OpLoad, u32, directValues[dword], pointer, BdaAccessMask(false), 4u);
+        }
+    } else {
+        const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
+        const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
+        auto value = ConstantU32(state, 0u);
+        for (std::uint32_t byte = 0; byte < bytes; ++byte) {
+            const auto element = byte == 0u ? translated : Binary(state, spv::OpIAdd, u64, translated, BdaConstant(state, byte));
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, element);
+            const auto loaded = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, BdaAccessMask(coherent || bits == 16u), 1u);
+            value = Binary(state, spv::OpBitwiseOr, u32, value, Binary(state, spv::OpShiftLeftLogical, u32, Unary(state, spv::OpUConvert, u32, loaded), ConstantU32(state, byte * 8u)));
+        }
+        directValues[0] = value;
+    }
+    const auto directExit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, lookupLabel);
+    const auto lookupValues = lookup();
+    const auto lookupExit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    std::array<std::uint32_t, 4> values{};
+    for (std::uint32_t dword = 0; dword < (bits == 32u ? dwords : 1u); ++dword) {
+        if ((used & (1u << dword)) == 0u) {
+            values[dword] = ConstantU32(state, 0u);
+            continue;
+        }
+        values[dword] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, u32, values[dword], directValues[dword], directExit, lookupValues[dword], lookupExit);
+    }
+    return values;
+}
+
 std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bits) {
     auto& state = ctx.state;
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA read width");
@@ -445,19 +659,9 @@ void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA write width");
     const auto storeBytes = [&] {
         EmitBdaOverflowCheck(state, address, bits / 8u, instruction);
-        for (std::uint32_t byte = 0u; byte < bits / 8u; ++byte) {
-            const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, byte));
-            const auto physical = state.module.AllocateId();
-            state.module.AddFunction(spv::OpFunctionCall, TypeScalarU64(state), physical, state.bdaWritePointerFunction, guest, ConstantU32(state, 1u), instruction);
-            EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), [&] {
-                const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
-                const auto pointer = state.module.AllocateId();
-                state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType), pointer, physical);
-                const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), value, ConstantU32(state, byte * 8u));
-                state.module.AddFunction(spv::OpStore, pointer, Unary(state, spv::OpUConvert, byteType, shifted), BdaAccessMask(state, inst), 1u);
-                state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, guest);
-            });
-        }
+        const auto function = state.bdaByteWriteFunctions[BdaCoherent(state, inst)];
+        if (function == 0) ctx.Fail(inst, "BDA byte write function is missing");
+        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), function, address, value, ConstantU32(state, bits / 8u), instruction);
     };
     if (bits != 32u) {
         storeBytes();

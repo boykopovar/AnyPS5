@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -26,13 +28,14 @@ void fillPlaceholderDetails(int trophyId, NpTrophy2Details* details) {
     std::strncpy(details->reward, NP_TROPHY2_TROPHY_REWARD, sizeof(details->reward) - 1);
 }
 
-void fillPlaceholderData(int trophyId, NpTrophy2Data* data) {
+void fillPlaceholderData(int context, int trophyId, NpTrophy2Data* data) {
     std::memset(data, 0, sizeof(*data));
+    const auto tick = NpTrophy2::ContextUnlockTick(context, trophyId);
     data->trophy_id = trophyId;
-    data->unlocked = false;
+    data->unlocked = tick.has_value();
     data->progress.type = NP_TROPHY2_PROGRESS_TYPE_NONE;
     data->progress.value = NP_TROPHY2_PROGRESS_VALUE_NONE;
-    data->timestamp_tick = 0;
+    data->timestamp_tick = tick.value_or(0);
 }
 
 void fillDetails(const NpTrophy2::TrophyDefinition& trophy, NpTrophy2Details* details) {
@@ -51,14 +54,16 @@ void fillDetails(const NpTrophy2::TrophyDefinition& trophy, NpTrophy2Details* de
     NpTrophy2::CopyText(details->reward, sizeof(details->reward), trophy.reward);
 }
 
-void fillData(const NpTrophy2::TrophyDefinition& trophy, NpTrophy2Data* data) {
+void fillData(const NpTrophy2::ContextOwner& owner, const NpTrophy2::TrophyDefinition& trophy, NpTrophy2Data* data) {
     std::memset(data, 0, sizeof(*data));
+    const auto tick = NpTrophy2::TitleStore().UnlockTick(owner.userId, owner.serviceLabel, trophy.id);
     data->trophy_id = trophy.id;
-    data->unlocked = false;
-    data->timestamp_tick = 0;
+    data->unlocked = tick.has_value();
+    data->timestamp_tick = tick.value_or(0);
     if (!NpTrophy2::ProgressTarget(trophy)) return;
+    const auto stat = trophy.statId ? NpTrophy2::TitleStats().Value(owner.userId, owner.serviceLabel, *trophy.statId) : std::nullopt;
     data->progress.type = NP_TROPHY2_PROGRESS_TYPE_VALUE;
-    data->progress.value = NpTrophy2::TrophyProgress(trophy, std::nullopt, data->unlocked);
+    data->progress.value = NpTrophy2::TrophyProgress(trophy, stat, data->unlocked);
 }
 
 }
@@ -74,15 +79,13 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
     const auto* package = owner ? NpTrophy2::Package(owner->serviceLabel) : nullptr;
     if (package == nullptr) {
         if (details != nullptr) fillPlaceholderDetails(trophy_id, details);
-        if (data != nullptr) fillPlaceholderData(trophy_id, data);
+        if (data != nullptr) fillPlaceholderData(context, trophy_id, data);
         return SCE_NP_TROPHY2_OK;
     }
     const auto trophy = package->trophies.find(trophy_id);
-    if (trophy == package->trophies.end()) {
-        throw std::invalid_argument(std::string(__func__) + ": trophy " + std::to_string(trophy_id) + " is not in " + NpTrophy2::PackagePath(owner->serviceLabel));
-    }
+    if (trophy == package->trophies.end()) return SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID;
     if (details != nullptr) fillDetails(trophy->second, details);
-    if (data != nullptr) fillData(trophy->second, data);
+    if (data != nullptr) fillData(*owner, trophy->second, data);
     return SCE_NP_TROPHY2_OK;
 }
 
@@ -97,7 +100,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
         const uint32_t out_count = (offset == 0 && limit != 0 ? 1u : 0u);
         *count = out_count;
         if (out_count != 0 && details_array != nullptr) fillPlaceholderDetails(NP_TROPHY2_TROPHY_ID_DEFAULT, details_array);
-        if (out_count != 0 && data_array != nullptr) fillPlaceholderData(NP_TROPHY2_TROPHY_ID_DEFAULT, data_array);
+        if (out_count != 0 && data_array != nullptr) fillPlaceholderData(context, NP_TROPHY2_TROPHY_ID_DEFAULT, data_array);
         return SCE_NP_TROPHY2_OK;
     }
     *count = 0;
@@ -105,7 +108,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
     std::advance(trophy, std::min<std::size_t>(offset, package->trophies.size()));
     for (; trophy != package->trophies.end() && *count < limit; ++trophy, ++*count) {
         if (details_array != nullptr) fillDetails(trophy->second, &details_array[*count]);
-        if (data_array != nullptr) fillData(trophy->second, &data_array[*count]);
+        if (data_array != nullptr) fillData(*owner, trophy->second, &data_array[*count]);
     }
     return SCE_NP_TROPHY2_OK;
 }

@@ -22,10 +22,48 @@ int AgcDriver::SubmitMany(std::uint32_t* const* addresses, const std::uint32_t* 
     return 0;
 }
 
+namespace {
+
+std::uint32_t PayloadDwords(std::uint32_t bytes) {
+    return static_cast<std::uint32_t>((std::uint64_t{bytes} + 3) >> 2);
+}
+
+std::uint32_t WorkloadDataPacketDwords(std::uint32_t bytes) {
+    if (bytes == 0) return 3;
+    const std::uint32_t payload = PayloadDwords(bytes);
+    return payload == 1 ? 4 : payload + 7;
+}
+
+}
+
 extern "C" {
 
 std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords() {
     return AgcDriver::RenderingWaitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords() {
+    return AgcDriver::FlipPacketWords;
+}
+
+std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadsActivePacketSize() {
+    return WorkloadDataPacketDwords(8) + 9;
+}
+
+std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadCompletePacketSize() {
+    return WorkloadDataPacketDwords(0) + 9;
+}
+
+std::uint32_t APS5_VABI sceAgcDriverGetSetWorkloadStreamInactivePacketSize() {
+    return WorkloadDataPacketDwords(8);
+}
+
+std::uint32_t APS5_VABI sceAgcDriverNopDataGetPacketSize(std::uint32_t bytes) {
+    return PayloadDwords(bytes) + 2;
+}
+
+std::uint32_t APS5_VABI sceAgcDriverUserDataGetPacketSize(std::uint32_t bytes) {
+    return WorkloadDataPacketDwords(bytes);
 }
 
 std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t** command,

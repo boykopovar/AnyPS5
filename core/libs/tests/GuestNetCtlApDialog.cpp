@@ -1,17 +1,9 @@
+#include "prx/libSceNetCtlApDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceNetCtlApDialogInitialize(void);
-int APS5_VABI sceNetCtlApDialogTerminate(void);
-int APS5_VABI sceNetCtlApDialogOpen(const void* param);
-int APS5_VABI sceNetCtlApDialogClose(void);
-int APS5_VABI sceNetCtlApDialogUpdateStatus(void);
-int APS5_VABI sceNetCtlApDialogGetStatus(void);
-int APS5_VABI sceNetCtlApDialogGetResult(void* result);
-}
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 
 namespace {
 
@@ -37,14 +29,17 @@ void RequireCanceled(const std::uint8_t (&result)[44]) {
 }
 
 int main() {
-    std::uint8_t param[104] = {};
-    std::uint8_t result[44];
+    NetCtlApDialogParam param{};
+    param.base.size = sizeof(param.base);
+    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+    param.size = sizeof(param);
+    alignas(NetCtlApDialogResult) std::uint8_t result[44];
     std::memset(result, 0x5a, sizeof(result));
 
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
-    Require(sceNetCtlApDialogOpen(param) == kErrNotInitialized);
+    Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
     Require(sceNetCtlApDialogClose() == kErrNotInitialized);
-    Require(sceNetCtlApDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
     Require(sceNetCtlApDialogGetStatus() == kStatusNone);
     Require(sceNetCtlApDialogUpdateStatus() == kStatusNone);
 
@@ -55,27 +50,39 @@ int main() {
 
     Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
-    Require(sceNetCtlApDialogGetResult(result) == kErrNotFinished);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == static_cast<int>(0x80B8000Au));
+    std::memset(result + 4, 0, 36);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
 
-    Require(sceNetCtlApDialogOpen(param) == 0);
+    param.size = 103;
+    Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
+    param.size = sizeof(param);
+    param.reserved60 = 1;
+    Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
+    param.reserved60 = 0;
+    std::memset(param.option, 'a', sizeof(param.option));
+    Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
+    param.option[8] = 0;
+    param.reserved[30] = 1;
+    Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
+    param.reserved[30] = 0;
+    Require(sceNetCtlApDialogOpen(&param) == 0);
     Require(sceNetCtlApDialogGetStatus() == kStatusFinished);
     Require(sceNetCtlApDialogUpdateStatus() == kStatusFinished);
 
     Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
-    Require(sceNetCtlApDialogGetResult(result) == 0);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kResultUserCanceled);
     RequireCanceled(result);
 
-    Require(sceNetCtlApDialogOpen(param) == 0);
-    Require(sceNetCtlApDialogClose() == 0);
+    Require(sceNetCtlApDialogOpen(&param) == 0);
+    Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNetCtlApDialogTerminate() == 0);
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
     Require(sceNetCtlApDialogGetStatus() == kStatusNone);
 
     Require(sceNetCtlApDialogInitialize() == 0);
-    Require(sceNetCtlApDialogClose() == 0);
-    Require(sceNetCtlApDialogGetStatus() == kStatusFinished);
-    std::memset(result, 0x5a, sizeof(result));
-    Require(sceNetCtlApDialogGetResult(result) == 0);
-    RequireCanceled(result);
+    Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
+    Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
     Require(sceNetCtlApDialogTerminate() == 0);
 }

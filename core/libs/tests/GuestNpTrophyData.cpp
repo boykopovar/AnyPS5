@@ -1,6 +1,10 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -13,16 +17,11 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetGroupInfoArray(int, int, uint32_t, uint32_t, NpTrophy2GroupDetails*, NpTrophy2GroupData*, uint32_t*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int, int, uint32_t, uint32_t, NpTrophy2Details*, NpTrophy2Data*, uint32_t*);
-}
+struct NpUniversalDataSystemEvent;
+struct NpUniversalDataSystemEventPropertyObject;
 
 static constexpr int InitialUser = 0x10000000;
+static constexpr int InvalidTrophyId = static_cast<int>(0x8055390Au);
 
 static const char TropConf[] = R"({"defaultLanguage":"en-US","trophies":[
     {"id":"0","grade":"P"},
@@ -90,6 +89,24 @@ static void Write(const std::filesystem::path& path, const std::string& text) {
     Require(std::fclose(file) == 0 && written, "a test file was not written");
 }
 
+static void PostUnlock(int trophyId) {
+    static int context = 0;
+    static int handle = 0;
+    if (context == 0) {
+        Require(sceNpUniversalDataSystemCreateContext(&context, InitialUser, 0, 0) == 0, "UDS context was not created");
+        Require(sceNpUniversalDataSystemCreateHandle(&handle) == 0, "UDS handle was not created");
+        Require(sceNpUniversalDataSystemRegisterContext(context, handle, 0) == 0, "UDS context was not registered");
+    }
+    NpUniversalDataSystemEventPropertyObject* properties = nullptr;
+    Require(sceNpUniversalDataSystemCreateEventPropertyObject(&properties) == 0, "property object was not created");
+    Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", trophyId) == 0, "trophy id was not set");
+    NpUniversalDataSystemEvent* event = nullptr;
+    Require(sceNpUniversalDataSystemCreateEvent("_UnlockTrophy", properties, &event, nullptr) == 0, "event was not created");
+    Require(sceNpUniversalDataSystemPostEvent(context, handle, event, 0) == 0, "event was not posted");
+    Require(sceNpUniversalDataSystemDestroyEvent(event) == 0, "event was not destroyed");
+    Require(sceNpUniversalDataSystemDestroyEventPropertyObject(properties) == 0, "property object was not destroyed");
+}
+
 static int TrophyContext(std::uint32_t serviceLabel) {
     int context = 0;
     Require(sceNpTrophy2CreateContext(&context, InitialUser, serviceLabel, 0) == 0, "trophy context was not created");
@@ -107,6 +124,15 @@ static NpTrophy2GameData Game(int context, NpTrophy2GameDetails* details = nullp
     NpTrophy2GameData data{};
     Require(sceNpTrophy2GetGameInfo(context, 1, details, &data) == 0, "game info was not returned");
     return data;
+}
+
+struct Unlocks {
+    std::vector<std::int32_t> trophies;
+};
+
+static void Remember(void* context, const NpTrophy2Unlock& unlock) {
+    Require(unlock.titleId == "PPSA00000" && unlock.userId == InitialUser && unlock.serviceLabel == 0 && unlock.tick != 0, "an unlock does not carry its title, user, label and time");
+    static_cast<Unlocks*>(context)->trophies.push_back(unlock.trophyId);
 }
 
 static void ReportTrophyData(int context) {
@@ -128,8 +154,18 @@ static void ReportTrophyData(int context) {
     Require(details.trophy_grade == 1 && std::strcmp(details.name, "All of them") == 0, "the platinum is not reported");
     const auto steps = Trophy(context, 5, &details);
     Require(details.target.type == 1 && details.target.value == 5 && !steps.unlocked && steps.progress.type == 1 && steps.progress.value == 0, "the progressive trophy does not report its target");
-    NpTrophy2Data unknown{};
-    Require(ThrowsInvalidArgument([context, &unknown] { sceNpTrophy2GetTrophyInfo(context, 1, 99, nullptr, &unknown); }), "a trophy that is not in the package was reported");
+    const auto untouched = [](const void* bytes, std::size_t size) {
+        const auto* first = static_cast<const unsigned char*>(bytes);
+        return std::all_of(first, first + size, [](unsigned char byte) { return byte == 0x5a; });
+    };
+    for (const int unknownId : {8, 99, -1}) {
+        NpTrophy2Details unknownDetails{};
+        NpTrophy2Data unknown{};
+        std::memset(&unknownDetails, 0x5a, sizeof(unknownDetails));
+        std::memset(&unknown, 0x5a, sizeof(unknown));
+        Require(sceNpTrophy2GetTrophyInfo(context, 1, unknownId, &unknownDetails, &unknown) == InvalidTrophyId, "a trophy that is not in the package did not return the invalid trophy id error");
+        Require(untouched(&unknownDetails, sizeof(unknownDetails)) && untouched(&unknown, sizeof(unknown)), "a trophy that is not in the package wrote its details or data");
+    }
 
     std::vector<NpTrophy2Details> list(10);
     std::vector<NpTrophy2Data> listed(10);
@@ -151,6 +187,25 @@ static void ReportTrophyData(int context) {
     Require(sceNpTrophy2GetGroupInfoArray(context, 1, 0, 4, groups.data(), nullptr, &count) == 0 && count == 2 && groups[0].group_id == -1 && std::strcmp(groups[0].title, "Synthetic Game") == 0 &&
                 groups[0].num_trophies == 6 && groups[1].group_id == 1,
             "the group list does not hold the base game and group 1");
+}
+
+static void PostUnlocks(int context) {
+    Unlocks unlocks;
+    const auto listener = NpTrophy2AddUnlockListener_nid_no_patch(Remember, &unlocks);
+    for (const int trophyId : {1, 2, 3, 6}) PostUnlock(trophyId);
+    const auto partway = Game(context);
+    Require(!Trophy(context, 0).unlocked && partway.unlocked_trophies == 4 && partway.unlocked_gold == 1 && partway.unlocked_silver == 1 && partway.unlocked_bronze == 2 &&
+                partway.progress_percentage == (6 + 2 + 2) * 100 / (6 + 2 + 5),
+            "the game does not count the unlocks by grade");
+    PostUnlock(4);
+    Require(!Trophy(context, 0).unlocked, "the platinum unlocked before every trophy that names it");
+    for (const int trophyId : {5, 0, 42}) PostUnlock(trophyId);
+    const auto refused = Game(context);
+    Require(!Trophy(context, 5).unlocked && !Trophy(context, 0).unlocked && refused.unlocked_trophies == 5 && refused.unlocked_platinum == 0 && refused.unlocked_bronze == 3 &&
+                refused.progress_percentage == (6 + 2 + 3) * 100 / (6 + 2 + 5),
+            "a progressive, platinum or unknown trophy posted through UDS unlocked, or changed the counts");
+    NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
+    Require(unlocks.trophies == (std::vector<std::int32_t>{1, 2, 3, 6, 4}), "the listener did not see each posted unlock once, in order, or saw a refused one");
 }
 
 static void ReportPlaceholders() {
@@ -179,6 +234,7 @@ int main() {
 
     const auto context = TrophyContext(0);
     ReportTrophyData(context);
+    PostUnlocks(context);
     ReportPlaceholders();
 
     std::filesystem::current_path(previous);

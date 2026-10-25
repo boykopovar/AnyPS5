@@ -1,0 +1,15 @@
+add_library(libSceRegMgr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceRegMgr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceRegMgr)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_regmgr_tests ${LIBS_INCLUDE_DIR}/tests/GuestRegMgr.cpp)
+    target_include_directories(guest_regmgr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_regmgr_tests PRIVATE libSceRegMgr libc)
+    configure_windows_unwind(guest_regmgr_tests)
+    add_test(NAME guest_regmgr COMMAND guest_regmgr_tests)
+    if(WIN32)
+        set_tests_properties(guest_regmgr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRegMgr>")
+    endif()
+endif()

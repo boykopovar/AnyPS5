@@ -36,13 +36,30 @@ struct Registry {
     std::map<std::uint64_t, std::shared_ptr<const Range>> ranges;
     bool mainImageRegistered = false;
     std::map<std::uintptr_t, std::uintptr_t> registeredImages;
-    std::weak_ptr<const Lease::Ranges> readableLease;
-    std::weak_ptr<const Lease::Ranges> allLease;
+    std::shared_ptr<const Lease::Ranges> readableLease;
+    std::shared_ptr<const Lease::Ranges> allLease;
+    std::uint64_t backingSerials = 0;
 };
 
 Registry& registry() {
     static auto* value = new Registry;
     return *value;
+}
+
+std::uint64_t freshBacking() {
+    return ++registry().backingSerials;
+}
+
+void renewBacking(std::uintptr_t address, std::size_t bytes) {
+    auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && it->first < address + bytes; ++it) {
+        if (it->first + it->second->bytes <= address) continue;
+        auto renewed = *it->second;
+        renewed.backingSerial = freshBacking();
+        it->second = std::make_shared<const Range>(renewed);
+    }
 }
 
 std::atomic<std::uint64_t> generation{1};
@@ -71,6 +88,7 @@ struct MutationState {
     std::unique_lock<std::mutex> lock;
     std::vector<std::pair<std::uintptr_t, std::size_t>> changed;
     std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
+    std::vector<std::pair<std::uintptr_t, std::size_t>> unpinned;
 };
 
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
@@ -132,6 +150,7 @@ void* GuestAllocationsBegin_nid_postfix() {
 
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     auto* state = static_cast<MutationState*>(mutation);
+    for (const auto& [address, bytes] : state->unpinned) renewBacking(address, bytes);
     const auto ended = generation.fetch_add(1, std::memory_order_release) + 1;
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
@@ -214,7 +233,7 @@ void registerImage(const void* image) {
                 const auto& previous = *std::prev(next)->second;
                 require(previous.address + previous.bytes <= cursor, "guest image overlaps a registered allocation");
             }
-            replacement.emplace(cursor, std::make_shared<const Range>(Range{cursor, memory.RegionSize, readable, writable, cursor, memory.RegionSize, false}));
+            replacement.emplace(cursor, std::make_shared<const Range>(Range{cursor, memory.RegionSize, readable, writable, cursor, memory.RegionSize, false, false, freshBacking()}));
             registered = true;
         }
         cursor += memory.RegionSize;
@@ -287,7 +306,7 @@ std::uintptr_t registerImagePages(const ImagePages& collected) {
             const auto& previous = *std::prev(next)->second;
             require(previous.address + previous.bytes <= address, "guest image overlaps a registered allocation");
         }
-        replacement.emplace(address, std::make_shared<const Range>(Range{address, bytes, page->second.readable, page->second.writable, address, bytes, false}));
+        replacement.emplace(address, std::make_shared<const Range>(Range{address, bytes, page->second.readable, page->second.writable, address, bytes, false, false, freshBacking()}));
         page = std::next(last);
     }
     state.ranges.swap(replacement);
@@ -342,7 +361,7 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
         const auto& previous = *std::prev(next)->second;
         require(previous.address + previous.bytes <= address, "overlapping guest allocation");
     }
-    ranges.emplace(address, std::make_shared<const Range>(Range{address, bytes, readable, writable, address, bytes, true, gpu}));
+    ranges.emplace(address, std::make_shared<const Range>(Range{address, bytes, readable, writable, address, bytes, true, gpu, freshBacking()}));
 }
 
 [[noreturn]] void PinnedFailure(std::uintptr_t address, std::size_t bytes, const char* why) {
@@ -379,14 +398,22 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
                 break;
             }
         }
-        if (!pinned) return;
+        if (!pinned) {
+            if (state != nullptr && bytes != 0) state->unpinned.emplace_back(address, bytes);
+            return;
+        }
         if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;
         if (state != nullptr && state->lock.owns_lock()) {
             state->lock.unlock();
-            if (waiter != nullptr) progressed = waiter(address, bytes);
-            else std::this_thread::yield();
+            try {
+                if (waiter != nullptr) progressed = waiter(address, bytes);
+                else std::this_thread::yield();
+            } catch (...) {
+                state->lock.lock();
+                throw;
+            }
             state->lock.lock();
         } else {
             std::this_thread::yield();
@@ -526,12 +553,12 @@ RangePatch replaceRange(const void* pointer, std::size_t bytes, bool remove, boo
         if (base >= end) break;
         require(base <= cursor, "guest protection or unmap range has a hole");
         patch.erased.push_back(base);
-        const auto insert = [&](std::uint64_t first, std::uint64_t last, bool canRead, bool canWrite, bool gpuMapped) {
-            if (first < last) patch.inserted.emplace_back(first, std::make_shared<const Range>(Range{first, static_cast<std::size_t>(last - first), canRead, canWrite, range.allocationAddress, range.allocationBytes, range.releasable, gpuMapped}));
+        const auto insert = [&](std::uint64_t first, std::uint64_t last, bool canRead, bool canWrite, bool gpuMapped, std::uint64_t backing) {
+            if (first < last) patch.inserted.emplace_back(first, std::make_shared<const Range>(Range{first, static_cast<std::size_t>(last - first), canRead, canWrite, range.allocationAddress, range.allocationBytes, range.releasable, gpuMapped, backing}));
         };
-        insert(base, std::max<std::uint64_t>(base, address), range.readable, range.writable, range.gpu);
-        if (!remove) insert(std::max<std::uint64_t>(base, address), std::min<std::uint64_t>(finish, end), readable, writable, gpu);
-        insert(std::min<std::uint64_t>(finish, end), finish, range.readable, range.writable, range.gpu);
+        insert(base, std::max<std::uint64_t>(base, address), range.readable, range.writable, range.gpu, range.backingSerial);
+        if (!remove) insert(std::max<std::uint64_t>(base, address), std::min<std::uint64_t>(finish, end), readable, writable, gpu, freshBacking());
+        insert(std::min<std::uint64_t>(finish, end), finish, range.readable, range.writable, range.gpu, range.backingSerial);
         cursor = std::min<std::uint64_t>(finish, end);
     }
     require(cursor == end, "guest protection or unmap range is not registered");
@@ -606,7 +633,7 @@ void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_
 
 Lease GuestAllocationsAcquire_nid_postfix() {
     std::lock_guard lock(registry().mutex);
-    if (auto shared = registry().readableLease.lock()) return Lease(std::move(shared));
+    if (auto shared = registry().readableLease) return Lease(std::move(shared));
     auto ranges = std::make_shared<Lease::Ranges>();
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
@@ -633,7 +660,7 @@ std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t a
 
 Lease GuestAllocationsAcquireAll_nid_postfix() {
     std::lock_guard lock(registry().mutex);
-    if (auto shared = registry().allLease.lock()) return Lease(std::move(shared));
+    if (auto shared = registry().allLease) return Lease(std::move(shared));
     auto ranges = std::make_shared<Lease::Ranges>();
     ranges->reserve(registry().ranges.size());
     for (const auto& [address, range] : registry().ranges) {

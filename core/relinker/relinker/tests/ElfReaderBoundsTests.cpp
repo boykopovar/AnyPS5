@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,22 @@ Bytes Fixture() {
     const char strings[] = "\0.text\0.shstrtab";
     Write<std::uint64_t>(bytes, 288, sizeof(strings));
     std::memcpy(bytes.data() + 0x200, strings, sizeof(strings));
+    return bytes;
+}
+
+Bytes TlsFixture(const std::uint64_t address, const std::uint64_t fileSize, const std::uint64_t memorySize, const std::uint64_t alignment) {
+    auto bytes = Fixture();
+    std::memcpy(bytes.data() + 0x260, bytes.data() + 64, 56);
+    Write<std::uint64_t>(bytes, 32, 0x260);
+    Write<std::uint16_t>(bytes, 56, 2);
+    Write<std::uint32_t>(bytes, 0x298, 7);
+    Write<std::uint32_t>(bytes, 0x29c, 4);
+    Write<std::uint64_t>(bytes, 0x2a0, 0x248);
+    Write(bytes, 0x2a8, address);
+    Write(bytes, 0x2b0, address);
+    Write(bytes, 0x2b8, fileSize);
+    Write(bytes, 0x2c0, memorySize);
+    Write(bytes, 0x2c8, alignment);
     return bytes;
 }
 
@@ -119,6 +136,60 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"TLS image inside load memory and empty TLS placeholders", [] {
+            for (const auto& [address, fileSize, memorySize, alignment] : {std::tuple<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>{0x1008, 8, 16, 8}, {0x1030, 16, 16, 16}, {0x9000, 0, 0, 0}, {0x9000, 0, 16, 16}}) {
+                const auto headers = Relinker::ElfReader(TlsFixture(address, fileSize, memorySize, alignment)).ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Type == 7 && headers[1].MappedAddress == address);
+            }
+        }},
+        {"TLS image inside uncovered SCE RELRO", [] {
+            auto bytes = TlsFixture(0x1008, 8, 16, 8);
+            Write<std::uint32_t>(bytes, 0x260, 0x61000010);
+            const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+            Require(headers.size() == 2 && headers[0].Type == 1 && headers[1].Type == 7 && headers[1].MappedAddress == 0x1008);
+        }},
+        {"TLS image ending at end of file", [] {
+            auto bytes = TlsFixture(0x1008, 8, 16, 8);
+            Write<std::uint64_t>(bytes, 0x2a0, 0x2f8);
+            const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+            Require(headers.size() == 2 && headers[1].Offset + headers[1].FileSize == 0x300);
+        }},
+        {"empty TLS image beyond end of file", [] {
+            constexpr std::uint64_t offsets[] = {0x300, 0x301, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t offset : offsets) {
+                auto bytes = TlsFixture(0x9000, 0, 16, 16);
+                Write(bytes, 0x2a0, offset);
+                const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Offset == offset && headers[1].FileSize == 0);
+            }
+        }},
+        {"TLS file range past end of file", [] {
+            constexpr std::uint64_t offsets[] = {0x2f9, 0x300, 0x301, std::numeric_limits<std::uint64_t>::max() - 3, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t offset : offsets) {
+                auto bytes = TlsFixture(0x1008, 8, 16, 1);
+                Write(bytes, 0x2a0, offset);
+                RejectProgramHeaders(std::move(bytes));
+            }
+        }},
+        {"TLS image outside load memory", [] {
+            constexpr std::uint64_t addresses[] = {0x0ff8, 0x103c, 0x2000, std::numeric_limits<std::uint64_t>::max() - 3};
+            for (const std::uint64_t address : addresses) {
+                RejectProgramHeaders(TlsFixture(address, 8, 8, 1));
+            }
+        }},
+        {"TLS file size exceeds memory size", [] {
+            RejectProgramHeaders(TlsFixture(0x1008, 16, 8, 8));
+        }},
+        {"TLS alignment is not a power of two", [] {
+            RejectProgramHeaders(TlsFixture(0x1008, 8, 8, 3));
+        }},
+        {"second TLS segment", [] {
+            auto bytes = TlsFixture(0x1008, 8, 16, 8);
+            bytes.resize(0x308);
+            std::memcpy(bytes.data() + 0x2d0, bytes.data() + 0x298, 56);
+            Write<std::uint16_t>(bytes, 56, 3);
+            RejectProgramHeaders(std::move(bytes));
+        }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].EntrySize == 24);
@@ -161,6 +232,41 @@ int main() {
             Write<std::uint16_t>(bytes, 62, 0);
             bytes.resize(128 + 3 * 64 - 1);
             RejectSections(std::move(bytes));
+        }},
+        {"section file range past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, 0x2f0);
+            RejectSections(std::move(bytes));
+        }},
+        {"section file range offset overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, std::numeric_limits<std::uint64_t>::max() - 15);
+            RejectSections(std::move(bytes));
+        }},
+        {"section ending at end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, 0x2e0);
+            Write<std::uint64_t>(bytes, 224, 32);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Offset + sections[1].SectionSize == 0x300);
+        }},
+        {"unbacked SHT_NOBITS section with range past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 8);
+            Write<std::uint64_t>(bytes, 216, 0x2f0);
+            Write<std::uint64_t>(bytes, 224, 0x1000);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Type == 8);
+        }},
+        {"empty section beyond end of file", [] {
+            constexpr std::uint64_t offsets[] = {0x300, 0x301, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t offset : offsets) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 216, offset);
+                Write<std::uint64_t>(bytes, 224, 0);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Offset == offset && sections[1].SectionSize == 0);
+            }
         }},
         {"translation program header stride", [] {
             for (const std::uint16_t stride : {0, 48, 64}) {

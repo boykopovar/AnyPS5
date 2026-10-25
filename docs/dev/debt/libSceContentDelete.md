@@ -2,4 +2,9 @@
 
 ### Functional
 
-- [sceContentDeleteById and sceContentDeleteByPath](../../../core/libs/prx/libSceContentDelete/Export.cpp) (libSceContentDelete) delete from a content library that is empty on the host, as nothing is exported to it, so both throw for every content id and path once the arguments and the initialization are checked: no reference gives the console's error for content that is not in the library ([SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Content/ContentDelete.cs#L25-L42) names only `0x809D5006`, no permission). The signatures, a 64-bit content id and a UTF-8 path, follow [Orbital](https://github.com/AlexAltea/orbital/blob/cc408367da6a6ebbf5ac1ac559fefeadc73b2831/tools/ida/db_types.json#L541-L542) and SharpProspero, which agree. A null path and a call outside `sceContentDeleteInitialize` and `sceContentDeleteTerminate` throw, as the console's errors for them are unknown, and the order of the two checks is unverified.
+- [sceContentDeleteById](../../../core/libs/prx/libSceContentDelete/Export.cpp) and `sceContentDeleteByPath`: content database access and deletion are not implemented. Calls with valid arguments after initialization throw; the backend result cannot be inferred from an empty host library. Null paths after initialization throw instead of reproducing the original unchecked string access.
+- [sceContentDeleteInitialize](../../../core/libs/prx/libSceContentDelete/Export.cpp): validates the confirmed 16 KiB heap requirement and lifecycle errors, but does not create the original allocator, mutex and database client. Initialization-parameter fields other than the 64-bit heap size at offset 8 remain unresolved.
+
+### Unknown function info
+
+- [sceContentDeleteGlobalMstat](../../../core/libs/prx/libSceContentDelete/Export.cpp), `sceContentDeleteMemoryInitialize` and `sceContentDeleteMemoryTerminate`: neither exports nor callers were found in the supplied decompiled library corpus; their signatures remain unresolved.

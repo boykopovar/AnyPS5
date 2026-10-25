@@ -1,0 +1,8 @@
+add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp")
+    target_sources(libSceNpCommon PRIVATE Export.cpp)
+endif()
+target_sources(libSceNpCommon PRIVATE Runtime.cpp Strings.cpp)
+target_include_directories(libSceNpCommon PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpCommon PRIVATE libc libkernel libSceRtc libSceUserService)
+configure_windows_unwind(libSceNpCommon)

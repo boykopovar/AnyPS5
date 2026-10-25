@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 
 #include <chrono>
@@ -5,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -12,17 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -44,6 +35,8 @@ constexpr std::uint32_t formatMonoFloat = 1u << 8;
 constexpr std::uint32_t formatStereoFloat = 2u << 8;
 constexpr std::uint32_t attributeData = 0;
 constexpr int queueFull = static_cast<int>(0x80260507);
+constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+constexpr int errorInvalidHandle = static_cast<int>(0x80260503);
 constexpr float masterGain = 0.5f;
 constexpr float tolerance = 1e-5f;
 
@@ -53,24 +46,26 @@ struct Session {
     AudioOut2PortHandle port = 0;
     std::vector<float> buffer = std::vector<float>(static_cast<std::size_t>(grain) * 2, 0.0f);
 
-    explicit Session(const char* name) : path(std::filesystem::temp_directory_path() / (std::to_string(std::random_device{}()) + "-" + name)) {
+    bool low;
+
+    explicit Session(const char* name, bool lowLatency = false) : path(std::filesystem::temp_directory_path() / (std::to_string(std::random_device{}()) + "-" + name)), low(lowLatency) {
         std::filesystem::remove(path);
         SetEnvironment("SDL_DISKAUDIOFILE", path.string());
         AudioOut2ContextParam params{};
         Require(sceAudioOut2ContextResetParam(&params) == 0);
         params.num_grains = grain;
         params.queue_depth = queueDepth;
-        Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
+        Require((low ? sceAudioOut2LoContextCreate : sceAudioOut2ContextCreate)(&params, nullptr, 0, &context) == 0);
         AudioOut2PortParam port{};
         port.port_type = 0;
         port.data_format = formatStereoFloat;
         port.sampling_freq = frequency;
-        Require(sceAudioOut2PortCreate(context, &port, &this->port) == 0);
+        Require((low ? sceAudioOut2LoPortCreate : sceAudioOut2PortCreate)(context, &port, &this->port) == 0);
     }
 
     void Point(const void* data) {
         const AudioOut2Attribute attribute{attributeData, 0, &data, sizeof(data)};
-        Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
+        Require((low ? sceAudioOut2LoPortSetAttributes : sceAudioOut2PortSetAttributes)(port, &attribute, 1) == 0);
     }
 
     void Fill(float value) {
@@ -78,8 +73,8 @@ struct Session {
     }
 
     std::vector<float> Close() {
-        Require(sceAudioOut2PortDestroy(port) == 0);
-        Require(sceAudioOut2ContextDestroy(context) == 0);
+        Require((low ? sceAudioOut2LoPortDestroy : sceAudioOut2PortDestroy)(port) == 0);
+        Require((low ? sceAudioOut2LoContextDestroy : sceAudioOut2ContextDestroy)(context) == 0);
         std::ifstream file(path, std::ios::binary);
         const std::vector<char> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
         file.close();
@@ -188,6 +183,132 @@ void TestPrimingAfterRunningDry() {
     Require(Constant(played, second, burst, -0.5f * masterGain));
 }
 
+void TestLowLatencyCallsRejectBadArguments() {
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0);
+    params.num_grains = grain;
+    params.queue_depth = queueDepth;
+    const std::size_t sizeSentinel = 0x1234;
+    std::size_t size = sizeSentinel;
+    Require(sceAudioOut2LoContextQueryMemory(nullptr, &size) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextQueryMemory(&params, nullptr) == errorInvalidArgument);
+    Require(size == sizeSentinel);
+    Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0);
+    std::size_t standardSize = sizeSentinel;
+    Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
+    Require(size == standardSize && size != sizeSentinel);
+
+    const AudioOut2ContextHandle contextSentinel = 0x5A5A;
+    AudioOut2ContextHandle context = contextSentinel;
+    Require(sceAudioOut2LoContextCreate(nullptr, nullptr, 0, &context) == errorInvalidArgument);
+    Require(context == contextSentinel);
+    Require(sceAudioOut2LoContextCreate(&params, nullptr, 0, nullptr) == errorInvalidArgument);
+
+    Require(sceAudioOut2LoContextDestroy(0) == errorInvalidHandle);
+    Require(sceAudioOut2LoContextAdvance(0) == errorInvalidHandle);
+    Require(sceAudioOut2LoContextPush(0, 0) == errorInvalidHandle);
+    Require(sceAudioOut2LoContextPush(0, 1) == errorInvalidHandle);
+    std::uint32_t level = 77;
+    std::uint32_t available = 78;
+    Require(sceAudioOut2LoContextGetQueueLevel(0, &level, &available) == errorInvalidHandle);
+    Require(level == 77 && available == 78);
+    const AudioOut2Attribute attribute{0, 0, nullptr, 0};
+    Require(sceAudioOut2LoContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
+
+    AudioOut2PortParam portParams{};
+    portParams.port_type = 0;
+    portParams.data_format = formatStereoFloat;
+    portParams.sampling_freq = frequency;
+    const AudioOut2PortHandle portSentinel = 0x6B6B;
+    AudioOut2PortHandle port = portSentinel;
+    Require(sceAudioOut2LoPortCreate(0, &portParams, &port) == errorInvalidHandle);
+    Require(port == portSentinel);
+    Require(sceAudioOut2LoPortDestroy(0) == errorInvalidHandle);
+    Require(sceAudioOut2LoPortSetAttributes(0, &attribute, 1) == errorInvalidHandle);
+    AudioOut2PortState state;
+    Require(sceAudioOut2LoPortGetState(0, &state) == errorInvalidHandle);
+
+    Session session("anyps5_audio_out2_low_arguments.raw", true);
+    Require(sceAudioOut2LoPortCreate(session.context, nullptr, &port) == errorInvalidArgument);
+    Require(port == portSentinel);
+    Require(sceAudioOut2LoPortCreate(session.context, &portParams, nullptr) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 1) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 0) == 0);
+    Require(sceAudioOut2LoContextSetAttributes(session.context, &attribute, 1) == 0);
+    Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 1) == errorInvalidArgument);
+    Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 0) == 0);
+    Require(sceAudioOut2LoPortGetState(session.port, nullptr) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextGetQueueLevel(session.context, nullptr, nullptr) == 0);
+    std::memset(&state, 0xAB, sizeof(state));
+    Require(sceAudioOut2LoPortGetState(session.port, &state) == 0);
+    Require(state.output == 1 && state.num_channels == 2 && state.volume == 127 && state.reroute_counter == 0 && state.flags == 0);
+    const auto destroyed = session.port;
+    Require(sceAudioOut2LoPortDestroy(destroyed) == 0);
+    Require(sceAudioOut2LoPortDestroy(destroyed) == errorInvalidHandle);
+    Require(sceAudioOut2LoPortGetState(destroyed, &state) == errorInvalidHandle);
+    Require(sceAudioOut2LoPortSetAttributes(destroyed, &attribute, 1) == errorInvalidHandle);
+    Require(sceAudioOut2LoContextDestroy(session.context) == 0);
+    std::filesystem::remove(session.path);
+}
+
+void TestLowLatencyReadsAtNextPush() {
+    Session session("anyps5_audio_out2_low_next_push.raw", true);
+    session.Fill(0.25f);
+    session.Point(session.buffer.data());
+    Require(sceAudioOut2LoContextPush(session.context, 1) == 0);
+    session.Fill(0.5f);
+    Require(sceAudioOut2LoContextPush(session.context, 1) == 0);
+    session.Fill(0.75f);
+    Require(sceAudioOut2LoContextPush(session.context, 1) == 0);
+    session.Fill(0.0f);
+    session.Point(nullptr);
+    for (std::uint32_t push = 0; push < cushionGrains * 4; push++) Require(sceAudioOut2LoContextPush(session.context, 1) == 0);
+    const auto played = session.Close();
+    const auto first = FirstNonZero(played);
+    const std::size_t samples = static_cast<std::size_t>(grain) * 2;
+    Require(Constant(played, first, samples, 0.5f * masterGain));
+    Require(Constant(played, first + samples, samples, 0.75f * masterGain));
+    Require(FirstNonZero(played, first + 2 * samples) == played.size());
+}
+
+void TestLowLatencyAdvanceKeepsTheAdvancedGrain() {
+    Session session("anyps5_audio_out2_low_advance.raw", true);
+    session.Fill(0.25f);
+    session.Point(session.buffer.data());
+    Require(sceAudioOut2LoContextAdvance(session.context) == 0);
+    session.Fill(0.75f);
+    session.Point(nullptr);
+    for (std::uint32_t push = 0; push < cushionGrains * 4; push++) {
+        Require(sceAudioOut2LoContextPush(session.context, 1) == 0);
+        Require(sceAudioOut2LoContextAdvance(session.context) == 0);
+    }
+    const auto played = session.Close();
+    const auto first = FirstNonZero(played);
+    const std::size_t samples = static_cast<std::size_t>(grain) * 2;
+    Require(Constant(played, first, samples, 0.25f * masterGain));
+    Require(FirstNonZero(played, first + samples) == played.size());
+}
+
+void TestLowLatencyQueueLevelFillsToTheDepth() {
+    Session session("anyps5_audio_out2_low_level.raw", true);
+    session.Point(nullptr);
+    std::uint32_t level = 99;
+    std::uint32_t available = 99;
+    Require(sceAudioOut2LoContextGetQueueLevel(session.context, &level, &available) == 0);
+    Require(level == 0 && available == queueDepth);
+    std::uint32_t accepted = 0;
+    int result = 0;
+    while ((result = sceAudioOut2LoContextPush(session.context, 0)) == 0) {
+        accepted++;
+        Require(accepted < 1000);
+    }
+    Require(result == queueFull);
+    Require(accepted >= cushionGrains + queueDepth);
+    Require(sceAudioOut2LoContextGetQueueLevel(session.context, &level, &available) == 0);
+    Require(level <= queueDepth && level + available == queueDepth);
+    session.Close();
+}
+
 }
 
 int main() {
@@ -196,5 +317,9 @@ int main() {
     TestRecreatedPort();
     TestLevelExcludesCushion();
     TestPrimingAfterRunningDry();
+    TestLowLatencyCallsRejectBadArguments();
+    TestLowLatencyReadsAtNextPush();
+    TestLowLatencyAdvanceKeepsTheAdvancedGrain();
+    TestLowLatencyQueueLevelFillsToTheDepth();
     return 0;
 }

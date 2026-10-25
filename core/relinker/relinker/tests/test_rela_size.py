@@ -40,6 +40,38 @@ def main():
                             valid = tags.get(8, 0) == size
                     if not valid:
                         failures.append((tag, size, mode, result.returncode, result.stdout, result.stderr))
+
+        def verify_failure(name, image, expected_error, options=("unused-filter=1",)):
+            source = work / f"{name}.elf"
+            output = work / f"{name}.out"
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            if result.returncode != 2 or expected_error not in result.stderr or output.exists():
+                failures.append((name, result.returncode, result.stdout, result.stderr))
+
+        neg_image = fixture()
+        struct.pack_into("<q", neg_image, 0x700 + 16, -1)
+        verify_failure("negative-relative-addend", neg_image, "Relative relocation target address is negative")
+
+        conflict_slot_image = fixture()
+        for offset in range(0x400, 0x470, 16):
+            if struct.unpack_from("<q", conflict_slot_image, offset)[0] == 8:
+                struct.pack_into("<Q", conflict_slot_image, offset + 8, 48)
+        struct.pack_into("<QQq", conflict_slot_image, 0x718, 0x300, 8, 0x220)
+        verify_failure("conflicting-relative-targets", conflict_slot_image, "Conflicting relative relocation targets for slot")
+
+        mismatched_image = fixture()
+        for offset in range(0x400, 0x470, 16):
+            if struct.unpack_from("<q", mismatched_image, offset)[0] == 8:
+                struct.pack_into("<q", mismatched_image, offset, 0x61000031)
+        verify_failure("mismatched-tag-variants", mismatched_image, "Mismatched DT_RELA and DT_RELASZ tag variants")
+
+        both_rela_image = fixture()
+        for offset in range(0x400, 0x470, 16):
+            if struct.unpack_from("<q", both_rela_image, offset)[0] == 9:
+                struct.pack_into("<q", both_rela_image, offset, 0x6100002F)
+        verify_failure("both-rela-variants", both_rela_image, "Both DT_OS_ and DT_ variants present for DT_RELA")
     if failures:
         raise AssertionError(failures)
     print("RELA size tests passed")

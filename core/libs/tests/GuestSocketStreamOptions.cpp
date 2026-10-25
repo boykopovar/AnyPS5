@@ -1,28 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <utility>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI shutdown_nid_postfix(int, int);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -36,6 +20,9 @@ constexpr int SocketLevel = 0xffff;
 constexpr int TcpLevel = 6;
 constexpr int TcpNoDelay = 1;
 constexpr int TcpMaximumSegment = 2;
+constexpr int Ipv6Level = 41;
+constexpr int Ipv6UnicastHops = 4;
+constexpr int Ipv6Only = 27;
 constexpr int NoSigpipe = 0x800;
 constexpr int NonBlockingOption = 0x1200;
 constexpr int NoSignalFlag = 0x20000;
@@ -88,12 +75,14 @@ int main() {
     Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
     const int server = accept_nid_postfix(listener, nullptr, nullptr);
     Require(server >= 0);
-    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1));
+    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1) && Set(listener, TcpLevel, 0x100, 60) && Set(listener, TcpLevel, 4, 1) && Set(listener, TcpLevel, 8, 1));
     const int secondClient = socket_nid_postfix(2, 1, 0);
     Require(secondClient >= 0 && connect_nid_postfix(secondClient, address.data(), address.size()) == 0);
     const int inheriting = accept_nid_postfix(listener, nullptr, nullptr);
     Require(inheriting >= 0);
     Require(Get(inheriting, SocketLevel, NoSigpipe) == NoSigpipe && Get(inheriting, TcpLevel, TcpNoDelay) == 4);
+    Require(Get(inheriting, TcpLevel, 0x100) == 60 && Get(server, TcpLevel, 0x100) == 7200);
+    Require(Get(inheriting, TcpLevel, 4) == 0x1000 && Get(inheriting, TcpLevel, 8) == 0);
     Require(Get(server, SocketLevel, NoSigpipe) == 0 && Get(server, TcpLevel, TcpNoDelay) == 0);
     Require(close_nid_postfix(inheriting) == 0 && close_nid_postfix(secondClient) == 0);
     const int datagram = socket_nid_postfix(2, 2, 0);
@@ -111,7 +100,27 @@ int main() {
     int value = 0;
     Require(Set(client, TcpLevel, TcpNoDelay, 0) && Get(client, TcpLevel, TcpNoDelay) == 0);
     Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpNoDelay, &one, sizeof(one) - 1), Invalid));
-    Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &one, sizeof(one)), NoProtocolOption));
+    Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &one, sizeof(one)), Invalid));
+    const int fresh = socket_nid_postfix(2, 1, 0);
+    Require(fresh >= 0 && Get(fresh, TcpLevel, TcpMaximumSegment) == 536);
+    for (const int segment : {1000, 175, 0, -1}) {
+        Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, TcpMaximumSegment, &segment, sizeof(segment)), Invalid));
+    }
+    Require(Set(fresh, TcpLevel, TcpMaximumSegment, 300) && Get(fresh, TcpLevel, TcpMaximumSegment) == 300);
+    Require(Get(fresh, TcpLevel, 0x100) == 7200 && Get(fresh, TcpLevel, 0x200) == 75 && Get(fresh, TcpLevel, 0x400) == 8);
+    Require(Set(fresh, TcpLevel, 0x100, 60) && Get(fresh, TcpLevel, 0x100) == 60);
+    Require(Set(fresh, TcpLevel, 0x100, 0) && Get(fresh, TcpLevel, 0x100) == 7200);
+    Require(Set(fresh, TcpLevel, 0x200, 10) && Get(fresh, TcpLevel, 0x200) == 10);
+    Require(Set(fresh, TcpLevel, 0x400, 3) && Get(fresh, TcpLevel, 0x400) == 3);
+    Require(Set(fresh, TcpLevel, 0x400, -1) && Get(fresh, TcpLevel, 0x400) == -1);
+    Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, sizeof(one)), NoProtocolOption));
+    for (const auto& [option, bit] : {std::pair{4, 0x1000}, std::pair{8, 0x8}, std::pair{0x80, 0x10000}}) {
+        Require(Get(fresh, TcpLevel, option) == 0);
+        Require(Set(fresh, TcpLevel, option, 5) && Get(fresh, TcpLevel, option) == bit);
+        Require(Set(fresh, TcpLevel, option, -1) && Get(fresh, TcpLevel, option) == bit);
+        Require(Set(fresh, TcpLevel, option, 0) && Get(fresh, TcpLevel, option) == 0);
+    }
+    Require(close_nid_postfix(fresh) == 0);
     length = sizeof(value);
     Require(Fails(setsockopt_nid_postfix(datagram, TcpLevel, TcpNoDelay, &one, sizeof(one)), Invalid));
     Require(Fails(getsockopt_nid_postfix(datagram, TcpLevel, TcpNoDelay, &value, &length), Invalid));
@@ -121,13 +130,13 @@ int main() {
     char received = 0;
     Require(Get(server, SocketLevel, NonBlockingOption) == 0);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) == 0);
-    Require(Set(server, SocketLevel, NonBlockingOption, 5) && Get(server, SocketLevel, NonBlockingOption) == 1);
+    Require(Set(server, SocketLevel, NonBlockingOption, 5) && Get(server, SocketLevel, NonBlockingOption) == 0x100);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) != 0);
     Require(Fails(recv_nid_postfix(server, &received, sizeof(received), 0), Again));
     Require(Set(server, SocketLevel, NonBlockingOption, 0) && Get(server, SocketLevel, NonBlockingOption) == 0);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) == 0);
     Require(Fails(setsockopt_nid_postfix(server, SocketLevel, NonBlockingOption, &one, sizeof(one) - 1), Invalid));
-    Require(Set(datagram, SocketLevel, NonBlockingOption, 1) && Get(datagram, SocketLevel, NonBlockingOption) == 1);
+    Require(Set(datagram, SocketLevel, NonBlockingOption, 1) && Get(datagram, SocketLevel, NonBlockingOption) == 0x100);
     Require(Fails(recv_nid_postfix(datagram, &received, sizeof(received), 0), Again));
 
 #ifndef _WIN32
@@ -147,6 +156,28 @@ int main() {
     Require(Fails(send_nid_postfix(client, "x", 1, 0), BrokenPipe));
     Require(BrokenPipes() == 1);
 #endif
+
+    const int dualStack = socket_nid_postfix(28, 1, 0);
+    Require(dualStack >= 0 && Get(dualStack, Ipv6Level, Ipv6Only) == 1);
+    Require(Set(dualStack, Ipv6Level, Ipv6Only, 0) && Get(dualStack, Ipv6Level, Ipv6Only) == 0);
+    std::array<std::uint8_t, 28> mapped{28, 28, address[2], address[3], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1};
+    Require(connect_nid_postfix(dualStack, mapped.data(), mapped.size()) == 0);
+    const int mappedPeer = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(mappedPeer >= 0 && close_nid_postfix(mappedPeer) == 0);
+    const int datagram6 = socket_nid_postfix(28, 2, 0);
+    Require(datagram6 >= 0 && Get(datagram6, Ipv6Level, Ipv6Only) == 1);
+    Require(Set(datagram6, Ipv6Level, Ipv6Only, 9) && Get(datagram6, Ipv6Level, Ipv6Only) == 1);
+    Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6Only, &one, sizeof(one) - 1), Invalid));
+    Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &one, sizeof(one)), NoProtocolOption));
+    length = sizeof(value);
+    Require(Fails(getsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6UnicastHops, &value, &length), NoProtocolOption));
+    std::array<std::uint8_t, 28> unspecified6{28, 28};
+    Require(bind_nid_postfix(datagram6, unspecified6.data(), unspecified6.size()) == 0);
+    Require(Fails(setsockopt_nid_postfix(datagram6, Ipv6Level, Ipv6Only, &one, sizeof(one)), Invalid));
+    Require(Fails(setsockopt_nid_postfix(datagram, Ipv6Level, Ipv6Only, &one, sizeof(one)), Invalid));
+    Require(Fails(getsockopt_nid_postfix(datagram, Ipv6Level, Ipv6Only, &value, &length), Invalid));
+    Require(Fails(setsockopt_nid_postfix(local[0], Ipv6Level, Ipv6Only, &one, sizeof(one)), Invalid));
+    Require(close_nid_postfix(datagram6) == 0 && close_nid_postfix(dualStack) == 0);
 
     Require(close_nid_postfix(local[0]) == 0 && close_nid_postfix(local[1]) == 0);
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(server) == 0);

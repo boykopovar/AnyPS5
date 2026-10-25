@@ -47,7 +47,7 @@ public:
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
     VkPipelineLayout Layout() const;
-    std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::uint32_t layers = 1, std::span<const std::uint8_t> persistent = {});
+    std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<void>> owners, VkExtent2D extent, std::uint32_t layers = 1);
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
     void Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, VkExtent2D extent, const State& state) const;
     // The same inside a render pass another pipeline of the same attachments began (compatible by
@@ -58,6 +58,10 @@ public:
     void ContinueBackFaces(VkCommandBuffer commands, const State& state) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
     void ContinueSecondChannel(VkCommandBuffer commands) const;
+    const SampleOrder& HostSampleOrder() const { return sampleOrder; }
+    bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
+    bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
+    VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
     void Abandon() noexcept;
@@ -65,10 +69,11 @@ public:
 private:
     struct CachedFramebuffer {
         std::vector<VkImageView> views;
-        std::vector<std::weak_ptr<StorageTexture>> owners;
+        std::vector<std::weak_ptr<void>> owners;
         std::vector<bool> owned;
         VkExtent2D extent;
         std::uint32_t layers = 1;
+        std::uint64_t depthReleases = 0;
         std::shared_ptr<Framebuffer> framebuffer;
     };
     void release() noexcept;
@@ -82,6 +87,8 @@ private:
     VkPipeline secondChannel = VK_NULL_HANDLE;
     std::size_t attachments = 0;
     std::size_t colorAttachments = 0;
+    std::vector<bool> boundAttachments;
+    std::uint32_t boundColorAttachments = 0;
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
@@ -91,6 +98,8 @@ private:
     VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::vector<std::uint32_t> colorSlots;
     bool sampleLocationsEnabled = false;
+    VkExtent2D sampleLocationGrid{1, 1};
+    SampleOrder sampleOrder{};
     std::vector<CachedFramebuffer> framebuffers;
 };
 
@@ -142,7 +151,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders);
 bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program);
 void ValidateSampleMask(const Context& context, const State& state, std::span<const CompiledShader> shaders);
 // Returns the color attachment locations the pixel shader writes.
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false, bool shaderTerminateInvocation = false);
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false, bool shaderTerminateInvocation = false, bool meshShader = true);
 
 }
 

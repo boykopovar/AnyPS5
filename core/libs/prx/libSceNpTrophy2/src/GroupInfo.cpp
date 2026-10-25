@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -34,8 +36,9 @@ void fillPlaceholderData(std::int32_t groupId, NpTrophy2GroupData* data) {
     data->progress_percentage = NP_TROPHY2_PROGRESS_PERCENTAGE;
 }
 
-void fillGroup(const NpTrophy2::TrophyPackage& package, std::int32_t groupId, const std::string& title, NpTrophy2GroupDetails* details, NpTrophy2GroupData* data) {
-    const auto counts = NpTrophy2::CountTrophies(package, groupId);
+void fillGroup(const NpTrophy2::TrophyPackage& package, const NpTrophy2::ContextOwner& owner, std::int32_t groupId, const std::string& title, NpTrophy2GroupDetails* details,
+               NpTrophy2GroupData* data) {
+    const auto counts = NpTrophy2::CountTrophies(package, groupId, NpTrophy2::UnlockedBy(owner.userId, owner.serviceLabel));
     if (details != nullptr) {
         std::memset(details, 0, sizeof(*details));
         details->group_id = groupId;
@@ -79,7 +82,7 @@ int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, Np
     if (group == package->groups.end()) {
         throw std::invalid_argument(std::string(__func__) + ": group " + std::to_string(group_id) + " is not in " + NpTrophy2::PackagePath(owner->serviceLabel));
     }
-    fillGroup(*package, group->first, group->second, details, data);
+    fillGroup(*package, *owner, group->first, group->second, details, data);
     return SCE_NP_TROPHY2_OK;
 }
 
@@ -101,7 +104,7 @@ int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t of
     auto group = package->groups.begin();
     std::advance(group, std::min<std::size_t>(offset, package->groups.size()));
     for (; group != package->groups.end() && *count < limit; ++group, ++*count) {
-        fillGroup(*package, group->first, group->second, details_array != nullptr ? &details_array[*count] : nullptr, data_array != nullptr ? &data_array[*count] : nullptr);
+        fillGroup(*package, *owner, group->first, group->second, details_array != nullptr ? &details_array[*count] : nullptr, data_array != nullptr ? &data_array[*count] : nullptr);
     }
     return SCE_NP_TROPHY2_OK;
 }

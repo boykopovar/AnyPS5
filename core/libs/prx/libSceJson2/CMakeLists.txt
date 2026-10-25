@@ -1,4 +1,4 @@
-add_library(libSceJson2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceJson2 SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceJson2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJson2)
 
@@ -8,8 +8,34 @@ if(BUILD_TESTING)
     target_link_libraries(guest_json_tests PRIVATE libSceJson2 libc)
     configure_windows_unwind(guest_json_tests)
     add_test(NAME guest_json COMMAND guest_json_tests)
+    add_test(NAME guest_json_numeric_locale COMMAND guest_json_tests --numeric-locale)
+    set_tests_properties(guest_json_numeric_locale PROPERTIES SKIP_RETURN_CODE 77)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(numeric_locale_dir ${CMAKE_CURRENT_BINARY_DIR}/numeric-locale)
+        set(numeric_locale_data ${LIBS_INCLUDE_DIR}/tests/numeric-locale)
+        add_test(NAME guest_json_numeric_locale_setup COMMAND sh -c
+            "rm -rf '${numeric_locale_dir}' && mkdir -p '${numeric_locale_dir}' && I18NPATH='${numeric_locale_dir}' localedef -c -f '${numeric_locale_data}/comma.charmap' -i '${numeric_locale_data}/comma.locale' '${numeric_locale_dir}/xx_COMMA'; test -f '${numeric_locale_dir}/xx_COMMA/LC_NUMERIC'")
+        set_tests_properties(guest_json_numeric_locale_setup PROPERTIES FIXTURES_SETUP json_numeric_locale)
+        set_tests_properties(guest_json_numeric_locale PROPERTIES FIXTURES_REQUIRED json_numeric_locale
+            ENVIRONMENT "LOCPATH=${numeric_locale_dir}")
+    endif()
     if(WIN32)
-        set_tests_properties(guest_json PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_json guest_json_numeric_locale PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJson2>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_json_copy_failure_tests ${LIBS_INCLUDE_DIR}/tests/JsonCopyFailure.cpp Export.cpp)
+    target_include_directories(guest_json_copy_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    if(WIN32)
+        target_link_libraries(guest_json_copy_failure_tests PRIVATE libc)
+        configure_windows_unwind(guest_json_copy_failure_tests)
+    endif()
+    add_test(NAME guest_json_copy_failure COMMAND guest_json_copy_failure_tests)
+    set_tests_properties(guest_json_copy_failure PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_json_copy_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

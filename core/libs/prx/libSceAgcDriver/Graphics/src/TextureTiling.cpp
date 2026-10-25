@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include <string>
 #include <algorithm>
 #include <bit>
@@ -383,6 +384,13 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
 
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
     SurfaceGeometry geometry;
+    if (descriptor.samples != 1u && descriptor.tileMode != TextureTileMode::kLinear) {
+        Require(descriptor.samples == 2u || descriptor.samples == 4u || descriptor.samples == 8u, "multisampled surface fragment count is not implemented");
+        Require(descriptor.dimension == TextureDimension::k2DMsaa && descriptor.baseArray == 0u && descriptor.depthOrLastArray == 0u, "multisampled surface dimension or array range is not implemented");
+        Require(descriptor.mipCount == 1u && descriptor.allocatedMipCount == 1u && descriptor.baseLevel == 0u && descriptor.lastLevel == 0u, "multisampled surface mip levels are not implemented");
+        Require(descriptor.width != 0u && descriptor.width <= 16384u && descriptor.height != 0u && descriptor.height <= 16384u, "invalid multisampled surface extent");
+        Require(!IsBlockCompressed(descriptor.format), "multisampled block-compressed surface is not implemented");
+    }
     if (descriptor.dimension == TextureDimension::k3D && (descriptor.tileMode == TextureTileMode::kZ64KBX || descriptor.tileMode == TextureTileMode::kR64KBX)) {
         const auto depth = descriptor.depthOrLastArray + 1u;
         geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
@@ -404,6 +412,29 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         geometry.thick = descriptor.tileMode != TextureTileMode::kLinear;
         geometry.blockDepth = thick.blockDepth;
         geometry.layerBytes = thick.slabBytes;
+        return geometry;
+    }
+    if (descriptor.dimension == TextureDimension::k2DMsaa && descriptor.tileMode != TextureTileMode::kLinear) {
+        Require(descriptor.samples > 1u && std::has_single_bit(descriptor.samples), "multisampled texture has an invalid sample count");
+        const auto bytesPerElement = BytesPerElement(descriptor.format);
+        Require(std::has_single_bit(bytesPerElement), "multisampled texture format has an unsupported element size");
+        const auto block = GetBlockLayout(descriptor.tileMode, bytesPerElement);
+        Require(block.blockSize == 4096u || block.blockSize == 65536u, "multisampled surface requires 4 KiB or 64 KiB blocks");
+        const auto log2Samples = static_cast<std::uint32_t>(std::countr_zero(descriptor.samples));
+        const auto log2Pixels = static_cast<std::uint32_t>(std::countr_zero(block.blockSize)) - static_cast<std::uint32_t>(std::countr_zero(bytesPerElement)) - log2Samples;
+        const auto log2Width = (log2Pixels + ((log2Samples & 1u) == 0u ? 1u : 0u)) / 2u;
+        const auto blockWidth = 1u << log2Width;
+        const auto blockHeight = 1u << (log2Pixels - log2Width);
+        const auto align = [](std::uint32_t extent, std::uint32_t blockDimension) {
+            return (static_cast<std::uint64_t>(extent) + blockDimension - 1u) / blockDimension * blockDimension;
+        };
+        geometry.guestBytes = align(descriptor.width, blockWidth) * align(descriptor.height, blockHeight) * bytesPerElement * descriptor.samples;
+        geometry.layerBytes = geometry.guestBytes;
+        geometry.layers = 1;
+        geometry.imageLayers = 1;
+        geometry.imageDepth = 1;
+        geometry.sliceLinearBytes = static_cast<std::uint64_t>(descriptor.width) * descriptor.height * descriptor.samples * bytesPerElement;
+        geometry.mips.push_back({0u, geometry.guestBytes, 0u, geometry.sliceLinearBytes, descriptor.width, descriptor.height, static_cast<std::uint32_t>(align(descriptor.width, blockWidth) / blockWidth), descriptor.width * descriptor.samples * bytesPerElement, false, 0u, 0u});
         return geometry;
     }
     geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
@@ -433,6 +464,45 @@ bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t leve
         if (mip.tiledOffset + mip.tiledSize > extended.layerBytes) return false;
     }
     return true;
+}
+
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed) {
+    const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
+    if (!layered || viewed.baseArray == 0 || viewed.baseArray > viewed.depthOrLastArray || viewed.dccAddress != 0) return viewed;
+    if (const auto xorMode = XorSwizzleMode(viewed.tileMode); xorMode != 0u) {
+        const auto* equation = FindTextureSwizzleEquation(xorMode, BytesPerElement(viewed.format));
+        if (equation == nullptr) return viewed;
+        std::uint32_t sliceBits = 0;
+        for (const auto bit : equation->bits) sliceBits |= bit >> 24u;
+        const auto sliceMask = sliceBits == 0 ? 0u : (1u << std::bit_width(sliceBits)) - 1u;
+        if ((viewed.baseArray & sliceMask) != 0) return viewed;
+    }
+    const auto geometry = DescribeSurface(viewed);
+    if (geometry.thick || geometry.layers != viewed.depthOrLastArray + 1u) return viewed;
+    auto window = viewed;
+    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(viewed.baseArray);
+    window.depthOrLastArray = viewed.depthOrLastArray - viewed.baseArray;
+    window.baseArray = 0;
+    return window;
+}
+
+GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers) {
+    const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
+    if (viewed.depthOrLastArray < maxArrayLayers || !layered) return viewed;
+    Require(viewed.dimension != TextureDimension::kCube, "an image with more layers than maxImageArrayLayers that is not a 1D or 2D array is not implemented");
+    Require(viewed.baseArray <= viewed.depthOrLastArray, "an image view's first array slice lies past its last");
+    Require(viewed.depthOrLastArray - viewed.baseArray < maxArrayLayers, "an image view of more array slices than maxImageArrayLayers is not implemented");
+    if (const auto xorMode = XorSwizzleMode(viewed.tileMode); xorMode != 0u) {
+        const auto* equation = FindTextureSwizzleEquation(xorMode, BytesPerElement(viewed.format));
+        Require(equation != nullptr && std::none_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0; }), "an image view past maxImageArrayLayers of a swizzle that depends on the slice is not implemented");
+    }
+    const auto geometry = DescribeSurface(viewed);
+    Require(!geometry.thick && geometry.layers == viewed.depthOrLastArray + 1u, "an array past maxImageArrayLayers must be a thin array");
+    auto window = viewed;
+    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(viewed.baseArray);
+    window.depthOrLastArray = viewed.depthOrLastArray - viewed.baseArray;
+    window.baseArray = 0;
+    return window;
 }
 
 std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {

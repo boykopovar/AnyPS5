@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <barrier>
 #include <chrono>
@@ -12,33 +15,14 @@
 
 class FileStream;
 
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelClose(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI flock_nid_postfix(int, int);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-FileStream* APS5_VABI fdopen_nid_postfix(int, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-}
-
 static void Require(bool condition) {
     if (!condition) std::abort();
 }
 
-static int Duplicate(int source, int kind) {
+static int Duplicate(int source, int kind, int target = 20) {
     if (kind == 0) return dup_nid_postfix(source);
-    if (kind == 1) return dup2_nid_postfix(source, 20);
-    return fcntl_nid_postfix(source, 0, 20);
+    if (kind == 1) return dup2_nid_postfix(source, target);
+    return fcntl_nid_postfix(source, 0, target);
 }
 
 static bool Acquires(int descriptor, int mode) {
@@ -53,7 +37,8 @@ static bool Acquires(int descriptor, int mode) {
 
 struct Fixture {
     static inline unsigned serial = 0;
-    std::string path = (std::filesystem::temp_directory_path() / ("anyps5-flock-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(serial++) + ".bin")).string();
+    std::filesystem::path native = std::filesystem::temp_directory_path() / ("anyps5-flock-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(serial++) + ".bin");
+    std::string path = native.string();
     std::set<int> descriptors;
     int source = Open(true);
     int other = Open(false);
@@ -64,8 +49,8 @@ struct Fixture {
         descriptors.insert(descriptor);
         return descriptor;
     }
-    int Copy(int kind, int from = -1) {
-        const int descriptor = Duplicate(from < 0 ? source : from, kind);
+    int Copy(int kind, int from = -1, int target = 20) {
+        const int descriptor = Duplicate(from < 0 ? source : from, kind, target);
         Require(descriptor >= 0);
         descriptors.insert(descriptor);
         return descriptor;
@@ -76,7 +61,7 @@ struct Fixture {
     }
     ~Fixture() {
         for (const int descriptor : descriptors) Require(close_nid_postfix(descriptor) == 0);
-        Require(std::remove(path.c_str()) == 0);
+        Require(std::filesystem::remove(native));
     }
 };
 
@@ -258,16 +243,17 @@ static void Streams() {
     Require(fclose_nid_postfix(stream) == 0);
 }
 
-static int ChildTry(const std::string& path, int mode) {
+static int ChildTry(const Fixture (&fixtures)[6], int mode) {
     wchar_t executable[32768];
     Require(::GetModuleFileNameW(nullptr, executable, 32768) != 0);
-    std::wstring command = L"\"" + std::wstring(executable) + L"\" child \"" + std::filesystem::path(path).wstring() + L"\" " + std::to_wstring(mode | 4);
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" child " + std::to_wstring(mode | 4);
+    for (const Fixture& fixture : fixtures) command += L" \"" + fixture.native.filename().wstring() + L"\"";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     Require(::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != 0);
     ::CloseHandle(process.hThread);
-    if (::WaitForSingleObject(process.hProcess, 3000) != WAIT_OBJECT_0) {
+    if (::WaitForSingleObject(process.hProcess, 30000) != WAIT_OBJECT_0) {
         ::TerminateProcess(process.hProcess, 99);
         std::abort();
     }
@@ -278,30 +264,56 @@ static int ChildTry(const std::string& path, int mode) {
 }
 
 static void Processes() {
-    for (int kind = 0; kind != 3; ++kind) {
-        for (int mode : {1, 2}) {
-            Fixture fixture;
-            Require(flock_nid_postfix(fixture.source, mode | 4) == 0);
-            const int copy = fixture.Copy(kind);
-            Require(ChildTry(fixture.path, 2) == 35);
-            Require(ChildTry(fixture.path, 1) == (mode == 1 ? 0 : 35));
-            fixture.Close(fixture.source);
-            Require(ChildTry(fixture.path, 2) == 35);
-            Require(flock_nid_postfix(copy, 8) == 0);
-            Require(ChildTry(fixture.path, 2) == 0);
-        }
+    Fixture fixtures[6];
+    int copies[6];
+    int shared = 0;
+    for (int index = 0; index != 6; ++index) {
+        const int mode = index % 2 == 0 ? 1 : 2;
+        if (mode == 1) shared |= 1 << index;
+        Require(flock_nid_postfix(fixtures[index].source, mode | 4) == 0);
+        copies[index] = fixtures[index].Copy(index / 2, -1, 100 + index);
     }
+    Require(ChildTry(fixtures, 2) == 0x3f);
+    Require(ChildTry(fixtures, 1) == (0x3f & ~shared));
+    for (Fixture& fixture : fixtures) fixture.Close(fixture.source);
+    Require(ChildTry(fixtures, 2) == 0x3f);
+    for (const int copy : copies) Require(flock_nid_postfix(copy, 8) == 0);
+    Require(ChildTry(fixtures, 2) == 0);
+}
+
+static void Directories() {
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / ("anyps5-flock-dir-" + std::to_string(::GetCurrentProcessId()));
+    std::filesystem::create_directories(directory);
+    const std::string path = directory.string();
+    const int descriptor = open_nid_postfix(path.c_str(), 0x20000, 0);
+    Require(descriptor >= 0);
+    Require(flock_nid_postfix(descriptor, 1 | 4) == 0);
+    Require(flock_nid_postfix(descriptor, 2 | 4) == 0);
+    Require(flock_nid_postfix(descriptor, 2) == 0);
+    Require(flock_nid_postfix(descriptor, 8) == 0);
+    Require(flock_nid_postfix(descriptor, 0) == -1 && *__error_nid_postfix() == 9);
+    Require(flock_nid_postfix(descriptor, 4) == -1 && *__error_nid_postfix() == 9);
+    Require(close_nid_postfix(descriptor) == 0);
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
 }
 
 int main(int argc, char** argv) {
-    if (argc == 4 && std::string(argv[1]) == "child") {
-        const int descriptor = open_nid_postfix(argv[2], 2, 0);
-        Require(descriptor >= 0);
-        const int result = flock_nid_postfix(descriptor, std::atoi(argv[3]));
-        const int error = result == 0 ? 0 : *__error_nid_postfix();
-        if (result == 0) Require(flock_nid_postfix(descriptor, 8) == 0);
-        Require(close_nid_postfix(descriptor) == 0);
-        return error;
+    if (argc >= 4 && std::string(argv[1]) == "child") {
+        int busy = 0;
+        for (int index = 3; index < argc; ++index) {
+            const std::string path = (std::filesystem::temp_directory_path() / argv[index]).string();
+            const int descriptor = open_nid_postfix(path.c_str(), 2, 0);
+            Require(descriptor >= 0);
+            if (flock_nid_postfix(descriptor, std::atoi(argv[2])) == 0) {
+                Require(flock_nid_postfix(descriptor, 8) == 0);
+            } else {
+                Require(*__error_nid_postfix() == 35);
+                busy |= 1 << (index - 3);
+            }
+            Require(close_nid_postfix(descriptor) == 0);
+        }
+        return busy;
     }
     Require(argc == 2);
     const std::string mode = argv[1];
@@ -311,5 +323,6 @@ int main(int argc, char** argv) {
     else if (mode == "threads") Threads();
     else if (mode == "streams") Streams();
     else if (mode == "process") Processes();
+    else if (mode == "directory") Directories();
     else std::abort();
 }

@@ -58,7 +58,10 @@ struct MockDevice {
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
+    VkResult allocationResult = VK_SUCCESS;
+    std::uint64_t allocationAttempts = 0;
     std::uint64_t nextAddress = 0x500000000ull;
+    VkDeviceSize sparseAlignment = Alignment;
 };
 
 MockDevice mock;
@@ -111,12 +114,15 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyBuffer(VkDevice, VkBuffer buffer, const Vk
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    requirements->size = (mock.sizes.at(buffer) + Alignment - 1) / Alignment * Alignment;
-    requirements->alignment = Alignment;
+    const auto alignment = mock.sparse.contains(buffer) ? mock.sparseAlignment : Alignment;
+    requirements->size = (mock.sizes.at(buffer) + alignment - 1) / alignment * alignment;
+    requirements->alignment = alignment;
     requirements->memoryTypeBits = 1;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+    ++mock.allocationAttempts;
+    if (mock.allocationResult != VK_SUCCESS) return mock.allocationResult;
     *memory = reinterpret_cast<VkDeviceMemory>(mock.next++);
     mock.memories[*memory] = info->allocationSize;
     return VK_SUCCESS;
@@ -305,16 +311,65 @@ void ImportsALargeRangeAsOneSparseBuffer() {
     Expect(memories.size() == chunks, "two parts of the range are bound to the same chunk import");
 }
 
-void UnalignedOffsetIsDecidedBeforeImporting() {
+void UnalignedOffsetStartsAtTheBlockBelow() {
     const auto bytes = RangeBytes();
-    SharedRange range(bytes, 4096, true);
+    constexpr std::uint64_t lead = 4096;
+    SharedRange range(bytes, lead, true);
     const auto context = mockContext();
     mock.binds.clear();
+    const auto address = mock.nextAddress;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, range.Address(), static_cast<std::size_t>(bytes));
+    Expect(import != nullptr, "a range whose backing offset is not 64 KiB aligned was not imported above udmabuf's size limit");
+    if (import == nullptr) return;
+    Expect(mock.sparse.contains(import->buffer) && import->lead == lead, "the import does not start its sparse buffer at the 64 KiB block below the range");
+    Expect(import->address == address + lead && HostImportOffset(*import, range.Address()) == lead, "the import's device address or buffer offset does not point at the range itself");
+    Expect(!mock.binds.empty() && mock.binds.front().resourceOffset == 0 && mock.binds.front().memoryOffset == 0, "the first bind does not map the block below the range");
+    VkDeviceSize bound = 0;
+    for (const auto& bind : mock.binds) bound += bind.size;
+    Expect(bound >= lead + bytes, "the binds do not cover the range after its lead");
+}
+
+void LargerSparseBlockIsDecidedBeforeImporting() {
+    const auto bytes = RangeBytes();
+    SharedRange range(bytes, Alignment, true);
+    const auto context = mockContext();
+    mock.binds.clear();
+    mock.sparseAlignment = 2 * Alignment;
     const auto memories = mock.memories.size();
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     const auto* import = HostImportFor(context, range.Address(), static_cast<std::size_t>(bytes));
+    mock.sparseAlignment = Alignment;
     Expect(import == nullptr, "a range whose backing offset is not on the sparse block size was imported above udmabuf's size limit");
     Expect(mock.memories.size() == memories && mock.binds.empty(), "a chunk was imported or bound for a range that does not take the sparse path");
+}
+
+void RetainsFailedWindowAcrossUnrelatedMutation() {
+    constexpr std::uint64_t window = 4ull << 20u;
+    SharedRange range(window * 2, 0, true);
+    const auto context = mockContext();
+    SetHostImportRangeWindow(window);
+    mock.allocationResult = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    const auto address = range.Address() + window;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto attempts = mock.allocationAttempts;
+    Expect(HostImportFor(context, address, Alignment) == nullptr, "the failed import window was accepted");
+    const auto failedAttempts = mock.allocationAttempts;
+    Expect(failedAttempts > attempts, "the import window did not reach allocation");
+    Expect(HostImportFor(context, address, Alignment) == nullptr && mock.allocationAttempts == failedAttempts, "an unchanged failed window was retried");
+    SharedRange unrelated(Alignment, 0, true);
+    Expect(HostImportFor(context, address, Alignment) == nullptr && mock.allocationAttempts == failedAttempts, "an unrelated registry change retried a failed import window");
+    Expect(HostImportFor(context, range.Address(), Alignment) == nullptr && mock.allocationAttempts > failedAttempts, "a different import window inherited the first window's failure");
+    const auto beforeRemap = mock.allocationAttempts;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(range.backing.base);
+        mutation.Add(range.backing.base, static_cast<std::size_t>(range.backing.bytes), true, true, true);
+    }
+    mock.allocationResult = VK_SUCCESS;
+    const auto* imported = HostImportFor(context, address, Alignment);
+    Expect(imported != nullptr && imported->base == address && imported->bytes == window && mock.allocationAttempts > beforeRemap, "a remapped failed import window was not retried successfully");
+    SetHostImportRangeWindow(64ull << 20u);
 }
 
 void FailureAfterTheDecisionThrows(bool sealed, VkResult bind, const char* step) {
@@ -355,9 +410,11 @@ int main() {
         SettlingSurvivesDeviceReplacement(false);
         SettlingSurvivesDeviceReplacement(true);
         ImportsALargeRangeAsOneSparseBuffer();
-        UnalignedOffsetIsDecidedBeforeImporting();
+        UnalignedOffsetStartsAtTheBlockBelow();
+        LargerSparseBlockIsDecidedBeforeImporting();
         FailureAfterTheDecisionThrows(false, VK_SUCCESS, "UDMABUF_CREATE");
         FailureAfterTheDecisionThrows(true, VK_ERROR_DEVICE_LOST, "vkQueueBindSparse");
+        RetainsFailedWindowAcrossUnrelatedMutation();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

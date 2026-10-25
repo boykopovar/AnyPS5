@@ -117,6 +117,32 @@ int main() {
         const auto threeDNowInfo = decoder.DecodeInstruction(threeDNow.data(), threeDNow.size());
         require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
         require(threeDNowInfo.HasRipRelativeDisp && threeDNowInfo.RipRelativeDispOffset == 3, "3DNow! RIP-relative displacement was not reported");
+        for (const auto& testCase : std::vector<std::pair<const char*, bool>>{
+            {"6590", false},
+            {"654889c8", false},
+            {"65488b0c2578030000", true},
+            {"65a4", true},
+            {"650fa2", false},
+            {"650ff7c1", true},
+            {"65660ff7c1", true},
+            {"65c5f9f7c1", true},
+            {"65c4e179f7c1", true},
+            {"650f01c8", true},
+            {"650f01fa", true},
+            {"650f01fc", true},
+            {"650f01c9", false},
+            {"650f01fd", false},
+            {"65f30faef0", true},
+            {"f20faef0", false},
+            {"660faef0", false},
+            {"f30faee8", false},
+            {"ff10", true},
+            {"ffe0", false},
+        }) {
+            const auto bytes = parse(testCase.first);
+            require(decoder.DecodeInstruction(bytes.data(), bytes.size()).HasMemoryOperand == testCase.second,
+                    "Wrong memory operand presence for " + std::string(testCase.first));
+        }
         std::cout << "Decoder length tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

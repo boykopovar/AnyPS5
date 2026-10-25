@@ -9,6 +9,7 @@
 struct ParsedParamJson {
     std::string title;
     std::string titleId;
+    std::string contentVersion;
     std::uint64_t downloadDataSizeMiB = 0;
     std::uint32_t attribute3 = 0;
     std::optional<std::uint64_t> flexibleMemorySizeBytes;

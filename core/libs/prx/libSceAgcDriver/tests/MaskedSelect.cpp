@@ -987,6 +987,42 @@ int main() {
         return StencilReferenceValues(b.program) == std::vector<std::uint32_t>{0u, 255u} && !StencilReplaySafe(b.program);
     });
 
+    passed &= run("an unprovable stencil reference replays every eight-bit value", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& zero = b.constant(0u);
+        auto& reference = b.emit(IrOpcode::UndefU32, IrType::U32, {});
+        ExportInfo info{};
+        info.kind = ExportTargetKind::MrtZ;
+        info.en = 2u;
+        info.vm = true;
+        b.program.Metadata().exportInfo.push_back(info);
+        ExportFlags flags{0u};
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &flags, sizeof(flags));
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&zero, &reference, &zero, &zero});
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.truth()}, bits);
+        const auto values = StencilReferenceValues(b.program);
+        return values.size() == 256u && values.front() == 0u && values.back() == 255u;
+    });
+
+    passed &= run("a proven stencil reference replays its eight-bit value", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& zero = b.constant(0u);
+        ExportInfo info{};
+        info.kind = ExportTargetKind::MrtZ;
+        info.en = 2u;
+        info.vm = true;
+        b.program.Metadata().exportInfo.push_back(info);
+        ExportFlags flags{0u};
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &flags, sizeof(flags));
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&zero, &b.constant(300u), &zero, &zero});
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.truth()}, bits);
+        return StencilReferenceValues(b.program) == std::vector<std::uint32_t>{44u};
+    });
+
     passed &= run("stencil replay admits own-lane masks and their whole-quad expansion as export guards", [&] {
         Builder b;
         b.program.Resources().stage = IrShaderStage::Pixel;
@@ -1028,6 +1064,38 @@ int main() {
         auto& real = b.ballotBit(helperPredicate(b, false));
         stencilByMask(b, wholeQuads(b, b.logicalAnd(real, pixelPredicate(b))));
         return StencilReplaySafe(b.program);
+    });
+
+    passed &= run("read-only BDA reads can be replayed and BDA writes cannot", [] {
+        Builder b;
+        b.program.Info().usesDma = true;
+        if (!StencilReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = true;
+        return !StencilReplaySafe(b.program);
+    });
+
+    const auto execCopy = [](Builder& b, IrValue& low, IrValue& high) -> IrValue& {
+        auto& active = b.emit(IrOpcode::Ballot, IrType::U32x4, {&b.truth()});
+        auto& lanes = b.emit(IrOpcode::CompositeConstructU64, IrType::U64, {&b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&active, &b.constant(0u)}), &b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&active, &b.constant(1u)})});
+        auto& wqm = b.emit(IrOpcode::WqmU64, IrType::U64, {&lanes});
+        return b.threadBit(b.wordAnd(low, b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqm, &b.constant(0u)})), b.wordAnd(high, b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqm, &b.constant(1u)})));
+    };
+
+    passed &= run("an exec copy masked by the whole-quad active lanes is a stable export guard", [&] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        const auto [low, high] = b.ballotWords(pixelPredicate(b));
+        exportUnder(b, execCopy(b, *low, *high), true, true);
+        return StencilReplaySafe(b.program);
+    });
+
+    passed &= run("an exec copy does not hide helper participation in a whole-quad expansion", [&] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        const auto [low, high] = b.ballotWords(helperPredicate(b, true));
+        auto& wqm = b.emit(IrOpcode::WqmU64, IrType::U64, {&b.emit(IrOpcode::CompositeConstructU64, IrType::U64, {low, high})});
+        stencilByMask(b, execCopy(b, b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqm, &b.constant(0u)}), b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqm, &b.constant(1u)})));
+        return !StencilReplaySafe(b.program);
     });
 
     passed &= run("only guarded read-only SRT diagnostics can be replayed", [] {

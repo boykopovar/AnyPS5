@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <cstddef>
 #include <cstring>
 #include <optional>
@@ -6,6 +7,7 @@
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -30,7 +32,7 @@ int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDeta
         }
         if (data != nullptr) {
             std::memset(data, 0, sizeof(*data));
-            data->unlocked_trophies = NP_TROPHY2_UNLOCKED_TROPHIES;
+            data->unlocked_trophies = static_cast<std::uint32_t>(NpTrophy2::ContextUnlockCount(context));
             data->unlocked_platinum = NP_TROPHY2_UNLOCKED_PLATINUM;
             data->unlocked_gold = NP_TROPHY2_UNLOCKED_GOLD;
             data->unlocked_silver = NP_TROPHY2_UNLOCKED_SILVER;
@@ -39,7 +41,7 @@ int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDeta
         }
         return SCE_NP_TROPHY2_OK;
     }
-    const auto counts = NpTrophy2::CountTrophies(*package, std::nullopt);
+    const auto counts = NpTrophy2::CountTrophies(*package, std::nullopt, NpTrophy2::UnlockedBy(owner->userId, owner->serviceLabel));
     if (details != nullptr) {
         std::memset(details, 0, sizeof(*details));
         details->num_groups = static_cast<std::uint32_t>(package->groups.size());

@@ -321,9 +321,10 @@ int main() {
             }
             Require(refused, "unsafe primitive routing was not refused");
         }
-        bool unknownRefused = false;
-        try { Draw(*device, ColumnPixelCode, exported, replace()); } catch (const std::exception& error) { unknownRefused = std::string(error.what()).find("proven set") != std::string::npos; }
-        Require(unknownRefused, "unbounded stencil reference was not refused");
+        Draw(*device, ColumnPixelCode, exported, replace());
+        Check(all, "unbounded stencil export");
+        Draw(*device, PlainPixelCode, plain, equal(5u));
+        Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "unbounded stencil export replaces each column's own value");
         bool earlyRefused = false;
         try { Draw(*device, alternating, 0x1012u, replace()); } catch (const std::exception& error) { earlyRefused = std::string(error.what()).find("late tests") != std::string::npos; }
         Require(earlyRefused, "early stencil testing was not refused");

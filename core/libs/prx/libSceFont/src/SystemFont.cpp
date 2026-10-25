@@ -37,7 +37,7 @@ constexpr std::array<std::uint32_t, 120> SYSTEM_FONT_SET_TYPES = {
     0x1A0825C3u, 0x1A0825C7u, 0x1A083553u, 0x1A083557u, 0x1A0835D3u, 0x1A0835D7u,
 };
 
-enum class Family { Latin, LatinItalic, Typewriter, Vietnamese, Thai, Japanese, ChineseGb };
+enum class Family { Latin, LatinItalic, Typewriter, Vietnamese, Thai, Japanese, ChineseGb, Hangul, Arabic };
 
 struct FamilyFiles {
     std::array<std::string_view, 4> system;
@@ -45,7 +45,7 @@ struct FamilyFiles {
     std::uint32_t substituteSubFont;
 };
 
-constexpr std::array<FamilyFiles, 7> FAMILY_FILES = {{
+constexpr std::array<FamilyFiles, 9> FAMILY_FILES = {{
     {{"SST-Light.otf", "SST-Roman.otf", "SST-Medium.otf", "SST-Bold.otf"},
      {"NotoSans-Light.ttf", "NotoSans-Regular.ttf", "NotoSans-Medium.ttf", "NotoSans-Bold.ttf"}, 0},
     {{"SST-LightItalic.otf", "SST-Italic.otf", "SST-MediumItalic.otf", "SST-BoldItalic.otf"},
@@ -60,6 +60,10 @@ constexpr std::array<FamilyFiles, 7> FAMILY_FILES = {{
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 0},
     {{"DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf"},
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 2},
+    {{"SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Bold.otf"},
+     {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 1},
+    {{"SSTArabic-Light.otf", "SSTArabic-Roman.otf", "SSTArabic-Medium.otf", "SSTArabic-Bold.otf"},
+     {"NotoSansArabic-Light.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Medium.ttf", "NotoSansArabic-Bold.ttf"}, 0},
 }};
 
 Family FamilyOf(std::uint32_t fontSetType) {
@@ -85,6 +89,37 @@ std::size_t WeightOf(std::uint32_t fontSetType) {
         case 0x7: return 3;
         default: return 1;
     }
+}
+
+std::vector<Family> FallbackFamilies(std::uint32_t fontSetType) {
+    const std::uint32_t scripts = (fontSetType >> 8) & 0xFFu;
+    const Family primary = FamilyOf(fontSetType);
+    std::vector<Family> families;
+    const auto add = [&](bool wanted, Family family) {
+        if (wanted && family != primary && std::find(families.begin(), families.end(), family) == families.end()) families.push_back(family);
+    };
+    add((fontSetType & 0x10u) != 0, Family::Vietnamese);
+    add((scripts & 0x10u) != 0, Family::Thai);
+    add((scripts & 0x88u) == 0x88u, Family::ChineseGb);
+    add((scripts & 0x04u) != 0, Family::Japanese);
+    add((scripts & 0x80u) != 0, Family::ChineseGb);
+    add((scripts & 0x20u) != 0, Family::Hangul);
+    add((fontSetType & 0x80u) != 0, Family::Arabic);
+    return families;
+}
+
+std::vector<Font::SystemFontFile> FamilyCandidates(Family family, std::size_t weight) {
+    const FamilyFiles& files = FAMILY_FILES[static_cast<std::size_t>(family)];
+    return {{std::filesystem::path(files.system[weight]), 0}, {std::filesystem::path(files.substitute[weight]), files.substituteSubFont}};
+}
+
+std::optional<Font::SystemFontFile> FirstExisting(const std::filesystem::path& directory, const std::vector<Font::SystemFontFile>& candidates) {
+    for (const Font::SystemFontFile& candidate : candidates) {
+        std::error_code error;
+        const std::filesystem::path path = directory / candidate.path;
+        if (std::filesystem::is_regular_file(path, error)) return Font::SystemFontFile{path, candidate.subFontIndex};
+    }
+    return std::nullopt;
 }
 
 std::filesystem::path ExecutableDirectory() {
@@ -115,14 +150,16 @@ bool Font::IsSystemFontSet(std::uint32_t fontSetType) {
 
 std::vector<Font::SystemFontFile> Font::SystemFontCandidates(std::uint32_t fontSetType) {
     if (!IsSystemFontSet(fontSetType)) return {};
-    const FamilyFiles& files = FAMILY_FILES[static_cast<std::size_t>(FamilyOf(fontSetType))];
-    const std::size_t weight = WeightOf(fontSetType);
-    return {{std::filesystem::path(files.system[weight]), 0}, {std::filesystem::path(files.substitute[weight]), files.substituteSubFont}};
+    return FamilyCandidates(FamilyOf(fontSetType), WeightOf(fontSetType));
 }
 
 std::filesystem::path Font::SystemFontDirectory() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SYSTEM_FONTS");
+#else
     const char* configured = std::getenv("ANYPS5_SYSTEM_FONTS");
-    if (!configured || configured[0] == '\0') return ExecutableDirectory() / "anyps5-fonts";
+#endif
+    if (!configured || configured[0] == 0) return ExecutableDirectory() / "anyps5-fonts";
     const std::filesystem::path directory(configured);
     std::error_code error;
     if (!std::filesystem::is_directory(directory, error)) throw std::runtime_error("libSceFont: ANYPS5_SYSTEM_FONTS is not a directory: " + directory.string());
@@ -132,11 +169,22 @@ std::filesystem::path Font::SystemFontDirectory() {
 std::optional<Font::SystemFontFile> Font::FindSystemFontFile(std::uint32_t fontSetType) {
     const std::vector<SystemFontFile> candidates = SystemFontCandidates(fontSetType);
     if (candidates.empty()) return std::nullopt;
+    return FirstExisting(SystemFontDirectory(), candidates);
+}
+
+std::vector<Font::SystemFontFile> Font::FindSystemFontFallbackFiles(std::uint32_t fontSetType) {
+    if (!IsSystemFontSet(fontSetType)) return {};
     const std::filesystem::path directory = SystemFontDirectory();
-    for (const SystemFontFile& candidate : candidates) {
-        std::error_code error;
-        const std::filesystem::path path = directory / candidate.path;
-        if (std::filesystem::is_regular_file(path, error)) return SystemFontFile{path, candidate.subFontIndex};
+    const std::size_t weight = WeightOf(fontSetType);
+    std::vector<SystemFontFile> files;
+    const std::optional<SystemFontFile> primary = FirstExisting(directory, SystemFontCandidates(fontSetType));
+    const auto opened = [&](const SystemFontFile& file) {
+        const auto same = [&](const SystemFontFile& other) { return other.path == file.path && other.subFontIndex == file.subFontIndex; };
+        return (primary && same(*primary)) || std::any_of(files.begin(), files.end(), same);
+    };
+    for (const Family family : FallbackFamilies(fontSetType)) {
+        auto file = FirstExisting(directory, FamilyCandidates(family, weight));
+        if (file && !opened(*file)) files.push_back(std::move(*file));
     }
-    return std::nullopt;
+    return files;
 }

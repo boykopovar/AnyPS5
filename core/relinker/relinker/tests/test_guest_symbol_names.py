@@ -4,7 +4,9 @@ import subprocess
 import sys
 import tempfile
 
+from guest_import_fixtures import dynamic
 from test_guest_intel_trampolines import PLAIN_SITE, elf_loads, guest_fixture, main_fixture
+from test_guest_module_directories import needed_libraries
 from test_windows_import_modules import consumer, provider
 
 DYNAMIC = 0x4800
@@ -34,6 +36,21 @@ def guest_module(symbols):
     for index, (offset, (_, exported)) in enumerate(zip(offsets, symbols), 1):
         struct.pack_into("<IBBHQQ", image, 0x880 + index * 24, offset, 0x12, 0,
                          1 if exported else 0, 0x1000 if exported else 0, 1 if exported else 0)
+    return image
+
+
+def needed_module_import(exported, imported, owner, needed_module_tags=(0x6100000F,)):
+    image = guest_fixture(PLAIN_SITE)
+    strings, offsets = string_table([exported, imported, owner, owner[:-len(".prx")]])
+    assert len(strings) <= 0x40
+    image[0x800:0x800 + len(strings)] = strings
+    struct.pack_into("<IIIIII", image, 0x840, 1, 3, 1, 0, 2, 0)
+    struct.pack_into("<IBBHQQ", image, 0x898, offsets[0], 0x12, 0, 1, 0x1000, 1)
+    struct.pack_into("<IBBHQQ", image, 0x8B0, offsets[1], 0x12, 0, 0, 0, 0)
+    struct.pack_into("<QQq", image, 0x900, 0x2320, (2 << 32) | 6, 0)
+    dynamic(image, 0x600, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
+                                (4, 0x2240), (7, 0x2300), (8, 24), (9, 24), (1, offsets[2]),
+                                *((tag, (1 << 48) | offsets[3]) for tag in needed_module_tags)])
     return image
 
 
@@ -186,6 +203,64 @@ def main():
         assert exporter == ["shared#guest"], exporter
         importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
         assert "shared" in importer and "shared#guest" not in importer, importer
+
+        guests = relink(relinker, work / "guest-declared-ps4", importing_executable([]), {
+            "b.prx": provider(7),
+            "c.prx": consumer("libSceLibcInternal.prx", module_name="libSceLibcInternal", needed_module_tag=0x6100000F),
+        }).parent / "app0" / "sce_module"
+        importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
+        assert "shared" in importer and "shared#guest" not in importer, importer
+
+        for windows in (False, True):
+            for tag in (0x61000045, 0x6100000F):
+                case = work / f"needed-module-order-{windows}-{tag:x}"
+                (case / "sce_module").mkdir(parents=True)
+                (case / "input.elf").write_bytes(importing_executable([]))
+                (case / "sce_module" / "libc.prx").write_bytes(
+                    needed_module_import("XXXXXXXXXXX", "YYYYYYYYYYY#A#B", "libkernel.prx", (tag,)))
+                (case / "sce_module" / "libSceFios2.prx").write_bytes(
+                    needed_module_import("YYYYYYYYYYY", "XXXXXXXXXXX#A#B", "libc.prx", (tag,)))
+                output = case / ("output.exe" if windows else "output.elf")
+                result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(case / "input.elf"), str(output)],
+                                        capture_output=True, text=True, timeout=30)
+                assert result.returncode == 0, (windows, hex(tag), result.stdout, result.stderr)
+                if not windows:
+                    modules = case / "app0" / "sce_module"
+                    libc = module_symbols((modules / "libc.prx.guest.prx").read_bytes())
+                    assert libc == ["XXXXXXXXXXX#guest", "YYYYYYYYYYY"], libc
+                    fios = module_symbols((modules / "libSceFios2.prx.guest.prx").read_bytes())
+                    assert fios == ["YYYYYYYYYYY#guest", "XXXXXXXXXXX#guest"], fios
+                    needed = needed_libraries(output.read_bytes())
+                    assert needed[:2] == ["$ORIGIN/app0/sce_module/libc.prx.guest.prx",
+                                          "$ORIGIN/app0/sce_module/libSceFios2.prx.guest.prx"], needed
+
+        case = work / "needed-module-mixed"
+        (case / "sce_module").mkdir(parents=True)
+        (case / "input.elf").write_bytes(importing_executable([]))
+        module = case / "sce_module" / "libc.prx"
+        module.write_bytes(needed_module_import("XXXXXXXXXXX", "YYYYYYYYYYY#A#B", "libkernel.prx", (0x6100000F, 0x61000045)))
+        result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 2 and f"{module}: Guest module mixes PS4 and PS5 needed-module tags\n" in result.stderr, result.stderr
+        assert not (case / "output.elf").exists()
+
+        case = work / "needed-module-unknown-id"
+        (case / "sce_module").mkdir(parents=True)
+        (case / "input.elf").write_bytes(importing_executable([]))
+        module = case / "sce_module" / "libc.prx"
+        module.write_bytes(needed_module_import("XXXXXXXXXXX", "YYYYYYYYYYY#A#C", "libkernel.prx"))
+        result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 2 and "Unknown import module ID: YYYYYYYYYYY#A#C\n" in result.stderr \
+            and f"Input: {module}\n" in result.stderr, result.stderr
+        assert not (case / "output.elf").exists()
+
+        guests = relink(relinker, work / "guest-unmatched-ps4", importing_executable([]), {
+            "b.prx": provider(7),
+            "c.prx": consumer("libFoo2.prx", module_name="libFoo", needed_module_tag=0x6100000F),
+        }).parent / "app0" / "sce_module"
+        importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
+        assert "shared#guest" in importer, importer
     print("Guest symbol name tests passed")
 
 

@@ -3,7 +3,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include "../AllocationFailure.hpp"
+#include "../SlabReturn.hpp"
 #include <SDL_loadso.h>
 #include <array>
 #include <cstdint>
@@ -142,6 +144,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -153,6 +157,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -161,22 +171,11 @@ public:
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             const auto properties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
-            const auto* requested = std::getenv("ANYPS5_GPU");
-            const bool named = requested != nullptr && *requested != '\0';
-            context.physical = devices.front();
-            for (const auto candidate : devices) {
-                VkPhysicalDeviceProperties described{};
-                properties(candidate, &described);
-                if (named ? std::strstr(described.deviceName, requested) != nullptr : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                    context.physical = candidate;
-                    break;
-                }
-            }
+            context.physical = SelectFixturePhysicalDevice(devices, properties);
             VkPhysicalDeviceProperties selected{};
             properties(context.physical, &selected);
             context.limits = selected.limits;
             std::printf("device %s vendor=0x%x device=0x%x driver=0x%x\n", selected.deviceName, selected.vendorID, selected.deviceID, selected.driverVersion);
-            Require(requested == nullptr || std::strstr(selected.deviceName, requested) != nullptr, "selected device does not match ANYPS5_GPU");
             VkPhysicalDeviceFeatures supported{};
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             Require(supported.robustBufferAccess == VK_TRUE, "the device lacks robustBufferAccess");
@@ -543,7 +542,7 @@ void ExactSizes(const Context& context) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         std::unique_ptr<Device> device;
         try {
@@ -553,7 +552,27 @@ int main() {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
-        SlabMetadataFailures(device->GetContext());
+        const auto& context = device->GetContext();
+        const bool onlyReturns = argc == 2;
+        const bool hostOnly = onlyReturns && std::strcmp(argv[1], "--slab-return-host") == 0;
+        Require(!onlyReturns || hostOnly || std::strcmp(argv[1], "--slab-return-device") == 0, "unknown slab return test mode");
+        bool host = false;
+        bool local = false;
+        for (std::uint32_t type = 0; type < context.memory.memoryTypeCount; ++type) {
+            const auto flags = context.memory.memoryTypes[type].propertyFlags;
+            const bool isHost = (flags & HostMemory) == HostMemory;
+            const bool isLocal = (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0;
+            if ((!host && isHost && (!onlyReturns || hostOnly)) || (!local && isLocal && (!onlyReturns || !hostOnly))) {
+                const auto before = LiveBytes;
+                AgcDriver::Tests::SlabReturnWithoutAllocation(context, type);
+                Require(LiveBytes == before && AllocationErrors == 0, "slab returns leaked or invalidly freed native Vulkan memory");
+                host |= isHost;
+                local |= isLocal;
+            }
+        }
+        Require(onlyReturns ? (hostOnly ? host : local) : host, "no requested memory type for the slab return test");
+        if (onlyReturns) return 0;
+        SlabMetadataFailures(context);
         RobustReadPastEnd(device->GetContext());
         DeviceBindingFailures(device->GetContext());
         ExactSizes(device->GetContext());

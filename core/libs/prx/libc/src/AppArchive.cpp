@@ -22,8 +22,8 @@ struct Archive {
 };
 
 Archive& State() {
-    static Archive archive;
-    return archive;
+    static auto* archive = new Archive;
+    return *archive;
 }
 
 bool SameComponent(std::string_view left, std::string_view right) {

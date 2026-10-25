@@ -114,12 +114,14 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
 void SpirvModule::BeginHelperFunction() {
     if (inHelperFunction) throw std::runtime_error("SpirvModule helper functions cannot nest");
     std::swap(functionInstructions, helperFunctionInstructions);
+    std::swap(ballots, helperBallots);
     inHelperFunction = true;
 }
 
 void SpirvModule::EndHelperFunction() {
     if (!inHelperFunction) throw std::runtime_error("SpirvModule::EndHelperFunction without a helper function");
     std::swap(functionInstructions, helperFunctionInstructions);
+    std::swap(ballots, helperBallots);
     inHelperFunction = false;
 }
 
@@ -219,6 +221,33 @@ void SpirvModule::AddName(std::uint32_t target, const std::string& name) {
 
 void SpirvModule::AddFunction(std::span<const std::uint32_t> words) {
     AppendInstructionWords(functionInstructions, words);
+}
+
+void SpirvModule::AddSubgroupBallot(std::uint32_t type, std::uint32_t result, std::uint32_t scope, std::uint32_t predicate) {
+    if (ballots.scanned > functionInstructions.size()) throw std::runtime_error("SpirvModule function instructions shrank under a subgroup ballot");
+    for (auto offset = ballots.scanned; offset < functionInstructions.size();) {
+        const auto wordCount = functionInstructions[offset] >> spv::WordCountShift;
+        if (wordCount == 0u || wordCount > functionInstructions.size() - offset) throw std::runtime_error("SpirvModule malformed function instruction before a subgroup ballot");
+        switch (functionInstructions[offset] & spv::OpCodeMask) {
+        case spv::OpLabel:
+        case spv::OpFunction:
+        case spv::OpFunctionEnd:
+        case spv::OpFunctionCall:
+        case spv::OpDemoteToHelperInvocation:
+            ballots.results.clear();
+            break;
+        default:
+            break;
+        }
+        offset += wordCount;
+    }
+    const auto [found, inserted] = ballots.results.try_emplace({type, scope, predicate}, result);
+    if (inserted) {
+        appendInstruction(functionInstructions, spv::OpGroupNonUniformBallot, type, result, scope, predicate);
+    } else {
+        appendInstruction(functionInstructions, spv::OpCopyObject, type, result, found->second);
+    }
+    ballots.scanned = functionInstructions.size();
 }
 
 void SpirvModule::appendString(std::vector<std::uint32_t>& words, const std::string& text) {

@@ -1,0 +1,40 @@
+name: Pages progress
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - core/libs/prx/**
+      - core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
+
+permissions:
+  contents: read
+  actions: write
+  pages: read
+
+concurrency:
+  group: pages-progress
+  cancel-in-progress: true
+
+jobs:
+  progress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Deploy Pages if the progress changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 tools/progress.py "$RUNNER_TEMP/progress"
+          site=$(gh api "repos/$GH_REPO/pages" --jq .html_url)
+          if curl -fsSL "${site%/}/progress.json?$GITHUB_SHA" -o "$RUNNER_TEMP/deployed.json" &&
+            cmp -s "$RUNNER_TEMP/deployed.json" "$RUNNER_TEMP/progress/progress.json"; then
+            echo "Progress unchanged, Pages not deployed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh workflow run pages.yml --ref main
+            echo "Progress changed, Pages deployment dispatched" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,14 +1,23 @@
 #include "BdaShader.hpp"
 #include "ColorTransferTests.hpp"
+#include "HostImportFailure.hpp"
 #include <fstream>
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -21,9 +30,66 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 
+std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request) {
+    const auto rankDeviceType = [](VkPhysicalDeviceType type) {
+        switch (type) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 2;
+            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 1;
+            default: return 0;
+        }
+    };
+    std::optional<std::size_t> selected;
+    int selectedRank = -1;
+    for (std::size_t index = 0; index < devices.size(); ++index) {
+        const auto& candidate = devices[index];
+        if (candidate.apiVersion < VK_API_VERSION_1_1) continue;
+        const std::string_view name(candidate.deviceName);
+        if (!request.empty() && std::search(name.begin(), name.end(), request.begin(), request.end(), [](char left, char right) {
+            return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
+        }) == name.end()) continue;
+        const int rank = request.empty() ? rankDeviceType(candidate.deviceType) : 4;
+        if (rank <= selectedRank) continue;
+        selected = index;
+        selectedRank = rank;
+    }
+    return selected;
+}
+
+bool canSkipVulkanFailure(const char* requestedName, const char* requireVulkan) {
+    return (requestedName == nullptr || *requestedName == '\0') && requireVulkan == nullptr;
+}
+
+void deviceSelectionTests() {
+    const auto properties = [](const char* name, VkPhysicalDeviceType type) {
+        VkPhysicalDeviceProperties result{};
+        result.apiVersion = VK_API_VERSION_1_1;
+        result.deviceType = type;
+        std::memcpy(result.deviceName, name, std::strlen(name) + 1u);
+        return result;
+    };
+    std::array devices{
+        properties("AMD Radeon(TM) Graphics", VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU),
+        properties("NVIDIA GeForce RTX 5080", VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU),
+    };
+    Require(!selectDevice({}, {}).has_value(), "an empty Vulkan device list selected a device");
+    Require(selectDevice(devices, {}) == 1u, "default selection did not prefer the discrete GPU");
+    Require(selectDevice(devices, "AMD") == 0u, "an AMD request lost to an unrelated discrete GPU");
+    Require(selectDevice(devices, "aMd rAdEoN") == 0u, "GPU name matching was not case-insensitive");
+    Require(selectDevice(devices, "RTX 5080") == 1u, "partial GPU name matching failed");
+    Require(!selectDevice(devices, "missing device").has_value(), "an unmatched GPU request selected another device");
+    Require(canSkipVulkanFailure(nullptr, nullptr), "an optional Vulkan test without a device request cannot skip");
+    Require(canSkipVulkanFailure("", nullptr), "an empty GPU request prevents an optional Vulkan skip");
+    Require(!canSkipVulkanFailure("missing device", nullptr), "an unmatched GPU request can be reported as a skip");
+    Require(!canSkipVulkanFailure(nullptr, "1"), "a required Vulkan test can be reported as a skip");
+    devices[0].apiVersion = VK_API_VERSION_1_0;
+    Require(!selectDevice(devices, "AMD").has_value(), "a GPU without Vulkan 1.1 matched the request");
+    std::cout << "BDA device selection CPU tests passed\n";
+}
+
 class Device {
 public:
-    Device() {
+    explicit Device(bool importHostMemory = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #else
@@ -44,27 +110,29 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            const auto rankDeviceType = [](VkPhysicalDeviceType type) {
-                switch (type) {
-                    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
-                    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 2;
-                    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 1;
-                    default: return 0;
-                }
-            };
+            devices.resize(count);
             const auto physicalProperties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
-            int selectedRank = -1;
-            for (const auto physical : devices) {
-                VkPhysicalDeviceProperties candidate{};
-                physicalProperties(physical, &candidate);
-                if (candidate.apiVersion < VK_API_VERSION_1_1) continue;
-                const int rank = rankDeviceType(candidate.deviceType);
-                if (rank <= selectedRank) continue;
-                context.physical = physical;
-                selectedRank = rank;
-                cpu = candidate.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+            std::vector<VkPhysicalDeviceProperties> deviceProperties(count);
+            for (std::size_t index = 0; index < devices.size(); ++index) {
+                physicalProperties(devices[index], &deviceProperties[index]);
             }
-            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
+            const char* requestedName = std::getenv("ANYPS5_GPU");
+            const std::string_view request = requestedName != nullptr ? requestedName : "";
+            const auto selected = selectDevice(deviceProperties, request);
+            if (!selected.has_value()) {
+                if (!request.empty()) {
+                    std::string candidateNames;
+                    for (const auto& candidate : deviceProperties) {
+                        if (!candidateNames.empty()) candidateNames += ", ";
+                        candidateNames += candidate.deviceName;
+                    }
+                    throw std::runtime_error(std::string("no Vulkan 1.1 device whose name contains ANYPS5_GPU=\"") + std::string(request) + "\"; devices: " + candidateNames);
+                }
+                throw std::runtime_error("no Vulkan 1.1 device");
+            }
+            context.physical = devices[*selected];
+            cpu = deviceProperties[*selected].deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+            std::cout << "Using \"" << deviceProperties[*selected].deviceName << "\"\n";
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -86,11 +154,13 @@ public:
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
             address.pNext = &bytes;
-            const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            const bool externalHost = importHostMemory && std::any_of(available.begin(), available.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) == 0; });
+            if (externalHost) extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = 2;
+            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
             device.ppEnabledExtensionNames = extensionsEnabled.data();
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
@@ -99,6 +169,13 @@ public:
             VkPhysicalDeviceProperties properties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
+            if (externalHost) {
+                VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+                VkPhysicalDeviceProperties2 extended{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
+                function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &extended);
+                context.hostImportAlignment = host.minImportedHostPointerAlignment;
+            }
+            if (importHostMemory) std::printf("host import device %s vendor=0x%04x device=0x%04x driver=0x%08x alignment=%llu\n", properties.deviceName, properties.vendorID, properties.deviceID, properties.driverVersion, static_cast<unsigned long long>(context.hostImportAlignment));
             context.bufferDeviceAddress = true;
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -142,8 +219,11 @@ private:
 
 int main(int argc, char** argv) {
     try {
+        deviceSelectionTests();
+        if (argc == 2 && std::string_view(argv[1]) == "--device-selection-cpu") return 0;
         RunBdaContractTests();
-        if (argc == 2) {
+        const bool importFailures = argc == 2 && std::strcmp(argv[1], "--host-import-failures") == 0;
+        if (argc == 2 && !importFailures) {
             const auto shader = MakeBdaTestShader(0x7fff12340000ULL, 32);
             std::ofstream file(argv[1], std::ios::binary);
             file.write(reinterpret_cast<const char*>(shader.data()), static_cast<std::streamsize>(shader.size() * sizeof(std::uint32_t)));
@@ -152,11 +232,19 @@ int main(int argc, char** argv) {
         }
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>();
+            device = std::make_unique<Device>(importFailures);
         } catch (const std::exception& error) {
-            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+            if (!canSkipVulkanFailure(std::getenv("ANYPS5_GPU"), std::getenv("ANYPS5_REQUIRE_VULKAN"))) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
             return 77;
+        }
+        if (importFailures) {
+            if (device->GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, no external host memory import support\n";
+                return 77;
+            }
+            AgcDriver::Tests::RunHostImportFailureTests(device->GetContext(), true);
+            return 0;
         }
         Buffer buffer(device->GetContext(), 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");

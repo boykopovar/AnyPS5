@@ -5,10 +5,15 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Elfpatcher::MacOs {
+
+inline constexpr std::uint64_t ExportKindAbsolute = 2;
+inline constexpr std::uint64_t ExportWeakDefinition = 4;
 
 struct MacOsBind {
     std::string Symbol;
@@ -19,7 +24,8 @@ struct MacOsBind {
 
 struct MacOsExport {
     std::string Symbol;
-    std::uint32_t Rva;
+    std::uint64_t Value;
+    std::uint64_t Flags = 0;
 };
 
 struct MacOsTlsImport {
@@ -32,6 +38,7 @@ struct MacOsTlsImport {
 struct MacOsTlsExport {
     std::string Symbol;
     std::uint64_t Offset;
+    std::uint64_t Flags = 0;
 };
 
 struct MacOsImageInput {
@@ -54,6 +61,7 @@ struct MacOsImageInput {
     std::vector<MacOsTlsImport> TlsImports;
     std::vector<MacOsTlsExport> TlsExports;
     const std::vector<Codegen::TrampolineSite>* Trampolines = nullptr;
+    std::function<void(std::string_view)> Message;
 };
 
 std::uint64_t GuestTlsBlockSize(const Domain::ProgramHeader& tls);

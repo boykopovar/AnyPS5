@@ -9,6 +9,8 @@
 #include <mutex>
 #include <windows.h>
 
+#include "prx/libc/include/WindowsDescriptor.hpp"
+
 namespace {
 
 constexpr int LockShared = 1;
@@ -21,6 +23,14 @@ constexpr DWORD LockByteHigh = 0x7FFFFFFF;
 struct LockState {
     std::mutex mutex;
     int mode = 0;
+    HANDLE locker = nullptr;
+
+    LockState() = default;
+    LockState(const LockState&) = delete;
+    LockState& operator=(const LockState&) = delete;
+    ~LockState() {
+        if (locker != nullptr) ::CloseHandle(locker);
+    }
 };
 
 std::mutex g_mutex;
@@ -59,16 +69,21 @@ int GuestFileLock_nid_no_patch(int fd, int operation) {
         OVERLAPPED overlapped{};
         overlapped.Offset = LockByteLow;
         overlapped.OffsetHigh = LockByteHigh;
-        if (!::UnlockFileEx(handle, 0, 1, 0, &overlapped)) return -1;
+        if (!::UnlockFileEx(state->locker != nullptr ? state->locker : handle, 0, 1, 0, &overlapped)) return -1;
         state->mode = 0;
     }
     if (mode == LockUnlock) return 0;
+    if (state->locker == nullptr && (WindowsHandleAccess_nid_no_patch(handle, fd, "flock") & (FILE_READ_DATA | FILE_WRITE_DATA)) == 0) {
+        const auto locker = ::ReOpenFile(handle, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+        if (locker == INVALID_HANDLE_VALUE) return -1;
+        state->locker = locker;
+    }
     DWORD flags = mode == LockExclusive ? LOCKFILE_EXCLUSIVE_LOCK : 0;
     if (operation & LockNonblocking) flags |= LOCKFILE_FAIL_IMMEDIATELY;
     OVERLAPPED overlapped{};
     overlapped.Offset = LockByteLow;
     overlapped.OffsetHigh = LockByteHigh;
-    if (!::LockFileEx(handle, flags, 0, 1, 0, &overlapped)) return -1;
+    if (!::LockFileEx(state->locker != nullptr ? state->locker : handle, flags, 0, 1, 0, &overlapped)) return -1;
     state->mode = mode;
     return 0;
 }

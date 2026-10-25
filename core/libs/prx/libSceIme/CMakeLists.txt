@@ -23,6 +23,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 
+    add_test_executable(guest_ime_filter_text_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeFilterText.cpp)
+    target_include_directories(guest_ime_filter_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_filter_text_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_filter_text_tests)
+    add_test(NAME guest_ime_filter_text COMMAND guest_ime_filter_text_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_filter_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
     add_test_executable(guest_ime_open_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeOpen.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
     target_include_directories(guest_ime_open_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})

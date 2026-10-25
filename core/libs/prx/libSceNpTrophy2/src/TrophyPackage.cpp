@@ -336,6 +336,105 @@ TrophyDefinition readTrophy(const Json& definition, std::size_t index, std::vect
     return trophy;
 }
 
+std::optional<std::string> propertyPath(std::string_view input) {
+    if (!input.starts_with("$.")) return std::nullopt;
+    const auto path = input.substr(2);
+    bool segmentStart = true;
+    for (const char character : path) {
+        if (character == '.') {
+            if (segmentStart) return std::nullopt;
+            segmentStart = true;
+            continue;
+        }
+        const bool word = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_';
+        if (!word) return std::nullopt;
+        segmentStart = false;
+    }
+    if (segmentStart) return std::nullopt;
+    return std::string(path);
+}
+
+void readStat(const Json& definition, std::size_t index, StatRules& rules) {
+    const auto* id = definition.Find("statId");
+    const auto statId = id != nullptr ? id->Unsigned() : std::nullopt;
+    if (!statId) {
+        rules.skipped.push_back("stats_definition.json statDefinitionArray[" + std::to_string(index) + "] has no unsigned statId");
+        return;
+    }
+    const auto name = "stat " + std::to_string(*statId);
+    const auto* aggregation = definition.Find("aggregation");
+    if (aggregation == nullptr || aggregation->kind != Json::Kind::String || aggregation->text != "latest") {
+        rules.skipped.push_back(name + " has aggregation " + (aggregation != nullptr ? describe(*aggregation) : std::string("none")) + "; only \"latest\" is supported");
+        return;
+    }
+    const auto* type = definition.Find("dataType");
+    StatDefinition stat;
+    if (type != nullptr && type->kind == Json::Kind::String && type->text == "uint32") {
+        stat.type = StatType::UInt32;
+        stat.maximum = UINT32_MAX;
+    } else if (type != nullptr && type->kind == Json::Kind::String && type->text == "uint64") {
+        stat.type = StatType::UInt64;
+        stat.maximum = UINT64_MAX;
+    } else {
+        rules.skipped.push_back(name + " has dataType " + (type != nullptr ? describe(*type) : std::string("none")) + "; only \"uint32\" and \"uint64\" are supported");
+        return;
+    }
+    if (const auto* minimum = definition.Find("minValue")) {
+        const auto value = minimum->Unsigned();
+        if (!value || *value > stat.maximum) {
+            rules.skipped.push_back(name + " has minValue " + describe(*minimum) + ", which its " + type->text + " type cannot hold");
+            return;
+        }
+        stat.minimum = *value;
+    }
+    if (const auto* maximum = definition.Find("maxValue")) {
+        const auto value = maximum->Unsigned();
+        if (!value || *value > stat.maximum || *value < stat.minimum) {
+            rules.skipped.push_back(name + " has maxValue " + describe(*maximum) + ", which is not from its minValue to its " + type->text + " limit");
+            return;
+        }
+        stat.maximum = *value;
+    }
+    if (!rules.stats.emplace(*statId, stat).second) rules.skipped.push_back(name + " is defined twice; the first definition is used");
+}
+
+void readRule(const Json& rule, std::size_t index, StatRules& rules) {
+    const auto where = "stats_extraction.json statsExtractionRuleArray[" + std::to_string(index) + "]";
+    const auto* condition = rule.Find("condition");
+    const auto* action = rule.Find("action");
+    if (condition == nullptr || condition->kind != Json::Kind::Object || action == nullptr || action->kind != Json::Kind::Object) {
+        rules.skipped.push_back(where + " has no condition and action objects");
+        return;
+    }
+    const auto* event = condition->Find("eventName");
+    if (event == nullptr || event->kind != Json::Kind::String) {
+        rules.skipped.push_back(where + " has no eventName");
+        return;
+    }
+    if (condition->members.size() != 1) {
+        rules.skipped.push_back(where + " filters " + event->text + " by more than its eventName; only eventName conditions are supported");
+        return;
+    }
+    const auto* output = action->Find("output");
+    const auto* id = output != nullptr ? output->Find("statId") : nullptr;
+    const auto statId = id != nullptr ? id->Unsigned() : std::nullopt;
+    if (!statId) {
+        rules.skipped.push_back(where + " for " + event->text + " has no unsigned output statId");
+        return;
+    }
+    if (!rules.stats.contains(*statId)) {
+        rules.skipped.push_back(where + " for " + event->text + " writes stat " + std::to_string(*statId) + ", which has no supported definition");
+        return;
+    }
+    const auto* input = action->Find("input");
+    const auto path = input != nullptr && input->kind == Json::Kind::String ? propertyPath(input->text) : std::nullopt;
+    if (!path) {
+        rules.skipped.push_back(where + " for " + event->text + " reads " + (input != nullptr ? describe(*input) : std::string("no input")) + "; only \"$.name\" property paths are supported");
+        return;
+    }
+    rules.events[event->text].push_back({*path, *statId});
+}
+
 }
 
 const Json* Json::Find(std::string_view key) const {
@@ -465,6 +564,18 @@ TrophyPackage ParseTrophyPackage(std::string_view ucp, std::string_view language
         }
     }
     return package;
+}
+
+StatRules ParseStatRules(std::string_view ucp) {
+    const auto files = ReadUcp(ucp);
+    const auto definitions = document(files, "stats_definition.json");
+    const auto extraction = document(files, "stats_extraction.json");
+    const auto& stats = member(definitions, "statDefinitionArray", Json::Kind::Array, "stats_definition.json");
+    const auto& extractionRules = member(extraction, "statsExtractionRuleArray", Json::Kind::Array, "stats_extraction.json");
+    StatRules rules;
+    for (std::size_t index = 0; index < stats.items.size(); ++index) readStat(stats.items[index], index, rules);
+    for (std::size_t index = 0; index < extractionRules.items.size(); ++index) readRule(extractionRules.items[index], index, rules);
+    return rules;
 }
 
 std::string_view LanguageTag(int consoleLanguage) {

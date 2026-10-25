@@ -1,11 +1,16 @@
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
+REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
+REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
 FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
@@ -16,7 +21,7 @@ BATCH = 20000
 class Build:
     def __init__(self, path):
         cache = {}
-        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8").splitlines():
+        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
             name, _, value = line.partition("=")
             cache[name.partition(":")[0]] = value
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
@@ -84,10 +89,42 @@ class Build:
                 leaves.add(name)
         return sorted(leaves)
 
-    def tests(self):
-        listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1"],
+    def outputs(self, paths):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
+        return [path for path in paths if path in built]
+
+    def tests(self, *arguments):
+        listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
+        missing = {test["name"] for test in listing["tests"] if not test.get("command")}
+        if missing:
+            commands = self.test_commands(missing)
+            for test in listing["tests"]:
+                candidates = commands.get(test["name"], set())
+                if test["name"] in missing and len(candidates) == 1:
+                    command = next(iter(candidates))
+                    if command and os.path.isabs(command[0]):
+                        test["command"] = list(command)
         return listing, listing["tests"]
+
+    def test_commands(self, names):
+        found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
+        while pending:
+            directory = pending.pop().resolve()
+            file = directory / "CTestTestfile.cmake"
+            if directory in visited or not file.is_file():
+                continue
+            visited.add(directory)
+            try:
+                commands = list(REGISTRATION.commands(file.read_text(encoding="utf-8-sig")))
+            except (OSError, UnicodeError, ValueError):
+                continue
+            for command, arguments in commands:
+                if command == "subdirs":
+                    pending.extend(directory / argument for argument in arguments)
+                elif command == "add_test" and arguments and arguments[0] in names:
+                    found[arguments[0]].add(tuple(arguments[1:]))
+        return found
 
     def output(self, path):
         absolute = self.absolute(path)
@@ -110,14 +147,24 @@ def relative(path, root):
     return path[root_len + 1:].replace(os.sep, "/")
 
 
+def paths(arguments):
+    for argument in arguments:
+        value = argument.partition("=")[2] if argument.startswith("-D") else argument
+        if os.path.isabs(value):
+            yield value
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
-        if batch and size + len(name) + 1 > BATCH:
+        length = len(name) + 1
+        if sys.platform == "win32":
+            length = len(subprocess.list2cmdline([name]).encode("utf-16-le", "surrogatepass")) // 2 + 1
+        if batch and size + length > BATCH:
             yield batch
             batch, size = [], 0
         batch.append(name)
-        size += len(name) + 1
+        size += length
     if batch:
         yield batch
 
@@ -157,7 +204,7 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in (test.get("command") or [])[1:] if os.path.isabs(a)} - {None})
+        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
@@ -166,7 +213,7 @@ def dump(build, out):
     print(f"{len(tests)} tests, {len(closures)} test executables, {len(deps)} objects with header deps")
 
 
-def select(graph, changed):
+def select(graph, changed, reasons=None):
     full = [f for f in changed if FULL.search(f)]
     if full:
         return None, full
@@ -180,15 +227,28 @@ def select(graph, changed):
         if (test["target"] is None or files & set(test["registered"]) or files & scope
                 or any(f.startswith(dirs) for f in scope | set(test["registered"]))):
             picked.add(name)
+            if reasons is not None:
+                reasons[name] = (["no build executable"] if test["target"] is None else [])
+                reasons[name] += ["input: " + path for path in sorted(files & scope)]
+                reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
+                reasons[name] += ["directory: " + directory for directory in dirs
+                                  if any(path.startswith(directory) for path in scope | set(test["registered"]))]
     setups = collections.defaultdict(set)
     for name, test in tests.items():
         for fixture in test["sets"]:
             setups[fixture].add(name)
     todo = list(picked)
     while todo:
-        test = tests[todo.pop()]
+        name = todo.pop()
+        test = tests[name]
         for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"])):
-            if extra in tests and extra not in picked:
+            if extra not in tests:
+                continue
+            if reasons is not None:
+                fixture = set(test["requires"]) & set(tests[extra]["sets"])
+                kind = "fixture setup for: " if fixture else "dependency of: "
+                reasons.setdefault(extra, []).append(kind + name)
+            if extra not in picked:
                 picked.add(extra)
                 todo.append(extra)
     return picked, []
@@ -197,17 +257,28 @@ def select(graph, changed):
 def plan(build, graph, picked):
     _, listed = build.tests()
     run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
-    names = {listed[i - 1]["name"] for i in run}
-    keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
+    if not run:
+        skip = {build.target(t) for t in listed} - {None}
+        return [], [t for t in build.leaves() if t not in skip], len(listed)
+    _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
+    names = {t["name"] for t in selected}
+    run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
+    if any(not t.get("command") for t in listed if t["name"] in names):
+        return run, build.leaves(), len(listed)
+    keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
-    return run, [t for t in build.leaves() if t not in skip], len(listed)
+    targets = [t for t in build.leaves() if t not in skip]
+    return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)
 
 
 def escape(name):
     return name.replace("$", "$$").replace(":", "$:").replace(" ", "$ ")
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Select the tests whose build inputs a change touches")
     sub = parser.add_subparsers(dest="command", required=True)
     d = sub.add_parser("dump", help="write the test graph of a built tree")
@@ -217,15 +288,33 @@ def main():
     s.add_argument("build")
     s.add_argument("graph")
     s.add_argument("changed", help="file with one changed path per line")
+    e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
+    e.add_argument("graph", type=Path)
+    e.add_argument("changed", type=Path, help="file with one changed path per line")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8").strip()] if selected.exists() else []
+        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
-    build = Build(args.build)
+    if args.command == "explain":
+        try:
+            graph = json.loads(args.graph.read_text(encoding="utf-8-sig"))
+            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            reasons = {}
+            picked, full = select(graph, changed, reasons)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        print(json.dumps({"tests": sorted(picked) if picked is not None else None,
+                          "full_run_paths": full, "reasons": {name: sorted(set(why)) for name, why in reasons.items()}},
+                         indent=2, sort_keys=True))
+        return 0
+    try:
+        build = Build(args.build)
+    except (OSError, KeyError) as error:
+        parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "dump":
         dump(build, args.graph)
         return 0
@@ -234,8 +323,8 @@ def main():
     if not os.path.exists(args.graph):
         print("full run: no test graph")
         return 0
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
-    changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8").splitlines() if line.strip()]
+    graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
+    changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     picked, full = select(graph, changed)
     if picked is None:
         print(f"full run: {', '.join(full[:5])}")

@@ -1,3 +1,4 @@
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Rwlock.hpp"
 #include "prx/libc/include/General.hpp"
@@ -14,6 +15,8 @@ static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
+static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
+static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -102,8 +105,11 @@ int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedrdlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     if (!lock->_changed.WaitUntil(state, deadline, [&] { return ReaderMayEnter(lock); })) return SCE_KERNEL_ERROR_ETIMEDOUT;
     return EnterRead(lock);
@@ -131,14 +137,16 @@ int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     ++lock->_waitingWriters;
     const bool acquired = lock->_changed.WaitUntil(state, deadline, [&] { return WriterMayEnter(lock); });
     --lock->_waitingWriters;
     if (acquired) return EnterWrite(lock);
-    state.unlock();
     lock->_changed.NotifyAll();
     return SCE_KERNEL_ERROR_ETIMEDOUT;
 }
@@ -155,7 +163,6 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
         if (readLocksHeld != 0) --readLocksHeld;
         if (lock->_readers.fetch_sub(1, std::memory_order_acq_rel) != 1) return SCE_OK;
     }
-    state.unlock();
     lock->_changed.NotifyAll();
     return SCE_OK;
 }
@@ -176,7 +183,7 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
 }
 
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
-    if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrSettype: null attr");
+    if (!attr || !*attr || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return SCE_KERNEL_ERROR_EINVAL;
     (*attr)->type = type;
     return SCE_OK;
 }

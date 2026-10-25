@@ -72,8 +72,25 @@ static void CheckUnsupportedOpcodeDiagnostic(std::uint32_t encoding, std::string
     }
     Require(false);
 }
+static void CheckSampleCompareOffsetAdjust() {
+    const std::array<std::uint32_t, 2> code{0xf0e00109u, 0x00801e33u};
+    const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);
+    Require(instruction.op == RdnaOpcode::ImageSample);
+    Require(instruction.imageOpcodeId == 0xb8u);
+    Require(instruction.imageSampleFlags == (RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust));
+    Require(instruction.imageAddressComponents == 4u);
+    Require(GetRdnaImageAddressComponentLayout(instruction.imageSampleFlags, 1u).bitOffset == 32u);
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(instruction);
+    Require(program.Resources().memoryInfo.size() == 1u);
+    Require(program.Resources().memoryInfo.back().imageSampleFlags == instruction.imageSampleFlags);
+}
 int main() {
     CheckSamplerVccTuple();
+    CheckSampleCompareOffsetAdjust();
     CheckSamplerVccTupleOverflow();
     Check(0x26u, RdnaOpcode::ImageSampleBCl, 0xfu);
     Check(0x36u, RdnaOpcode::ImageSampleBClO, 0xfu);
