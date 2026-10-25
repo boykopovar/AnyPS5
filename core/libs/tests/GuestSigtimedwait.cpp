@@ -105,6 +105,8 @@ int main() {
     const GuestSignalSet interrupt{{1u << 1, 0, 0, 0}};
     const KernelTimespec poll{0, 0};
     const KernelTimespec expired{0, 1000000000};
+    const KernelTimespec negativeSeconds{-1, 0};
+    const KernelTimespec negativeNanoseconds{0, -1};
     GuestSiginfo info{};
     int taken = -1;
     *__error_nid_postfix() = 0;
@@ -126,6 +128,10 @@ int main() {
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &poll) == -1 && *__error_nid_postfix() == 35);
     *__error_nid_postfix() = 0;
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &expired) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, &info, &negativeSeconds) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, &info, &negativeNanoseconds) == -1 && *__error_nid_postfix() == 22);
     RequireUntouched(info);
 
     GuestSignalSet previous{};
