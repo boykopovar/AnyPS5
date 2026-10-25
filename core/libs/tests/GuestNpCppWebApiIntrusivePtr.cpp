@@ -20,6 +20,8 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr std::size_t ObjectSize = 0x40;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 struct DestroyCase {
     Destroy destroy;
@@ -301,11 +303,11 @@ static void TestVectorPushBackReleasesElements() {
     Require(deletedObject == object);
 }
 
-static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
+static void TestAdoptedStringVectorCountsReferences() {
     int context = 0;
     alignas(8) unsigned char body[ObjectSize];
     std::memset(body, 0x5a, sizeof(body));
-    WriteCount(body, VectorReferenceCountOffset, 1);
+    WriteCount(body, StringVectorReferenceCountOffset, 0);
     deleterCalls = 0;
     deletedObject = nullptr;
 
@@ -315,12 +317,52 @@ static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
     Require(vector.object == body);
     Require(vector.deleter == RecordDelete);
     Require(vector.libContext == &context);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 1);
+    Require(OnlyCountChanged(body, StringVectorReferenceCountOffset));
+
+    IntrusivePtr copy;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1ERS7_(&copy, &vector);
+    Require(copy.object == body);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 2);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&copy);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 1);
+    Require(deleterCalls == 0);
 
     _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&vector);
-    Require(ReadCount(body, VectorReferenceCountOffset) == 0);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 0);
+    Require(OnlyCountChanged(body, StringVectorReferenceCountOffset));
     Require(deleterCalls == 1);
     Require(deletedObject == body);
     Require(vector.object == nullptr);
+
+    IntrusivePtr empty;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PFvS8_EPNS2_10LibContextE(&empty, nullptr, RecordDelete, &context);
+    Require(empty.object == nullptr);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&empty);
+    Require(deleterCalls == 1);
+}
+
+static void TestScalarVectorAssignment() {
+    int context = 0;
+    alignas(8) unsigned char first[ObjectSize];
+    alignas(8) unsigned char second[ObjectSize];
+    std::memset(first, 0x5a, sizeof(first));
+    std::memset(second, 0x5a, sizeof(second));
+    WriteCount(first, ScalarVectorReferenceCountOffset, 2);
+    WriteCount(second, ScalarVectorReferenceCountOffset, 1);
+    deleterCalls = 0;
+
+    IntrusivePtr target{first, RecordDelete, &context};
+    const IntrusivePtr source{second, RecordDelete, &context};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(&target, &source);
+
+    Require(target.object == second);
+    Require(ReadCount(first, ScalarVectorReferenceCountOffset) == 1);
+    Require(ReadCount(second, ScalarVectorReferenceCountOffset) == 2);
+    Require(OnlyCountChanged(first, ScalarVectorReferenceCountOffset));
+    Require(OnlyCountChanged(second, ScalarVectorReferenceCountOffset));
+    Require(deleterCalls == 0);
 }
 
 static void TestVectorAliasedGrowth() {
@@ -506,6 +548,8 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEED1Ev, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev, StringVectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev, ScalarVectorReferenceCountOffset},
     };
     for (const auto& testCase : destructors) TestDestroy(testCase);
 
@@ -513,7 +557,8 @@ int main(int argc, char** argv) {
     TestMatchmakingSharedOwnership();
     TestMatchTeamVectorSize();
     TestVectorPushBackReleasesElements();
-    TestAdoptedVectorBodyDestroyedThroughDeleter();
+    TestAdoptedStringVectorCountsReferences();
+    TestScalarVectorAssignment();
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
     return 0;
