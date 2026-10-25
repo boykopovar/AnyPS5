@@ -37,6 +37,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Atfork.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Attr.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/AttrNp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Barrier.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Mutex.cpp
