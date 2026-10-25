@@ -162,6 +162,45 @@ void testUpdateMapping() {
     check(update[1].value == 0x01380007u && update[3].value == 0x03680409u, "f16 DEFAULT_VAL does not come from the low default");
 }
 
+void testUpdate0100Mapping() {
+    const auto mappingsBefore = mappings;
+    const auto linksBefore = links;
+    Shader ps{};
+    auto regs = filled();
+    const auto untouched = filled();
+    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), nullptr, &ps) == 0, "_0100 update without inputs failed");
+    check(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "_0100 update without inputs wrote registers");
+
+    std::array<ShaderSemantic, 4> inputs{semantic(1, 0, 0), semantic(2, 0, 1), semantic(3, 0, 2), semantic(4, 0, 3)};
+    inputs[0].is_custom = 1;
+    inputs[0].default_value = 2;
+    inputs[1].default_value = 1;
+    inputs[1].default_value_hi = 1;
+    inputs[2].default_value_hi = 2;
+    inputs[3].is_custom = 1;
+    inputs[3].default_value = 3;
+    inputs[3].default_value_hi = 3;
+    std::array<ShaderSemantic, 3> outputs{semantic(1, 5, 0), semantic(2, 7, 1), semantic(4, 9, 3)};
+    Shader vs{};
+    vs.output_semantics = outputs.data();
+    vs.num_output_semantics = static_cast<std::uint16_t>(outputs.size());
+    ps.input_semantics = inputs.data();
+    ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
+
+    regs = filled();
+    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update mapping failed");
+    check(regs[0].value == 0x00000525u, "_0100 update does not encode default value 2 as 1");
+    check(regs[1].value == 0x01380207u, "_0100 update does not encode default value 1 as 2");
+    check(regs[2].value == 0x02580020u, "_0100 unmatched interpolant update changed");
+    check(regs[3].value == 0x03680709u, "_0100 full f16 interpolant update changed");
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 update register offset changed");
+    }
+    const std::size_t written = inputs.size() * sizeof(ShaderRegister);
+    check(std::memcmp(regs.data() + inputs.size(), untouched.data(), sizeof(regs) - written) == 0, "_0100 update wrote past its inputs");
+    check(mappings == mappingsBefore && links == linksBefore, "_0100 update resolved an ABI");
+}
+
 void testUnversionedMapping() {
     std::array<ShaderSemantic, 5> inputs{
         semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
@@ -207,6 +246,7 @@ void testRejections() {
     std::memset(regs.data(), 0xcc, sizeof(regs));
     const auto saved = regs;
     expectFailure([&] { sceAgcCreateInterpolantMapping_0100(regs.data(), &gs, &ps); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &gs, &ps); });
     expectFailure([&] { sceAgcCreateInterpolantMapping_10000(regs.data(), &gs, &ps); });
     expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(regs.data(), &gs, &ps); });
     check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
@@ -216,6 +256,15 @@ void testRejections() {
     expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(regs.data(), nullptr, &ps); });
     expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(nullptr, &gs, &ps); });
     expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(regs.data(), &gs, nullptr); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), nullptr, &ps); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(nullptr, &gs, &ps); });
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &gs, nullptr); });
+    ps.input_semantics = nullptr;
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &gs, &ps); });
+    ps.input_semantics = inputs.data();
+    gs.output_semantics = nullptr;
+    gs.num_output_semantics = 1;
+    expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &gs, &ps); });
 }
 
 }
@@ -238,6 +287,7 @@ int main() {
         testIdentity();
         testMapping();
         testUpdateMapping();
+        testUpdate0100Mapping();
         testUnversionedMapping();
         testRejections();
         check(mappings == 10u && links == 8u, "mapping preparation call count changed");
