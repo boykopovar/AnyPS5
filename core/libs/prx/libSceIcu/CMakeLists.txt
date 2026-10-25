@@ -1,4 +1,4 @@
-add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Numeric.cpp Set.cpp Version.cpp)
+add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ConstrainedFieldPosition.cpp Enumeration.cpp ErrorName.cpp Export.cpp Invariant.cpp Iterator.cpp Numeric.cpp Set.cpp Version.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIcu)
 
@@ -39,8 +39,14 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_icu_enumeration_tests)
     add_test(NAME guest_icu_enumeration COMMAND guest_icu_enumeration_tests)
     set_tests_properties(guest_icu_enumeration PROPERTIES TIMEOUT 10)
+    add_test_executable(guest_icu_iterator_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuIterator.cpp)
+    target_include_directories(guest_icu_iterator_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_iterator_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_iterator_tests)
+    add_test(NAME guest_icu_iterator COMMAND guest_icu_iterator_tests)
+    set_tests_properties(guest_icu_iterator PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_icu_version guest_icu_numeric guest_icu_error_name guest_icu_constrained_field_position guest_icu_set guest_icu_enumeration PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_version guest_icu_numeric guest_icu_error_name guest_icu_constrained_field_position guest_icu_set guest_icu_enumeration guest_icu_iterator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

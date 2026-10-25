@@ -3,6 +3,7 @@
 #include "Enumeration.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
+#include "Iterator.hpp"
 #include "Numeric.hpp"
 #include "Set.hpp"
 #include "Version.hpp"
