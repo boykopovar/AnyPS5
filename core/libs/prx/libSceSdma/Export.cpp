@@ -25,14 +25,6 @@ constexpr std::uint32_t WindowPacket = 13;
 constexpr std::uint32_t FencePacket = 4;
 constexpr std::uint32_t ChunkBytes = 0x400000;
 
-struct SdmaOpenParam {
-    std::uint32_t engine;
-    std::uint32_t reserved;
-    std::uint64_t fenceAddress;
-    std::uint64_t writeBackAddress;
-    std::uint64_t writeBackExtra;
-    std::uint32_t flags;
-};
 static_assert(offsetof(SdmaOpenParam, fenceAddress) == 8);
 static_assert(offsetof(SdmaOpenParam, writeBackAddress) == 0x10);
 static_assert(offsetof(SdmaOpenParam, flags) == 0x20);
