@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
@@ -17,6 +18,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
@@ -480,7 +482,13 @@ char* GuestZoneName(int index) {
     static char unnamed[] = "   ";
     char** names = HostZoneNames();
 #ifdef _WIN32
+    static std::array<std::string, 2> utf8Names;
     const bool daylightSaving = _daylight != 0;
+    if (index >= 0 && index < 2) {
+        utf8Names[static_cast<std::size_t>(index)] = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+        if (index == 1 && !daylightSaving) return unnamed;
+        return utf8Names[static_cast<std::size_t>(index)].data();
+    }
 #else
     const bool daylightSaving = ::daylight != 0;
 #endif
@@ -580,7 +588,7 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
     _get_dstbias(&daylightBias);
     const bool daylight = host.tm_isdst > 0;
     result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
-    result->tm_zone = _tzname[daylight ? 1 : 0];
+    result->tm_zone = GuestZoneName(daylight ? 1 : 0);
 #else
     const std::time_t t = static_cast<std::time_t>(*timer);
     if (localtime_r(&t, &host) == nullptr) {
