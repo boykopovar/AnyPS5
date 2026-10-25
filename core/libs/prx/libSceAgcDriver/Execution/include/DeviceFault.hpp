@@ -5,6 +5,7 @@
 #define VK_NO_PROTOTYPES
 #endif
 #include <vulkan/vulkan.h>
+#include "SubmissionSnapshots.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -44,7 +45,65 @@ inline std::string DeviceFaultText(const char (&text)[VK_MAX_DESCRIPTION_SIZE]) 
     return std::string(text, strnlen(text, VK_MAX_DESCRIPTION_SIZE));
 }
 
-inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDeviceFaultInfoEXT faultInfo, VkQueue queue, PFN_vkGetQueueCheckpointDataNV checkpointData) {
+inline std::uint64_t DeviceFaultRangeLow(std::uint64_t address, std::uint64_t precision) {
+    return precision == 0 ? address : address & ~(precision - 1);
+}
+
+inline std::uint64_t DeviceFaultRangeHigh(std::uint64_t address, std::uint64_t precision) {
+    return precision == 0 ? address : address | (precision - 1);
+}
+
+inline const char* DeviceFaultRangePermissions(std::uint32_t permissions) {
+    constexpr std::uint32_t readWrite = ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write;
+    if ((permissions & readWrite) == readWrite) return "read write";
+    if ((permissions & ShaderRecompiler::BdaAbi::Write) != 0) return "write";
+    if ((permissions & ShaderRecompiler::BdaAbi::Read) != 0) return "read";
+    return "none";
+}
+
+inline std::vector<std::string> DeviceFaultRangeLines(VkDeviceFaultAddressTypeEXT type, std::uint64_t address, std::uint64_t precision, const std::vector<ShaderRecompiler::BdaAbi::Range>& snapshot, std::uint64_t submitSerial, std::uint64_t spaceSerial) {
+    std::vector<std::string> lines;
+    char line[320];
+    const std::uint64_t low = DeviceFaultRangeLow(address, precision);
+    const std::uint64_t high = DeviceFaultRangeHigh(address, precision);
+    const ShaderRecompiler::BdaAbi::Range* owner = nullptr;
+    const ShaderRecompiler::BdaAbi::Range* before = nullptr;
+    const ShaderRecompiler::BdaAbi::Range* after = nullptr;
+    for (const auto& range : snapshot) {
+        if (owner == nullptr && range.begin <= low && high < range.end) owner = &range;
+        if (range.end <= low && (before == nullptr || before->end < range.end)) before = &range;
+        if (range.begin > high && (after == nullptr || range.begin < after->begin)) after = &range;
+    }
+    if (owner != nullptr) {
+        std::snprintf(line, sizeof(line), "[device-fault] %s at 0x%llx (precision 0x%llx) in guest range [0x%llx, 0x%llx) %s (batch %llu, space %llu)", DeviceFaultAddressKind(type), static_cast<unsigned long long>(address), static_cast<unsigned long long>(precision), static_cast<unsigned long long>(owner->begin), static_cast<unsigned long long>(owner->end), DeviceFaultRangePermissions(owner->permissions), static_cast<unsigned long long>(submitSerial), static_cast<unsigned long long>(spaceSerial));
+        lines.emplace_back(line);
+        return lines;
+    }
+    std::snprintf(line, sizeof(line), "[device-fault] %s at 0x%llx (precision 0x%llx) has no guest owner in batch %llu (internal or unmapped)", DeviceFaultAddressKind(type), static_cast<unsigned long long>(address), static_cast<unsigned long long>(precision), static_cast<unsigned long long>(submitSerial));
+    lines.emplace_back(line);
+    if (before != nullptr) {
+        std::snprintf(line, sizeof(line), "[device-fault] previous guest range [0x%llx, 0x%llx) %s ends 0x%llx before the fault range", static_cast<unsigned long long>(before->begin), static_cast<unsigned long long>(before->end), DeviceFaultRangePermissions(before->permissions), static_cast<unsigned long long>(low - before->end));
+        lines.emplace_back(line);
+    }
+    if (after != nullptr) {
+        std::snprintf(line, sizeof(line), "[device-fault] next guest range [0x%llx, 0x%llx) %s starts 0x%llx after the fault range", static_cast<unsigned long long>(after->begin), static_cast<unsigned long long>(after->end), DeviceFaultRangePermissions(after->permissions), static_cast<unsigned long long>(after->begin - high));
+        lines.emplace_back(line);
+    }
+    return lines;
+}
+
+inline std::vector<std::string> DeviceFaultBatchLines(VkDeviceFaultAddressTypeEXT type, std::uint64_t address, std::uint64_t precision, std::uint64_t submitSerial, const SubmissionSnapshots& snapshots) {
+    if (submitSerial == 0) return {};
+    const auto found = snapshots.Find(submitSerial);
+    if (!found.has_value()) {
+        char line[128];
+        std::snprintf(line, sizeof(line), "[device-fault] no guest snapshot for batch %llu", static_cast<unsigned long long>(submitSerial));
+        return {line};
+    }
+    return DeviceFaultRangeLines(type, address, precision, *found->ranges, found->submitSerial, found->spaceSerial);
+}
+
+inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDeviceFaultInfoEXT faultInfo, VkQueue queue, PFN_vkGetQueueCheckpointDataNV checkpointData, std::uint64_t submitSerial = 0, const SubmissionSnapshots* snapshots = nullptr) {
     std::vector<std::string> lines;
     char line[VK_MAX_DESCRIPTION_SIZE + 128];
     if (checkpointData != nullptr && queue != VK_NULL_HANDLE) {
@@ -72,6 +131,10 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
     info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
     info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
     const auto result = faultInfo(device, &counts, &info);
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+        lines.emplace_back("[device-fault] vkGetDeviceFaultInfoEXT reported nothing");
+        return lines;
+    }
     addresses.resize(std::min<std::size_t>(addresses.size(), counts.addressInfoCount));
     vendors.resize(std::min<std::size_t>(vendors.size(), counts.vendorInfoCount));
     std::snprintf(line, sizeof(line), "[device-fault] result %d: %s", static_cast<int>(result), DeviceFaultText(info.description).c_str());
@@ -79,6 +142,10 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
     for (const auto& address : addresses) {
         std::snprintf(line, sizeof(line), "[device-fault] %s at 0x%llx (precision 0x%llx)", DeviceFaultAddressKind(address.addressType), static_cast<unsigned long long>(address.reportedAddress), static_cast<unsigned long long>(address.addressPrecision));
         lines.emplace_back(line);
+        if (snapshots != nullptr) {
+            const auto correlated = DeviceFaultBatchLines(address.addressType, address.reportedAddress, address.addressPrecision, submitSerial, *snapshots);
+            lines.insert(lines.end(), correlated.begin(), correlated.end());
+        }
     }
     for (const auto& vendor : vendors) {
         std::snprintf(line, sizeof(line), "[device-fault] vendor: %s (code 0x%llx, data 0x%llx)", DeviceFaultText(vendor.description).c_str(), static_cast<unsigned long long>(vendor.vendorFaultCode), static_cast<unsigned long long>(vendor.vendorFaultData));
