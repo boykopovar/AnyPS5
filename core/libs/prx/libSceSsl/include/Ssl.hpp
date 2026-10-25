@@ -61,5 +61,6 @@ int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen);
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId);
 int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen);
 int APS5_VABI sceSslSetSslVersion();
+int APS5_VABI sceSslSetServerName();
 
 }

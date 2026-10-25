@@ -56,6 +56,108 @@ static void CheckValue(const Value& value, const char* expected) {
 
 }
 
+struct HandlerContext {
+    Value fallback{};
+    const Value* parent = nullptr;
+    unsigned calls = 0;
+};
+
+static const Value& APS5_VABI OnTypeMismatch(ValueType requested, const Value* value, const Value* second, void* context) {
+    auto& handler = *static_cast<HandlerContext*>(context);
+    Require(requested == 2 && value == handler.parent && second == nullptr, "handler arguments changed");
+    ++handler.calls;
+    return handler.fallback;
+}
+
+static void CheckHandler(HandlerContext& handler) {
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(handler.parent) == 77 && handler.calls == 1, "handler was lost");
+}
+
+static int APS5_VABI ReadNext(char& character, void* context) {
+    auto& cursor = *static_cast<const char**>(context);
+    character = *cursor;
+    if (!character) return -1;
+    ++cursor;
+    return 0;
+}
+
+static bool Parse(const char* document, bool valid, bool callback, const char* expected = nullptr) {
+    Value result{};
+    HandlerContext handler{};
+    _ZN3sce4Json5ValueC1EPKc(&result, "previous");
+    _ZN3sce4Json5ValueC1El(&handler.fallback, 77);
+    handler.parent = &result;
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&result, OnTypeMismatch, &handler) == 0, "set handler failed");
+    bool completed = false;
+    allocationBudget = activeBudget;
+    try {
+        const char* cursor = document;
+        const int status = callback ? _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&result, ReadNext, &cursor)
+                                    : _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&result, document, std::strlen(document));
+        Require(status == (valid ? 0 : (callback ? -1 : static_cast<int>(0x80848101))), "unexpected parse result");
+        completed = true;
+    } catch (const std::bad_alloc&) {
+    }
+    allocationBudget = -1;
+    CheckValue(result, completed ? (expected ? expected : document) : "\"previous\"");
+    CheckHandler(handler);
+    _ZN3sce4Json5ValueD1Ev(&result);
+    _ZN3sce4Json5ValueD1Ev(&handler.fallback);
+    return completed;
+}
+
+static bool ObjectEntry(const char* keyText) {
+    Object object{};
+    String oldKey{}, newKey{};
+    HandlerContext handler{};
+    _ZN3sce4Json6ObjectC1Ev(&object);
+    _ZN3sce4Json6StringC1EPKc(&oldKey, "kept");
+    _ZN3sce4Json6StringC1EPKc(&newKey, keyText);
+    Value* kept = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &oldKey);
+    _ZN3sce4Json5Value3setEPKc(kept, "previous");
+    CheckValue(*kept, "\"previous\"");
+    _ZN3sce4Json5ValueC1El(&handler.fallback, 77);
+    handler.parent = kept;
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(kept, OnTypeMismatch, &handler) == 0, "set handler failed");
+    bool completed = false;
+    Value* inserted = nullptr;
+    allocationBudget = activeBudget;
+    try {
+        inserted = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &newKey);
+        completed = true;
+    } catch (const std::bad_alloc&) {
+    }
+    allocationBudget = 0;
+    Require(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &oldKey) == kept, "existing entry changed");
+    allocationBudget = -1;
+    Require(_ZNK3sce4Json6Object4sizeEv(&object) == (completed ? 2 : 1), "failed insertion changed object size");
+    if (completed) Require(inserted && _ZNK3sce4Json5Value7getTypeEv(inserted) == 0, "new entry is not null");
+    CheckValue(*kept, "\"previous\"");
+    CheckHandler(handler);
+    _ZN3sce4Json6ObjectD1Ev(&object);
+    _ZN3sce4Json6StringD1Ev(&newKey);
+    _ZN3sce4Json6StringD1Ev(&oldKey);
+    _ZN3sce4Json5ValueD1Ev(&handler.fallback);
+    return completed;
+}
+
+template<typename TOperation>
+static unsigned CheckFailures(const char* name, TOperation operation) {
+    activeCase = name;
+    bool succeeded = false;
+    unsigned failures = 0;
+    for (activeBudget = 0; activeBudget < 256 && !succeeded; ++activeBudget) {
+        const auto before = liveAllocations;
+        succeeded = operation();
+        if (liveAllocations != before) std::fprintf(stderr, "expected %zu live allocations, got %zu\n", before, liveAllocations);
+        Require(liveAllocations == before, "operation leaked allocations");
+        failures += !succeeded;
+    }
+    Require(succeeded, "operation never succeeded");
+    std::printf("%s: %u allocation failures, no leaks\n", name, failures);
+    return failures;
+}
+
 enum class Operation {
     ValueCopy, ArrayCopy, ObjectCopy, ValueAssign, ObjectAssign, ArrayAppend,
     ValueArray, ValueObject, ValueString, ValueText, ValueTypeString, ValueTypeArray,
@@ -175,18 +277,12 @@ int main() {
     };
     unsigned failures = 0;
     for (const auto& test : cases) {
-        activeCase = test.name;
-        bool succeeded = false;
-        for (activeBudget = 0; activeBudget < 256 && !succeeded; ++activeBudget) {
-            const auto before = liveAllocations;
-            succeeded = Run(test.operation, *test.source, test.expected, *array, *object, text);
-            if (liveAllocations != before) std::fprintf(stderr, "expected %zu live allocations, got %zu\n", before, liveAllocations);
-            Require(liveAllocations == before, "copy leaked allocations");
-            failures += !succeeded;
+        failures += CheckFailures(test.name, [&] {
+            const bool succeeded = Run(test.operation, *test.source, test.expected, *array, *object, text);
             CheckValue(objectValue, objectJson);
             CheckValue(arrayValue, arrayJson);
-        }
-        Require(succeeded, "copy never succeeded");
+            return succeeded;
+        });
     }
     const auto checkIterator = [&]<bool TObject>() {
         constexpr bool objectIterator = TObject;
@@ -208,7 +304,7 @@ int main() {
                 ++failures;
             }
             allocationBudget = -1;
-            Require(succeeded, "ObjectIterator copies must use the guest allocator without host allocations");
+            Require(succeeded, "Iterator copies must use the guest allocator without host allocations");
             if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
             if constexpr (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
             else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
@@ -248,10 +344,30 @@ int main() {
         CheckValue(arrayValue, arrayJson);
     }
     Require(swapSucceeded, "swap never succeeded");
+    struct ParseCase { const char* name; const char* document; bool valid; bool callback; const char* expected = nullptr; };
+    const ParseCase parseCases[] = {
+        {"parse empty array", "[]", true, false},
+        {"parse empty object", "{}", true, false},
+        {"parse array", "[1]", true, false},
+        {"parse object", "{\"a\":1}", true, false},
+        {"parse nested array", arrayJson, true, false},
+        {"parse nested object", objectJson, true, false},
+        {"parse long key", "{\"a sufficiently long key to require its own allocation\":{\"child\":[1,2]}}", true, false},
+        {"parse invalid array", "[1,{\"a\":[true,null]}", false, false, "[1,{\"a\":[true,null]}]"},
+        {"parse invalid object", "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]", false, false, "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]}"},
+        {"parse trailing input", "{\"a\":[1]}x", true, false, "{\"a\":[1]}"},
+        {"parse callback", objectJson, true, true},
+        {"parse invalid callback", "[{\"a\":[1]}", false, true, "[{\"a\":[1]}]"},
+    };
+    for (const auto& test : parseCases)
+        failures += CheckFailures(test.name, [&] { return Parse(test.document, test.valid, test.callback, test.expected); });
+    failures += CheckFailures("insert short key", [] { return ObjectEntry("missing"); });
+    failures += CheckFailures("insert long key", [&] { return ObjectEntry(_ZNK3sce4Json6String5c_strEv(&text)); });
     _ZN3sce4Json6StringD1Ev(&text);
     _ZN3sce4Json5ValueD1Ev(&arrayValue);
     _ZN3sce4Json5ValueD1Ev(&objectValue);
 
     Require(liveAllocations == initial, "source cleanup leaked allocations");
-    std::printf("JSON copy cleanup: %zu operations, %u allocation failures, no leaks\n", sizeof(cases) / sizeof(cases[0]) + 3, failures);
+    std::printf("JSON allocation cleanup: %zu operations, %u allocation failures, no leaks\n",
+                sizeof(cases) / sizeof(cases[0]) + sizeof(parseCases) / sizeof(parseCases[0]) + 5, failures);
 }

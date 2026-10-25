@@ -1,8 +1,10 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -66,10 +68,11 @@ static bool EncodeLeavesOutputs(int expected, const void* profile, std::uint16_t
     return result == expected && size == 77 && mbcs[0] == 0xEE && mbcs[1] == 0xEE && mbcs[2] == 0xEE;
 }
 
-static bool DecodeLeavesOutputs(int expected, const void* profile, const char* bytes, std::uint32_t size, bool sjis) {
+static bool DecodeFails(int expected, const void* profile, const char* bytes, std::uint32_t size, bool sjis) {
     std::uint32_t used = 77;
     std::uint16_t ucs2 = 0xEEEE;
     const int result = sjis ? sceCesSJisToUcs2(profile, Bytes(bytes), size, &used, &ucs2) : sceCesEucJpToUcs2(profile, Bytes(bytes), size, &used, &ucs2);
+    if (!sjis) return result == expected && ucs2 == 0;
     return result == expected && used == 77 && ucs2 == 0xEEEE;
 }
 
@@ -92,7 +95,7 @@ static void SweepEucJisX0208(const void* profile) {
                 std::uint32_t size = 0;
                 Require(sceCesUcs2ToEucJp(ucs2, profile, again, sizeof(again), &size) == 0 && size == 2 && again[0] == lead && again[1] == trail);
             } else {
-                Require(result == unassignedCode && used == 77 && ucs2 == 0xEEEE);
+                Require(result == unassignedCode && used == 2 && ucs2 == 0);
             }
             hash = Digest(hash, value);
         }
@@ -156,11 +159,11 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
         Require(EucToUcs2(profile, "\xA2\xCC", 2, ucs2) == 0 && ucs2 == 0x00AC);
         for (const std::uint16_t cp932Form : {0xFF5E, 0x2225, 0xFF0D, 0xFFE0, 0xFFE1, 0xFFE2, 0x2460, 0x2170}) Require(EncodeLeavesOutputs(unassignedCode, profile, cp932Form, false));
         Require(Reports(unsettledCell, [&] { EucEncodes(profile, 0xFF3C, ""); }));
-        Require(DecodeLeavesOutputs(unassignedCode, profile, "\xAD\xA1", 2, false) && DecodeLeavesOutputs(unassignedCode, profile, "\xF9\xA1", 2, false));
-        Require(DecodeLeavesOutputs(unassignedCode, profile, "\xA9\xA1", 2, false) && DecodeLeavesOutputs(unassignedCode, profile, "\xFE\xFE", 2, false));
-        Require(DecodeLeavesOutputs(invalidEncode, profile, "\xA4\x41", 2, false) && DecodeLeavesOutputs(invalidEncode, profile, "\xA4\xFF", 2, false));
-        Require(DecodeLeavesOutputs(invalidEncode, profile, "\x80", 1, false) && DecodeLeavesOutputs(invalidEncode, profile, "\xFF", 1, false));
-        Require(DecodeLeavesOutputs(srcBufferEnd, profile, "\xA4\xA2", 1, false));
+        Require(DecodeFails(unassignedCode, profile, "\xAD\xA1", 2, false) && DecodeFails(unassignedCode, profile, "\xF9\xA1", 2, false));
+        Require(DecodeFails(unassignedCode, profile, "\xA9\xA1", 2, false) && DecodeFails(unassignedCode, profile, "\xFE\xFE", 2, false));
+        Require(DecodeFails(invalidEncode, profile, "\xA4\x41", 2, false) && DecodeFails(invalidEncode, profile, "\xA4\xFF", 2, false));
+        Require(DecodeFails(invalidEncode, profile, "\x80", 1, false) && DecodeFails(invalidEncode, profile, "\xFF", 1, false));
+        Require(DecodeFails(srcBufferEnd, profile, "\xA4\xA2", 1, false));
         std::uint8_t mbcs[4] = {0xEE, 0xEE, 0xEE, 0xEE};
         std::uint32_t size = 77;
         Require(sceCesUcs2ToEucJp(0x3042, profile, mbcs, 1, &size) == dstBufferEnd && size == 77 && mbcs[0] == 0xEE);
@@ -170,8 +173,8 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
     Require(EucEncodes(cp51932, 0x7E8A, "\xF9\xA1") && EucEncodes(ss3, 0x7E8A, "\x8F\xD4\xE3"));
     Require(EncodeLeavesOutputs(unassignedCode, euc, 0x7E8A, false) && EncodeLeavesOutputs(unassignedCode, ss2, 0x7E8A, false));
 
-    Require(DecodeLeavesOutputs(invalidEncode, euc, "\x8E\xB1", 2, false) && DecodeLeavesOutputs(invalidEncode, euc, "\x8E", 1, false));
-    Require(DecodeLeavesOutputs(invalidEncode, euc, "\x8F\xB0\xA1", 3, false) && DecodeLeavesOutputs(invalidEncode, ss2, "\x8F\xB0\xA1", 3, false));
+    Require(DecodeFails(invalidEncode, euc, "\x8E\xB1", 2, false) && DecodeFails(invalidEncode, euc, "\x8E", 1, false));
+    Require(DecodeFails(invalidEncode, euc, "\x8F\xB0\xA1", 3, false) && DecodeFails(invalidEncode, ss2, "\x8F\xB0\xA1", 3, false));
     Require(EncodeLeavesOutputs(unassignedCode, euc, 0xFF71, false));
     Require(EncodeLeavesOutputs(unassignedCode, euc, 0x4E02, false) && EncodeLeavesOutputs(unassignedCode, ss2, 0x4E02, false));
     for (const void* profile : {ss2, ss3}) {
@@ -179,8 +182,8 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
             const char bytes[3] = {'\x8E', static_cast<char>(kana), 0};
             Require(EucToUcs2(profile, bytes, 2, ucs2) == 0 && ucs2 == 0xFF61 + kana - 0xA1 && EucEncodes(profile, ucs2, bytes));
         }
-        Require(DecodeLeavesOutputs(invalidEncode, profile, "\x8E\xE0", 2, false) && DecodeLeavesOutputs(invalidEncode, profile, "\x8E\xA0", 2, false));
-        Require(DecodeLeavesOutputs(srcBufferEnd, profile, "\x8E\xB1", 1, false));
+        Require(DecodeFails(invalidEncode, profile, "\x8E\xE0", 2, false) && DecodeFails(invalidEncode, profile, "\x8E\xA0", 2, false));
+        Require(DecodeFails(srcBufferEnd, profile, "\x8E\xB1", 1, false));
     }
     std::uint32_t supplementary = 0;
     std::uint32_t hash = 0x811C9DC5u;
@@ -199,7 +202,7 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
         }
     }
     Require(supplementary == jisX0212Cells && hash == jisX0212Digest);
-    Require(DecodeLeavesOutputs(srcBufferEnd, ss3, "\x8F\xB0", 2, false) && DecodeLeavesOutputs(invalidEncode, ss3, "\x8F\xB0\x41", 3, false));
+    Require(DecodeFails(srcBufferEnd, ss3, "\x8F\xB0", 2, false) && DecodeFails(invalidEncode, ss3, "\x8F\xB0\x41", 3, false));
     Require(EucEncodes(ss3, 0x4E02, "\x8F\xB0\xA1") && EucEncodes(ss2, 0xFF71, "\x8E\xB1"));
 
     std::uint8_t utf8[4] = {};
@@ -217,11 +220,11 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
     Require(SJisToUcs2(sjis, "\x81\x60", 2, ucs2) == 0 && ucs2 == 0x301C && SJisEncodes(sjis, 0x301C, "\x81\x60"));
     Require(SJisToUcs2(sjis, "\x81\x91", 2, ucs2) == 0 && ucs2 == 0x00A2 && SJisEncodes(sjis, 0x00AC, "\x81\xCA"));
     for (const std::uint16_t cp932Form : {0xFF5E, 0x2225, 0xFF0D, 0xFFE0, 0xFFE1, 0xFFE2, 0x2460, 0x2170, 0x7E8A, 0x4E02}) Require(EncodeLeavesOutputs(unassignedCode, sjis, cp932Form, true));
-    for (const char* removed : {"\x87\x40", "\xED\x40", "\xEE\xFC", "\xFA\x40", "\xFC\x4B", "\xF0\x40", "\xEF\xFC"}) Require(DecodeLeavesOutputs(unassignedCode, sjis, removed, 2, true));
+    for (const char* removed : {"\x87\x40", "\xED\x40", "\xEE\xFC", "\xFA\x40", "\xFC\x4B", "\xF0\x40", "\xEF\xFC"}) Require(DecodeFails(unassignedCode, sjis, removed, 2, true));
     Require(SJisToUcs2(cp932, "\x87\x40", 2, ucs2) == 0 && ucs2 == 0x2460 && SJisToUcs2(cp932, "\xFA\x40", 2, ucs2) == 0 && ucs2 == 0x2170);
     Require(SJisToUcs2(cp932, "\x81\x5F", 2, ucs2) == 0 && ucs2 == 0xFF3C && SJisToUcs2(cp932, "\\", 1, ucs2) == 0 && ucs2 == 0x5C);
-    Require(DecodeLeavesOutputs(invalidEncode, sjis, "\x82\x7F", 2, true) && DecodeLeavesOutputs(invalidEncode, sjis, "\x82\xFD", 2, true));
-    Require(DecodeLeavesOutputs(srcBufferEnd, sjis, "\x82\xA0", 1, true));
+    Require(DecodeFails(invalidEncode, sjis, "\x82\x7F", 2, true) && DecodeFails(invalidEncode, sjis, "\x82\xFD", 2, true));
+    Require(DecodeFails(srcBufferEnd, sjis, "\x82\xA0", 1, true));
     for (std::uint32_t byte = 0; byte <= 0xFF; ++byte) {
         const char bytes[2] = {static_cast<char>(byte), 0};
         if (byte == 0x5C || byte == 0x7E) {
@@ -231,7 +234,7 @@ static void TestJisX0208Profiles(const void* cp932, const void* cp51932) {
         } else if (byte >= 0xA1 && byte <= 0xDF) {
             Require(SJisToUcs2(sjis, bytes, 1, ucs2) == 0 && ucs2 == 0xFF61 + byte - 0xA1 && SJisEncodes(sjis, ucs2, bytes));
         } else {
-            Require(DecodeLeavesOutputs(byte == 0x80 || byte == 0xA0 || byte >= 0xFD ? invalidEncode : srcBufferEnd, sjis, bytes, 1, true));
+            Require(DecodeFails(byte == 0x80 || byte == 0xA0 || byte >= 0xFD ? invalidEncode : srcBufferEnd, sjis, bytes, 1, true));
         }
     }
     for (const std::uint16_t unsettled : {0x5C, 0x7E, 0xA5, 0x203E}) Require(Reports(unsettledByte, [&] { SJisEncodes(sjis, unsettled, ""); }));
@@ -292,7 +295,7 @@ int main() {
     Require(sceCesEucJpToUtf16(euc, Bytes("\xA4\xA2"), 2, &consumed, &utf16, 1, &produced) == 0 && consumed == 2 && utf16 == 0x3042);
     Require(sceCesEucJpToUtf16be(euc, Bytes("\x8E\xB1"), 2, &consumed, &utf16, 1, &produced) == 0);
     Require(std::memcmp(&utf16, "\xFF\x71", 2) == 0);
-    Require(sceCesEucJpToUtf32(euc, Bytes("\x8F\xB0\xA1"), 3, &consumed, &utf32) == 0 && consumed == 3 && utf32 == 0x4E02);
+    Require(sceCesEucJpToUtf32(euc, Bytes("\x8F\xB0\xA1"), 3, &consumed, &utf32) == invalidEncode);
     Require(sceCesEucJpToUtf32le(euc, Bytes("\xA4\xA2"), 2, &consumed, &utf32) == 0);
     Require(std::memcmp(&utf32, "\x42\x30\x00\x00", 4) == 0);
     Require(sceCesEucJpToUtf32(sjis, Bytes("\xA4\xA2"), 2, &consumed, &utf32) == invalidParameter);
@@ -306,7 +309,7 @@ int main() {
     Require(sceCesUcs2ToSJis(0x3042, euc, mbcs, sizeof(mbcs), &produced) == invalidParameter);
     Require(sceCesUcs2ToSJis(0x3042, sceCesRefersUcsProfileCp1252(), mbcs, sizeof(mbcs), &produced) == invalidParameter);
     Require(sceCesUcs2ToSJis(0x3042, sjis, nullptr, sizeof(mbcs), &produced) == invalidDstBuffer);
-    Require(sceCesUcs2ToEucJp(0x4E02, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 3 && std::memcmp(mbcs, "\x8F\xB0\xA1", 3) == 0);
+    Require(sceCesUcs2ToEucJp(0x4E02, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucJp(0xFF71, euc, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\x8E\xB1", 2) == 0);
 
     Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 3, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == 0);
@@ -338,8 +341,10 @@ int main() {
     std::memcpy(&utf32Le, "\xE5\x65\x00\x00", 4);
     Require(sceCesUtf32leToEucJp(&utf32Le, euc, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\xC6\xFC", 2) == 0);
 
+    constexpr int microsoftForms[] = {0x00A2, 0x00A3, 0x00A5, 0x00AC, 0x2014, 0x2016, 0x203E, 0x2212, 0x301C, 0xFEFF};
     for (int code = 1; code < 0x10000; ++code) {
         if (code >= 0xD800 && code <= 0xDFFF) continue;
+        if (std::find(std::begin(microsoftForms), std::end(microsoftForms), code) != std::end(microsoftForms)) continue;
         std::uint8_t encoded[4] = {};
         std::uint32_t size = 0;
         if (sceCesUcs2ToSJis(static_cast<std::uint16_t>(code), sjis, encoded, sizeof(encoded), &size) == 0) {

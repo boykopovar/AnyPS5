@@ -1,6 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
-#include "prx/libSceJobManager/include/Api.hpp"
+#include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -87,6 +87,46 @@ static void MemoryCase() {
 }
 
 static void APS5_VABI Nothing(void*, std::uint32_t) {
+}
+
+static void OwnedStateCase() {
+    for (const auto [workers, count] : {std::pair{1u, 1u}, std::pair{3u, 32u}, std::pair{13u, 2u}}) {
+        const auto size = SizeFor(workers, count, count * 4, count * 2, count * 2);
+        Block block(size + 256);
+        std::memset(block.memory, 0xa5, block.bytes);
+        ManagerObject manager;
+        const auto begin = reinterpret_cast<std::uintptr_t>(block.memory);
+        const auto inside = [begin, size](const void* pointer) {
+            const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+            return address >= begin && address < begin + size;
+        };
+        for (int round = 0; round < 3; ++round) {
+            Require(Initialize(manager.storage, block.memory, size, workers, count, nullptr) == 0);
+            void* implementation = nullptr;
+            std::memcpy(&implementation, manager.storage, sizeof(implementation));
+            Require(inside(implementation));
+            for (std::uint32_t priority = 0; priority < 2; ++priority) {
+                Require(inside(Factories(manager.storage, priority)));
+                Require(inside(UnifiedFactories(manager.storage, priority)));
+            }
+            auto* factory = Factories(manager.storage, round % 2);
+            std::array<ISequence*, 32> sequences{};
+            for (std::uint32_t index = 0; index < count; ++index) {
+                auto*& sequence = sequences[index];
+                Require(factory->Create(&sequence, 4, 4, 2, 2, nullptr) == 0 && inside(sequence));
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+                Require(sequence->SyncPoint() == 0);
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+            }
+            for (std::uint32_t index = count; index != 0; --index) {
+                Require(sequences[index - 1]->Wait() == 0);
+                Require(factory->Destroy(sequences[index - 1]) == 0);
+            }
+            Require(Shutdown(manager.storage) == 0);
+            const auto* bytes = static_cast<const std::uint8_t*>(block.memory);
+            for (auto offset = size; offset < block.bytes; ++offset) Require(bytes[offset] == 0xa5);
+        }
+    }
 }
 
 static void ValidationCase() {
@@ -698,9 +738,150 @@ static void WorkerCountCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+static void APS5_VABI ShutdownGateJob(void* argument, std::uint32_t index) {
+    GateJob(argument, index);
+    ++static_cast<Order*>(argument)->next;
+}
+
+static void ShutdownActiveCase(bool wait, bool queue, bool destroy, std::uint32_t count = 1) {
+    for (int round = 0; round < 3; ++round) {
+        Block block(SizeFor(1, 1, 4, 2, 2));
+        ManagerObject manager;
+        Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, nullptr) == 0);
+        ISequenceFactory* factory = Factories(manager.storage, 0);
+        ISequence* sequence = nullptr;
+        Require(factory->Create(&sequence, 4, 4, 2, 2, "shutdown active") == 0);
+        Order order;
+        Require(sequence->Dispatch(ShutdownGateJob, &order, count, nullptr) == 0);
+        while (!order.started) std::this_thread::yield();
+        if (queue) {
+            Require(sequence->SyncPoint() == 0);
+            Require(sequence->Dispatch(LowJob, &order, 1, nullptr) == 0);
+        }
+        std::atomic<bool> entered{false};
+        std::atomic<bool> returned{false};
+        std::thread waiter;
+        if (wait) {
+            waiter = std::thread([&] {
+                entered = true;
+                Require(destroy ? factory->Destroy(sequence) == 0 : sequence->Wait() == 0);
+                returned = true;
+            });
+            while (!entered) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            Require(!returned);
+        }
+        std::atomic<bool> stopping{false};
+        std::atomic<bool> stopped{false};
+        std::thread shutdown([&] {
+            stopping = true;
+            Require(Shutdown(manager.storage) == 0);
+            stopped = true;
+        });
+        while (!stopping) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        Require(!stopped);
+        order.release = true;
+        shutdown.join();
+        if (waiter.joinable()) waiter.join();
+        Require(stopped && (!wait || returned));
+        Require(order.next == 1);
+        Require(Factories(manager.storage, 0) == nullptr);
+        Require(Initialize(manager.storage, block.memory, block.bytes, 1, 1, nullptr) == 0);
+        Require(Shutdown(manager.storage) == 0);
+    }
+}
+
+struct ShutdownCrossWait {
+    ISequence* sequence;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+};
+
+static void APS5_VABI ShutdownWaitOther(void* argument, std::uint32_t) {
+    auto& state = *static_cast<ShutdownCrossWait*>(argument);
+    state.entered = true;
+    Require(state.sequence->Wait() == 0);
+    state.returned = true;
+}
+
+static void ConcurrentWaitCase() {
+    for (const bool stop : {false, true}) {
+        for (int round = 0; round < 3; ++round) {
+            Block block(SizeFor(2, 1, 4, 2, 8));
+            ManagerObject manager;
+            Require(Initialize(manager.storage, block.memory, block.bytes, 2, 1, nullptr) == 0);
+            auto* factory = Factories(manager.storage, 0);
+            ISequence* sequence = nullptr;
+            Require(factory->Create(&sequence, 2, 2, 1, 8, nullptr) == 0);
+            Order order;
+            Require(sequence->Dispatch(ShutdownGateJob, &order, 1, nullptr) == 0);
+            while (!order.started) std::this_thread::yield();
+            std::atomic<std::uint32_t> entered{0};
+            std::atomic<std::uint32_t> returned{0};
+            std::array<std::thread, 4> waiters;
+            for (auto& waiter : waiters) waiter = std::thread([&] {
+                ++entered;
+                Require(sequence->Wait() == 0);
+                ++returned;
+            });
+            while (entered != waiters.size()) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(returned == 0);
+            std::thread shutdown;
+            if (stop) {
+                shutdown = std::thread([&] { Require(Shutdown(manager.storage) == 0); });
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            order.release = true;
+            for (auto& waiter : waiters) waiter.join();
+            Require(returned == waiters.size() && order.next == 1);
+            if (stop) shutdown.join();
+            else {
+                Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == 0);
+                Require(factory->Destroy(sequence) == 0);
+                Require(Shutdown(manager.storage) == 0);
+            }
+        }
+    }
+}
+
+static void ShutdownCrossWaitCase() {
+    Block block(SizeFor(2, 2, 4, 2, 2));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    auto* factory = Factories(manager.storage, 0);
+    ISequence* producer = nullptr;
+    ISequence* consumer = nullptr;
+    Require(factory->Create(&producer, 1, 1, 1, 1, nullptr) == 0);
+    Require(factory->Create(&consumer, 1, 1, 1, 1, nullptr) == 0);
+    Order order;
+    Require(producer->Dispatch(ShutdownGateJob, &order, 1, nullptr) == 0);
+    while (!order.started) std::this_thread::yield();
+    ShutdownCrossWait state{producer};
+    Require(consumer->Dispatch(ShutdownWaitOther, &state, 1, nullptr) == 0);
+    while (!state.entered) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!state.returned);
+    std::atomic<bool> stopping{false};
+    std::atomic<bool> stopped{false};
+    std::thread shutdown([&] {
+        stopping = true;
+        Require(Shutdown(manager.storage) == 0);
+        stopped = true;
+    });
+    while (!stopping) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!stopped);
+    order.release = true;
+    shutdown.join();
+    Require(state.returned && stopped && order.next == 1);
+}
+
 int RunJobManagerCase(const char* caseName) {
     const std::string name = caseName;
     if (name == "memory") MemoryCase();
+    else if (name == "owned_state") OwnedStateCase();
     else if (name == "validation") ValidationCase();
     else if (name == "dispatch") DispatchCase();
     else if (name == "ordering") OrderingCase();
@@ -714,6 +895,13 @@ int RunJobManagerCase(const char* caseName) {
     else if (name == "worker_wake") WorkerWakeCase();
     else if (name == "worker_spin") WorkerSpinCase();
     else if (name == "worker_count") WorkerCountCase();
+    else if (name == "shutdown_running") ShutdownActiveCase(false, false, false);
+    else if (name == "shutdown_waiter") ShutdownActiveCase(true, false, false);
+    else if (name == "shutdown_queued") ShutdownActiveCase(true, true, false);
+    else if (name == "shutdown_destroy") ShutdownActiveCase(true, true, true);
+    else if (name == "shutdown_partial") ShutdownActiveCase(true, false, false, 4);
+    else if (name == "shutdown_cross_wait") ShutdownCrossWaitCase();
+    else if (name == "concurrent_wait") ConcurrentWaitCase();
     else return 2;
     return 0;
 }

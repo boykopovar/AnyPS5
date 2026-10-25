@@ -8,12 +8,19 @@
 #include <cstring>
 #include <initializer_list>
 #include <map>
+#include <stdexcept>
 
 using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; };
+static const char* CleanupDocument = nullptr;
+static int CleanupBudget = -1;
+static bool CleanupCallback = false;
 static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
+    if (!valid) {
+        if (CleanupDocument) std::fprintf(stderr, "Parser document=%s callback=%d budget=%d\n", CleanupDocument, CleanupCallback, CleanupBudget);
+        std::fprintf(stderr, "%s\n", message); std::abort();
+    }
 }
 struct ParserTrace : std::map<void*, std::size_t> {
     int budget = -1;
@@ -81,6 +88,98 @@ static void CheckArrayEntryFailures(ParserTrace& live, std::size_t baseline) {
         Require(completed && failures != 0, "Every reader and syntax case must exercise guest allocation failure and complete admission");
     }
 }
+static void CheckOwnedTree(const Value& value, const Value* parent = nullptr, bool partial = false) {
+    Require(value.parent == parent || (partial && value.type == TypeNull && !value.parent && !value.auxiliary),
+            "Admitted payloads must retain their owner; interrupted null placeholders may remain unbound");
+    if (value.type == TypeArray) {
+        const auto count = _ZNK3sce4Json5Value5countEv(&value);
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto* child = _ZNK3sce4Json5ValueixEm(&value, index);
+            Require(child != nullptr, "Admitted array entries must remain reachable");
+            CheckOwnedTree(*child, &value, partial);
+        }
+    } else if (value.type == TypeObject) {
+        const auto* object = _ZNK3sce4Json5Value9getObjectEv(&value);
+        ObjectIterator position{}, end{};
+        _ZNK3sce4Json6Object5beginEv(&position, object);
+        _ZNK3sce4Json6Object3endEv(&end, object);
+        std::size_t count = 0;
+        for (; _ZNK3sce4Json6Object8iteratorneERKS2_(&position, &end); _ZN3sce4Json6Object8iteratorppEv(&position)) {
+            CheckOwnedTree(_ZNK3sce4Json6Object8iteratordeEv(&position)->value, &value, partial);
+            ++count;
+        }
+        _ZN3sce4Json6Object8iteratorD1Ev(&position);
+        _ZN3sce4Json6Object8iteratorD1Ev(&end);
+        Require(count == _ZNK3sce4Json5Value5countEv(&value), "Every admitted object entry must remain reachable");
+    }
+}
+static void CheckParserCleanup(ParserTrace& live, std::size_t baseline) {
+    struct Case { const char* document; bool valid; const char* retained; };
+    const Case cases[]{
+        {"[1,{\"a\":[true,null]}", false, "[1,{\"a\":[true,null]}]"},
+        {"[]", true, "[]"}, {"{}", true, "{}"}, {"[1]", true, "[1]"},
+        {"{\"a\":1}", true, "{\"a\":1}"},
+        {"[1,{\"long\":\"a sufficiently long string to require its own allocation\"},[false,null]]", true,
+         "[1,{\"long\":\"a sufficiently long string to require its own allocation\"},[false,null]]"},
+        {"{\"long\":\"a sufficiently long string to require its own allocation\",\"nested\":[{\"leaf\":\"another sufficiently long string\"},[true,null,17]]}", true,
+         "{\"long\":\"a sufficiently long string to require its own allocation\",\"nested\":[{\"leaf\":\"another sufficiently long string\"},[true,null,17]]}"},
+        {"{\"a sufficiently long key to require its own allocation\":{\"child\":[1,2]}}", true,
+         "{\"a sufficiently long key to require its own allocation\":{\"child\":[1,2]}}"},
+        {"{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]", false,
+         "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]}"},
+        {"{\"a\":[1]}x", true, "{\"a\":[1]}"},
+        {"[{\"a\":[1]}", false, "[{\"a\":[1]}]"},
+    };
+    unsigned failures = 0, refusals = 0;
+    for (bool callback : {false, true}) for (const auto& test : cases) {
+        bool completed = false;
+        for (int budget = 0; budget < 128 && !completed; ++budget) {
+            CleanupDocument = test.document; CleanupBudget = budget; CleanupCallback = callback;
+            Value value{}; _ZN3sce4Json5ValueC1EPKc(&value, "previous");
+            const auto notifications = live.notifications;
+            const char* cursor = test.document;
+            live.budget = budget;
+            int status = 0;
+            bool refused = false;
+            try {
+                status = callback ? _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&value, ReadNext, &cursor) : Parse(value, test.document);
+            } catch (const std::runtime_error& error) {
+                if (std::strcmp(error.what(), "value not implemented") != 0 || live.notifications == notifications)
+                    std::fprintf(stderr, "Parser document=%s callback=%d budget=%d refusal=%s\n", test.document, callback, budget, error.what());
+                Require(std::strcmp(error.what(), "value not implemented") == 0 && live.notifications != notifications,
+                        "Only the documented allocation-failed array-sentinel path may refuse parsing");
+                refused = true;
+                ++refusals;
+            }
+            live.budget = -1;
+            const bool failed = live.notifications != notifications;
+            if (!refused) {
+                const int expected = failed ? static_cast<int>(0x80848102) : test.valid ? 0 : callback ? -1 : static_cast<int>(0x80848101);
+                Require(status == expected, "Guest allocation and syntax failures must retain their public status");
+                CheckOwnedTree(value, nullptr, failed);
+            }
+            if (!failed) {
+                completed = true;
+                String output{}; _ZN3sce4Json6StringC1Ev(&output);
+                Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&value, &output) == 0 &&
+                            std::strcmp(_ZNK3sce4Json6String5c_strEv(&output), test.retained) == 0,
+                        "Complete and malformed documents must retain the expected tree");
+                _ZN3sce4Json6StringD1Ev(&output);
+            } else {
+                ++failures;
+                Require(Parse(value, "false") == 0 && Parse(value, "[1]") == 0,
+                        "Interrupted parsing must permit cleanup and reuse of the same destination");
+                CheckOwnedTree(value, nullptr, failed);
+            }
+            _ZN3sce4Json5ValueD1Ev(&value);
+            Require(live.size() == baseline, "Parser cleanup must leave no unreachable guest allocations");
+        }
+        Require(completed, "Every document and reader must reach its allocation-complete result");
+    }
+    CleanupDocument = nullptr;
+    Require(failures != 0, "Parser cleanup must exercise guest allocation failures");
+    std::printf("Parser cleanup: %u guest allocation failures, %u documented sentinel refusals, no leaks\n", failures, refusals);
+}
 int main() {
     JsonTest::Allocator allocator;
     void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTracked), reinterpret_cast<void*>(FreeTracked), reinterpret_cast<void*>(NotifyTracked)};
@@ -91,6 +190,7 @@ int main() {
     _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, &parameter) == 0, "Initialize parser state tests");
     const auto baseline = live.size();
+    CheckParserCleanup(live, baseline);
     CheckArrayEntryFailures(live, baseline);
     struct FailureCase { bool once; int budget; int type; unsigned notifications; std::size_t requests; const char* text; };
     const FailureCase failures[]{
