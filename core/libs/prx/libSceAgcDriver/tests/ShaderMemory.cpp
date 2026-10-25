@@ -8271,7 +8271,7 @@ void verifyGcnSampleThroughVolume() {
         0xbf8c007fu,
         0x7e0002f0u,
         0x7e0202f0u,
-        0x7e0402f0u,
+        0x7e0402f2u,
         0xf09c0f00u, 0x00820400u,
         0xbf8c0f70u,
         0xe0780000u, 0x80050400u,
@@ -8316,6 +8316,9 @@ void verifyGcnSampleThroughVolume() {
     std::map<std::uint32_t, std::uint32_t> imageDims;
     std::map<std::uint32_t, std::uint32_t> sampledImages;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> samples;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::uint32_t> bitcasts;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto length = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -8324,14 +8327,24 @@ void verifyGcnSampleThroughVolume() {
         if (op == spv::OpTypeImage) imageDims[words[cursor + 1]] = words[cursor + 3];
         if (op == spv::OpTypeSampledImage) sampledImages[words[cursor + 1]] = words[cursor + 2];
         if (op == spv::OpImageSampleExplicitLod) samples.emplace_back(words[cursor + 3], words[cursor + 4]);
+        if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+        if (op == spv::OpBitcast) bitcasts[words[cursor + 2]] = words[cursor + 3];
+        for (std::size_t operand = 3; op == spv::OpCompositeConstruct && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
         if (length > 2u && op != spv::OpTypeVector && op != spv::OpTypeImage && op != spv::OpTypeSampledImage && op != spv::OpStore && op != spv::OpDecorate && op != spv::OpMemberDecorate && op != spv::OpName) resultTypes[words[cursor + 2]] = words[cursor + 1];
         cursor += length;
     }
     require(!samples.empty(), "GCN volume sample: the sample was not emitted");
+    const auto constantBits = [&](std::uint32_t id) {
+        const auto source = bitcasts.find(id);
+        const auto constant = constants.find(source == bitcasts.end() ? id : source->second);
+        return constant == constants.end() ? 0xffffffffu : constant->second;
+    };
     for (const auto& [sampledImage, coordinate] : samples) {
         const auto sampledType = resultTypes[sampledImage];
         require(imageDims[sampledImages[sampledType]] == spv::Dim3D, "GCN volume sample: a sample through a 3D T# does not read a 3D image");
         require(vectorSizes[resultTypes[coordinate]] == 3u, "GCN volume sample: a sample through a 3D T# does not take three coordinates");
+        const auto& parts = composites[coordinate];
+        require(parts.size() == 3u && constantBits(parts[0]) == 0x3f000000u && constantBits(parts[1]) == 0x3f000000u && constantBits(parts[2]) == 0x3f800000u, "GCN volume sample: a sample through a 3D T# does not take its z from the third address VGPR");
     }
 }
 
