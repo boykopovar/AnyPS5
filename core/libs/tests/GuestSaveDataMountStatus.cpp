@@ -55,6 +55,13 @@ void CheckUnmountedCalls() {
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
     Check(sceSaveDataGetEventResult(nullptr, nullptr) == SaveDataErrorParameter, "getEventResult null event is PARAMETER");
+    SaveDataPrepareParam prepareParam{};
+    Check(sceSaveDataPrepare(nullptr, &prepareParam) == SaveDataErrorParameter, "prepare null point is PARAMETER");
+    Check(sceSaveDataPrepare(&point, nullptr) == SaveDataErrorParameter, "prepare null param is PARAMETER");
+    Check(sceSaveDataPrepare(&point, &prepareParam) == SaveDataErrorNotMounted, "prepare unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataCommit(nullptr) == SaveDataErrorParameter, "commit null param is PARAMETER");
+    SaveDataCommitParam commitParam{};
+    Check(sceSaveDataCommit(&commitParam) == 0, "commit with valid param succeeds");
 }
 
 void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
@@ -93,6 +100,11 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSetParam(point, 1, newTitle, sizeof(newTitle)) == 0, "setParam on mounted save succeeds");
     Check(sceSaveDataGetParam(point, 1, readTitle, sizeof(readTitle), &gotSize) == 0, "getParam reads back set title");
     Check(std::strcmp(readTitle, newTitle) == 0, "readTitle matches newTitle");
+    SaveDataPrepareParam prepareParam{};
+    Check(sceSaveDataPrepare(nullptr, &prepareParam) == SaveDataErrorParameter, "prepare null point is PARAMETER");
+    Check(sceSaveDataPrepare(point, nullptr) == SaveDataErrorParameter, "prepare null param is PARAMETER");
+    Check(sceSaveDataPrepare(&unmounted, &prepareParam) == SaveDataErrorNotMounted, "prepare unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataPrepare(point, &prepareParam) == 0, "prepare on mounted save succeeds");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
