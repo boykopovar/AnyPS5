@@ -12,6 +12,30 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return path;
+    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return {};
+    std::wstring target(MAX_PATH, L'\0');
+    DWORD length = GetFinalPathNameByHandleW(handle, target.data(), static_cast<DWORD>(target.size()), FILE_NAME_NORMALIZED);
+    if (length >= target.size()) {
+        target.resize(length);
+        length = GetFinalPathNameByHandleW(handle, target.data(), length, FILE_NAME_NORMALIZED);
+    }
+    const DWORD error = GetLastError();
+    CloseHandle(handle);
+    if (length == 0 || length >= target.size()) {
+        SetLastError(length == 0 ? error : ERROR_FILENAME_EXCED_RANGE);
+        return {};
+    }
+    target.resize(length);
+    return target;
+}
+#endif
+
 extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
     if (!path) { errno = 14; return -1; }
@@ -19,9 +43,11 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     try {
         const auto resolved = ResolvePath_nid_no_patch(path);
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(resolved.c_str());
+        const auto target = FollowedPath(resolved);
+        const DWORD attributes = target.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(target.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES) {
-            errno = FilesystemError(std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+            const DWORD failure = GetLastError();
+            errno = failure == ERROR_CANT_RESOLVE_FILENAME ? 62 : FilesystemError(std::error_code(static_cast<int>(failure), std::system_category()));
             if (errno == 2) errno = NotFoundError_nid_no_patch(resolved);
             return -1;
         }
@@ -31,10 +57,10 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
         }
         DWORD size = 0;
         constexpr auto information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-        GetFileSecurityW(resolved.c_str(), information, nullptr, 0, &size);
+        GetFileSecurityW(target.c_str(), information, nullptr, 0, &size);
         if (!size) { errno = 13; return -1; }
         std::vector<unsigned char> descriptor(size);
-        if (!GetFileSecurityW(resolved.c_str(), information, descriptor.data(), size, &size)) {
+        if (!GetFileSecurityW(target.c_str(), information, descriptor.data(), size, &size)) {
             errno = 13; return -1;
         }
         struct Token {

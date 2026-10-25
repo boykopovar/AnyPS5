@@ -937,6 +937,53 @@ static void CheckAcoshfMsunBoundaries() {
     Require(std::isinf(acoshf_nid_postfix(INFINITY)) && acoshf_nid_postfix(INFINITY) > 0.0f);
     Require(std::isnan(acoshf_nid_postfix(-INFINITY)));
     Require(std::isnan(acoshf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint32_t input;
+        std::uint32_t result[4];
+        unsigned raised;
+    } cases[] = {
+        {0x3f800000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}, 0u},
+        {0x3f800001u, {0x39ffffffu, 0x39ffffffu, 0x3a000001u, 0x39ffffffu}, 32u},
+        {0x3fffffffu, {0x3fa89213u, 0x3fa89212u, 0x3fa89214u, 0x3fa89212u}, 32u},
+        {0x40000000u, {0x3fa89214u, 0x3fa89213u, 0x3fa89214u, 0x3fa89213u}, 32u},
+        {0x40000001u, {0x3fa89215u, 0x3fa89214u, 0x3fa89215u, 0x3fa89214u}, 32u},
+        {0x40000002u, {0x3fa89216u, 0x3fa89215u, 0x3fa89217u, 0x3fa89215u}, 32u},
+        {0x40000003u, {0x3fa89217u, 0x3fa89217u, 0x3fa89218u, 0x3fa89217u}, 32u},
+        {0x4d7fffffu, {0x41a0cf66u, 0x41a0cf65u, 0x41a0cf66u, 0x41a0cf65u}, 32u},
+        {0x4d800000u, {0x41a0cf66u, 0x41a0cf64u, 0x41a0cf66u, 0x41a0cf64u}, 32u},
+        {0x4d800001u, {0x41a0cf66u, 0x41a0cf65u, 0x41a0cf67u, 0x41a0cf65u}, 32u},
+        {0x4d8050f2u, {0x41a0d473u, 0x41a0d472u, 0x41a0d474u, 0x41a0d472u}, 32u},
+        {0x7f7fffffu, {0x42b2d4fcu, 0x42b2d4fbu, 0x42b2d4fdu, 0x42b2d4fbu}, 32u},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    float (APS5_VABI * volatile call)(float) = acoshf_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (std::uint16_t sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    Require(fesetexceptflag_nid_postfix(&sticky, 0x3f) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0 && (before.status & 0x3fu) == sticky);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint32_t>(call(std::bit_cast<float>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result[mode] || after.mxcsr != (control | sticky | item.raised) || (after.status & 0x3fu) != sticky || after.control != before.control || error != 1234) {
+                        std::fprintf(stderr, "acoshf positive: input=%08llx mode=%u denorm=%u sticky=%u bits=%08llx expected=%08llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), static_cast<unsigned long long>(item.result[mode]), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+
 }
 
 static void CheckCoshfMsunBoundaries() {

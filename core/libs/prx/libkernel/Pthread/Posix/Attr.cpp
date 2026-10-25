@@ -24,12 +24,15 @@ int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr) {
 
 int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr) {
     if (!thread || !Valid(attr)) return PosixThread::GUEST_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return PosixThread::GUEST_ESRCH;
     auto* p = *attr;
     p->_stacksize = thread->stackSize;
     p->stackAddress = thread->stackAddress;
     p->_detachstate = thread->_detached ? 1 : 0;
     p->_schedpriority = thread->priority.load(std::memory_order_relaxed);
     p->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    p->_createSuspended = thread->createdSuspended;
     p->_affinity = thread->affinity.load(std::memory_order_relaxed);
     p->_affinityExplicit = true;
     p->_scope = thread->scope;

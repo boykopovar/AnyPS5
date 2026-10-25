@@ -646,6 +646,7 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum);
 void APS5_VABI sceKernelDebugRaiseException(int c1, int c2);
 void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2);
 int APS5_VABI getlogin_r_nid_postfix(char* output, int size);
+char* APS5_VABI getlogin_nid_postfix(void);
 int APS5_VABI sceKernelDebugOutText(int channel, const char* text);
 int APS5_VABI sceKernelSendNotificationRequest(int device, const void* request, std::size_t size, int flags);
 int APS5_VABI getargc_nid_postfix(void);

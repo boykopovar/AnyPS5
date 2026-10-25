@@ -515,6 +515,12 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     return 0;
 }
 
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
+
+int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return SetTimeOfDay_nid_no_patch(tv, tz);
+}
+
 int APS5_VABI chroot_nid_postfix(const char* path) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));

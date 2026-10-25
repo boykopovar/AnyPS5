@@ -63,7 +63,7 @@ def check_guest_needed(relinker, work):
             (case / "prx" / "consumer.prx").write_bytes(module_with_needed(names, entries))
             output = case / ("output.exe" if windows else "output.elf")
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             assert result.returncode == 0, (label, windows, result.stdout, result.stderr)
             artifact = case / "app0" / "prx" / "consumer.prx.guest.prx"
             assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), artifact
@@ -81,7 +81,7 @@ def check_guest_needed(relinker, work):
             module.write_bytes(module_with_needed((first, invalid), (0, 0, 1)))
             output = case / ("output.exe" if windows else "output.elf")
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             assert result.returncode == 2 and f"{module}: Invalid dependency: {invalid.decode()}\n" in result.stderr, result.stderr
             assert not output.exists() and not (case / "app0").exists(), output
 
@@ -198,7 +198,7 @@ def main():
             source.write_bytes(executable_with_needed(needed, repeats))
             output = case / ("output.exe" if windows else "output.elf")
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             return result, output
 
         for windows in (False, True):
@@ -217,7 +217,7 @@ def main():
             assert layout in result.stdout, result.stdout
             for spelling in (os.path.join(".", output.name), os.path.join("..", case.name, output.name)):
                 relative = subprocess.run([str(relinker), *(["--windows"] if windows else []), "input.elf", spelling], cwd=case,
-                                          capture_output=True, text=True, timeout=30)
+                                          capture_output=True, text=True, encoding="utf-8", timeout=30)
                 assert relative.returncode == 0 and layout in relative.stdout, (spelling, relative.stdout, relative.stderr)
             if windows and os.name == "nt":
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
@@ -302,7 +302,7 @@ def main():
         source = case / "input.elf"
         source.write_bytes(executable_with_needed(b"libSceVideoOut.prx", 2))
         result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, (result.stdout, result.stderr)
     print("Guest needed module tests passed")
 

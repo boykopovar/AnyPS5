@@ -60,7 +60,7 @@ constexpr std::array<FamilyFiles, 9> FAMILY_FILES = {{
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 0},
     {{"DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf", "DFHEI5-SONY.ttf"},
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 2},
-    {{"SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Bold.otf"},
+    {{"SCEPS4Yoongd-Light.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Medium.otf", "SCEPS4Yoongd-Bold.otf"},
      {"NotoSansCJK-Light.ttc", "NotoSansCJK-Regular.ttc", "NotoSansCJK-Medium.ttc", "NotoSansCJK-Bold.ttc"}, 1},
     {{"SSTArabic-Light.otf", "SSTArabic-Roman.otf", "SSTArabic-Medium.otf", "SSTArabic-Bold.otf"},
      {"NotoSansArabic-Light.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Medium.ttf", "NotoSansArabic-Bold.ttf"}, 0},

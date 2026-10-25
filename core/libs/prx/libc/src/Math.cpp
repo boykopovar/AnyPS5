@@ -1045,10 +1045,10 @@ float APS5_VABI acoshf_nid_postfix(float x) {
     if ((bits & 0x80000000u) != 0 || magnitude < 0x3f800000u) return (x - x) / (x - x);
     if (magnitude >= 0x7f800000u) return x + x;
     if (magnitude == 0x3f800000u) return 0.0f;
-    if (magnitude >= 0x4d800000u) return std::log(x) + ln2;
+    if (magnitude >= 0x4d800000u) return logf_nid_postfix(x) + ln2;
     if (magnitude > 0x40000000u) {
         const float square = x * x;
-        return std::log(2.0f * x - 1.0f / (x + std::sqrt(square - 1.0f)));
+        return logf_nid_postfix(2.0f * x + (-1.0f / (x + std::sqrt(square - 1.0f))));
     }
     const float t = x - 1.0f;
     return AtanhfLog1p(t + std::sqrt(2.0f * t + t * t));

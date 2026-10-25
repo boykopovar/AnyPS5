@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
@@ -378,6 +379,31 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     Require(pathconf_nid_postfix(longPath.c_str(), 4) == -1 && Error() == 63);
 }
 
+void CheckSettimeofday() {
+    KernelTimezone zone{-1, -1};
+    Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    const KernelTimezone west{60, 1};
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    const KernelTimeval valid{1000000000, 0};
+    bool rejected = false;
+    try {
+        settimeofday_nid_postfix(&valid, &west);
+    } catch (const std::runtime_error& error) {
+        rejected = std::strstr(error.what(), "settimeofday: setting the time to 1000000000.000000") != nullptr;
+    }
+    Require(rejected);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(settimeofday_nid_postfix(nullptr, &west) == 0);
+    KernelTimeval now{};
+    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
+    const KernelTimezone zero{0, 0};
+    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
 void DirectoryRenameTests(const std::filesystem::path& parent) {
     const auto fixture = parent / "directory-identity";
     const auto original = fixture / "original";
@@ -711,6 +737,7 @@ int main() {
     Require(link_nid_postfix(nullptr, linked.c_str()) == -1 && Error() == 14);
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
+    CheckSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
