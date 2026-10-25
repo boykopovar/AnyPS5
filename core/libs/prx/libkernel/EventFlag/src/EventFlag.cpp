@@ -343,6 +343,10 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         flag->_changed.Wait(lock, released);
     }
     KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+    if (waiter.satisfied) {
+        if (result_pat) *result_pat = waiter.resultPattern;
+        return SCE_OK;
+    }
     if (flag->_deleted) {
         if (result_pat) *result_pat = 0;
         return SCE_KERNEL_ERROR_EACCES;
@@ -351,7 +355,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         if (result_pat) *result_pat = 0;
         return SCE_KERNEL_ERROR_ECANCELED;
     }
-    if (timedOut && !waiter.satisfied) {
+    if (timedOut) {
         if (result_pat) *result_pat = flag->_pattern;
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
