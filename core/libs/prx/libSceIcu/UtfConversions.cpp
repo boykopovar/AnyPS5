@@ -1,3 +1,4 @@
+#include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
 #include <cstdint>
