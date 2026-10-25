@@ -1,9 +1,8 @@
+#include "prx/libSceOpusSilkEnc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct OpusSilkEncoder;
 
 extern "C" {
 

@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -7,40 +8,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-struct Md4Context {
-    std::uint32_t A, B, C, D;
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Md5Context {
-    std::uint32_t A, B, C, D;
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Sha1Context {
-    std::uint32_t h[5];
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Sha256Context {
-    std::uint32_t h[8];
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num, mdLength;
-};
-
-struct Sha512Context {
-    std::uint64_t h[8];
-    std::uint64_t Nl, Nh;
-    std::uint64_t data[16];
-    std::uint32_t num, mdLength;
-};
 
 static_assert(sizeof(Md4Context) == 92);
 static_assert(sizeof(Md5Context) == 92);
@@ -494,6 +461,7 @@ unsigned char* APS5_VABI SHA256_nid_postfix(const unsigned char* data, std::size
     if (!digest) NotImplemented_nid_no_patch("SHA256: null digest buffer");
     Sha256Context c;
     SHA256_Init_nid_postfix(&c);
+
     if (length) Update32(c, data, length, Sha256Block);
     Sha256Final(digest, c, __func__);
     return digest;

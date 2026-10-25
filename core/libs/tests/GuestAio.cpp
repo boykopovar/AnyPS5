@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -19,28 +21,7 @@
 #include <io.h>
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 #endif
-extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
-int APS5_VABI sceKernelAioDeleteRequest(std::int32_t id, std::int32_t* ret);
-int APS5_VABI sceKernelAioInitializeImpl(void* param, std::int32_t size);
-void APS5_VABI sceKernelAioInitializeParam(void* param);
-int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, std::int32_t schedulingWindowSize, std::int32_t delayedCountLimit, std::uint32_t enableSplit, std::uint32_t splitSize, std::uint32_t splitChunkSize);
-int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioPollRequest(std::int32_t id, std::int32_t* state);
-int APS5_VABI sceKernelAioWaitRequest(std::int32_t id, std::int32_t* state, std::uint32_t* usec);
-int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioWaitRequests(std::int32_t* id, std::int32_t num, std::int32_t* state, std::uint32_t mode, std::uint32_t* usec);
-int APS5_VABI sceKernelAioPollRequests(std::int32_t* id, std::int32_t num, std::int32_t* state);
-int APS5_VABI sceKernelAioCancelRequest(std::int32_t id, std::int32_t* state);
-int APS5_VABI sceKernelAioCancelRequests(std::int32_t* id, std::int32_t num, std::int32_t* state);
-int APS5_VABI sceKernelAioDeleteRequests(std::int32_t* id, std::int32_t num, std::int32_t* ret);
-}
+
 static void Require(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Aio check failed at line %d\n", line);

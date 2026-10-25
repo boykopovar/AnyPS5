@@ -185,6 +185,8 @@ int main(int argc, char** argv) {
         Require(link("data", -1, "missing") == -1 && *error() == 9);
         Require(link("data", file, "missing") == -1 && *error() == 20);
         Require(link(nullptr, base, "missing") == -1 && *error() == 14);
+        Require(link(reinterpret_cast<const char*>(1), base, "missing") == -1 && *error() == 14);
+        Require(link("data", base, reinterpret_cast<const char*>(1)) == -1 && *error() == 14);
         Require(link("data", base, nullptr) == -1 && *error() == 14);
         Require(link("", base, "missing") == -1 && *error() == 2);
         Require(link(std::string(1024, 'x').c_str(), -1, "missing") == -1 && *error() == 63);

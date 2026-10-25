@@ -1,3 +1,4 @@
+#include "prx/libSceMsgDialog/include/Api.hpp"
 // libSceMsgDialog: message dialog state machine (NONE -> INITIALIZED -> RUNNING -> FINISHED) without a visible dialog.
 // The dialog "closes" with the affirmative button after a couple of status polls, so a title waiting for the user
 // never blocks. The message text is logged for the first calls.
@@ -25,7 +26,6 @@ constexpr int kStatusFinished = 3;
 
 constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003u);
-constexpr int kErrNotFinished = static_cast<int>(0x80B80005u);
 constexpr int kErrBusy = static_cast<int>(0x80B80007u);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
@@ -42,7 +42,6 @@ constexpr int kButtonTypeYesNoFocusNo = 4;
 
 constexpr int kButtonIdOk = 1;   // OK / YES / BUTTON1
 constexpr int kButtonIdNo = 2;   // NO / BUTTON2
-constexpr int kResultOk = 0;
 
 std::mutex g_lock;
 int g_status = kStatusNone;
@@ -136,15 +135,6 @@ int APS5_VABI sceMsgDialogGetStatus(void) {
 }
 int APS5_VABI sceMsgDialogUpdateStatus(void) {
  return Poll();
-}
-// SceMsgDialogResult: { int32 mode; int32 result; int32 buttonId; uint8 reserved[32] }.
-int APS5_VABI sceMsgDialogGetResult(void* result) {
- if (result == nullptr) return kErrArgNull;
- std::lock_guard g(g_lock);
- if (g_status != kStatusFinished) return kErrNotFinished;
- std::int32_t out[3] = {g_mode, kResultOk, g_buttonId};
- std::memcpy(result, out, sizeof(out));
- return kErrOk;
 }
 int APS5_VABI sceMsgDialogClose(void) {
  std::lock_guard g(g_lock);

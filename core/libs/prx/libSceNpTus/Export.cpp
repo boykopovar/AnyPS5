@@ -1,3 +1,4 @@
+#include "prx/libSceNpTus/include/Api.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <mutex>

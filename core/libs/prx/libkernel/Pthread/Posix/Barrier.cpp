@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <climits>
 #include <condition_variable>
@@ -7,24 +8,11 @@
 #include <stdexcept>
 #include <string>
 
-struct PthreadBarrierPrivate {
-    std::mutex mutex;
-    std::condition_variable changed;
-    unsigned count;
-    unsigned arrived = 0;
-    unsigned active = 0;
-    std::uint64_t generation = 0;
-};
-
 namespace {
 
 constexpr int PROCESS_PRIVATE = 0;
 
 }
-
-struct PthreadBarrierattrPrivate {
-    int pshared = PROCESS_PRIVATE;
-};
 
 extern "C" {
 

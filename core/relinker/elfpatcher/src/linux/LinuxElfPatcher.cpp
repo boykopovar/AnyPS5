@@ -81,7 +81,6 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
         }
         case R_X86_64_64:
         case R_X86_64_PC32:
-        case R_X86_64_COPY:
         case R_X86_64_GLOB_DAT:
         case R_X86_64_JUMP_SLOT:
         case R_X86_64_32:

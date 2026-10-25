@@ -1,3 +1,4 @@
+#include "prx/libSceVoice/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>

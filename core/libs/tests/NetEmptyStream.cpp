@@ -1,4 +1,4 @@
-#include "SceTypes.hpp"
+#include "prx/libSceNet/libSceNet.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -7,38 +7,6 @@
 #include <cstdlib>
 #include <future>
 #include <string_view>
-
-struct NetIovec {
-    void* base;
-    std::uint64_t length;
-};
-
-struct NetMsghdr {
-    void* name;
-    std::uint32_t nameLength;
-    NetIovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
-
-extern "C" {
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetSocketClose(int);
-int APS5_VABI sceNetBind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockname(int, void*, std::uint32_t*);
-int APS5_VABI sceNetListen(int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetAccept(int, void*, std::uint32_t*);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetSend(int, const void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI sceNetRecvmsg(int, NetMsghdr*, int);
-int* APS5_VABI sceNetErrnoLoc();
-}
 
 namespace {
 
@@ -104,9 +72,9 @@ Result Receive(std::string_view api, int descriptor, int flags, bool nullBuffer,
         NetMsghdr message{address.data(), addressLength, nullBuffer ? nullptr : &vector, nullBuffer ? 0 : 1, &control, 1, 0x4000};
         count = sceNetRecvmsg(descriptor, &message, flags);
         if (count >= 0) {
-            Require(message.controlLength == 0, "control length is not zero");
+            Require(message.control_length == 0, "control length is not zero");
             Require(message.flags == (datagram ? 0x10 : 0), "unexpected output flags");
-            addressLength = message.nameLength;
+            addressLength = message.name_length;
         }
     }
     const int error = *sceNetErrnoLoc();

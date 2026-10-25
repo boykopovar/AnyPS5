@@ -41,8 +41,13 @@ class DatabaseCacheTests(unittest.TestCase):
             database.write_text(f"{nid} sceExample\n", encoding="utf-8")
             scratch = str(Path(directory) / "scratch")
             Path(scratch).mkdir()
+            tree = Path(directory) / "tree"
+            (tree / "core" / "libs" / "prx").mkdir(parents=True)
+            (tree / "tools").mkdir()
+            tool = tree / "tools" / "nid_names.py"
+            tool.write_bytes(Path(script).read_bytes())
             environment = {**os.environ, "ANYPS5_NID_DB": str(database), "TEMP": scratch, "TMP": scratch, "TMPDIR": scratch}
-            result = subprocess.run([sys.executable, script, "--nid", nid, "--json"], capture_output=True, text=True,
+            result = subprocess.run([sys.executable, str(tool), "--nid", nid, "--json"], capture_output=True, text=True,
                                     env=environment, timeout=20)
             self.assertEqual(list(Path(scratch).iterdir()), [])
         self.assertEqual(result.returncode, 0, result.stderr)

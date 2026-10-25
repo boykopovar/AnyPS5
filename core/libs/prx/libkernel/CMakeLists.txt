@@ -56,6 +56,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/ModuleInfo.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Tls.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp
@@ -564,6 +565,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_stack_protect PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_tls_get_addr_tests ${LIBS_INCLUDE_DIR}/tests/GuestTlsGetAddr.cpp)
+    target_include_directories(guest_tls_get_addr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_tls_get_addr_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_tls_get_addr_tests)
+    add_test(NAME guest_tls_get_addr COMMAND guest_tls_get_addr_tests)
+    set_tests_properties(guest_tls_get_addr PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_tls_get_addr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_thread_self_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadSelf.cpp)
     target_include_directories(guest_thread_self_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_thread_self_tests PRIVATE libkernel libc)
@@ -990,6 +1001,16 @@ if(BUILD_TESTING)
     target_link_libraries(guest_signal_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_signal_tests)
     add_test(NAME guest_signals COMMAND guest_signal_tests)
+    add_test_executable(guest_signal_interrupt_tests ${LIBS_INCLUDE_DIR}/tests/GuestSignalInterrupt.cpp)
+    target_include_directories(guest_signal_interrupt_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_signal_interrupt_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_signal_interrupt_tests)
+    add_test(NAME guest_signal_interrupt COMMAND guest_signal_interrupt_tests)
+    set_tests_properties(guest_signal_interrupt PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_signal_interrupt PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_signals PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")

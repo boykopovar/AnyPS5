@@ -1,3 +1,4 @@
+#include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
@@ -5,10 +6,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceConvertKeycodeGetImeKeyboardType(std::int32_t, std::uint32_t*);
-}
 
 int main() {
 #ifdef _WIN32

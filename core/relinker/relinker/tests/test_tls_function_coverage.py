@@ -777,6 +777,8 @@ def main():
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
+            convert("branch-into-gs", make_image("register", "unwind", body=bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3")),
+                    "Branch enters a guest GS instruction", error_offset=0x11243)
 
         def check_gs_traps(cases):
             for name, instruction, trapped in cases:

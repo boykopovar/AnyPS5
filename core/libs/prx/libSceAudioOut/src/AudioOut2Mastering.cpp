@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>

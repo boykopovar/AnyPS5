@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #ifdef _WIN32
@@ -6,14 +8,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" {
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI getppid_nid_postfix(void);
-int APS5_VABI getsid_nid_postfix(int);
-int APS5_VABI setpgid_nid_postfix(int, int);
-int APS5_VABI setpgrp_nid_postfix(int, int);
-int* APS5_VABI __error_nid_postfix();
-}
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const int self = getpid_nid_postfix();

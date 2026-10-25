@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData.native/include/Api.hpp"
+#include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -1041,17 +1043,6 @@ int APS5_VABI sceSaveDataDebugTarget() {
 }
 
 namespace {
-
-struct SaveDataMountPs4 {
-    std::int32_t user_id;
-    std::int32_t pad;
-    const void* title_id;
-    const SceSaveDataDirName* dir_name;
-    const void* fingerprint;
-    std::uint64_t blocks;
-    std::uint32_t mount_mode;
-    std::uint8_t reserved[32];
-};
 
 }
 
