@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
@@ -17,20 +19,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id);
-int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id);
-int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id);
-int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
-int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
-int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
-int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t* handle);
-int APS5_VABI sceKernelDlsym(std::int32_t handle, const char* symbol, void** addr);
-}
 
 namespace {
 
@@ -110,6 +98,7 @@ void CheckUnwindInfo() {
     bool threw = false;
     try {
         sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(gap), 0, &info);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

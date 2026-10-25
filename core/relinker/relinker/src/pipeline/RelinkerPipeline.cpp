@@ -120,9 +120,6 @@ RelinkResult RelinkerPipeline::Relink() {
     };
 
     auto getTagValue = [&](const std::int64_t tag) -> std::uint64_t {
-        for (const auto& t : dynTags)
-            if (t.Tag == tag)
-                return t.Value;
         const char* name = "unknown";
         switch (tag) {
         case DT_OS_STRTAB: name = "DT_OS_STRTAB"; break;
@@ -149,6 +146,16 @@ RelinkResult RelinkerPipeline::Relink() {
         case DT_RELAENT: name = "DT_RELAENT"; break;
         case DT_OS_SYMTABSZ: name = "DT_OS_SYMTABSZ"; break;
         }
+        std::optional<std::uint64_t> value;
+        for (const auto& t : dynTags) {
+            if (t.Tag != tag)
+                continue;
+            if (value && *value != t.Value)
+                throw RelinkerException(std::string("Conflicting duplicate ") + name + " tags");
+            value = t.Value;
+        }
+        if (value)
+            return *value;
         std::ostringstream message;
         message << "Required dynamic tag " << name << " (0x" << std::hex << tag << ") not found";
         throw RelinkerException(message.str());
@@ -277,6 +284,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
         snd = readCStr(fst);
+        if (snd.empty() || snd.find_first_of("\\:$\r\n") != std::string::npos)
+            throw RelinkerException("Invalid dependency: " + snd, dynStrTabOffset + fst);
         neededLibraries.push_back(snd);
     }
 
@@ -312,8 +321,8 @@ RelinkResult RelinkerPipeline::Relink() {
         return type == R_X86_64_DTPMOD64 || type == R_X86_64_DTPOFF64 || type == R_X86_64_TPOFF64;
     };
 
-    const bool hasTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
-                                           [](const ProgramHeader& ph) { return ph.Type == PT_TLS; });
+    const bool hasNonEmptyTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
+                                                   [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
 
     const auto definedTlsSymbolValue = [&](const std::uint32_t symIdx, const FileByteOffset pos) -> std::optional<std::uint64_t> {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
@@ -346,8 +355,13 @@ RelinkResult RelinkerPipeline::Relink() {
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
+            validationPolicy->ValidateRelocationTypeSupported(relType, pos);
+
             if (relType == R_X86_64_NONE)
                 continue;
+
+            if (plt && relType != R_X86_64_JUMP_SLOT)
+                throw RelinkerException("Unsupported PLT relocation type", pos);
 
             if (relType == 8) {
                 if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
@@ -376,9 +390,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
-
-    for (const auto& ref : nidRefs)
-        validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
@@ -432,13 +443,42 @@ RelinkResult RelinkerPipeline::Relink() {
             std::memcpy(&sourceName, symbol, sizeof(sourceName));
             auto name = readCStr(sourceName);
             name.resize(name.find('#') == std::string::npos ? name.size() : name.find('#'));
+            const FileByteOffset entryOffset = dynSymTabOffset + off;
+            const auto type = symbol[4] & 15;
+            std::uint64_t value = 0;
+            std::uint64_t size = 0;
+            std::memcpy(&value, symbol + 8, sizeof(value));
+            std::memcpy(&size, symbol + 16, sizeof(size));
+            if (type == STT_TLS) {
+                if (section >= SHN_LORESERVE)
+                    throw RelinkerException("Unsupported executable TLS export section: " + name, entryOffset);
+                const auto tls = std::find_if(programHeaders.begin(), programHeaders.end(),
+                                              [](const ProgramHeader& ph) { return ph.Type == PT_TLS; });
+                if (tls == programHeaders.end())
+                    throw RelinkerException("Executable TLS export has no PT_TLS segment: " + name, entryOffset);
+                if (value > tls->MemorySize || size > tls->MemorySize - value)
+                    throw RelinkerException("Executable TLS export exceeds PT_TLS: " + name, entryOffset);
+            } else if (section != SHN_ABS) {
+                if (section >= SHN_LORESERVE)
+                    throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
+                const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
+                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
+                    return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
+                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                });
+                if (!mapped) {
+                    std::ostringstream message;
+                    message << "Executable export " << name << " at 0x" << std::hex << value
+                            << (size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : " is not inside ")
+                            << (flags != 0 ? "an executable" : "a") << " PT_LOAD segment";
+                    throw RelinkerException(message.str(), entryOffset);
+                }
+            }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && (symbol[4] & 15) == STT_FUNC) {
-                VirtualAddress address = 0;
-                std::memcpy(&address, symbol + 8, sizeof(address));
-                exportedFunctions.push_back(address);
-            }
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+                exportedFunctions.push_back(value);
         }
     }
 
@@ -543,8 +583,8 @@ RelinkResult RelinkerPipeline::Relink() {
                     continue;
                 offset = *value;
             }
-            if (!hasTlsSegment)
-                throw RelinkerException("TLS relocation in an executable without a PT_TLS segment", pos);
+            if (!hasNonEmptyTlsSegment)
+                throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
             const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));

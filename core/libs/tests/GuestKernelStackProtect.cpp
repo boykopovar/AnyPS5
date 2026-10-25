@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <atomic>
@@ -17,18 +19,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
-int* APS5_VABI __error_nid_postfix();
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t Page = 0x4000;

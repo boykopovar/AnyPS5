@@ -92,7 +92,7 @@ struct GcnTileGeometry {
 GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement);
 inline TextureTileMode MipTileMode(TextureTileMode tileMode, const TileMipLayout& mip) { return mip.gcnMicroTiled ? GcnMicroTileMode(tileMode) : tileMode; }
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
-GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed);
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed, bool keysReadAsStored);
 GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers);
 
 }

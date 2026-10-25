@@ -1,12 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t ChainReach = std::uintptr_t{64} << 10;

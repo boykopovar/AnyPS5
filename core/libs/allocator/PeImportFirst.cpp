@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -78,16 +79,16 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
     for (std::size_t index = 0; index < descriptors.size(); ++index) std::memcpy(bytes.data() + directory + index * DescriptorBytes, descriptors[index].data(), DescriptorBytes);
 }
 
-void MoveImportFirstInFile(const std::string& path, const std::string& dll) {
+void MoveImportFirstInFile(const std::filesystem::path& path, const std::string& dll) {
     std::vector<unsigned char> bytes;
     {
         std::ifstream input(path, std::ios::binary);
-        if (!input) throw std::runtime_error("cannot open " + path);
+        if (!input) throw std::runtime_error("cannot open " + path.string());
         bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     }
     MoveImportFirst(bytes, dll);
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) throw std::runtime_error("cannot write " + path);
+    if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) throw std::runtime_error("cannot write " + path.string());
 }
 
 }

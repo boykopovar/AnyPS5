@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -111,7 +112,6 @@ extern "C" void ForgetUnloadedUnwindImages_nid_no_patch() {
   for (const auto base : unloaded) UnwindImages().erase(base);
 }
 #elif !defined(__APPLE__)
-extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 
 namespace {
 struct ImageSearch {
@@ -142,7 +142,7 @@ bool IsRelinkedImage(std::uint64_t address) {
 void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
   ModuleInfoEx module{};
   module.st_size = sizeof(ModuleInfoEx);
-  if (sceKernelGetModuleInfoFromAddr(address, 2, &module) != 0)
+  if (sceKernelGetModuleInfoFromAddr(address, 1, &module) != 0)
     throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to query guest module information");
   info->eh_frame_hdr_addr = module.eh_frame_hdr_addr;
   info->eh_frame_addr = module.eh_frame_addr;
@@ -150,13 +150,6 @@ void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
 }
 }
 #endif
-
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name);
-int APS5_VABI dlclose_nid_postfix(void* handle);
-const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
-}
 
 namespace {
 constexpr int kRtldNow = 2;

@@ -1,3 +1,4 @@
+#include "prx/libSceNpCommerce/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
@@ -9,19 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceNpCommerceDialogInitialize();
-int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param);
-int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param);
-int APS5_VABI sceNpCommerceDialogUpdateStatus(void);
-int APS5_VABI sceNpCommerceDialogGetStatus(void);
-int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result);
-int APS5_VABI sceNpCommerceDialogClose(void);
-int APS5_VABI sceNpCommerceDialogTerminate();
-}
-
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -31,6 +19,7 @@ alignas(16) std::array<std::byte, 64> process{};
 constexpr int statusNone = 0;
 constexpr int statusInitialized = 1;
 constexpr int statusFinished = 3;
+constexpr int errorAlreadyInitialized = static_cast<int>(0x80B80004u);
 constexpr std::int32_t resultUserCanceled = 1;
 
 void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
@@ -72,6 +61,19 @@ int main() {
     Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
     NpCommerceDialogResult result{};
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
+
+    Require(sceNpCommerceDialogInitializeInternal() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogInitializeInternal() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogInitialize() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
+    Require(sceNpCommerceDialogInitialize() == 0);
+    Require(sceNpCommerceDialogInitializeInternal() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogInitialize() == 0);
     Require(sceNpCommerceDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80005u));
@@ -142,6 +144,7 @@ int main() {
     bool threw = false;
     try {
         sceNpCommerceDialogOpen2(&param2);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

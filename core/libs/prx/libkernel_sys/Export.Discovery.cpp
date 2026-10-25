@@ -1,47 +1,23 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Atfork.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
+#include <cstddef>
+
+namespace {
+
+int SceResult(int error) {
+    return error == 0 ? 0 : SceKernelError(error);
+}
+
+}
 
 extern "C" {
-
-int APS5_VABI aio_cancel_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_error_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_fsync_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_read_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_return_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_suspend_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_waitcomplete_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI aio_write_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI amd64_set_fsbase_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -68,11 +44,6 @@ int APS5_VABI blockpool_unmap_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI chown_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI cpuset_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -89,16 +60,6 @@ int APS5_VABI cpuset_setid_nid_postfix(void) {
 }
 
 int APS5_VABI dynlib_get_obj_member_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI fchownat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI fstat_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -139,11 +100,6 @@ int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
 }
 
 int APS5_VABI getfsstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI getlogin_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -278,52 +234,12 @@ int APS5_VABI ksem_wait_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ktimer_create_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ktimer_delete_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ktimer_getoverrun_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ktimer_gettime_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ktimer_settime_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ktrace_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI lchflags_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI lchmod_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI lchown_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI linkat_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -353,11 +269,6 @@ int APS5_VABI profil_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pselect_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -373,8 +284,10 @@ int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
+    constexpr int GuestEinval = 22;
+    if (!attr || !*attr) return GuestEinval;
+    (*attr)->_createSuspended = true;
     return 0;
 }
 
@@ -408,13 +321,8 @@ int APS5_VABI pthread_getstack_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_main_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_multi_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+    pthread_resume_all_np_nid_postfix();
     return 0;
 }
 
@@ -448,27 +356,18 @@ int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_resume_all_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI pthread_resume_all_np_nid_postfix(void) {
+    ResumeAllGuestThreads_nid_no_patch();
+    scePthreadTestcancel();
 }
 
-int APS5_VABI pthread_resume_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI pthread_resume_np_nid_postfix(Pthread thread) {
+    constexpr int GuestEinval = 22;
+    if (!thread) return GuestEinval;
+    return ResumeGuestThread_nid_no_patch(thread);
 }
 
 int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -509,18 +408,11 @@ int APS5_VABI pthread_suspend_user_context_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_switch_add_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 45;
 }
 
 int APS5_VABI pthread_switch_delete_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_timedjoin_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 45;
 }
 
 int APS5_VABI ptrace_nid_postfix(void) {
@@ -594,7 +486,6 @@ int APS5_VABI sceKernelAddProcessToCanvasMap(void) {
 }
 
 int APS5_VABI sceKernelAddResource(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -674,18 +565,11 @@ int APS5_VABI sceKernelClearBootReqNotifyCount(void) {
 }
 
 int APS5_VABI sceKernelClearGameDirectMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002004e);
 }
 
 int APS5_VABI sceKernelCloseEport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelCloseEventFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020001);
 }
 
 int APS5_VABI sceKernelCloseSema(void) {
@@ -699,8 +583,7 @@ int APS5_VABI sceKernelCreateBudget(void) {
 }
 
 int APS5_VABI sceKernelCreateEport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020001);
 }
 
 int APS5_VABI sceKernelDebugAcquireAndUpdateDebugRegister(void) {
@@ -779,8 +662,7 @@ int APS5_VABI sceKernelDeleteCpumodeEvent(void) {
 }
 
 int APS5_VABI sceKernelDeleteEport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020001);
 }
 
 int APS5_VABI sceKernelDeleteGpuExceptionEvent(void) {
@@ -824,7 +706,6 @@ int APS5_VABI sceKernelEndAppMount2(void) {
 }
 
 int APS5_VABI sceKernelEventLogInit(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -929,11 +810,6 @@ int APS5_VABI sceKernelGetCallRecord(void) {
 }
 
 int APS5_VABI sceKernelGetChildApp(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetCompiledSdkVersion(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1103,16 +979,6 @@ int APS5_VABI sceKernelGetMemoryPstate(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetModuleInfoInternal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetModuleListInternal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1139,11 +1005,6 @@ int APS5_VABI sceKernelGetPhysPageSize(void) {
 }
 
 int APS5_VABI sceKernelGetProcessName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetProcessType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1263,11 +1124,6 @@ int APS5_VABI sceKernelGetSubsysSubId(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetSystemExVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1279,11 +1135,6 @@ int APS5_VABI sceKernelGetSystemSwBeta(void) {
 }
 
 int APS5_VABI sceKernelGetThreadName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetTraceMemoryStats(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1364,8 +1215,7 @@ int APS5_VABI sceKernelGiveDirectMemoryToMapper(void) {
 }
 
 int APS5_VABI sceKernelHasNeoMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceKernelHwGetBdDriveInfo(void) {
@@ -1404,8 +1254,7 @@ int APS5_VABI sceKernelIccGetBootTimestamp(void) {
 }
 
 int APS5_VABI sceKernelIccGetCPMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002002d);
 }
 
 int APS5_VABI sceKernelIccGetCountTime(void) {
@@ -1499,8 +1348,7 @@ int APS5_VABI sceKernelIccSetBuzzer(void) {
 }
 
 int APS5_VABI sceKernelIccSetCPMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002002d);
 }
 
 int APS5_VABI sceKernelIccSetCpuInfoBit(void) {
@@ -1554,8 +1402,7 @@ int APS5_VABI sceKernelIsAllowedToSelectDvdRegion(void) {
 }
 
 int APS5_VABI sceKernelIsAuthenticNeo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceKernelIsCEX(void) {
@@ -1589,13 +1436,11 @@ int APS5_VABI sceKernelIsGenuineDevKit(void) {
 }
 
 int APS5_VABI sceKernelIsGenuineKratosCex(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKernelIsGenuineN(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceKernelIsGenuineTestKit(void) {
@@ -1714,8 +1559,7 @@ int APS5_VABI sceKernelMapToolMemory(void) {
 }
 
 int APS5_VABI sceKernelMapTraceMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002004e);
 }
 
 int APS5_VABI sceKernelMapperGetParam(void) {
@@ -1733,9 +1577,8 @@ int APS5_VABI sceKernelMlockall(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelMsync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags) {
+    return msync_nid_postfix(address, length, flags) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelNormalizePath(void) {
@@ -1764,8 +1607,7 @@ int APS5_VABI sceKernelNotifySystemSuspendStart(void) {
 }
 
 int APS5_VABI sceKernelOpenEport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020001);
 }
 
 int APS5_VABI sceKernelOpenInternal(void) {
@@ -1809,8 +1651,7 @@ int APS5_VABI sceKernelQueryToolMemory(void) {
 }
 
 int APS5_VABI sceKernelQueryTraceMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020002);
 }
 
 int APS5_VABI sceKernelRandomizedPath(void) {
@@ -1834,7 +1675,6 @@ int APS5_VABI sceKernelReleaseToolMemory(void) {
 }
 
 int APS5_VABI sceKernelReleaseTraceDirectMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -2143,24 +1983,17 @@ int APS5_VABI sceKernelTerminateSysCore(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKernelTraceMemoryTypeProtect(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002004e);
 }
 
 int APS5_VABI sceKernelTriggerEport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80020001);
 }
 
 int APS5_VABI sceKernelVirtualQueryAll(void) {
@@ -2283,74 +2116,59 @@ int APS5_VABI sceLibcMspaceCreateForMonoMutex(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadAtfork(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadAtfork(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)()) {
+    return SceResult(pthread_atfork_nid_postfix(prepare, parent, child));
 }
 
-int APS5_VABI scePthreadAttrGetscope(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadAttrGetscope(const PthreadAttr* attr, int* scope) {
+    return SceResult(pthread_attr_getscope_nid_postfix(attr, scope));
 }
 
-int APS5_VABI scePthreadAttrSetcreatesuspend(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadAttrSetcreatesuspend(PthreadAttr* attr) {
+    const int error = pthread_attr_setcreatesuspend_np_nid_postfix(attr);
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI scePthreadAttrSetscope(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadAttrSetscope(PthreadAttr* attr, int scope) {
+    return SceResult(pthread_attr_setscope_nid_postfix(attr, scope));
 }
 
-int APS5_VABI scePthreadBarrierDestroy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
+    return SceResult(pthread_barrier_destroy_nid_postfix(barrier));
 }
 
-int APS5_VABI scePthreadBarrierInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
+    (void)name;
+    return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
 }
 
-int APS5_VABI scePthreadBarrierWait(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierWait(PthreadBarrierPrivate** barrier) {
+    const int result = pthread_barrier_wait_nid_postfix(barrier);
+    return result > 0 ? SceKernelError(result) : result;
 }
 
-int APS5_VABI scePthreadBarrierattrDestroy(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierattrDestroy(PthreadBarrierattrPrivate** attr) {
+    return SceResult(pthread_barrierattr_destroy_nid_postfix(attr));
 }
 
-int APS5_VABI scePthreadBarrierattrGetpshared(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierattrGetpshared(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+    return SceResult(pthread_barrierattr_getpshared_nid_postfix(attr, pshared));
 }
 
-int APS5_VABI scePthreadBarrierattrInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierattrInit(PthreadBarrierattrPrivate** attr) {
+    return SceResult(pthread_barrierattr_init_nid_postfix(attr));
 }
 
-int APS5_VABI scePthreadBarrierattrSetpshared(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadCondattrGetclock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadBarrierattrSetpshared(PthreadBarrierattrPrivate** attr, int pshared) {
+    return SceResult(pthread_barrierattr_setpshared_nid_postfix(attr, pshared));
 }
 
 int APS5_VABI scePthreadGetconcurrency(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return pthread_getconcurrency_nid_postfix();
 }
 
-int APS5_VABI scePthreadGetcpuclockid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
+    return SceResult(pthread_getcpuclockid_nid_postfix(thread, clockId));
 }
 
 int APS5_VABI scePthreadMain(void) {
@@ -2359,8 +2177,8 @@ int APS5_VABI scePthreadMain(void) {
 }
 
 int APS5_VABI scePthreadMulti(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const int error = pthread_multi_np_nid_postfix();
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
 int APS5_VABI scePthreadMutexGetprioceiling(void) {
@@ -2408,14 +2226,13 @@ int APS5_VABI scePthreadMutexattrSetkind(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadResume(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadResume(Pthread thread) {
+    const int error = pthread_resume_np_nid_postfix(thread);
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI scePthreadResumeAll(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePthreadResumeAll(void) {
+    pthread_resume_all_np_nid_postfix();
 }
 
 int APS5_VABI scePthreadSetBesteffort(void) {
@@ -2423,9 +2240,8 @@ int APS5_VABI scePthreadSetBesteffort(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadSetconcurrency(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadSetconcurrency(int level) {
+    return SceResult(pthread_setconcurrency_nid_postfix(level));
 }
 
 int APS5_VABI scePthreadSingle(void) {
@@ -2458,11 +2274,6 @@ int APS5_VABI sched_getscheduler_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sched_rr_get_interval_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sched_setparam_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2473,22 +2284,7 @@ int APS5_VABI sched_setscheduler_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sem_close_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sem_setname_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_unlink_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2523,11 +2319,6 @@ int APS5_VABI statfs_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI swapcontext_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI swapon_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2544,16 +2335,6 @@ int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
 }
 
 int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

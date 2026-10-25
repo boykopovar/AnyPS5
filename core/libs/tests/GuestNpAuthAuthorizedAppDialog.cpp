@@ -1,21 +1,10 @@
+#include "prx/libSceNpAuthAuthorizedAppDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceNpAuthAuthorizedAppDialogInitialize(void);
-int APS5_VABI sceNpAuthAuthorizedAppDialogOpen(const NpAuthAuthorizedAppDialogParam* param);
-int APS5_VABI sceNpAuthAuthorizedAppDialogUpdateStatus(void);
-int APS5_VABI sceNpAuthAuthorizedAppDialogGetStatus(void);
-int APS5_VABI sceNpAuthAuthorizedAppDialogGetResult(std::int32_t* result);
-int APS5_VABI sceNpAuthAuthorizedAppDialogClose(void);
-int APS5_VABI sceNpAuthAuthorizedAppDialogTerminate(void);
-}
 
 namespace {
 
