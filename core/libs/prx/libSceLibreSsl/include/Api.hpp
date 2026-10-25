@@ -250,8 +250,26 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct LibreSslEvpCipherCtx;
+
+struct LibreSslEvpCipher {
+    int nid;
+    int blockSize;
+    int keyLength;
+    int ivLength;
+    std::uint64_t flags;
+    int (APS5_VABI* init)(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char* iv, int encrypt);
+    int (APS5_VABI* doCipher)(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length);
+    int (APS5_VABI* cleanup)(LibreSslEvpCipherCtx* ctx);
+    int contextSize;
+    int (APS5_VABI* setAsn1Parameters)(LibreSslEvpCipherCtx* ctx, void* type);
+    int (APS5_VABI* getAsn1Parameters)(LibreSslEvpCipherCtx* ctx, void* type);
+    int (APS5_VABI* control)(LibreSslEvpCipherCtx* ctx, int type, int arg, void* pointer);
+    void* applicationData;
+};
+
 struct LibreSslEvpCipherCtx {
-    const void* cipher;
+    const LibreSslEvpCipher* cipher;
     void* engine;
     int encrypt;
     int bufLen;
@@ -366,9 +384,9 @@ int APS5_VABI ERR_free_strings_nid_postfix(void);
 std::uint64_t APS5_VABI ERR_get_error_nid_postfix(void);
 std::uint64_t APS5_VABI ERR_peek_error_nid_postfix(void);
 void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
-int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
+int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(LibreSslEvpCipherCtx* ctx);
+int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(LibreSslEvpCipherCtx* ctx, int type, int arg, void* pointer);
+void APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(LibreSslEvpCipherCtx* ctx);
 void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(LibreSslEvpCipherCtx* ctx);
 LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad);
