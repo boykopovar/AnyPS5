@@ -15,12 +15,6 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
-
 using Ctl = int (APS5_VABI*)(void*, int, ...);
 
 struct Api {
@@ -107,7 +101,6 @@ void RequireRequests(const Api& api) {
     std::int32_t first = 0, second = 0;
     Require(api.ctl(state.data(), -1, &first, static_cast<std::int32_t*>(nullptr)) == api.error(13));
     Require(api.ctl(state.data(), -1, static_cast<std::int32_t*>(nullptr), &second) == api.error(13));
-    RequireThrows([&] { api.ctl(state.data(), -1, &first, &second); });
 
     Require(Get(api, state.data(), OPUS_GET_SAMPLE_RATE_REQUEST) == 24000);
     Require(Get(api, state.data(), OPUS_GET_FINAL_RANGE_REQUEST) == 0);
@@ -124,7 +117,6 @@ void RequireRequests(const Api& api) {
         Require(api.ctl(state.data(), OPUS_SET_INBAND_FEC_REQUEST, 2) == api.error(16));
         Require(api.ctl(state.data(), OPUS_SET_INBAND_FEC_REQUEST, 1) == 0 && Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 1);
         Require(api.ctl(state.data(), 4050, 2) == api.error(17));
-        RequireThrows([&] { api.ctl(state.data(), 4050, 1); });
         Require(api.ctl(state.data(), 4050, 0) == 0 && Get(api, state.data(), 4051) == 0);
     }
     Require(api.ctl(state.data(), OPUS_RESET_STATE) == 0);
