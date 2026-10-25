@@ -8305,6 +8305,12 @@ void verifyGcnSampleThroughVolume() {
     request.layout.pushConstantSizeBytes = 128;
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].dimension == RdnaImageDimension::Dim2D, "GCN volume sample: the GCN sample was not inferred as one 2D image");
+    auto gatherCode = code;
+    gatherCode[7] = 0xf11c0100u;
+    auto gatherRequest = request;
+    gatherRequest.shader = {ShaderStage::Compute, 0x25000u, gatherCode, 0, {}};
+    const auto gatherPlan = GetResourcePlan(gatherRequest);
+    require(!plan->info.images[0].gathered && gatherPlan->info.images.size() == 1u && gatherPlan->info.images[0].gathered, "GCN volume sample: only the image of the GCN gather is marked as gathered");
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
     const auto memoryRegions = memory.Regions();
