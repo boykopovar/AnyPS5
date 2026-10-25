@@ -8,6 +8,7 @@
 #include <io/BufferUtils.hpp>
 #include <nid/NidCompute.hpp>
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <set>
@@ -22,6 +23,22 @@ namespace Elfpatcher::Linux {
 namespace {
 
 constexpr std::uint64_t kLinuxUserAddressEnd = 0x800000000000;
+
+std::uint32_t GnuHash(std::string_view name) {
+    std::uint32_t h = 5381;
+    for (unsigned char c : name)
+        h = (h * 33) + c;
+    return h;
+}
+
+std::uint32_t ElfHash(std::string_view name) {
+    std::uint32_t h = 0;
+    for (unsigned char c : name) {
+        h = (h << 4) + c;
+        h = (h ^ ((h & 0xf0000000u) >> 24u)) & 0x0fffffffu;
+    }
+    return h;
+}
 
 std::string Hex(const std::uint64_t value) {
     std::ostringstream text;
@@ -418,13 +435,106 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
     alignBuf(buf, kDynSymAlignment);
 
-    const auto hashOff = static_cast<std::uint64_t>(buf.size());
     const auto symbolCount = static_cast<std::uint32_t>(symbols.size() / kSymEntrySize);
-    Io::AppendU32(buf, 1);
-    Io::AppendU32(buf, symbolCount);
-    Io::AppendU32(buf, symbolCount > 1 ? 1 : 0);
-    for (std::uint32_t index = 0; index < symbolCount; ++index)
-        Io::AppendU32(buf, index != 0 && index + 1 < symbolCount ? index + 1 : 0);
+    std::vector<std::uint32_t> definedSymbols;
+    for (std::uint32_t index = 1; index < symbolCount; ++index) {
+        const auto shndx = Io::ReadU16(symbols, index * kSymEntrySize + 6);
+        if (shndx != SHN_UNDEF)
+            definedSymbols.push_back(index);
+    }
+
+    const auto hashOff = static_cast<std::uint64_t>(buf.size());
+    if (definedSymbols.empty()) {
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, symbolCount);
+        Io::AppendU32(buf, 0);
+        for (std::uint32_t index = 0; index < symbolCount; ++index)
+            Io::AppendU32(buf, 0);
+    } else {
+        const auto bucketCount = std::max<std::uint32_t>(static_cast<std::uint32_t>(definedSymbols.size()), 1);
+        std::vector<std::uint32_t> sysvBuckets(bucketCount, 0), sysvChains(symbolCount, 0);
+        for (std::uint32_t symIdx : definedSymbols) {
+            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            const auto hash = ElfHash(name);
+            sysvChains[symIdx] = sysvBuckets[hash % bucketCount];
+            sysvBuckets[hash % bucketCount] = symIdx;
+        }
+        Io::AppendU32(buf, bucketCount);
+        Io::AppendU32(buf, symbolCount);
+        for (auto b : sysvBuckets) Io::AppendU32(buf, b);
+        for (auto c : sysvChains) Io::AppendU32(buf, c);
+    }
+    alignBuf(buf, 8);
+
+    const auto gnuHashOff = static_cast<std::uint64_t>(buf.size());
+    if (definedSymbols.empty()) {
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, symbolCount);
+        Io::AppendU32(buf, 1);
+        Io::AppendU32(buf, 6);
+        Io::AppendU64(buf, 0);
+        Io::AppendU32(buf, 0);
+    } else {
+        const auto symoffset = definedSymbols.front();
+        const auto numDefined = static_cast<std::uint32_t>(definedSymbols.size());
+        const auto nbuckets = std::max<std::uint32_t>(numDefined, 1);
+        constexpr std::uint32_t bloomShift = 6;
+        std::uint32_t bloomSize = 1;
+        while (bloomSize * 64 < numDefined * 8)
+            bloomSize <<= 1;
+
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> symHashes;
+        symHashes.reserve(numDefined);
+        for (std::uint32_t symIdx : definedSymbols) {
+            const auto offset = Io::ReadU32(symbols, symIdx * kSymEntrySize);
+            const char* name = offset < dynStrSize ? reinterpret_cast<const char*>(buf.data() + dynStrOff + offset) : "";
+            symHashes.emplace_back(symIdx, GnuHash(name));
+        }
+
+        std::stable_sort(symHashes.begin(), symHashes.end(), [nbuckets](const auto& a, const auto& b) {
+            return (a.second % nbuckets) < (b.second % nbuckets);
+        });
+
+        std::vector<std::uint8_t> sortedSymbols;
+        sortedSymbols.reserve(numDefined * kSymEntrySize);
+        for (const auto& [origIdx, hash] : symHashes) {
+            const auto* src = symbols.data() + origIdx * kSymEntrySize;
+            sortedSymbols.insert(sortedSymbols.end(), src, src + kSymEntrySize);
+        }
+        std::memcpy(symbols.data() + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
+        std::memcpy(buf.data() + dynSymOff + symoffset * kSymEntrySize, sortedSymbols.data(), sortedSymbols.size());
+
+        std::vector<std::uint64_t> bloom(bloomSize, 0);
+        for (const auto& [idx, hash] : symHashes) {
+            const auto wordIdx = (hash / 64) % bloomSize;
+            const auto bit1 = hash % 64;
+            const auto bit2 = (hash >> bloomShift) % 64;
+            bloom[wordIdx] |= (static_cast<std::uint64_t>(1) << bit1) | (static_cast<std::uint64_t>(1) << bit2);
+        }
+
+        std::vector<std::uint32_t> buckets(nbuckets, 0);
+        std::vector<std::uint32_t> chains(numDefined, 0);
+        std::uint32_t prevBucket = nbuckets;
+        for (std::uint32_t i = 0; i < numDefined; ++i) {
+            const auto hash = symHashes[i].second;
+            const auto b = hash % nbuckets;
+            if (b != prevBucket) {
+                buckets[b] = symoffset + i;
+                prevBucket = b;
+            }
+            const bool isLast = (i + 1 == numDefined) || ((symHashes[i + 1].second % nbuckets) != b);
+            chains[i] = (hash & ~1u) | (isLast ? 1u : 0u);
+        }
+
+        Io::AppendU32(buf, nbuckets);
+        Io::AppendU32(buf, symoffset);
+        Io::AppendU32(buf, bloomSize);
+        Io::AppendU32(buf, bloomShift);
+        for (auto w : bloom) Io::AppendU64(buf, w);
+        for (auto b : buckets) Io::AppendU32(buf, b);
+        for (auto c : chains) Io::AppendU32(buf, c);
+    }
     alignBuf(buf, kDynSymAlignment);
 
     const auto relaOff = static_cast<std::uint64_t>(buf.size());
@@ -462,6 +572,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _appendDynEntry(dynSegBuf, DT_SYMTAB, address(vaddrOfExtraBlockOffset(dynSymOff)));
     _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
     _appendDynEntry(dynSegBuf, DT_HASH, address(vaddrOfExtraBlockOffset(hashOff)));
+    _appendDynEntry(dynSegBuf, DT_GNU_HASH, address(vaddrOfExtraBlockOffset(gnuHashOff)));
     _appendDynEntry(dynSegBuf, DT_DEBUG, 0);
     if (!relocations.empty()) {
         _appendDynEntry(dynSegBuf, DT_RELA, address(vaddrOfExtraBlockOffset(relaOff)));
