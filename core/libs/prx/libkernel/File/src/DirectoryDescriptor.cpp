@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
+#include "prx/libkernel/File/include/WindowsExtendedPath.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
@@ -120,6 +121,31 @@ bool InsideApp0(const std::filesystem::path& directory) {
     return true;
 }
 
+std::vector<std::filesystem::path> ListDirectoryEntries(const std::filesystem::path& directory) {
+    std::vector<std::filesystem::path> entries;
+    WIN32_FIND_DATAW data{};
+    const HANDLE find = FindFirstFileExW((directory / L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) {
+        const DWORD code = GetLastError();
+        if (code == ERROR_FILE_NOT_FOUND) return entries;
+        throw std::system_error(static_cast<int>(code), std::system_category(), "read directory descriptor");
+    }
+    try {
+        do {
+            const std::wstring_view name(data.cFileName);
+            if (name == L"." || name == L"..") continue;
+            entries.push_back(directory / data.cFileName);
+        } while (FindNextFileW(find, &data));
+        const DWORD code = GetLastError();
+        if (code != ERROR_NO_MORE_FILES) throw std::system_error(static_cast<int>(code), std::system_category(), "read directory descriptor");
+    } catch (...) {
+        FindClose(find);
+        throw;
+    }
+    FindClose(find);
+    return entries;
+}
+
 std::uint8_t EntryType(const std::filesystem::path& path, bool followLinks) {
     FileStat status{};
     if (!File::FillLinkStat(path, &status))
@@ -150,16 +176,17 @@ void Load(DirectoryState& state, int fd) {
     if (state.loaded) return;
     state.entries.clear();
     const auto directoryPath = state.nativeBacked ? File::DirectoryDescriptorPath(fd).value_or(state.path) : state.path;
+    const auto hostPath = File::WindowsExtendedPath(directoryPath);
     AppArchiveNode node{};
     const bool hasArchiveDirectory = AppArchiveLookup_nid_no_patch(directoryPath, &node) && node.Directory;
     std::error_code hostError;
-    const auto hostPathStatus = std::filesystem::status(directoryPath, hostError);
+    const auto hostPathStatus = std::filesystem::status(hostPath, hostError);
     if (hostError && hostError != std::errc::no_such_file_or_directory)
         throw std::system_error(hostError, "stat directory descriptor path");
     const bool hostPathExists = !hostError && std::filesystem::exists(hostPathStatus);
     const bool hasHostDirectory = hostPathExists && std::filesystem::is_directory(hostPathStatus);
     FileStat directoryStatus{};
-    if (hasHostDirectory && !File::TryFillFileStat(directoryPath, &directoryStatus))
+    if (hasHostDirectory && !File::TryFillFileStat(hostPath, &directoryStatus))
         throw std::system_error(errno, std::generic_category(), "stat directory descriptor identity");
     if (!hasHostDirectory && !hasArchiveDirectory) throw std::system_error(ENOTDIR, std::generic_category(), "directory descriptor path");
     std::uint64_t currentNumber = hasArchiveDirectory ? static_cast<std::uint64_t>(node.Handle) + 1 : 0;
@@ -167,7 +194,7 @@ void Load(DirectoryState& state, int fd) {
     Add(state, ".", currentNumber, GuestDirectoryType);
     std::uint64_t parentNumber = 0;
     FileStat parentStatus{};
-    const bool hasHostParent = File::TryFillFileStat(directoryPath.parent_path(), &parentStatus);
+    const bool hasHostParent = File::TryFillFileStat(hostPath.parent_path(), &parentStatus);
     if (hasHostParent) parentNumber = static_cast<std::uint64_t>(parentStatus.st_ino);
     AppArchiveNode parentNode{};
     if (!hasHostParent && AppArchiveLookup_nid_no_patch(directoryPath.parent_path(), &parentNode) && parentNode.Directory)
@@ -180,6 +207,15 @@ void Load(DirectoryState& state, int fd) {
         const bool followLinks = InsideApp0(directoryPath);
         errno = savedErrno;
 #endif
+#ifdef _WIN32
+        for (const auto& entryPath : ListDirectoryEntries(hostPath)) {
+            const auto utf8Name = entryPath.filename().u8string();
+            const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
+            FileStat entryStatus{};
+            if (!File::FillLinkStat(entryPath, &entryStatus)) throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(entryPath, followLinks));
+        }
+#else
         for (std::filesystem::directory_iterator it(directoryPath, error), end; it != end; it.increment(error)) {
             if (error) throw std::system_error(error, "read directory descriptor");
             const auto utf8Name = it->path().filename().u8string();
@@ -194,6 +230,7 @@ void Load(DirectoryState& state, int fd) {
             if (error) throw std::system_error(error, "stat directory entry");
         }
         if (error) throw std::system_error(error, "read directory descriptor");
+#endif
     }
     if (hasArchiveDirectory) {
         std::vector<std::string> hostNames;
@@ -209,9 +246,10 @@ void Load(DirectoryState& state, int fd) {
 #ifdef _WIN32
 int OpenPlaceholder(const std::filesystem::path& path) {
     std::error_code error;
-    if (std::filesystem::is_directory(path, error)) {
+    const auto openPath = File::WindowsExtendedPath(path);
+    if (std::filesystem::is_directory(openPath, error)) {
         SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-        const auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        const auto handle = CreateFileW(openPath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             &security, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE) {
             errno = WindowsOpenError_nid_no_patch(GetLastError());
@@ -253,7 +291,11 @@ int OpenDirectoryDescriptor(const std::filesystem::path& path) {
     auto state = std::make_shared<DirectoryState>();
     state->path = path;
     std::error_code statusError;
+#ifdef _WIN32
+    const bool hostDirectory = std::filesystem::is_directory(File::WindowsExtendedPath(path), statusError);
+#else
     const bool hostDirectory = std::filesystem::is_directory(path, statusError);
+#endif
     AppArchiveNode archiveNode{};
     const bool archiveDirectory = AppArchiveLookup_nid_no_patch(path, &archiveNode) && archiveNode.Directory;
     state->virtualNamespace = archiveDirectory;

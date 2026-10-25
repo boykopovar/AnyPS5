@@ -10,6 +10,13 @@ static void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "ch
 
 static std::wstring Extend(const std::wstring& input) { return File::WindowsExtendedPath(std::filesystem::path(input)).native(); }
 
+static std::wstring Normalize(const std::wstring& input) {
+    std::error_code error;
+    const auto result = File::WindowsNormalizedPath(std::filesystem::path(input), error).native();
+    Require(!error);
+    return result;
+}
+
 class TemporaryDirectory {
 public:
     TemporaryDirectory() : original(std::filesystem::current_path()) {
@@ -65,5 +72,11 @@ int main() {
     const std::wstring relative = Extend(L"relative\\" + name);
     const std::wstring current = std::filesystem::current_path().native();
     Require(relative == L"\\\\?\\" + current + L"\\relative\\" + name);
+    Require(Normalize(L"C:\\dir\\.\\sub\\..\\file.bin") == L"C:\\dir\\file.bin");
+    Require(Normalize(L"C:\\" + name) == L"\\\\?\\C:\\" + name);
+    Require(Normalize(L"\\\\server\\share\\dir\\..\\file.bin") == L"\\\\server\\share\\file.bin");
+    Require(Normalize(L"//server/share/dir/file.bin") == L"\\\\server\\share\\dir\\file.bin");
+    Require(Normalize(L"\\\\server\\share\\" + name) == L"\\\\?\\UNC\\server\\share\\" + name);
+    Require(Normalize(L"\\\\?\\C:\\" + name) == L"\\\\?\\C:\\" + name);
     CheckRelativeUnderLongDirectory();
 }

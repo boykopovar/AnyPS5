@@ -115,15 +115,7 @@ static int NativeUnlink(const std::filesystem::path& p) {
     return -1;
 }
 static std::filesystem::path NativeMetadataPath(const std::filesystem::path& path, std::error_code& error) {
-    const auto& input = path.native();
-    if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) return path;
-    auto absolute = std::filesystem::absolute(path, error);
-    if (error) return {};
-    absolute = absolute.lexically_normal().make_preferred();
-    const auto& native = absolute.native();
-    if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return absolute;
-    return native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
-                                            : std::filesystem::path(L"\\\\?\\" + native);
+    return File::WindowsNormalizedPath(path, error);
 }
 static bool NativeSymbolicLinkLoop(const std::filesystem::path& path) {
     return File::WindowsSymbolicLinkLoop(path);
@@ -232,7 +224,7 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
-        const auto status = std::filesystem::status(native, error);
+        const auto status = std::filesystem::status(File::WindowsExtendedPath(native), error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
     }
     if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
@@ -269,7 +261,7 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         auto directory = native;
         while (!directory.has_filename() && directory.has_relative_path()) directory = directory.parent_path();
         std::error_code error;
-        if (std::filesystem::is_directory(directory, error)) {
+        if (std::filesystem::is_directory(File::WindowsExtendedPath(directory), error)) {
             if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) errno = EEXIST;
             else if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC))) errno = EISDIR;
             else fd = File::OpenDirectoryDescriptor(directory);

@@ -369,6 +369,11 @@ static void TestLongHostPathStat() {
     Require(sceKernelStat("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8);
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
+    const int opened = sceKernelOpen("/long-stat-host/payload.bin", 0, 0);
+    char content[8]{};
+    Require(opened >= 0 && sceKernelRead(opened, content, sizeof content) == 8 && std::memcmp(content, "metadata", 8) == 0 && sceKernelClose(opened) == 0);
+    const int listed = sceKernelOpen("/long-stat-host/", 0x20000, 0);
+    Require(listed >= 0 && sceKernelClose(listed) == 0);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
