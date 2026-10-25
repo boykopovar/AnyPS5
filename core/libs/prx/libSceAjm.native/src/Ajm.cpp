@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -1135,7 +1136,6 @@ std::size_t OpusPacketSamples(const std::uint8_t* packet, std::size_t size) {
     }
     return frames * frameSamples;
 }
-
 
 std::size_t OpusLength(const std::uint8_t* data, std::size_t size, std::size_t& at) {
     if (at >= size) return SIZE_MAX;

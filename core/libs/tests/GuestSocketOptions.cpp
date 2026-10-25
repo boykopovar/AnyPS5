@@ -1,25 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI poll_nid_postfix(void*, std::uint32_t, int);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -50,12 +36,6 @@ constexpr int ErrorBadDescriptor = 9;
 struct Linger {
     std::int32_t enabled;
     std::int32_t seconds;
-};
-
-struct PollDescriptor {
-    std::int32_t descriptor;
-    std::int16_t events;
-    std::int16_t revents;
 };
 
 void Require(bool condition, const char* what) {
@@ -99,7 +79,7 @@ std::array<std::uint8_t, 16> Listen(int* listener) {
 }
 
 void WaitUntilSettled(int descriptor) {
-    PollDescriptor entry{descriptor, 0x1 | 0x4, 0};
+    GuestPollDescriptor entry{descriptor, 0x1 | 0x4, 0};
     Require(poll_nid_postfix(&entry, 1, 6000) == 1, "the nonblocking connect did not settle within 6 s");
 }
 

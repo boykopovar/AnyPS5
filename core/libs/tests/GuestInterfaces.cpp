@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -27,28 +28,12 @@
 #include <cstring>
 #include <vector>
 
-struct GuestInterfaceAddress {
-    GuestInterfaceAddress* next;
-    char* name;
-    std::uint32_t flags;
-    void* address;
-    void* netmask;
-    void* destination;
-    void* data;
-};
 static_assert(sizeof(GuestInterfaceAddress) == 56);
 static_assert(offsetof(GuestInterfaceAddress, flags) == 16);
 static_assert(offsetof(GuestInterfaceAddress, address) == 24);
 static_assert(offsetof(GuestInterfaceAddress, netmask) == 32);
 static_assert(offsetof(GuestInterfaceAddress, destination) == 40);
 static_assert(offsetof(GuestInterfaceAddress, data) == 48);
-
-extern "C" {
-int APS5_VABI getifaddrs_nid_postfix(GuestInterfaceAddress** list);
-void APS5_VABI freeifaddrs_nid_postfix(GuestInterfaceAddress* list);
-void APS5_VABI free_nid_postfix(void* pointer);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -297,6 +282,7 @@ int main() {
         }
         matched = equal && entries == host.size() && loopback;
         freeifaddrs_nid_postfix(list);
+
     }
     Require(matched);
 #ifdef __linux__
@@ -306,6 +292,7 @@ int main() {
     Require(getifaddrs_nid_postfix(&released) == 0 && released != nullptr);
     free_nid_postfix(released);
     freeifaddrs_nid_postfix(nullptr);
+
     *__error_nid_postfix() = 0;
     Require(getifaddrs_nid_postfix(nullptr) == -1);
     Require(*__error_nid_postfix() == 14);

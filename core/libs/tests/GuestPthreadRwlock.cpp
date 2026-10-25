@@ -1,3 +1,7 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -6,43 +10,9 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr);
-int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared);
-int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr, int pshared);
-int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type);
-int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
-int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type);
-int APS5_VABI scePthreadRwlockattrSetpshared(PthreadRwlockattr* attr, int pshared);
-int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int* pshared);
-int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
-int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
-int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
-int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
-}
-
 using TimedLock = int (APS5_VABI *)(PthreadRwlock*, const KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EBUSY = 16;

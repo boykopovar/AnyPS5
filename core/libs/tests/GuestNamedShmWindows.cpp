@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "nid/Sha1.hpp"
@@ -21,19 +23,6 @@
 #include <barrier>
 #include <algorithm>
 
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI shm_unlink_nid_postfix(const char*);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI fchmod_nid_postfix(int, int);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 constexpr int ReadOnly = 0;

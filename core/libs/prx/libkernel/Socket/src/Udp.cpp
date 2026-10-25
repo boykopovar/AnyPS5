@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -57,8 +59,6 @@
 #include <string>
 #include <vector>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI dup2_nid_postfix(int from, int to);
 namespace {
 #ifdef _WIN32
 using NativeSocket = SOCKET;
@@ -536,11 +536,7 @@ using NativePollDescriptor = WSAPOLLFD;
 #else
 using NativePollDescriptor = pollfd;
 #endif
-struct GuestPollDescriptor {
-    int descriptor;
-    short events;
-    short revents;
-};
+
 struct PollFlag {
     short guest;
     short native;
@@ -1483,19 +1479,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     }
     return result;
 }
-struct GuestIovec {
-    void* base;
-    std::uint64_t length;
-};
-struct GuestMsghdr {
-    void* name;
-    std::uint32_t nameLength;
-    GuestIovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
+
 static_assert(sizeof(GuestMsghdr) == 48 && offsetof(GuestMsghdr, iov) == 16 && offsetof(GuestMsghdr, control) == 32 && offsetof(GuestMsghdr, flags) == 44);
 static std::int64_t MessageLength(const GuestMsghdr* message) {
     if (!message) return Fail(14);
@@ -1597,8 +1581,8 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
     if (header.iovLength < 0 || header.iovLength > 1024) return Fail(40);
-    std::vector<GuestIovec> vectors(static_cast<std::size_t>(header.iovLength));
-    if (!ReadGuest(vectors.data(), header.iov, vectors.size() * sizeof(GuestIovec))) return Fail(14);
+    std::vector<KernelIovec> vectors(static_cast<std::size_t>(header.iovLength));
+    if (!ReadGuest(vectors.data(), header.iov, vectors.size() * sizeof(KernelIovec))) return Fail(14);
     header.iov = vectors.data();
     const auto total = MessageLength(&header);
     if (total < 0) return -1;
@@ -1658,15 +1642,10 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     if (!WriteGuest(reinterpret_cast<char*>(message) + results, reinterpret_cast<const char*>(&header) + results, sizeof(header) - results)) return Fail(14);
     return received;
 }
-struct GuestSendfileHeaders {
-    GuestIovec* headers;
-    int headerCount;
-    GuestIovec* trailers;
-    int trailerCount;
-};
+
 static_assert(sizeof(GuestSendfileHeaders) == 32 && offsetof(GuestSendfileHeaders, trailers) == 16);
-std::int64_t APS5_VABI sceKernelPread(int descriptor, void* buffer, std::size_t length, std::int64_t offset);
-static bool SendfileIovecs(const GuestIovec* iov, int count) {
+
+static bool SendfileIovecs(const KernelIovec* iov, int count) {
     if (!iov) return true;
     if (count < 0 || count > 1024) return false;
     std::uint64_t total = 0;
@@ -1688,7 +1667,7 @@ static int SendAll(const Socket& socket, const void* data, std::uint64_t length,
     }
     return 0;
 }
-static int SendIovecs(const Socket& socket, const GuestIovec* iov, int count, std::int64_t& sent) {
+static int SendIovecs(const Socket& socket, const KernelIovec* iov, int count, std::int64_t& sent) {
     for (int i = 0; iov && i < count; ++i)
         if (const int error = SendAll(socket, iov[i].base, iov[i].length, sent)) return error;
     return 0;

@@ -1,16 +1,9 @@
+#include "prx/libSceProprietaryVoiceChatHelperPrx/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceProprietaryVoiceChatHelperInitialize();
-int APS5_VABI sceProprietaryVoiceChatHelperTerminate();
-int APS5_VABI sceProprietaryVoiceChatHelperSetVoiceChatState();
-int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChatUsageState();
-int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChat();
-}
 
 static void Require(bool value, const char* what) {
     if (value) return;

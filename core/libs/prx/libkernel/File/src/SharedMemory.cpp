@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -39,8 +41,6 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 #include <unistd.h>
 #include <cstdio>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 

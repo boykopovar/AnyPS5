@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/General.hpp"
@@ -170,9 +172,6 @@ static int MapFlags(int sceFlags) {
     return f;
 }
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
 
 static int SceErrorFromErrno(int error) {
     const int guest = error > 0 && error <= 34 ? error : FilesystemError(std::error_code(error, std::generic_category()));

@@ -61,11 +61,18 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         flush = 3u;
         break;
     case RdnaOpcode::VMullitF32:
+        flush = 3u;
+        break;
     case RdnaOpcode::VMinF32:
     case RdnaOpcode::VMaxF32:
     case RdnaOpcode::VMin3F32:
     case RdnaOpcode::VMax3F32:
     case RdnaOpcode::VMed3F32:
+        if (!floatMode.has_value() || ((floatMode->floatMode >> 4u) & 1u) == 0u) return 3u;
+        if (((floatMode->floatMode >> 4u) & 3u) == 1u && (!float32DenormPreserve || float32FlushToZero)) {
+            throw std::runtime_error("f32 denormal mode 1 at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+        }
+        return 0u;
     case RdnaOpcode::VFractF32:
     case RdnaOpcode::VFloorF32:
     case RdnaOpcode::VCeilF32:

@@ -1,3 +1,4 @@
+#include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -5,18 +6,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct WebBrowserDialogCookieParam {
-    std::uint64_t size;
-    const char* address;
-    const char* cookie;
-    std::uint8_t reserved[256];
-};
-
-struct WebBrowserDialogResetCookieParam {
-    std::uint64_t size;
-    std::uint8_t reserved[256];
-};
 
 static_assert(sizeof(WebBrowserDialogCookieParam) == 280);
 static_assert(offsetof(WebBrowserDialogCookieParam, address) == 8);
@@ -119,7 +108,6 @@ int APS5_VABI sceWebBrowserDialogUpdateStatus(void) {
     if (status == COMMON_DIALOG_STATUS_FINISHED) g_open = false;
     return status;
 }
-
 
 int APS5_VABI sceWebBrowserDialogSetCookie(const WebBrowserDialogCookieParam* param) {
     if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;

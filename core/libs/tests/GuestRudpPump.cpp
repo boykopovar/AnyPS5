@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -5,16 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpProcessEvents(std::uint64_t timeout);
-int APS5_VABI sceRudpNetFlush();
-int APS5_VABI sceRudpGetMaxSegmentSize(std::uint16_t*);
-int APS5_VABI sceRudpNetReceived(int socketId, const void* data, std::size_t dataSize, const void* sourceAddress, std::uint32_t sourceAddressSize);
-int APS5_VABI sceRudpEnableInternalIOThread2(std::uint32_t, std::uint32_t, std::uint64_t);
-}
 
 static void Require(bool value, int line) {
     if (!value) {

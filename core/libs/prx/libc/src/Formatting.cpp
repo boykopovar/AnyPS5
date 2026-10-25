@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -85,7 +86,6 @@ void RejectGuestWideScan(const char* format) {
 bool IsWideScan(const std::string& length, char conversion) {
     return conversion == 'S' || conversion == 'C' || (length == "l" && (conversion == 's' || conversion == 'c' || conversion == '['));
 }
-
 
 #endif
 

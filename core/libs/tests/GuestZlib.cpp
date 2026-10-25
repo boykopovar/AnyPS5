@@ -1,3 +1,4 @@
+#include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -9,14 +10,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-std::int32_t APS5_VABI sceZlibInitialize(const void*, std::uint64_t);
-std::int32_t APS5_VABI sceZlibFinalize();
-std::int32_t APS5_VABI sceZlibInflate(const void*, std::uint32_t, void*, std::uint32_t, std::uint64_t*);
-std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t*, std::uint32_t*);
-std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t, std::uint32_t*, std::int32_t*);
-}
 
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;

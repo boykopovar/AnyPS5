@@ -1,18 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr);
-int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr);
-int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId);
-int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clockId);
-int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared);
-int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared);
-int APS5_VABI scePthreadCondattrSetpshared(PthreadCondattr* attr, int pshared);
-int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* pshared);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
@@ -57,6 +48,7 @@ int main() {
     bool threw = false;
     try {
         pthread_condattr_getpshared_nid_postfix(&attr, nullptr);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }

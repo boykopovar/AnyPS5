@@ -1,4 +1,5 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include <array>
 #include <cstdint>
@@ -13,39 +14,13 @@
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
-GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix();
-struct GuestLocaleFacade { GuestLocale::Implementation* implementation; };
-GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix();
-void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* self);
-void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName);
-void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self);
-void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(GuestLocale::IosBase* self);
-struct StreamManipulator {
-    GuestLocale::IosBase* (APS5_VABI* function)(GuestLocale::IosBase*, std::int32_t);
-    std::int32_t argument;
-};
-StreamManipulator APS5_VABI _ZSt4setwi_nid_postfix(std::int32_t width);
-void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(GuestLocale::IosBase* self);
-const short* APS5_VABI _Getpctype_nid_postfix();
-const short* APS5_VABI _Getptolower_nid_postfix();
-const short* APS5_VABI _Getptoupper_nid_postfix();
-int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, std::mbstate_t* st);
-int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, std::mbstate_t* st);
-void APS5_VABI _Locksyslock_nid_postfix();
-void APS5_VABI _Unlocksyslock_nid_postfix();
-std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t wc, std::uint64_t desc);
-int* APS5_VABI __error_nid_postfix();
+
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
-std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
-std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
-std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
-std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];
 
 }
@@ -147,8 +122,10 @@ static void CheckLocinfoAlignment() {
     bytes.fill(std::byte{0x5a});
     auto* storage = reinterpret_cast<GuestLocale::LocinfoStorage*>(bytes.data() + 8);
     _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "C");
+
     for (std::size_t index = 0; index < bytes.size(); ++index) Require(bytes[index] == (index >= 8 && index < 72 ? std::byte{} : std::byte{0x5a}));
     _ZNSt8_LocinfoD1Ev_nid_postfix(storage);
+
     RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
     RequireException([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
 }
@@ -203,6 +180,7 @@ static void CheckStreamDestruction() {
     } object;
     object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     _ZNSt8ios_baseD2Ev_nid_postfix(&object.stream);
+
     Require(object.stream.locale == nullptr && object.before == 0x12345678 && object.after == 0x87654321);
     object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     object.stream.callbacks = &object;
@@ -240,31 +218,42 @@ static void CheckStandardStreams() {
     RequireException([&] { _ZNSt8ios_base7_AddstdEPS__nid_postfix(nullptr); });
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[0].stream);
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[1].stream);
+
     Require(streams[0].stream.standardStream == 1 && streams[1].stream.standardStream == 2);
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[0].stream);
+
     Require(streams[0].stream.standardStream == 1);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[0].stream);
+
     Require(streams[0].stream.locale == classic && streams[0].stream.standardStream == 1);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[0].stream);
+
     Require(streams[0].stream.locale == nullptr && streams[0].stream.standardStream == 1);
     streams[0].stream.locale = classic;
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[0].stream);
+
     Require(streams[0].stream.standardStream == 1);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[1].stream);
+
     Require(streams[1].stream.locale == nullptr && streams[1].stream.standardStream == 2);
     for (int index = 2; index < 7; ++index) {
         _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[index].stream);
+
         Require(streams[index].stream.standardStream == index + 1);
     }
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[7].stream);
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[8].stream);
+
     Require(streams[7].stream.standardStream == 8 && streams[8].stream.standardStream == 8);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[7].stream);
+
     Require(streams[7].stream.locale == classic);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[8].stream);
+
     Require(streams[8].stream.locale == nullptr);
     for (int index = 2; index < 7; ++index) {
         _ZNSt8ios_baseD2Ev_nid_postfix(&streams[index].stream);
+
         Require(streams[index].stream.locale == nullptr && streams[index].stream.standardStream == index + 1);
     }
     for (auto& object : streams) Require(object.before == 0x12345678 && object.after == 0x87654321);
@@ -372,5 +361,6 @@ int main() {
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
+
     std::cout << "Guest locale checks passed\n";
 }

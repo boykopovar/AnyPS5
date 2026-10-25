@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -6,27 +7,6 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-double APS5_VABI strtod_nid_postfix(const char* str, char** endptr);
-float APS5_VABI strtof_nid_postfix(const char* str, char** endptr);
-long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr);
-long long APS5_VABI strtoll_nid_postfix(const char* str, char** endptr, int base);
-unsigned long long APS5_VABI strtoull_nid_postfix(const char* str, char** endptr, int base);
-double APS5_VABI sin_nid_postfix(double x);
-double APS5_VABI cos_nid_postfix(double x);
-float APS5_VABI sinf_nid_postfix(float x);
-float APS5_VABI cosf_nid_postfix(float x);
-long double APS5_VABI sinl_nid_postfix(long double x);
-long double APS5_VABI cosl_nid_postfix(long double x);
-double APS5_VABI log_nid_postfix(double x);
-double APS5_VABI log10_nid_postfix(double x);
-double APS5_VABI log2_nid_postfix(double x);
-float APS5_VABI logf_nid_postfix(float x);
-float APS5_VABI log10f_nid_postfix(float x);
-float APS5_VABI log2f_nid_postfix(float x);
-}
 
 namespace {
 

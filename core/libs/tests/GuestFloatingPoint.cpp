@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <barrier>
@@ -16,24 +17,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-void APS5_VABI _Feraise_nid_postfix(int);
-int APS5_VABI fegetround_nid_postfix();
-int APS5_VABI fesetround_nid_postfix(int);
-int APS5_VABI fetestexcept_nid_postfix(int);
-int APS5_VABI feclearexcept_nid_postfix(int);
-int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t*, int);
-int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t*, int);
-int APS5_VABI feenableexcept_nid_postfix(int);
-int APS5_VABI fedisableexcept_nid_postfix(int);
-int APS5_VABI __feenableexcept_nid_postfix(int);
-int APS5_VABI __fedisableexcept_nid_postfix(int);
-int APS5_VABI fegettrapenable_nid_postfix();
-int APS5_VABI fegetexcept_nid_postfix();
-int APS5_VABI fesettrapenable_nid_postfix(int);
-}
 
 namespace {
 
@@ -135,6 +118,7 @@ void CheckFeraise() {
         const auto seeded = SeedFlags(0, 0);
         *__error_nid_postfix() = 0;
         _Feraise_nid_postfix(static_cast<int>(requested));
+
         const unsigned raised = (requested & 0x18) != 0 ? requested | 0x20 : requested;
         const auto state = ReadEnvironment();
         Require((state.x87[1] & 0x3f) == raised && (state.sse & 0x3f) == raised, "_Feraise raises the flags on both units");

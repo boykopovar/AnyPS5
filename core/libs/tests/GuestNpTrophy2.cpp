@@ -1,19 +1,10 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*);
-int APS5_VABI sceNpTrophy2UnregisterUnlockCallback();
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2ShowTrophyList(int);
-int APS5_VABI sceNpTrophy2GetRewardIcon(int, int, int, void*, std::size_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

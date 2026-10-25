@@ -1,14 +1,10 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
-int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
-}
 
 namespace {
 

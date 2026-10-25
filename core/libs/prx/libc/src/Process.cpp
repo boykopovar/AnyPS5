@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -20,8 +21,6 @@
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
-extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
-
 namespace {
 
 std::mutex shutdownMutex;
@@ -34,7 +33,7 @@ std::exception_ptr shutdownFailure;
 std::stop_source shutdownSource;
 std::atomic<bool> exitRequested{false};
 std::atomic<bool> exitStarted{false};
-using GuestExitCallback = void (APS5_VABI*)();
+
 thread_local bool runningExit = false;
 
 void APS5_VABI RunGuestExitCallback(void* callback) {
@@ -271,6 +270,7 @@ int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
     }
     for (auto it = callbacks.rbegin(); it != callbacks.rend(); ++it) (*it)();
     _Exit_nid_postfix(status);
+
 }
 
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {

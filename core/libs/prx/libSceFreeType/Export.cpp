@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_OUTLINE_H
 #include "prx/libc/include/FilesystemError.hpp"

@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/General.hpp"
@@ -27,27 +28,6 @@
 
 using namespace FreeType;
 
-extern "C" {
-void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec*, const GuestMatrix*, const GuestVector*);
-std::int64_t APS5_VABI FT_Cos_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Sin_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t, std::int64_t);
-void APS5_VABI FT_Vector_Unit_nid_postfix(GuestVector*, std::int64_t);
-int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
-int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
-int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
-int APS5_VABI FT_New_Memory_Face_nid_postfix(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
-int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec*);
-int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t);
-int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t, std::uint32_t, GuestVector*);
-std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(GuestFaceRec*, std::uint64_t);
-int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
-int APS5_VABI FT_Load_Char_nid_postfix(GuestFaceRec*, std::uint64_t, std::int32_t);
-int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec*, std::int32_t);
-int APS5_VABI FT_Set_Char_Size_nid_postfix(GuestFaceRec*, std::int64_t, std::int64_t, std::uint32_t, std::uint32_t);
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "FreeType check failed at line %d\n", line);
@@ -56,12 +36,10 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-extern "C" int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec*, std::uint32_t);
-
 static void CheckGaspTable(const std::vector<unsigned char>* table, const std::vector<std::pair<unsigned, int>>& ranges,
                            bool versionZero, bool render) {
     const auto font = SquareGlyphFont('A', 700, false, table);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Library nativeLibrary = nullptr;
     FT_Face native = nullptr;
@@ -138,7 +116,7 @@ template <typename TCall> static bool ThrowsWith(TCall call, const std::string& 
     return false;
 }
 
-static void FaceMatches(const GuestFaceRec* face, FT_Face host, const void* library) {
+static void FaceMatches(const GuestFaceRec* face, FT_Face host, const FreeType::GuestLibrary* library) {
     Require(face->num_faces == host->num_faces && face->face_index == host->face_index && face->face_flags == host->face_flags);
     Require(face->style_flags == host->style_flags && face->num_glyphs == host->num_glyphs && face->num_glyphs == 2);
     Require((face->family_name == nullptr) == (host->family_name == nullptr) && (face->style_name == nullptr) == (host->style_name == nullptr));
@@ -152,8 +130,6 @@ static void FaceMatches(const GuestFaceRec* face, FT_Face host, const void* libr
     Require(face->underline_position == host->underline_position && face->underline_thickness == host->underline_thickness);
     Require(face->glyph != nullptr && face->glyph->face == face && face->glyph->library == library && face->size != nullptr && face->size->face == face);
 }
-
-extern "C" int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(GuestOutline*);
 
 static unsigned orientationCases = 0;
 
@@ -239,7 +215,7 @@ static void CheckOutlineOrientation() {
         CheckOrientationCase(points, contours, twiceArea == 0 ? FT_ORIENTATION_NONE : expected == FT_ORIENTATION_POSTSCRIPT ? FT_ORIENTATION_TRUETYPE : FT_ORIENTATION_POSTSCRIPT);
     }
     const auto font = SquareGlyphFont('A', 700);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Library nativeLibrary = nullptr;
     FT_Face native = nullptr;
@@ -457,7 +433,7 @@ static void Trigonometry() {
         }
     }
     const auto font = SquareGlyphFont('A', 700);
-    void* library = nullptr;
+    GuestLibrary* library = nullptr;
     FT_Library oracle = nullptr;
     GuestFaceRec* face = nullptr;
     FT_Face native = nullptr;
@@ -493,12 +469,6 @@ static void Trigonometry() {
 struct Finalizers {
     std::vector<int> calls;
 };
-
-extern "C" {
-int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(GuestFaceRec*, const char**, const char**, std::int32_t*);
-int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(GuestFaceRec*, std::uint8_t*);
-int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t*);
-}
 
 static std::vector<unsigned char> CidMetadataFont(bool keyed, const std::string& registry, const std::string& ordering,
                                                 int supplement, unsigned cid) {
@@ -624,7 +594,7 @@ static void CheckCidMetadata() {
         {CidMetadataFont(false, "Adobe", "Identity", 0, 41), 0, 0, 0, nullptr, nullptr, 1},
         {SquareGlyphFont('A', 700), -1, 0, 0, nullptr, nullptr, 1}}};
     for (const auto& fixture : fixtures) {
-        void* library = nullptr;
+        FreeType::GuestLibrary* library = nullptr;
         GuestFaceRec* face = nullptr;
         FT_Library nativeLibrary = nullptr;
         FT_Face native = nullptr;
@@ -706,7 +676,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     FT_Library native = nullptr;
     FT_Face host = nullptr;
     FT_Face nativeOther = nullptr;
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     GuestFaceRec* other = nullptr;
     Require(FT_Init_FreeType(&native) == 0 && FT_Init_FreeType_nid_postfix(&library) == 0);
@@ -734,6 +704,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
             std::memcpy(savedSlot.data(), face->glyph, savedSlot.size());
             std::memcpy(savedSize.data(), face->size, savedSize.size());
             FT_Set_Transform_nid_postfix(face, m < matrices.size() ? &input : nullptr, d < deltas.size() ? &delta : nullptr);
+
             FT_Set_Transform(host, m < matrices.size() ? &matrix : nullptr, d < deltas.size() ? &translation : nullptr);
             Require(std::memcmp(savedSlot.data(), face->glyph, savedSlot.size()) == 0);
             Require(std::memcmp(savedSize.data(), face->size, savedSize.size()) == 0);
@@ -785,6 +756,7 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     rejectedDelta.x = std::numeric_limits<std::int64_t>::min();
     FT_Set_Transform_nid_postfix(nullptr, &rejected, &rejectedDelta);
     FT_Set_Transform_nid_postfix(nullptr, nullptr, nullptr);
+
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(native) == 0);
     std::printf("FT_Set_Transform: %zu native glyph and bitmap comparisons\n", comparisons);
 }
@@ -813,7 +785,7 @@ int main() {
     Require(secondFace != 0);
 
     Require(FT_Init_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Argument);
-    void* library = nullptr;
+    FreeType::GuestLibrary* library = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&library) == 0 && library != nullptr);
     Require(FT_Done_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Library_Handle);
     Require(FT_Done_Face_nid_postfix(nullptr) == FT_Err_Invalid_Face_Handle);
@@ -1106,7 +1078,7 @@ int main() {
     SetFinalizers(memoryFace, guestSecondEvents);
     Require(FT_Done_FreeType(hostLibrary) == 0);
 
-    void* independent = nullptr;
+    FreeType::GuestLibrary* independent = nullptr;
     GuestFaceRec* independentFace = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&independent) == 0);
     Require(FT_New_Memory_Face_nid_postfix(independent, font.data(), fontSize, 0, &independentFace) == 0);
@@ -1118,7 +1090,7 @@ int main() {
     Require(FT_Get_Char_Index_nid_postfix(independentFace, 'A') == 1);
     Require(FT_Done_FreeType_nid_postfix(independent) == 0 && independentEvents.calls == nativeDone.calls);
 
-    void* empty = nullptr;
+    FreeType::GuestLibrary* empty = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&empty) == 0 && FT_Done_FreeType_nid_postfix(empty) == 0);
     CheckTransforms(font);
     std::filesystem::current_path(previous);

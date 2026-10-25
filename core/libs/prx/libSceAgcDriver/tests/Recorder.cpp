@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "Triangle_frag_spv.h"
@@ -78,14 +79,6 @@
 #include <vector>
 
 namespace {
-
-extern "C" {
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-}
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
@@ -1331,7 +1324,7 @@ void directCompletionLabelTests(Recorder& recorder) {
         std::int64_t physical = -1;
         ~Release() {
             recorder.Sync();
-            if (mapping != nullptr) sceKernelMunmap(mapping, size);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), size);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, size);
         }
     } release{recorder};
@@ -2694,8 +2687,8 @@ void secondMappingImportTests(const Device& device) {
         void* alias = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (alias != nullptr) sceKernelMunmap(alias, page);
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (alias != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     } release;
@@ -2766,7 +2759,7 @@ int reimportBench(const Device& device) {
         void* mapping = nullptr;
         std::int64_t physical = -1;
         ~Release() {
-            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (mapping != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2916,8 +2909,8 @@ int hostImportCutTests(const Device& device) {
         std::size_t holeBytes = 0;
         ~Backing() {
             auto* memory = static_cast<std::byte*>(mapping);
-            if (memory != nullptr && hole != 0) sceKernelMunmap(memory, hole);
-            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(memory + hole + holeBytes, bytes - hole - holeBytes);
+            if (memory != nullptr && hole != 0) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), hole);
+            if (memory != nullptr && hole + holeBytes < bytes) sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + hole + holeBytes), bytes - hole - holeBytes);
             if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
         }
     };
@@ -2946,7 +2939,7 @@ int hostImportCutTests(const Device& device) {
         auto* cut = memory + test.offset;
         gpu.unlock();
         if (test.unmap) {
-            Require(sceKernelMunmap(cut, test.length) == 0, name + ": the unmap failed");
+            Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(cut), test.length) == 0, name + ": the unmap failed");
             backing.hole = test.offset;
             backing.holeBytes = test.length;
         } else {
@@ -2996,7 +2989,7 @@ int hostImportCutTests(const Device& device) {
         Require(whole != nullptr && whole->base == address && whole->bytes == bytes && whole->alias == nullptr && !whole->unwatched, name + ": the range was not imported whole, settled and watched");
         gpu.unlock();
         Require(sceKernelMprotect(memory, run, 0x03) == 0, name + ": the protection of the head failed");
-        Require(sceKernelMunmap(memory + run, bytes - run) == 0, name + ": the unmap of the kept side failed");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + run), bytes - run) == 0, name + ": the unmap of the kept side failed");
         backing.hole = run;
         backing.holeBytes = bytes - run;
         void* again = memory + run;
@@ -6944,7 +6937,6 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-
 void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     constexpr std::uint32_t side = 256;
@@ -7094,7 +7086,7 @@ void keptUnitSettleTests(const Device& device, Recorder& recorder) {
                     return;
                 }
                 if (direct) {
-                    if (block != nullptr) sceKernelMunmap(block, surfaceBytes);
+                    if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), surfaceBytes);
                     if (physical >= 0) sceKernelReleaseDirectMemory(physical, surfaceBytes);
                     return;
                 }

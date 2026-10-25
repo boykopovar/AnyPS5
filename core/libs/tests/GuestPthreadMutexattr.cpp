@@ -1,42 +1,11 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr);
-int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr);
-int APS5_VABI pthread_mutexattr_getpshared_nid_postfix(const PthreadMutexattr* attr, int* pshared);
-int APS5_VABI pthread_mutexattr_setpshared_nid_postfix(PthreadMutexattr* attr, int pshared);
-int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, int protocol);
-int APS5_VABI pthread_mutexattr_getprotocol_nid_postfix(const PthreadMutexattr* attr, int* protocol);
-int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* attr, int prioceiling);
-int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexattr* attr, int* prioceiling);
-int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type);
-int APS5_VABI pthread_mutexattr_gettype_nid_postfix(const PthreadMutexattr* attr, int* type);
-int APS5_VABI pthread_mutexattr_setkind_np_nid_postfix(PthreadMutexattr* attr, int kind);
-int APS5_VABI pthread_mutexattr_getkind_np_nid_postfix(PthreadMutexattr attr);
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-int APS5_VABI scePthreadMutexattrGettype(const PthreadMutexattr* attr, int* type);
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol);
-int APS5_VABI scePthreadMutexattrGetprotocol(const PthreadMutexattr* attr, int* protocol);
-int APS5_VABI scePthreadMutexattrSetprioceiling(PthreadMutexattr* attr, int prioceiling);
-int APS5_VABI scePthreadMutexattrGetprioceiling(const PthreadMutexattr* attr, int* prioceiling);
-int APS5_VABI scePthreadMutexattrSetpshared(PthreadMutexattr* attr, int pshared);
-int APS5_VABI scePthreadMutexattrGetpshared(const PthreadMutexattr* attr, int* pshared);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr);
-int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
-}
 
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int SCE_OK = 0;
@@ -44,7 +13,7 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
-static constexpr int SCHED_RR = 3;
+static constexpr int GuestSched_Rr = 3;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -154,7 +123,7 @@ static void CheckSceAccessors() {
     Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprotocol(&attr, PRIO_PROTECT) == SCE_OK);
-    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_OK && value == sched_get_priority_max_nid_postfix(SCHED_RR));
+    Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_OK && value == sched_get_priority_max_nid_postfix(GuestSched_Rr));
     Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_OK);
     Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_OK && value == 300);
     int protocol = -1;
@@ -232,7 +201,7 @@ int main() {
     Require(pthread_mutexattr_setprioceiling_nid_postfix(&attr, 300) == GUEST_EINVAL);
     Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_PROTECT) == 0);
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_PROTECT);
-    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == sched_get_priority_max_nid_postfix(SCHED_RR));
+    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == sched_get_priority_max_nid_postfix(GuestSched_Rr));
     Require(pthread_mutexattr_setprioceiling_nid_postfix(&attr, 300) == 0);
     Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == 300);
     PthreadMutex mutex = nullptr;
@@ -242,7 +211,7 @@ int main() {
     Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
     Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_PROTECT) == 0);
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_PROTECT);
-    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == sched_get_priority_max_nid_postfix(SCHED_RR));
+    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == sched_get_priority_max_nid_postfix(GuestSched_Rr));
     Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_NONE) == 0);
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_NONE);
     Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == GUEST_EINVAL);

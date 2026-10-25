@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
@@ -43,10 +45,6 @@
 #include <mach/mach_vm.h>
 #endif
 
-struct KernelIovec {
-    void* base;
-    std::size_t length;
-};
 static_assert(sizeof(KernelIovec) == sizeof(GuestSockets::Iovec));
 static_assert(sizeof(KernelIovec) == sizeof(AppArchiveBuffer) && offsetof(KernelIovec, length) == offsetof(AppArchiveBuffer, Length));
 
@@ -484,8 +482,6 @@ static int PathLookupFailure(const std::error_code& error) {
     return lookup ? SceErrorFromErrno(error.default_error_condition().value()) : 0;
 }
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
 static int PosixFailure(int error) {
     *__error_nid_postfix() = error;
     return -1;
@@ -628,9 +624,6 @@ static bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
     }
     return false;
 }
-
-extern "C" int APS5_VABI dup_nid_postfix(int d);
-extern "C" int APS5_VABI close_nid_postfix(int d);
 
 int File::DuplicateFrom(int fd, int start) {
 #ifdef _WIN32

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -8,13 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-std::int64_t APS5_VABI random_nid_postfix();
-void APS5_VABI srandomdev_nid_postfix();
-char* APS5_VABI initstate_nid_postfix(std::uint64_t, char*, std::int64_t);
-char* APS5_VABI setstate_nid_postfix(char*);
-}
 
 static void* entropyBuffer;
 static std::size_t entropySize;

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
@@ -12,8 +13,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-
-extern "C" void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
 
 namespace AgcDriver::Pm4 {
 
@@ -114,7 +113,6 @@ std::vector<std::byte> copySource(std::uint64_t source, std::size_t bytes, bool 
     }
     return data;
 }
-
 
 bool gdsRange(std::uint64_t offset, std::size_t bytes) {
     return offset <= GdsBytes && bytes <= GdsBytes - offset;

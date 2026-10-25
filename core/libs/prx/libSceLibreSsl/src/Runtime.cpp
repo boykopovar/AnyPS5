@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -7,8 +9,6 @@
 #include "prx/libc/include/HostEntropy.hpp"
 
 extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t size);
-void APS5_VABI free_nid_postfix(void* pointer);
 
 void APS5_VABI RAND_add_nid_postfix(const void*, int, double) {
 }
@@ -47,6 +47,7 @@ void* APS5_VABI CRYPTO_malloc_nid_postfix(int count, const char*, int) {
 
 void APS5_VABI CRYPTO_free_nid_postfix(void* pointer) {
     free_nid_postfix(pointer);
+
 }
 
 int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*) {

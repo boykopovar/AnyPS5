@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -36,8 +37,6 @@ void initializeStatic(PthreadRwlock* rwlock, const char* funcName) {
 }
 
 extern "C" {
-
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
 
 int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
     if (!rwlock) throw std::runtime_error("pthread_rwlock_destroy: null rwlock");

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <mutex>
 #include <array>
 #include <bit>
@@ -1306,13 +1307,6 @@ int APS5_VABI _Fltrounds_nid_postfix(void) {
     return SonyFltrounds();
 }
 
-struct GuestFloatingPointEnvironment {
-    std::uint32_t control;
-    std::uint32_t status;
-    std::uint32_t tag;
-    unsigned char other[16];
-    std::uint32_t mxcsr;
-};
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && alignof(GuestFloatingPointEnvironment) == 4 && offsetof(GuestFloatingPointEnvironment, mxcsr) == 28);
 
 int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* environment) {

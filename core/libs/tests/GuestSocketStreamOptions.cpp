@@ -1,28 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI shutdown_nid_postfix(int, int);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {

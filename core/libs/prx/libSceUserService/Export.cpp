@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -53,7 +54,6 @@ void PopulateInitialLoginEvents() {
  }
 }
 
-extern "C" int APS5_VABI sceSystemServiceParamGetInt(int param_id, int* value);
 
 // Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
 // the keyboard type of the configured system language and 0 for the input variants (see

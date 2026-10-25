@@ -7,31 +7,6 @@
 #include <string>
 #include <utility>
 
-extern "C" {
-int APS5_VABI sceUserServiceGetInitialUser(int* user_id);
-int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets);
-int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number);
-int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value);
-int APS5_VABI sceUserServiceGetForegroundUser(int* user_id);
-int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list);
-int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color);
-int APS5_VABI sceUserServiceGetKeyboardType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetNpAccountId(int user_id, std::uint64_t* account_id);
-int APS5_VABI sceUserServiceGetAgeLevel(int user_id, std::uint32_t* age_level);
-int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable();
-int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityZoom();
-int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, std::size_t size);
-int APS5_VABI sceUserServiceGetUserNumber(int user_id, std::int32_t* number);
-}
-
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -167,9 +142,10 @@ int main() {
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(0, &presets) == USER_SERVICE_ERROR_INVALID_ARGUMENT && presets.difficulty == 0x5a);
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
+    std::int32_t accessibilityValue = 0;
     bool threwKeyremap = false;
     try {
-        sceUserServiceGetAccessibilityKeyremapEnable();
+        sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
     } catch (const std::runtime_error&) {
         threwKeyremap = true;
     }
@@ -177,7 +153,7 @@ int main() {
 
     bool threwZoom = false;
     try {
-        sceUserServiceGetAccessibilityZoom();
+        sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
     } catch (const std::runtime_error&) {
         threwZoom = true;
     }

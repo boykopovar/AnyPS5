@@ -1,22 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-int APS5_VABI mkdir_nid_postfix(const char* path, std::uint16_t mode);
-int APS5_VABI rmdir_nid_postfix(const char* path);
-int APS5_VABI unlink_nid_postfix(const char* path);
-int APS5_VABI chmod_nid_postfix(const char* path, int mode);
-char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
-void* APS5_VABI opendir_nid_postfix(const char* path);
-int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
-int APS5_VABI closedir_nid_postfix(void* handle);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

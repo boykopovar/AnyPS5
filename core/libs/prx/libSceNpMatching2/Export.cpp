@@ -1,3 +1,4 @@
+#include "prx/libSceNpMatching2/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -17,25 +18,9 @@ static constexpr std::uint64_t CREATE_CONTEXT_PARAMETER_SIZE = 0x28;
 
 namespace {
 
-struct NpMatching2InitializeParameter {
-    std::uint64_t poolSize;
-    std::uint64_t cpuAffinityMask;
-    std::int32_t threadPriority;
-    std::uint8_t padding[4];
-    std::uint64_t threadStackSize;
-    std::uint64_t size;
-    std::uint64_t sslPoolSize;
-};
 static_assert(offsetof(NpMatching2InitializeParameter, size) == 0x20);
 static_assert(sizeof(NpMatching2InitializeParameter) == 0x30);
 
-struct NpMatching2CreateContextParameter {
-    const void* npId;
-    const void* npCommunicationId;
-    const void* npPassphrase;
-    std::uint32_t serviceLabel;
-    std::uint64_t size;
-};
 static_assert(sizeof(NpMatching2CreateContextParameter) == CREATE_CONTEXT_PARAMETER_SIZE);
 
 std::mutex matching2Mutex;

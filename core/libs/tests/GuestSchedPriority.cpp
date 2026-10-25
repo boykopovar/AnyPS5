@@ -1,29 +1,15 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
 #include <ctime>
-extern "C" int* APS5_VABI __error_nid_postfix();
+
 extern "C" {
-int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
-int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
-int APS5_VABI getpriority_nid_postfix(int which, int who);
-int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval);
-struct GuestRtPrio {
-    std::uint16_t type;
-    std::uint16_t prio;
-};
-int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority);
-int APS5_VABI pthread_setconcurrency_nid_postfix(int newLevel);
-int APS5_VABI pthread_getconcurrency_nid_postfix(void);
-struct GuestTimespec {
-    std::int64_t tv_sec;
-    std::int64_t tv_nsec;
-};
-int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, GuestTimespec* interval);
-int APS5_VABI getpid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
+
 }
 static constexpr int PrioProcess = 0;
 static constexpr int PrioGroup = 1;
@@ -54,7 +40,7 @@ static void RequireSetError(int which, int who, int nice, int error) {
 int main() {
     Require(Rejects(-1) && Rejects(2) && Rejects(5));
     const int self = getpid_nid_postfix();
-    GuestTimespec interval{};
+    KernelTimespec interval{};
     *__error_nid_postfix() = 13;
     Require(sched_rr_get_interval_nid_postfix(0, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 94000000 && *__error_nid_postfix() == 13);
     interval.tv_sec = -1;

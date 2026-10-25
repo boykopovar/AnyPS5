@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "SceTypes.hpp"
 
 struct UserServiceInitParam {
  std::int32_t priority;
@@ -30,5 +31,36 @@ constexpr const char* USER_SERVICE_USER_NAMES[USER_SERVICE_MAX_USERS] = {
 };
 
 extern "C" void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected);
+
+extern "C" {
+
+int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int userId, int32_t* chatTranscription);
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled);
+int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int userId, int32_t* pressAndHoldDelay);
+int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int userId, int32_t* triggerEffect);
+int APS5_VABI sceUserServiceGetAccessibilityVibration(int userId, int32_t* vibration);
+int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom);
+int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int userId, int32_t* zoomEnabled);
+int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int userId, int32_t* zoomFollowFocus);
+int APS5_VABI sceUserServiceGetAgeLevel(int userId, uint32_t* ageLevel);
+int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event);
+int APS5_VABI sceUserServiceGetGamePresets(int userId, UserServiceGamePresets* presets);
+int APS5_VABI sceUserServiceGetInitialUser(int* userId);
+int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* userIdList);
+int APS5_VABI sceUserServiceGetUserName(int userId, char* name, size_t size);
+int APS5_VABI sceUserServiceGetUserNumber(int userId, int32_t* number);
+int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params);
+int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask);
+int APS5_VABI sceUserServiceTerminate(void);
+int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t userId, int32_t* value);
+int APS5_VABI sceUserServiceGetForegroundUser(int* userId);
+int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* userIdList);
+int APS5_VABI sceUserServiceGetUserColor(int userId, int* color);
+int APS5_VABI sceUserServiceGetKeyboardType(int userId, int32_t* type);
+int APS5_VABI sceUserServiceGetJapaneseInputType(int userId, int32_t* type);
+int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int userId, int32_t* type);
+int APS5_VABI sceUserServiceGetNpAccountId(int userId, uint64_t* accountId);
+
+}
 
 #endif

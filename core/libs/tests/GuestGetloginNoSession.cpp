@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -7,8 +8,6 @@
 #include <pwd.h>
 #include <string>
 #include <unistd.h>
-
-extern "C" int APS5_VABI getlogin_r_nid_postfix(char*, int);
 
 static int loginError = ENXIO;
 

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -11,16 +12,7 @@
 
 extern "C" {
 using Handler = void (APS5_VABI*)();
-Handler APS5_VABI _ZSt15set_new_handlerPFvvE_nid_postfix(Handler);
-Handler APS5_VABI _ZSt15get_new_handlerv_nid_postfix();
-void* APS5_VABI _Znwm_nid_postfix(std::size_t);
-void* APS5_VABI _Znam_nid_postfix(std::size_t);
-void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t, std::size_t);
-void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
-void APS5_VABI _ZdlPv_nid_postfix(void*);
-void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void*, const void*) noexcept;
-void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void*, std::size_t);
+
 }
 
 namespace {
@@ -146,8 +138,10 @@ int main(int argc, char** argv) {
     const int nothrowTag = 0;
     REQUIRE(nothrowPointer == storage.data() && releases == 0);
     _ZdlPvRKSt9nothrow_t_nid_postfix(nothrowPointer, &nothrowTag);
+
     REQUIRE(releases == 1);
     _ZdlPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
+
     REQUIRE(releases == 1);
 
     Reset(1);
@@ -198,6 +192,7 @@ int main(int argc, char** argv) {
     void* aligned = _ZnwmSt11align_val_t_nid_postfix(24, 16);
     REQUIRE(aligned == storage.data() && lastSize == 24 && lastAlignment == 16 && allocations == 1);
     _ZdlPvSt11align_val_t_nid_postfix(aligned, 16);
+
     Reset(1);
     REQUIRE(Throws([] { _ZnwmSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
 
@@ -205,6 +200,7 @@ int main(int argc, char** argv) {
     REQUIRE(_ZnwmSt11align_val_t_nid_postfix(0, 16) == storage.data() && lastSize == 1 && lastAlignment == 16);
     Reset(2);
     _ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler);
+
     REQUIRE(_ZnwmSt11align_val_t_nid_postfix(8, 16) == storage.data() && handlerCalls == 2 && allocations == 3);
     _ZSt15set_new_handlerPFvvE_nid_postfix(nullptr);
 

@@ -12,40 +12,6 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
-struct PadStickTuningParameter;
-struct PadTriggerTuningParameter;
-struct PadHuntProfile;
-struct PadLeonardoProfile;
-struct PadProfileInfo;
-struct PadActiveProfileInfo;
-struct PadSavedSettingInfo;
-struct PadUsbDetectionState;
-struct PadVrUsbConnectionStatus;
-struct PadDeviceInfo;
-struct PadLicenseControllerInformation;
-struct PadRemoteSetting;
-struct PadVirtualTriggerSetting;
-struct PadProcessFocusParameter;
-struct PadDataExtended;
-struct PadVrControllerData {
-    std::uint32_t buttons;
-    std::uint8_t stick[2];
-    std::uint8_t unused6[2];
-    std::uint8_t triggers[2];
-    std::uint8_t unused10[2];
-    std::uint32_t touchButtons;
-    std::uint8_t touchValues[4];
-    float acceleration[3];
-    float angularVelocity[3];
-    float orientation[4];
-    std::uint8_t unused60[4];
-    std::uint8_t connected;
-    std::uint8_t connectedCount;
-    std::uint8_t unused66[6];
-    std::uint64_t timestamp;
-    std::uint8_t unused80[24];
-};
-
 static_assert(sizeof(PadVrControllerData) == 104);
 static_assert(offsetof(PadVrControllerData, triggers) == 8);
 static_assert(offsetof(PadVrControllerData, touchButtons) == 12);
@@ -54,50 +20,10 @@ static_assert(offsetof(PadVrControllerData, angularVelocity) == 32);
 static_assert(offsetof(PadVrControllerData, orientation) == 44);
 static_assert(offsetof(PadVrControllerData, connected) == 64);
 static_assert(offsetof(PadVrControllerData, timestamp) == 72);
-struct PadVrControllerDeviceInformation;
-struct PadVrTriggerEffect;
-struct PadVrTriggerEffects;
-struct PadTriggerEffectExtended;
-struct PadExtensionReport;
-struct PadExtensionUnitInfo;
-struct PadTriggerInternalState;
-struct PadTrackerData;
-struct PadBlasterTrackerData;
-struct PadAstonTrackerData;
-struct PadUiData;
-struct PadUiTuningData;
-struct PadLotusButtonData;
-struct PadVersionInfo;
-struct PadTelemetryInfo;
-struct PadPortInfo;
-struct PadVrControllerCombinedState;
-struct PadLeonardoData;
-struct PadLeonardoUniqueData;
-struct PadHistoryData;
-struct PadUpdateParameter;
-struct PadVirtualDeviceParameter;
-struct PadVirtualDeviceId;
-struct PadVirtualDeviceComponentInformation;
-
-struct PadVirtualTriggerInternalState {
-    std::uint32_t states[2];
-    std::uint8_t mode;
-    std::uint8_t flags[2];
-};
 
 static_assert(sizeof(PadVirtualTriggerInternalState) == 12);
 static_assert(offsetof(PadVirtualTriggerInternalState, mode) == 8);
 static_assert(offsetof(PadVirtualTriggerInternalState, flags) == 9);
-
-struct PadLightBarBlinkingParameter {
-    std::uint8_t values[3];
-};
-
-struct PadButtonRemappingInfo {
-    std::uint8_t mapping[14];
-    std::uint8_t reserved;
-    std::uint8_t mode;
-};
 
 static_assert(sizeof(PadLightBarBlinkingParameter) == 3);
 static_assert(sizeof(PadButtonRemappingInfo) == 16);
@@ -171,19 +97,8 @@ bool ValidPort(int userId, int type, int index) {
 
 }
 
-struct PadUpdateData {
-    std::size_t size;
-    std::uint8_t data[32768];
-};
-
 static_assert(sizeof(PadUpdateData) == 32776);
 static_assert(offsetof(PadUpdateData, data) == 8);
-
-struct PadMotionSensorPosition {
-    float x;
-    float y;
-    float z;
-};
 
 static_assert(sizeof(PadMotionSensorPosition) == 12);
 
@@ -533,7 +448,6 @@ int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
  *remote = false;
  return 0;
 }
-
 
 int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;

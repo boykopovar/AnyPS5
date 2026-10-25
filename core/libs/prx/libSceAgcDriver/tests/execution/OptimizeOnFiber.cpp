@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #if defined(ANYPS5_ENABLE_SPIRV_TOOLS) && ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -9,15 +10,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
-
-extern "C" {
-std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, GuestFiberEntry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t);
-std::int32_t APS5_VABI sceFiberFinalize(FiberObject*);
-std::int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject*, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberReturnToThread(std::uint64_t, std::uint64_t*);
-}
 
 namespace {
 

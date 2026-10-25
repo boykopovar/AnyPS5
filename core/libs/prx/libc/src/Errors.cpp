@@ -1,9 +1,9 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstring>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
@@ -77,6 +77,7 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));
+
     auto* stream = GetNativeStream(&_Stderr_nid_postfix);
     if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
     else std::fprintf(stream, "%s\n", message);

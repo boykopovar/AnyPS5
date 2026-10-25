@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceJobManager/include/Api.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -16,62 +18,6 @@
 #include <vector>
 
 extern "C" void AgcDriverShutdown_nid_postfix();
-
-struct MemorySizeQueryParams {
-    std::uint32_t version;
-    std::uint32_t workers;
-    std::uint32_t sequences;
-    std::uint32_t invocations;
-    std::uint32_t dispatches;
-    std::uint32_t syncPoints;
-    std::uint32_t waits;
-    std::uint32_t computeSequences;
-    std::uint64_t computeQueueMask;
-};
-
-struct ConfigParams {
-    std::uint32_t version;
-    std::uint32_t threadFlags;
-    std::uint32_t stackSize;
-    std::uint32_t priority;
-    const char* threadName;
-    std::uint32_t spinMicroseconds;
-    std::uint32_t computeAffinity;
-    std::uint32_t computePriority;
-    std::uint32_t reserved;
-};
-
-using JobEntry = void (APS5_VABI*)(void*, std::uint32_t);
-
-struct Sequence {
-    APS5_VABI virtual int Dispatch(JobEntry, void*, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int SyncPoint() = 0;
-    APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-    APS5_VABI virtual int DispatchCompute(const void*, void*, std::int32_t, std::int32_t, std::int32_t, const char*) = 0;
-    APS5_VABI virtual int DispatchComputeIndirect(const void*, void*, const void*, const char*) = 0;
-};
-
-struct SequenceFactory {
-    APS5_VABI virtual int Create(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int Destroy(Sequence*) = 0;
-    APS5_VABI virtual void CompleteDestructor() = 0;
-    APS5_VABI virtual void DeletingDestructor() = 0;
-    APS5_VABI virtual int CreateCompute(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
-    APS5_VABI virtual int DestroyCompute(Sequence*) = 0;
-};
-
-extern "C" {
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-void APS5_VABI _ZN3sce3Job10JobManagerC1Ev(void*);
-std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams*);
-int APS5_VABI _ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(void*, void*, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, const ConfigParams*);
-int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void*);
-SequenceFactory* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void*, std::uint32_t);
-}
 
 #define Construct _ZN3sce3Job10JobManagerC1Ev
 #define RequiredSize _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE
@@ -171,9 +117,9 @@ void RunCase() {
     Require(Initialize(manager, memory, size, 2, 1, 1, 2, &wideAffinity) == InvalidArgument, "a handler affinity beyond 13 cores was accepted");
     Require(Initialize(manager, memory, size, 2, 1, 0xffffffffu, 2, nullptr) == InvalidArgument, "a sequence count that wraps was accepted");
     Require(Initialize(manager, memory, size, 2, 1, 1, 2, nullptr) == 0, "initialize with one compute sequence failed");
-    SequenceFactory* factory = Factories(manager, 0);
-    Sequence* sequence = nullptr;
-    Sequence* other = nullptr;
+    ISequenceFactory* factory = Factories(manager, 0);
+    ISequence* sequence = nullptr;
+    ISequence* other = nullptr;
     Require(factory->CreateCompute(&sequence, 100, 4, 4, 2, "compute") == 0, "the compute sequence was not created");
     Require(factory->CreateCompute(&other, 1, 1, 1, 1, "second") == NoneFree, "a second compute sequence was created");
     Require(factory->Create(&other, 1, 1, 1, 1, "cpu") == 0, "the CPU sequence was not created");
@@ -260,7 +206,7 @@ void CapacityCase() {
     Construct(manager);
     Require(Initialize(manager, memory, size, 1, 0, 1, 1, nullptr) == 0, "capacity manager initialization failed");
     auto* factory = Factories(manager, 0);
-    Sequence* sequence = nullptr;
+    ISequence* sequence = nullptr;
     Require(factory->CreateCompute(&sequence, 0, 2, 0, 1, nullptr) == 0, "capacity sequence creation failed");
     for (std::uint32_t round = 0; round < 2; ++round) {
         Value[0] = 0xabcd0000u + round;
@@ -306,7 +252,7 @@ void StorageCase(bool directMemory) {
     Construct(manager);
     Require(Initialize(manager, memory, size, 2, 0, 2, mask, nullptr) == 0, "storage manager initialization failed");
     auto* factory = Factories(manager, 0);
-    std::array<Sequence*, 2> sequences{};
+    std::array<ISequence*, 2> sequences{};
     for (auto& sequence : sequences) Require(factory->CreateCompute(&sequence, 0, 16, 4, 2, nullptr) == 0, "storage sequence creation failed");
     for (std::uint32_t round = 0; round < 3; ++round) {
         for (auto* sequence : sequences) {
