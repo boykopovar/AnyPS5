@@ -5,10 +5,12 @@
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -16,40 +18,47 @@
 #include <unordered_map>
 #include <vector>
 
-static_assert(sizeof(HttpCookieStats) == 40);
-static_assert(offsetof(HttpCookieStats, maxInuseSize) == 16);
-static_assert(offsetof(HttpCookieStats, removedNum) == 28);
+static_assert(sizeof(HttpCookieStats) == 32);
+static_assert(offsetof(HttpCookieStats, cookieCount) == 8);
+static_assert(offsetof(HttpCookieStats, peakUsedBytes) == 16);
+static_assert(offsetof(HttpCookieStats, peakCookieCount) == 24);
+static_assert(offsetof(HttpCookieStats, evictedCookieCount) == 28);
 
 namespace {
 
 using Clock = std::chrono::system_clock;
 
+constexpr std::uint32_t DefaultMaxSize = 4096;
+constexpr std::uint32_t DefaultMaxNumPerDomain = 50;
+constexpr std::uint32_t DefaultMaxNum = 3000;
+constexpr size_t EvictedOverMaxNum = 10;
+
 struct Cookie {
     std::string name;
     std::string value;
+    std::string domainSpelling;
     std::string domain;
     std::string path;
-    bool hostOnly = true;
     bool secure = false;
     std::optional<Clock::time_point> expiry;
     std::uint64_t creation = 0;
-    std::uint64_t lastAccess = 0;
 };
 
 struct CookieJar {
     std::vector<Cookie> cookies;
-    std::uint32_t maxNum = 0;
-    std::uint32_t maxNumPerDomain = 0;
-    std::uint32_t maxSize = 0;
-    std::uint32_t totalMaxSize = 0;
-    std::uint64_t maxInuseSize = 0;
-    std::uint32_t maxInuseNum = 0;
+    std::uint32_t maxNum = DefaultMaxNum;
+    std::uint32_t maxNumPerDomain = DefaultMaxNumPerDomain;
+    std::uint32_t maxSize = DefaultMaxSize;
+    std::optional<std::uint32_t> totalMaxSize;
+    std::uint64_t peakSize = 0;
+    std::uint32_t peakNum = 0;
     std::uint32_t removedNum = 0;
 };
 
 struct RequestUrl {
     std::string host;
     std::string path;
+    bool secure = false;
 };
 
 std::mutex g_cookieMutex;
@@ -82,33 +91,34 @@ int parseUrl(const char* url, RequestUrl& parsed) {
     std::vector<char> pool(required);
     SceHttpUriElement element;
     if (const int result = sceHttpUriParse(&element, url, pool.data(), &required, pool.size()); result != 0) return result;
-    if (!equalsIgnoreCase(element.scheme, "http") && !equalsIgnoreCase(element.scheme, "https")) return ERROR_UNKNOWN_SCHEME;
-    if (element.opaque || element.hostname[0] == '\0') return ERROR_INVALID_URL;
+    if (element.hostname[0] == '\0') return ERROR_PARSE_HTTP_INVALID_VALUE;
     parsed.host = lowered(element.hostname);
     parsed.path = element.path;
+    parsed.secure = equalsIgnoreCase(element.scheme, "https");
     return 0;
-}
-
-bool isIpAddress(std::string_view host) {
-    return host.find(':') != std::string_view::npos || host.find_first_not_of("0123456789.") == std::string_view::npos;
 }
 
 bool domainMatches(std::string_view host, std::string_view domain) {
     if (host == domain) return true;
-    return host.size() > domain.size() && host.ends_with(domain) && host[host.size() - domain.size() - 1] == '.' && !isIpAddress(host);
+    return host.size() > domain.size() && host.ends_with(domain) && host[host.size() - domain.size() - 1] == '.';
+}
+
+bool allowedDomain(std::string_view domain) {
+    constexpr std::array<std::string_view, 7> generic = {"com", "org", "net", "edu", "gov", "mil", "int"};
+    const size_t dots = static_cast<size_t>(std::count(domain.begin(), domain.end(), '.'));
+    if (dots == 0 || domain.back() == '.') return false;
+    const std::string_view topLevel = domain.substr(domain.rfind('.') + 1);
+    return dots >= (std::find(generic.begin(), generic.end(), topLevel) != generic.end() ? 1u : 2u);
 }
 
 std::string defaultPath(std::string_view path) {
     if (path.empty() || path.front() != '/') return "/";
-    const size_t slash = path.rfind('/');
-    return slash == 0 ? "/" : std::string(path.substr(0, slash));
+    return std::string(path.substr(0, path.rfind('/') + 1));
 }
 
 bool pathMatches(std::string_view requestPath, std::string_view cookiePath) {
     if (requestPath.empty() || requestPath.front() != '/') requestPath = "/";
-    if (requestPath == cookiePath) return true;
-    if (!requestPath.starts_with(cookiePath)) return false;
-    return cookiePath.back() == '/' || requestPath[cookiePath.size()] == '/';
+    return requestPath.starts_with(cookiePath);
 }
 
 bool isDateDelimiter(char c) {
@@ -210,52 +220,52 @@ std::uint64_t cookieSize(const Cookie& cookie) {
     return cookie.name.size() + cookie.value.size();
 }
 
+std::uint64_t storedSize(const Cookie& cookie) {
+    return cookie.name.size() + cookie.value.size() + cookie.domain.size() + cookie.path.size() + 5;
+}
+
 std::uint64_t jarSize(const CookieJar& jar) {
     std::uint64_t size = 0;
-    for (const Cookie& cookie : jar.cookies) size += cookieSize(cookie);
+    for (const Cookie& cookie : jar.cookies) size += storedSize(cookie);
     return size;
 }
 
-void evictOldest(CookieJar& jar, std::string_view domain) {
+void evictOldest(CookieJar& jar, const std::string* domain) {
     auto oldest = jar.cookies.end();
     for (auto it = jar.cookies.begin(); it != jar.cookies.end(); ++it) {
-        if (!domain.empty() && it->domain != domain) continue;
-        if (oldest == jar.cookies.end() || it->lastAccess < oldest->lastAccess) oldest = it;
+        if (domain && it->domain != *domain) continue;
+        if (oldest == jar.cookies.end() || it->creation < oldest->creation) oldest = it;
     }
     if (oldest == jar.cookies.end()) return;
     jar.cookies.erase(oldest);
     ++jar.removedNum;
 }
 
-std::uint32_t domainCount(const CookieJar& jar, std::string_view domain) {
-    return static_cast<std::uint32_t>(std::count_if(jar.cookies.begin(), jar.cookies.end(), [&](const Cookie& cookie) { return cookie.domain == domain; }));
-}
-
-void enforceLimits(CookieJar& jar, Clock::time_point now) {
-    std::erase_if(jar.cookies, [&](const Cookie& cookie) { return expired(cookie, now); });
-    if (jar.maxNumPerDomain != 0) {
-        for (size_t index = 0; index < jar.cookies.size(); ++index) {
-            const std::string domain = jar.cookies[index].domain;
-            while (domainCount(jar, domain) > jar.maxNumPerDomain) evictOldest(jar, domain);
-        }
+void enforceLimits(CookieJar& jar, const std::string& domain) {
+    while (std::count_if(jar.cookies.begin(), jar.cookies.end(), [&](const Cookie& cookie) { return cookie.domain == domain; }) > jar.maxNumPerDomain) evictOldest(jar, &domain);
+    if (jar.cookies.size() > jar.maxNum) {
+        for (size_t index = 0; index < EvictedOverMaxNum && !jar.cookies.empty(); ++index) evictOldest(jar, nullptr);
     }
-    while ((jar.maxNum != 0 && jar.cookies.size() > jar.maxNum) || (jar.totalMaxSize != 0 && jarSize(jar) > jar.totalMaxSize)) evictOldest(jar, {});
-    jar.maxInuseSize = std::max(jar.maxInuseSize, jarSize(jar));
-    jar.maxInuseNum = std::max(jar.maxInuseNum, static_cast<std::uint32_t>(jar.cookies.size()));
+    while (jar.totalMaxSize && !jar.cookies.empty() && jarSize(jar) > *jar.totalMaxSize) evictOldest(jar, nullptr);
+    jar.peakSize = std::max(jar.peakSize, jarSize(jar));
+    jar.peakNum = std::max(jar.peakNum, static_cast<std::uint32_t>(jar.cookies.size()));
 }
 
-void storeCookie(CookieJar& jar, const RequestUrl& url, std::string_view header, Clock::time_point now) {
+int storeCookie(CookieJar& jar, const RequestUrl& url, std::string_view header, Clock::time_point now) {
     const size_t pairEnd = header.find(';');
     const std::string_view pair = header.substr(0, pairEnd);
     const size_t equals = pair.find('=');
-    if (equals == std::string_view::npos) return;
     Cookie cookie;
-    cookie.name = trimmed(pair.substr(0, equals));
-    cookie.value = trimmed(pair.substr(equals + 1));
-    if (cookie.name.empty()) return;
+    if (equals == std::string_view::npos) {
+        cookie.name = trimmed(pair);
+    } else {
+        cookie.name = trimmed(pair.substr(0, equals));
+        cookie.value = trimmed(pair.substr(equals + 1));
+    }
+    if (cookie.name.empty() && cookie.value.empty()) return ERROR_INVALID_VALUE;
     std::optional<Clock::time_point> expires;
     std::optional<Clock::time_point> maxAge;
-    std::string domain;
+    std::optional<std::string> domainSpelling;
     std::optional<std::string> path;
     std::string_view attributes = pairEnd == std::string_view::npos ? std::string_view{} : header.substr(pairEnd + 1);
     while (!attributes.empty()) {
@@ -270,7 +280,7 @@ void storeCookie(CookieJar& jar, const RequestUrl& url, std::string_view header,
         } else if (equalsIgnoreCase(name, "max-age")) {
             if (const auto age = parseMaxAge(value, now)) maxAge = age;
         } else if (equalsIgnoreCase(name, "domain")) {
-            if (!value.empty()) domain = lowered(value.starts_with('.') ? value.substr(1) : value);
+            if (!value.empty()) domainSpelling = std::string(value);
         } else if (equalsIgnoreCase(name, "path")) {
             path = value.empty() || value.front() != '/' ? defaultPath(url.path) : std::string(value);
         } else if (equalsIgnoreCase(name, "secure")) {
@@ -278,49 +288,46 @@ void storeCookie(CookieJar& jar, const RequestUrl& url, std::string_view header,
         }
     }
     cookie.expiry = maxAge ? maxAge : expires;
-    if (domain.empty()) {
-        cookie.domain = url.host;
+    if (domainSpelling) {
+        const std::string_view spelling = *domainSpelling;
+        cookie.domain = lowered(spelling.starts_with('.') ? spelling.substr(1) : spelling);
+        if (!allowedDomain(cookie.domain)) return ERROR_INVALID_VALUE;
+        if (!domainMatches(url.host, cookie.domain)) return ERROR_PARSE_HTTP_INVALID_VALUE;
+        cookie.domainSpelling = *domainSpelling;
     } else {
-        if (!domainMatches(url.host, domain)) return;
-        cookie.domain = domain;
-        cookie.hostOnly = false;
+        cookie.domain = url.host;
+        cookie.domainSpelling = url.host;
     }
     cookie.path = path ? *path : defaultPath(url.path);
-    if (jar.maxSize != 0 && cookieSize(cookie) > jar.maxSize) return;
-    cookie.creation = ++g_cookieClock;
-    cookie.lastAccess = cookie.creation;
-    const auto existing = std::find_if(jar.cookies.begin(), jar.cookies.end(), [&](const Cookie& stored) {
-        return stored.name == cookie.name && stored.domain == cookie.domain && stored.path == cookie.path;
+    if (cookieSize(cookie) > jar.maxSize) return ERROR_OUT_OF_SIZE;
+    std::erase_if(jar.cookies, [&](const Cookie& stored) {
+        return stored.name == cookie.name && stored.domainSpelling == cookie.domainSpelling && stored.path == cookie.path;
     });
-    if (existing != jar.cookies.end()) {
-        cookie.creation = existing->creation;
-        jar.cookies.erase(existing);
-    }
-    if (expired(cookie, now)) return;
-    jar.cookies.push_back(std::move(cookie));
-    enforceLimits(jar, now);
+    if (expired(cookie, now)) return 0;
+    cookie.creation = ++g_cookieClock;
+    const std::string domain = cookie.domain;
+    const auto last = std::find_if(jar.cookies.rbegin(), jar.cookies.rend(), [&](const Cookie& stored) { return stored.domain == domain; });
+    jar.cookies.insert(last == jar.cookies.rend() ? jar.cookies.end() : std::prev(last.base()), std::move(cookie));
+    enforceLimits(jar, domain);
+    return 0;
 }
 
-CookieJar* findJar(int contextId, int& error) {
-    if (!HttpInitialised()) {
-        error = ERROR_BEFORE_INIT;
-        return nullptr;
-    }
-    if (!IsHttpContext(contextId)) {
-        error = ERROR_INVALID_ID;
-        return nullptr;
-    }
-    error = 0;
-    return &g_jars[contextId];
+std::string headerItem(const Cookie& cookie) {
+    if (cookie.name.empty()) return cookie.value;
+    if (cookie.value.empty()) return cookie.name;
+    return cookie.name + '=' + cookie.value;
 }
 
-int setLimit(int contextId, std::uint32_t CookieJar::*limit, std::uint32_t value) {
+CookieJar* findJar(int contextId) {
+    return IsHttpContext(contextId) ? &g_jars[contextId] : nullptr;
+}
+
+int setLimit(int contextId, std::uint32_t value, void (*apply)(CookieJar&, std::uint32_t)) {
     std::lock_guard lock(g_cookieMutex);
-    int error = 0;
-    CookieJar* jar = findJar(contextId, error);
-    if (!jar) return error;
-    jar->*limit = value;
-    enforceLimits(*jar, Clock::now());
+    CookieJar* jar = findJar(contextId);
+    if (!jar) return ERROR_INVALID_ID;
+    jar->cookies.clear();
+    apply(*jar, value);
     return 0;
 }
 
@@ -340,80 +347,98 @@ extern "C" {
 
 int APS5_VABI sceHttpAddCookie(int contextId, const char* url, const char* cookie, std::size_t size) {
     std::lock_guard lock(g_cookieMutex);
-    int error = 0;
-    CookieJar* jar = findJar(contextId, error);
-    if (!jar) return error;
+    CookieJar* jar = findJar(contextId);
+    if (!jar) return ERROR_INVALID_ID;
     if (!url || !cookie) return ERROR_INVALID_VALUE;
     RequestUrl parsed;
     if (const int result = parseUrl(url, parsed); result != 0) return result;
     const std::string_view header(cookie, size);
-    storeCookie(*jar, parsed, header.substr(0, header.find('\0')), Clock::now());
-    return 0;
+    return storeCookie(*jar, parsed, header.substr(0, header.find('\0')), Clock::now());
 }
 
-int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* required, std::size_t prepared, int isSecure) {
+int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* required, std::size_t prepared) {
     std::lock_guard lock(g_cookieMutex);
-    int error = 0;
-    CookieJar* jar = findJar(contextId, error);
-    if (!jar) return error;
-    if (!url || (!cookie && !required)) return ERROR_INVALID_VALUE;
+    CookieJar* jar = findJar(contextId);
+    if (!jar) return ERROR_INVALID_ID;
+    if (!url) return ERROR_INVALID_VALUE;
     RequestUrl parsed;
     if (const int result = parseUrl(url, parsed); result != 0) return result;
     const auto now = Clock::now();
     std::erase_if(jar->cookies, [&](const Cookie& stored) { return expired(stored, now); });
-    std::vector<Cookie*> matches;
-    for (Cookie& stored : jar->cookies) {
-        const bool hostMatches = stored.hostOnly ? parsed.host == stored.domain : domainMatches(parsed.host, stored.domain);
-        if (hostMatches && pathMatches(parsed.path, stored.path) && (!stored.secure || isSecure != 0)) matches.push_back(&stored);
+    std::vector<const Cookie*> matches;
+    for (const Cookie& stored : jar->cookies) {
+        if (domainMatches(parsed.host, stored.domain) && pathMatches(parsed.path, stored.path) && (!stored.secure || parsed.secure)) matches.push_back(&stored);
     }
-    std::stable_sort(matches.begin(), matches.end(), [](const Cookie* left, const Cookie* right) {
-        if (left->path.size() != right->path.size()) return left->path.size() > right->path.size();
-        return left->creation < right->creation;
-    });
-    std::string header;
-    for (Cookie* stored : matches) {
-        if (!header.empty()) header += "; ";
-        header += stored->name;
-        header += '=';
-        header += stored->value;
+    if (matches.empty()) return ERROR_NOT_FOUND;
+    if (!cookie && !required) return ERROR_INVALID_VALUE;
+    std::stable_sort(matches.begin(), matches.end(), [](const Cookie* left, const Cookie* right) { return left->path.size() > right->path.size(); });
+    std::vector<std::string> items;
+    size_t length = 0;
+    for (const Cookie* stored : matches) {
+        items.push_back(headerItem(*stored));
+        length += (items.size() > 1 ? 2 : 0) + items.back().size();
     }
-    if (required) *required = header.size() + 1;
-    if (!cookie) return 0;
-    if (prepared < header.size() + 1) return ERROR_OUT_OF_SIZE;
-    std::memcpy(cookie, header.c_str(), header.size() + 1);
-    for (Cookie* stored : matches) stored->lastAccess = ++g_cookieClock;
+    const size_t total = length + 3;
+    if (!cookie) {
+        *required = total;
+        return 0;
+    }
+    if (prepared < total) {
+        size_t written = 0;
+        for (const std::string& item : items) {
+            const size_t next = written + (written != 0 ? 2 : 0) + item.size();
+            if (next + 1 > prepared) break;
+            if (written != 0) {
+                std::memcpy(cookie + written, "; ", 2);
+                written += 2;
+            }
+            std::memcpy(cookie + written, item.data(), item.size());
+            written += item.size();
+        }
+        if (prepared != 0) cookie[written] = '\0';
+        return ERROR_OUT_OF_SIZE;
+    }
+    size_t written = 0;
+    for (const std::string& item : items) {
+        if (written != 0) {
+            std::memcpy(cookie + written, "; ", 2);
+            written += 2;
+        }
+        std::memcpy(cookie + written, item.data(), item.size());
+        written += item.size();
+    }
+    std::memcpy(cookie + written, "\0 \0", 3);
+    if (required) *required = total;
     return 0;
 }
 
 int APS5_VABI sceHttpSetCookieTotalMaxSize(int contextId, std::uint32_t size) {
-    return setLimit(contextId, &CookieJar::totalMaxSize, size);
+    return setLimit(contextId, size, [](CookieJar& jar, std::uint32_t value) { jar.totalMaxSize = value; });
 }
 
 int APS5_VABI sceHttpSetCookieMaxSize(int contextId, std::uint32_t size) {
-    return setLimit(contextId, &CookieJar::maxSize, size);
+    return setLimit(contextId, size, [](CookieJar& jar, std::uint32_t value) { jar.maxSize = value; });
 }
 
 int APS5_VABI sceHttpSetCookieMaxNum(int contextId, std::uint32_t count) {
-    return setLimit(contextId, &CookieJar::maxNum, count);
+    return setLimit(contextId, count, [](CookieJar& jar, std::uint32_t value) { jar.maxNum = value; });
 }
 
 int APS5_VABI sceHttpSetCookieMaxNumPerDomain(int contextId, std::uint32_t count) {
-    return setLimit(contextId, &CookieJar::maxNumPerDomain, count);
+    return setLimit(contextId, count, [](CookieJar& jar, std::uint32_t value) { jar.maxNumPerDomain = value; });
 }
 
 int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
     std::lock_guard lock(g_cookieMutex);
-    int error = 0;
-    CookieJar* jar = findJar(id, error);
-    if (!jar) return error;
+    CookieJar* jar = findJar(id);
+    if (!jar) return ERROR_INVALID_ID;
     if (!stats) return ERROR_INVALID_VALUE;
     std::erase_if(jar->cookies, [now = Clock::now()](const Cookie& stored) { return expired(stored, now); });
-    *stats = {};
-    stats->currentInuseSize = jarSize(*jar);
-    stats->currentInuseNum = static_cast<std::uint32_t>(jar->cookies.size());
-    stats->maxInuseSize = jar->maxInuseSize;
-    stats->maxInuseNum = jar->maxInuseNum;
-    stats->removedNum = jar->removedNum;
+    stats->usedBytes = jarSize(*jar);
+    stats->cookieCount = static_cast<std::uint32_t>(jar->cookies.size());
+    stats->peakUsedBytes = jar->peakSize;
+    stats->peakCookieCount = jar->peakNum;
+    stats->evictedCookieCount = jar->removedNum;
     return 0;
 }
 
