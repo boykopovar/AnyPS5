@@ -353,6 +353,14 @@ void overlapWithWriters() {
     CheckOverlaps("t", patched, {.Traps = trapBefore});
     const std::vector<WriterRange> window{{0x100f, 4, "window"}};
     reject({.Traps = window}, "window");
+    const std::vector<Codegen::TrampolineSite> frame{{0x1011, 0x401011, 5, {}, {}, 0}};
+    reject({.RedZoneSites = frame}, "red-zone frame site");
+    const std::vector<Codegen::TrampolineSite> frameBefore{{0x100b, 0x40100b, 5, {}, {}, 0}};
+    CheckOverlaps("t", patched, {.RedZoneSites = frameBefore});
+    const std::vector<Codegen::RedZoneDisplacement> moved{{0x100f, {0x10, 0, 0, 0}}};
+    reject({.RedZoneDisplacements = moved}, "red-zone moved displacement");
+    const std::vector<Codegen::RedZoneDisplacement> movedBefore{{0x100f, {0x10}}};
+    CheckOverlaps("t", patched, {.RedZoneDisplacements = movedBefore});
 }
 
 void conversion() {
@@ -398,6 +406,56 @@ void conversion() {
 
     const auto repeated = converter.Convert(conversionInput(executable), plain);
     require(repeated.Executable == baseline.Executable && repeated.Modules.front().Bytes == baseline.Modules.front().Bytes, "no entries changed the output");
+}
+
+std::vector<std::uint8_t> framedLeafFixture() {
+    auto bytes = conversionFixture();
+    Io::WriteU64(bytes, 64 + 32, 0x80);
+    Io::WriteU64(bytes, 64 + 40, 0x80);
+    std::fill(bytes.begin() + 0x1000, bytes.begin() + 0x1080, 0xcc);
+    const std::vector<std::uint8_t> caller{0xe8, 0x3b, 0x00, 0x00, 0x00, 0xc3};
+    const std::vector<std::uint8_t> leaf{0x53, 0x41, 0x56, 0x41, 0x57, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x8b, 0x44, 0x24, 0x08, 0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xc3};
+    std::copy(caller.begin(), caller.end(), bytes.begin() + 0x1000);
+    std::copy(leaf.begin(), leaf.end(), bytes.begin() + 0x1040);
+    const auto ehFrameHeader = 64 + 7 * 56;
+    Io::WriteU32(bytes, ehFrameHeader, 0x6474e550);
+    Io::WriteU32(bytes, ehFrameHeader + 4, 4);
+    for (const auto field : {8, 16, 24}) Io::WriteU64(bytes, ehFrameHeader + field, 0x2900);
+    Io::WriteU64(bytes, ehFrameHeader + 32, 32);
+    Io::WriteU64(bytes, ehFrameHeader + 40, 32);
+    Io::WriteU64(bytes, ehFrameHeader + 48, 4);
+    Io::WriteU32(bytes, 0x2800, 9);
+    const std::vector<std::uint8_t> cie{1, 0, 1, 0x78, 16};
+    std::copy(cie.begin(), cie.end(), bytes.begin() + 0x2808);
+    Io::WriteU32(bytes, 0x2840, 20);
+    Io::WriteU32(bytes, 0x2844, 0x44);
+    Io::WriteU64(bytes, 0x2848, 0x1040);
+    Io::WriteU64(bytes, 0x2850, leaf.size());
+    bytes[0x2900] = 1;
+    bytes[0x2902] = 3;
+    Io::WriteU64(bytes, 0x2904, 0x2800);
+    Io::WriteU32(bytes, 0x290c, 1);
+    Io::WriteU64(bytes, 0x2910, 0x1040);
+    Io::WriteU64(bytes, 0x2918, 0x2840);
+    return bytes;
+}
+
+void framedLeafPatches() {
+    TestProgress progress;
+    const Conversion converter(progress);
+    const auto executable = framedLeafFixture();
+    ConversionOptions options;
+    options.TargetName = "custom-name.bin";
+    options.Target = TargetSystem::Windows;
+    options.FrameRedZone = true;
+    converter.Convert(conversionInput(executable), options);
+    require(progress.Messages.find("1 framed (1 without a frame pointer, 1 rsp operands moved, 2 in 1 operand stubs; 1 exits)") != std::string::npos, "the fixture's leaf was not framed with a moved displacement and an operand stub: " + progress.Messages);
+    options.Patches = {entry("custom-name.bin", 0x1010, {0xcc}, {0x90})};
+    require(converter.Convert(conversionInput(executable), options).AppliedPatches.size() == 1, "a patch outside the framed leaf was not applied");
+    options.Patches = {entry("custom-name.bin", 0x1049, {0xf0}, {0xe8})};
+    rejects([&] { converter.Convert(conversionInput(executable), options); }, "overlaps red-zone moved displacement at off=0x1049 length 1");
+    options.Patches = {entry("custom-name.bin", 0x104c, {0x04}, {0x0c})};
+    rejects([&] { converter.Convert(conversionInput(executable), options); }, "overlaps red-zone frame site at off=0x104a length 9");
 }
 
 void targets() {
@@ -588,6 +646,7 @@ int main() {
         applicationRangeWidths();
         overlapWithWriters();
         conversion();
+        framedLeafPatches();
         targets();
         verify();
         rangeFailureInVerify();

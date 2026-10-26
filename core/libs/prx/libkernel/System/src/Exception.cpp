@@ -1,9 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <vector>
 #include <algorithm>
 #include <array>
@@ -26,7 +28,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" Pthread APS5_VABI scePthreadSelf();
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
 extern "C" [[noreturn]] void Aps5RedirectedExit(CONTEXT* context, const void* vectors, void (*restore)(CONTEXT*, EXCEPTION_RECORD*));
@@ -527,7 +528,8 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
 
-void Deliver(int, siginfo_t*, void* context) {
+void Deliver(int signum, siginfo_t*, void* context) {
+    if (TimedWait::DeferDelivery(signum)) return;
     const auto handler = Handler(RaisedSignal);
     if (handler == nullptr) {
         static constexpr char message[] = "sceKernelRaiseException: the handler was removed before the signal was delivered\n";
@@ -679,6 +681,7 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
+ if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

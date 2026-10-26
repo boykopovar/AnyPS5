@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -9,19 +11,6 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
-
-extern "C" {
-void APS5_VABI RAND_add_nid_postfix(const void*, int, double);
-int APS5_VABI RAND_status_nid_postfix(void);
-int APS5_VABI RAND_bytes_nid_postfix(unsigned char*, int);
-int APS5_VABI RAND_load_file_nid_postfix(const char*, std::int64_t);
-const char* APS5_VABI RAND_file_name_nid_postfix(char*, std::size_t);
-void* APS5_VABI CRYPTO_malloc_nid_postfix(int, const char*, int);
-void APS5_VABI CRYPTO_free_nid_postfix(void*);
-int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void*, void*, void*);
-void APS5_VABI free_nid_postfix(void*);
-void* APS5_VABI malloc_nid_postfix(std::size_t);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -80,12 +69,15 @@ int main() {
     Require(block != nullptr);
     std::memset(block, 0x5a, 64);
     CRYPTO_free_nid_postfix(block);
+
     block = static_cast<unsigned char*>(CRYPTO_malloc_nid_postfix(32, nullptr, 0));
     Require(block != nullptr);
     free_nid_postfix(block);
+
     block = static_cast<unsigned char*>(malloc_nid_postfix(16));
     CRYPTO_free_nid_postfix(block);
     CRYPTO_free_nid_postfix(nullptr);
+
     Require(CRYPTO_malloc_nid_postfix(0, nullptr, 0) == nullptr);
     Require(CRYPTO_malloc_nid_postfix(-1, nullptr, 0) == nullptr);
     Require(CRYPTO_set_mem_functions_nid_postfix(reinterpret_cast<void*>(&std::malloc), reinterpret_cast<void*>(&std::realloc), reinterpret_cast<void*>(&std::free)) == 0);

@@ -207,7 +207,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (!validImageDescriptor(descriptor, base.r128)) {
         return rejectImage(invalidImageReason(descriptor), "image descriptor is invalid");
     }
-    decoded.dimension = descriptorDimension(descriptor, base.dimension);
+    const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
+    decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
     if (base.depthCompare) {
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
@@ -1715,17 +1716,17 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
-                const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
+                const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic64) << 25u) ^ (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
                 auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
                     const auto& entry = out.elements[known];
-                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic;
+                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic && entry.atomic64 == image.atomic64;
                 });
                 if (!index.has_value() && out.elements.size() >= Abi::ImageElementBudget) {
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
                     if (!index.has_value()) {
                         index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic});
+                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic, image.atomic64});
                         elementIndex.Insert(hash, *index);
                     }
                     out.elements[*index].samplers |= directSamplers[resource];
@@ -1838,7 +1839,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
 }
 
 std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
-    if (memoKey == 0u || snapshot.tables.tables.empty() || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
+    if (snapshot.tables.tables.empty()) {
+        static const auto none = std::make_shared<const ResolvedImageTables>();
+        static_cast<void>(ResolveImageTables(info, snapshot, memoKey));
+        return none;
+    }
+    if (memoKey == 0u || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
     auto reducing = reducingSamplers(info, snapshot);
     auto& memo = resolutionMemo();
     auto& totals = tableReuseTotals();
@@ -1940,10 +1946,23 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
-        if (image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        const bool planeAdded = image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid;
+        if (planeAdded) {
             auto plane = mode;
             plane.dimension = RdnaImageDimension::Dim2D;
             modes.push_back(plane);
+        }
+        if (image.dimension == RdnaImageDimension::Dim1D && image.dimensionQueryOnly && !storage) {
+            for (const auto dimension : {RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D}) {
+                if (dimension == RdnaImageDimension::Dim2D && planeAdded) continue;
+                auto view = mode;
+                view.dimension = dimension;
+                modes.push_back(view);
+            }
+            auto cube = mode;
+            cube.dimension = RdnaImageDimension::Dim2DArray;
+            cube.cube = true;
+            modes.push_back(cube);
         }
         if (image.dimension == RdnaImageDimension::Dim1DArray || image.dimension == RdnaImageDimension::Dim2DArray || image.dimension == RdnaImageDimension::Dim2DMsaaArray) {
             auto plain = mode;

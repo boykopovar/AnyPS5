@@ -262,6 +262,7 @@ struct Generator {
         if (half) return bits;
         const auto value = std::bit_cast<float>(bits);
         if (!std::isfinite(value) || std::fabs(value) > 65504.0f) return Half();
+        if (value == 0.0f) return bits;
         const auto exponent = std::max(std::ilogb(value) - 10, -24);
         return std::bit_cast<std::uint32_t>(static_cast<float>(std::ldexp(std::nearbyint(std::ldexp(value, -exponent)), exponent)));
     }

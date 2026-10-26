@@ -1,3 +1,4 @@
+#include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <array>
@@ -7,14 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceVoiceInit(const VoiceInitParam*, int32_t);
-int APS5_VABI sceVoiceEnd_nid_postfix(void);
-int APS5_VABI sceVoiceCreatePort(uint32_t*, const VoicePortParam*);
-int APS5_VABI sceVoiceDeletePort(uint32_t);
-int APS5_VABI sceVoiceGetPortAttr(uint32_t, int32_t, void*, int32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

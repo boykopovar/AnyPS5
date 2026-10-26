@@ -1,45 +1,10 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttpDeleteTemplate(int);
-int APS5_VABI sceHttpCreateConnectionWithURL(int, const char*, int);
-int APS5_VABI sceHttpDeleteConnection(int);
-int APS5_VABI sceHttpCreateRequestWithURL(int, int, const char*, std::uint64_t);
-int APS5_VABI sceHttpDeleteRequest(int);
-int APS5_VABI sceHttpSetAutoRedirect(int, int);
-int APS5_VABI sceHttpGetAutoRedirect(int, int*);
-int APS5_VABI sceHttpSetAuthEnabled(int, int);
-int APS5_VABI sceHttpGetAuthEnabled(int, int*);
-int APS5_VABI sceHttpSetCookieEnabled(int, int);
-int APS5_VABI sceHttpGetCookieEnabled(int, int*);
-int APS5_VABI sceHttpSetNonblock(int, int);
-int APS5_VABI sceHttpGetNonblock(int, int*);
-int APS5_VABI sceHttpTrySetNonblock(int, int);
-int APS5_VABI sceHttpTryGetNonblock(int, int*);
-int APS5_VABI sceHttpSetAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int, int*);
-int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpSetEpoll(int, HttpEpollHandle, void*);
-int APS5_VABI sceHttpUnsetEpoll(int);
-int APS5_VABI sceHttpGetEpoll(int, HttpEpollHandle*, void**);
-int APS5_VABI sceHttpCacheRedirectedConnectionEnabled(int, int);
-int APS5_VABI sceHttpsEnableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpsDisableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpAbortRequestForce(int);
-int APS5_VABI sceHttpSetProxy(int, int, int, const char*, std::uint16_t);
-int APS5_VABI sceHttpAddRequestHeader(int, const char*, const char*, std::uint32_t);
-int APS5_VABI sceHttpRemoveRequestHeader(int, const char*);
-}
 
 namespace {
 

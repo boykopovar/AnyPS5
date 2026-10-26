@@ -1,42 +1,15 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id);
-int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
-int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
-int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata);
-int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id);
-int APS5_VABI EqueueTriggerEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData);
-int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata);
-int APS5_VABI sceKernelAddTimerEvent(KernelEqueue eq, int id, KernelUseconds usec, void* udata);
-int APS5_VABI sceKernelDeleteTimerEvent(KernelEqueue eq, int id);
-intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev);
-int APS5_VABI sceKernelGetEventError(const KernelEvent* ev);
-intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev);
-int APS5_VABI sceKernelGetEventFilter(const KernelEvent* ev);
-uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
-void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
-static constexpr int EVFILT_TIMER = -7;
-static constexpr int EVFILT_USER = -11;
-static constexpr int EVFILT_HRTIMER = -15;
-static constexpr int EVFILT_AMPR = -25;
-static constexpr std::uint16_t EV_ERROR = 0x4000;
-static constexpr std::uint16_t EV_EOF = 0x8000;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -53,6 +26,7 @@ static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
 static bool RejectsWideFflags(const KernelEvent* ev) {
     try {
         sceKernelGetEventError(ev);
+
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -256,12 +230,64 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void RequireReported(KernelEqueue eq, int num, std::initializer_list<uintptr_t> expected) {
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    Require(sceKernelWaitEqueue(eq, events, num, &count, &poll) == SCE_OK);
+    Require(count == static_cast<int>(expected.size()));
+    int index = 0;
+    for (const uintptr_t id : expected) {
+        Require(sceKernelGetEventId(&events[index++]) == id);
+    }
+}
+
+static void VerifyReportedEventsMoveBehindWaitingOnes() {
+    KernelEqueue eq = 0;
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int payload = 0;
+    Require(sceKernelCreateEqueue(&eq, "rotate") == SCE_OK);
+    for (const int id : {1, 2}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {1});
+    RequireReported(eq, 1, {2});
+    RequireReported(eq, 1, {1});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate three") == SCE_OK);
+    for (const int id : {1, 2, 3}) {
+        Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 2, {1, 2});
+    RequireReported(eq, 2, {3, 1});
+    RequireReported(eq, 2, {2, 3});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+
+    Require(sceKernelCreateEqueue(&eq, "rotate edge") == SCE_OK);
+    for (const int id : {7, 8}) {
+        Require(sceKernelAddUserEventEdge(eq, id) == SCE_OK);
+        Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    }
+    RequireReported(eq, 1, {7});
+    Require(sceKernelTriggerUserEvent(eq, 7, &payload) == SCE_OK);
+    RequireReported(eq, 1, {8});
+    RequireReported(eq, 1, {7});
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
     VerifyRepeatedAmprCompletionsAreNotLost();
+    VerifyReportedEventsMoveBehindWaitingOnes();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);

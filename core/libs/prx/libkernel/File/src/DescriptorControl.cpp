@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -22,8 +24,10 @@
 #include <string>
 
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #else
 #include <fcntl.h>
@@ -31,9 +35,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI dup2_nid_postfix(int from, int to);
 
 namespace {
 
@@ -180,8 +181,33 @@ Entry InitialEntry(int fd) {
     return {false, std::make_shared<int>(status)};
 }
 
+void SetHostAppend(int fd, bool append, const char* function) {
+    const int translation = ::_setmode(fd, _O_BINARY);
+    if (translation == -1 || ::_setmode(fd, translation) == -1)
+        throw std::runtime_error(std::string(function) + ": cannot read the translation mode of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    HANDLE copy = nullptr;
+    if (!::DuplicateHandle(::GetCurrentProcess(), WindowsDescriptorHandle_nid_no_patch(fd), ::GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS))
+        throw std::runtime_error(std::string(function) + ": cannot duplicate the handle of descriptor " + std::to_string(fd) + ", error=" + std::to_string(::GetLastError()));
+    const int replacement = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(copy), (append ? _O_APPEND : 0) | translation);
+    if (replacement < 0) {
+        ::CloseHandle(copy);
+        throw std::runtime_error(std::string(function) + ": cannot open a replacement for descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    }
+    auto* const standard = HostStandardHandle_nid_no_patch(fd);
+    const int moved = ::_dup2(replacement, fd);
+    const int error = errno;
+    ::_close(replacement);
+    KeepStandardHandle_nid_no_patch(fd, standard);
+    if (moved != 0)
+        throw std::runtime_error(std::string(function) + ": cannot replace descriptor " + std::to_string(fd) + ", errno=" + std::to_string(error));
+}
+
 void ApplyHostStatus(int fd, Kind kind, int changed, int next, const char* function) {
-    if ((changed & Append) && kind == Kind::File) Unsupported(function, "changing O_APPEND", kind, fd);
+    if ((changed & Append) && kind == Kind::File) {
+        const auto status = g_entries.at(fd).status;
+        for (const auto& [descriptor, entry] : g_entries)
+            if (entry.status == status && DescriptorIsOpen_nid_no_patch(descriptor)) SetHostAppend(descriptor, (next & Append) != 0, function);
+    }
     if ((changed & Nonblocking) && kind == Kind::Device) Unsupported(function, "changing O_NONBLOCK", kind, fd);
     if ((changed & Nonblocking) && kind == Kind::Pipe) SetPipeNonblocking(fd, (next & Nonblocking) != 0, function);
 }
@@ -352,7 +378,6 @@ int ChangeStatus(int fd, Kind kind, int mask, int value, const char* function) {
     const int next = (status & ~mask) | (value & mask);
     const int changed = status ^ next;
     if ((changed & Asynchronous) && (kind == Kind::Pipe || kind == Kind::Socket || kind == Kind::Device)) Unsupported(function, "O_ASYNC", kind, fd);
-    if ((changed & Synchronous) && kind == Kind::File) Unsupported(function, "changing O_FSYNC", kind, fd);
     ApplyHostStatus(fd, kind, changed, next, function);
     status = next;
     return 0;
@@ -591,6 +616,21 @@ void ForgetDescriptor(int fd) {
     g_entries.erase(fd);
 }
 
+std::uint64_t g_synchronousWrites = 0;
+
+void SyncWrites(int fd) {
+    {
+        std::lock_guard lock(g_mutex);
+        const auto found = g_entries.find(fd);
+        if (found == g_entries.end() || !found->second.status || (*found->second.status & Synchronous) == 0) return;
+    }
+    if (Classify(fd, "write") != Kind::File) return;
+    if (const int result = sceKernelFsync(fd); result != 0)
+        throw std::runtime_error("write: syncing an O_FSYNC file failed, fd=" + std::to_string(fd) + ", error=" + std::to_string(result & 0xffff));
+    std::lock_guard lock(g_mutex);
+    ++g_synchronousWrites;
+}
+
 bool Appends(int fd) {
     std::lock_guard lock(g_mutex);
     const auto found = g_entries.find(fd);
@@ -623,4 +663,9 @@ bool IsVnode(int fd) {
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
     return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
+}
+
+extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {
+    std::lock_guard lock(g_mutex);
+    return File::g_synchronousWrites;
 }

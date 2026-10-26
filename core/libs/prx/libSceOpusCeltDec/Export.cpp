@@ -1,3 +1,4 @@
+#include "prx/libSceOpusCeltDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusDec/include/OpusDecoder.hpp"
 #include <cstdint>

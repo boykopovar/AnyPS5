@@ -1,22 +1,9 @@
+#include "prx/libSceMove/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceMoveInit(void);
-int APS5_VABI sceMoveTerm(void);
-int APS5_VABI sceMoveOpen(std::int32_t userId, std::int32_t type, std::int32_t index);
-int APS5_VABI sceMoveClose(std::int32_t handle);
-int APS5_VABI sceMoveGetDeviceInfo(std::int32_t handle, void* info);
-int APS5_VABI sceMoveGetExtensionPortInfo(std::int32_t handle, void* data);
-int APS5_VABI sceMoveReadStateLatest(std::int32_t handle, void* data);
-int APS5_VABI sceMoveReadStateRecent(std::int32_t handle, std::int64_t timestamp, void* data, std::int32_t* outCount);
-int APS5_VABI sceMoveSetVibration(std::int32_t handle, std::uint8_t motor);
-int APS5_VABI sceMoveSetLightSphere(std::int32_t handle, std::uint8_t red, std::uint8_t green, std::uint8_t blue);
-int APS5_VABI sceMoveResetLightSphere(std::int32_t handle);
-}
 
 namespace {
 
