@@ -111,6 +111,15 @@ static void TestParseLoop() {
     Require(sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_OK);
     Require(info.loop_begin_position == 84 && info.loop_end_position == 28 && info.num_blocks == 1);
     Require(SameBlock(info.block[0], HeaderSize, 64, 0, 112));
+
+    auto repeated = Vag(1, 10);
+    for (std::uint32_t frame = 0; frame < 8; frame++) Unit(repeated, 1, frame, 0)[1] = frame % 2 == 0 ? 6 : 3;
+    Require(sceNgs2ParseWaveformData(repeated.data(), repeated.size(), &info) == SCE_NGS2_OK);
+    Require(info.num_samples == 280 && info.loop_begin_position == 168 && info.loop_end_position == 224 && info.num_blocks == 3);
+    Require(SameBlock(info.block[0], HeaderSize, 96, 0, 168));
+    Require(SameBlock(info.block[1], HeaderSize + 96, 32, UINT32_MAX, 56));
+    Require(SameBlock(info.block[2], HeaderSize + 128, 32, 0, 56));
+    Require(SameBlock(info.block[3], 0, 0, 0, 0));
 }
 
 static void TestParseFile() {
