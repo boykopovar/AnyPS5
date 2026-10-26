@@ -221,6 +221,7 @@ void Ngs2Voice::ResetSetup() {
     sampleRate = 0;
     waveformType = 0;
     atrac9 = {};
+    vag = {};
     pitch = 1.0f;
     phase = 0;
     blocks.clear();
@@ -509,7 +510,8 @@ static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
         return;
     }
     voice.ResetSetup();
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_VAG) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_VAG && format.config_data != 0) throw std::runtime_error("NGS2: configured VAG waveforms are not implemented");
     if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.config_data != 0) {
         throw std::runtime_error("NGS2: configured PCM waveforms are not implemented");
     }
@@ -523,6 +525,7 @@ static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
 }
 
 static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlocksParam& param, std::size_t frameBytes) {
+    if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG) throw std::runtime_error("NGS2: appending VAG data is not implemented");
     const bool compressed = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9;
     const bool pending = !voice.blocks.empty() || (compressed ? voice.atrac9.remainingSamples != 0 : voice.pcmRemaining != 0);
     if (!pending) throw std::invalid_argument("NGS2: appending data requires a waveform");
@@ -563,8 +566,10 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         voice.blocks.clear();
         voice.samplerReplayBlocks.clear();
         voice.samplerWritePosition = 0;
+        voice.vag = {};
     }
-    const std::size_t frameBytes = voice.channels == 0 || voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? 0 : voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
+    const bool compressed = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 || voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG;
+    const std::size_t frameBytes = voice.channels == 0 || compressed ? 0 : voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
@@ -582,6 +587,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
             continue;
         }
         const std::uint64_t bytes = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? Ngs2Atrac9BlockBytes(voice, block)
+                                  : voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG ? Ngs2VagBlockBytes(voice, block)
                                   : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
@@ -590,6 +596,14 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
+        if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG) {
+            try {
+                Ngs2DecodeVag(voice, voice.blocks.back());
+            } catch (...) {
+                voice.blocks.pop_back();
+                throw;
+            }
+        }
         Ngs2SaveSamplerBlock(voice, voice.blocks.back());
     }
     if (preservePcm && !voice.blocks.empty()) {
