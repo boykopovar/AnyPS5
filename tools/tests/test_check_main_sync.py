@@ -67,6 +67,17 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertEqual((data["behind"], data["ahead"], data["conflicts"], data["shared"]), (0, 1, [], []))
         self.assertEqual(run_tool(self.repo.path, "--head", "feature", "--strict").returncode, 0)
 
+    def test_paths_named_like_revisions_do_not_confuse_the_report(self):
+        self.branch("feature")
+        self.repo.write("other.txt", "y\n")
+        self.repo.commit("feature change")
+        for name in ("main", "feature", "feature..main", "main..feature"):
+            self.repo.write(name, "path matching a revision\n")
+        result = run_tool(self.repo.path, "--head", "feature", "--strict")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 ahead and 0 behind main", result.stdout)
+        self.assertIn("merge: clean", result.stdout)
+
     def test_main_with_explicit_argv(self):
         self.branch("feature")
         self.repo.write("other.txt", "y\n")

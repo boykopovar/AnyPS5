@@ -186,6 +186,8 @@ static void CheckFloat() {
     Require(swprintf_nid_postfix(buffer, 64, u"[%a|%.3a]", 0x1p-1074, 0x0.fffffffffffffp-1022) == 25 &&
         buffer == std::u16string(u"[0x1p-1074|0x2.000p-1023]"), "swprintf normalises subnormal hexadecimal floats");
     Require(swprintf_nid_postfix(buffer, 64, u"[%.2Lf]", 0.125L) == 6 && buffer == std::u16string(u"[0.13]"), "swprintf long double rounding");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%La|%.0La]", 0.1L, 1.5L) == 32 && buffer == std::u16string(u"[0x1.999999999999999ap-4|0x2p+0]"),
+        "swprintf long double hexadecimal");
 }
 
 static void CheckSwprintf() {

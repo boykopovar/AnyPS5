@@ -97,7 +97,6 @@ static void CheckPhysicalMemorySysctl(int number, const char* name) {
     Require(sysctl_nid_postfix(mib, 2, &value, &length, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
     Require(sysctlbyname_nid_postfix(name, &value, &length, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
 }
-#if defined(__x86_64__) || defined(__i386__)
 static void CheckModelSysctl() {
     const int mib[] = {6, 2};
     *__error_nid_postfix() = 13;
@@ -116,7 +115,6 @@ static void CheckModelSysctl() {
     length = sizeof(model);
     Require(sysctlbyname_nid_postfix("hw.model", model, &length, model, size) == -1 && *__error_nid_postfix() == 1);
 }
-#endif
 static void CheckTscFrequencySysctl() {
     *__error_nid_postfix() = 13;
     std::size_t length = 0;
@@ -150,9 +148,13 @@ static void CheckUnansweredSysctl() {
     static constexpr const char* names[] = {
         "hw.byteorder",
         "hw.cacheline_size",
+        "hw.floatingpoint",
         "hw.machine_arch",
         "hw.usermem",
+        "kern.bootfile",
         "kern.clockrate",
+        "kern.cp_time",
+        "kern.ident",
         "kern.maxfiles",
         "kern.maxfilesperproc",
         "kern.maxproc",
@@ -312,9 +314,10 @@ struct SystemString {
 };
 static const SystemString SystemStrings[] = {
     {{1, 1}, "kern.ostype", "FreeBSD"},
-    {{1, 2}, "kern.osrelease", "11.4-RELEASE"},
+    {{1, 2}, "kern.osrelease", "0.0-prototype"},
     {{1, 4}, "kern.version", "FreeBSD 11.4-RELEASE\n"},
-    {{1, 10}, "kern.hostname", "AnyPS5"},
+    {{1, 10}, "kern.hostname", ""},
+    {{6, 2}, "hw.model", "100-000001020                                  "},
     {{6, 1}, "hw.machine", "amd64"},
 };
 static void CheckSystemStringSysctl() {
@@ -323,16 +326,16 @@ static void CheckSystemStringSysctl() {
         *__error_nid_postfix() = 13;
         std::size_t length = 0;
         Require(sysctl_nid_postfix(entry.mib, 2, nullptr, &length, nullptr, 0) == 0 && length == size);
-        char buffer[32];
+        char buffer[64];
         std::memset(buffer, 0xaa, sizeof(buffer));
         length = sizeof(buffer);
         Require(sysctl_nid_postfix(entry.mib, 2, buffer, &length, nullptr, 0) == 0 && length == size);
         Require(std::strcmp(buffer, entry.value) == 0 && buffer[size] == static_cast<char>(0xaa));
         Require(*__error_nid_postfix() == 13);
         std::memset(buffer, 0xaa, sizeof(buffer));
-        length = 2;
+        length = size - 1;
         Require(sysctl_nid_postfix(entry.mib, 2, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
-        Require(length == 2 && std::memcmp(buffer, entry.value, 2) == 0 && buffer[2] == static_cast<char>(0xaa));
+        Require(length == size - 1 && std::memcmp(buffer, entry.value, size - 1) == 0 && buffer[size - 1] == static_cast<char>(0xaa));
         length = sizeof(buffer);
         Require(sysctl_nid_postfix(entry.mib, 2, buffer, &length, "Prospero", sizeof("Prospero")) == -1 && *__error_nid_postfix() == 1);
         const int deeper[] = {entry.mib[0], entry.mib[1], 0};
@@ -344,7 +347,7 @@ static void CheckSystemStringSysctl() {
 static void CheckSystemStringNames() {
     for (const auto& entry : SystemStrings) {
         *__error_nid_postfix() = 13;
-        char buffer[32];
+        char buffer[64];
         std::memset(buffer, 0xaa, sizeof(buffer));
         std::size_t length = sizeof(buffer);
         Require(sysctlbyname_nid_postfix(entry.name, buffer, &length, nullptr, 0) == 0 && length == std::strlen(entry.value) + 1);
@@ -356,9 +359,34 @@ static void CheckSystemStringNames() {
         Require(mib[0] == entry.mib[0] && mib[1] == entry.mib[1] && mib[2] == 0x5a5a5a5a);
     }
 }
+static void CheckMeasuredIntegerSysctl() {
+    struct MeasuredInteger {
+        int mib[2];
+        const char* name;
+        std::int32_t value;
+    };
+    static constexpr MeasuredInteger integers[] = {
+        {{1, 3}, "kern.osrevision", 199506},
+        {{1, 8}, "kern.argmax", 262144},
+        {{1, 18}, "kern.ngroups", 1023},
+    };
+    for (const auto& entry : integers) {
+        std::int32_t value = 0;
+        std::size_t length = sizeof(value);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(entry.mib, 2, &value, &length, nullptr, 0) == 0 && value == entry.value && length == sizeof(value));
+        value = 0;
+        length = sizeof(value);
+        Require(sysctlbyname_nid_postfix(entry.name, &value, &length, nullptr, 0) == 0 && value == entry.value && *__error_nid_postfix() == 13);
+        length = 3;
+        Require(sysctlbyname_nid_postfix(entry.name, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 3);
+        length = sizeof(value);
+        Require(sysctl_nid_postfix(entry.mib, 2, &value, &length, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
+    }
+}
 static void CheckOsReleaseDateSysctl() {
     const int mib[] = {1, 24};
-    constexpr std::int32_t expected = 1104001;
+    constexpr std::int32_t expected = 900000;
     *__error_nid_postfix() = 13;
     std::size_t length = 0;
     Require(sysctl_nid_postfix(mib, 2, nullptr, &length, nullptr, 0) == 0 && length == sizeof(expected));
@@ -941,9 +969,8 @@ int main() {
     CheckPageSizeSysctl();
     CheckPhysicalMemorySysctl(5, "hw.physmem");
     CheckPhysicalMemorySysctl(12, "hw.realmem");
-#if defined(__x86_64__) || defined(__i386__)
     CheckModelSysctl();
-#endif
+    CheckMeasuredIntegerSysctl();
     CheckTscFrequencySysctl();
     CheckUnansweredSysctl();
     CheckUnknownSysctlName();

@@ -177,8 +177,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             const bool hexadecimal = narrow == 'a' || narrow == 'A';
             if (length == "L") {
                 const long double value = args.Next<long double>();
-                if (!hexadecimal && std::isfinite(value)) {
-                    const std::string text = LibcDetail::DecimalFloat(spec, narrow, value);
+                if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
                     out.append(text.begin(), text.end());
                 } else {
                     AppendNumber(out, spec + "L" + narrow, value);

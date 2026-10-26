@@ -71,11 +71,11 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     for (const auto& header : headers) {
         if (header.Type == 0x61000000) sceBase = header.Offset;
         if (header.Type != 2) continue;
-        if (hasDynamic || header.FileSize % 16 != 0) throw Domain::RelinkerException("Code analysis: invalid dynamic segment");
+        if (hasDynamic) throw Domain::RelinkerException("Code analysis: invalid dynamic segment");
         hasDynamic = true;
         range(header.Offset, header.FileSize);
         bool terminated = false;
-        for (std::uint64_t offset = header.Offset; offset < header.Offset + header.FileSize; offset += 16) {
+        for (std::uint64_t offset = header.Offset; header.Offset + header.FileSize - offset >= 16; offset += 16) {
             const auto tag = Io::ReadU64(bytes, offset);
             if (tag == 0) { terminated = true; break; }
             const auto value = Io::ReadU64(bytes, offset + 8);

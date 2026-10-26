@@ -136,7 +136,6 @@ int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void);
 int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr);
 int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void);
 int APS5_VABI pthread_barrier_setname_np_nid_postfix(void);
-int APS5_VABI pthread_cond_setname_np_nid_postfix(void);
 int APS5_VABI pthread_get_specificarray_np_nid_postfix(void);
 int APS5_VABI pthread_get_user_context_np_nid_postfix(void);
 int APS5_VABI pthread_getstack_np_nid_postfix(void);

@@ -339,7 +339,7 @@ int APS5_VABI SSL_use_certificate_ASN1_nid_postfix(void);
 int APS5_VABI SSL_version_nid_postfix(void);
 int APS5_VABI SSL_want_nid_postfix(void);
 int APS5_VABI SSL_write_nid_postfix(void);
-int APS5_VABI SSLeay_nid_postfix(void);
+std::uint64_t APS5_VABI SSLeay_nid_postfix(void);
 int APS5_VABI SSLv23_client_method_nid_postfix(void);
 int APS5_VABI SSLv23_server_method_nid_postfix(void);
 int APS5_VABI TLS_client_method_nid_postfix(void);
