@@ -1420,6 +1420,9 @@ if(BUILD_TESTING)
     add_test(NAME agc_memory_accounting_budget_cap COMMAND agc_buffer_pool_tests --memory-accounting-budget-cap)
     set_tests_properties(agc_memory_accounting_budget_cap PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1"
         PASS_REGULAR_EXPRESSION "cap=1073741824 selected=1073741824" TIMEOUT 30)
+    add_test(NAME agc_memory_accounting_budget_floor COMMAND agc_buffer_pool_tests --memory-accounting-budget-floor)
+    set_tests_properties(agc_memory_accounting_budget_floor PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1"
+        PASS_REGULAR_EXPRESSION "cap=536870912 selected=536870912" TIMEOUT 30)
     add_test(NAME agc_buffer_pool_small_device_shared COMMAND agc_buffer_pool_tests --small-device-retention)
     set_tests_properties(agc_buffer_pool_small_device_shared PROPERTIES ENVIRONMENT
         "APS5_STAGING_POOL_MIB=256;APS5_BUFFER_POOL_SHARED=1")
@@ -1427,7 +1430,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT
         "APS5_STAGING_POOL_MIB=0")
     if(WIN32)
-        set_tests_properties(agc_memory_accounting agc_memory_accounting_budget_cap agc_buffer_pool agc_buffer_pool_small_device_shared agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_memory_accounting agc_memory_accounting_budget_cap agc_memory_accounting_budget_floor agc_buffer_pool agc_buffer_pool_small_device_shared agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

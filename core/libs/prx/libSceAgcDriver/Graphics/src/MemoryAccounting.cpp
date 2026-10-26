@@ -190,7 +190,7 @@ void MemoryAccounting::Report(const Context& context, const VkPhysicalDeviceMemo
             const auto usage = reported.heapUsage[*storageHeap];
             const auto reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + budget / 8u;
             const auto available = budget > reserved ? budget - reserved : 0u;
-            const auto cap = std::min<std::uint64_t>(context.memory.memoryHeaps[*storageHeap].size / 2u, budget / 2u);
+            const auto cap = StorageTextureCeiling(context.memory, &reported);
             std::fprintf(stderr, "[gpu-memory] storage heap=%u sampled_live=%llu storage_cached=%llu reserved=%llu available=%llu cap=%llu selected=%llu\n", *storageHeap,
                 static_cast<unsigned long long>(sampledBytes), static_cast<unsigned long long>(storageBytes), static_cast<unsigned long long>(reserved),
                 static_cast<unsigned long long>(available), static_cast<unsigned long long>(cap), static_cast<unsigned long long>(storageBudget));

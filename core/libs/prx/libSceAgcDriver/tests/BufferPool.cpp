@@ -1335,14 +1335,15 @@ void MemoryAccountingIdleReclaim() {
     if (failures == 0) std::puts("idle device reclaim allocation accounting passed");
 }
 
-void MemoryAccountingBudgetCap() {
+void MemoryAccountingBudgetCap(bool floor = false) {
     Expect(MemoryAccounting::Enabled(), "memory accounting is not enabled");
     auto context = budgetContext();
-    context.device = reinterpret_cast<VkDevice>(std::uintptr_t{104});
+    context.device = reinterpret_cast<VkDevice>(std::uintptr_t{floor ? 106u : 104u});
+    if (floor) context.memory.memoryHeaps[0].size = 256 * MiB;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
-    reported.heapBudget[0] = 2048 * MiB;
+    reported.heapBudget[0] = (floor ? 256 : 2048) * MiB;
     const auto selected = StorageTextureBudget(context.memory, &reported, 0, 0);
-    Expect(selected == 1024 * MiB, "an unpressured storage budget did not select half the reported heap budget");
+    Expect(selected == (floor ? 512 : 1024) * MiB, "an unpressured storage budget did not select its ceiling");
     MemoryAccounting::Report(context, reported, 0, 0, selected);
 }
 
@@ -1356,6 +1357,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-cap") {
             MemoryAccountingBudgetCap();
+            return failures == 0 ? 0 : 1;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-floor") {
+            MemoryAccountingBudgetCap(true);
             return failures == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
