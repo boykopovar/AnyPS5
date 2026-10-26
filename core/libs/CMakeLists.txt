@@ -205,9 +205,9 @@ foreach(LIB_DIR ${LIBS_DIRS})
     endif()
 endforeach()
 
-target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
-
 include(prx/libSceFreeType/PostScriptPrivate.cmake)
+
+target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
