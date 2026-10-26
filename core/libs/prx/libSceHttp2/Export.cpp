@@ -8,19 +8,25 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <memory>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
+static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
 
@@ -40,6 +46,22 @@ struct Http2Handle {
 static std::atomic<int> g_nextHandle{1};
 static std::mutex g_handlesMutex;
 static std::unordered_map<int, Http2Handle> g_handles;
+static std::mutex g_completionsMutex;
+static std::condition_variable g_completionsChanged;
+static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
+
+static void CompleteAsync(int req_id, const Http2AsyncOption& option, int event_type, int result) {
+    {
+        std::lock_guard lock(g_completionsMutex);
+        Http2AsyncResult completion{};
+        completion.event_type = event_type;
+        completion.req_id = req_id;
+        completion.result = result;
+        g_completions[req_id].push_back(completion);
+    }
+    g_completionsChanged.notify_all();
+    sceKernelTriggerUserEvent(option.equeue, option.user_event_id, option.user_data);
+}
 
 static Http2Handle* FindHandle(int id, Http2Kind kind) {
     const auto entry = g_handles.find(id);
@@ -172,6 +194,10 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
     if (!handle) return ERROR_INVALID_ID;
     if (handle->transport) handle->transport->Stop();
     g_handles.erase(req_id);
+    {
+        std::lock_guard completions(g_completionsMutex);
+        g_completions.erase(req_id);
+    }
     return 0;
 }
 
@@ -217,7 +243,19 @@ int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
 }
 
 int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* kqueue_option, void* option) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!kqueue_option || option) NotImplemented_nid_no_patch(__func__);
+    if (!data && size) return ERROR_NULL_POINTER;
+    const auto request = Transport(req_id, false);
+    if (!request) return ERROR_INVALID_ID;
+    const Http2AsyncOption async = *static_cast<const Http2AsyncOption*>(kqueue_option);
+    std::thread([request, async, data, size, req_id] {
+        int result = ERROR_NETWORK;
+        try {
+            result = request->Read(data, size);
+        } catch (...) {
+        }
+        CompleteAsync(req_id, async, 1, result);
+    }).detach();
     return 0;
 }
 
@@ -227,9 +265,21 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 }
 
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
-    std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(req_id, Http2Kind::Request)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
+    if (!kqueue_option || option) NotImplemented_nid_no_patch(__func__);
+    if (!post_data && size) return ERROR_NULL_POINTER;
+    const auto request = Transport(req_id, true);
+    if (!request) return ERROR_INVALID_ID;
+    std::vector<std::uint8_t> body;
+    if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
+    const Http2AsyncOption async = *kqueue_option;
+    std::thread([request, async, body = std::move(body), req_id]() mutable {
+        int result = ERROR_NETWORK;
+        try {
+            result = request->Send(body.empty() ? nullptr : body.data(), body.size());
+        } catch (...) {
+        }
+        CompleteAsync(req_id, async, 0, result);
+    }).detach();
     return 0;
 }
 
@@ -324,7 +374,18 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 }
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!result || option) NotImplemented_nid_no_patch(__func__);
+    std::unique_lock lock(g_completionsMutex);
+    auto& queue = g_completions[req_id];
+    const auto available = [&] { return !queue.empty(); };
+    if (timeout) {
+        if (!g_completionsChanged.wait_for(lock, std::chrono::microseconds(*timeout), available)) NotImplemented_nid_no_patch("sceHttp2WaitAsync: waiting for an operation that has not completed");
+    } else {
+        g_completionsChanged.wait(lock, available);
+    }
+    *result = queue.front();
+    queue.pop_front();
+    if (queue.empty()) g_completions.erase(req_id);
     return 0;
 }
 

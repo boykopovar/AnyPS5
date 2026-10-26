@@ -12,6 +12,7 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "SslCertificateFixture.hpp"
@@ -504,6 +505,45 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
     server.Join();
 }
 
+void Async(int ssl) {
+    std::fprintf(stderr, "HTTP2 async scenario\n");
+    Server server(Mode::Normal);
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async host name");
+    client.Create(server.Url("localhost"));
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "http2-async") == 0, "async equeue");
+    Require(sceKernelAddUserEventEdge(eq, client.request) == 0, "async user event");
+    int tag = 0;
+    Http2AsyncOption option{};
+    option.equeue = eq;
+    option.user_event_id = client.request;
+    option.user_data = &tag;
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &option, nullptr) == 0, "async send submission");
+    KernelEvent event{};
+    int count = 0;
+    const KernelUseconds timeout = 2000000;
+    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async send event");
+    Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async send event payload");
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async send completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async send result");
+    std::array<char, 64> buffer{};
+    Http2AsyncOption readOption = option;
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &readOption, nullptr) == 0, "async read submission");
+    count = 0;
+    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async read event");
+    Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async read event payload");
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "async read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "async read result");
+    Require(std::string(buffer.data(), 13) == "response body", "async read body");
+    server.Join();
+    Require(server.Negotiated(), "async h2 ALPN");
+    Require(sceKernelDeleteUserEvent(eq, client.request) == 0, "delete async user event");
+    Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
+}
+
 void Failure(int ssl, Mode mode, bool verifyName = false) {
     std::fprintf(stderr, "HTTP2 failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -751,6 +791,7 @@ int main(int argc, char** argv) {
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);
+        Async(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Failure(untrusted, Mode::Normal);
