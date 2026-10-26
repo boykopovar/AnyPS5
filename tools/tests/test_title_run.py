@@ -25,7 +25,7 @@ class TitlesTests(unittest.TestCase):
 
     def test_repository_file_is_valid(self):
         titles = title_run.load_titles(title_run.ROOT / "tools/titles.json")
-        self.assertEqual(titles["PPSA85300"]["fixed_base"], "0x400000")
+        self.assertEqual(titles["PPSA85300"], {"relink": ["--registry"]})
 
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):

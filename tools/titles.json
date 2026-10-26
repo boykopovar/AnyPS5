@@ -1,9 +1,9 @@
 {
   "PPSA01153": {"relink": ["--trap-sdk-syscall-stubs"]},
-  "PPSA68091": {"relink": ["--registry"], "fixed_base": "0x400000"},
+  "PPSA68091": {"relink": ["--registry"]},
   "PPSA69421": {"relink": ["--trap-sdk-syscall-stubs"]},
-  "PPSA85300": {"relink": ["--registry"], "fixed_base": "0x400000"},
-  "PPSA97358": {"relink": ["--registry"], "fixed_base": "0x400000"},
+  "PPSA85300": {"relink": ["--registry"]},
+  "PPSA97358": {"relink": ["--registry"]},
   "PPSA99004": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99008": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99011": {"relink": ["--trap-sdk-syscall-stubs"]},
