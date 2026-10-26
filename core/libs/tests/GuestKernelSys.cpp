@@ -1107,7 +1107,12 @@ int main() {
 #endif
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
+    Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);
+    Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0) == 0);
     Require(fchown_nid_postfix(-1, 0, 0) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 1, 0) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 0, 1) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 1, 1) == -1 && Error() == 9);
     const int kqueueDescriptor = kqueue_nid_postfix();
     Require(kqueueDescriptor >= 0);
     Require(fchown_nid_postfix(kqueueDescriptor, 0, 0) == -1 && Error() == 22);

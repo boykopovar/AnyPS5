@@ -726,16 +726,14 @@ int APS5_VABI lchmod_nid_postfix(const char* path, std::uint16_t mode) {
 }
 
 int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
-    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
-    if (uid != 0 && uid != Unchanged) NotImplemented_nid_no_patch("fchown: an owner other than the guest user");
-    if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch("fchown: a group other than the guest group");
-    if (IsKqueueDescriptor_nid_no_patch(fd)) return static_cast<int>(Fail(GuestEinval));
 #ifdef _WIN32
     if (GuestFstat(fd) != 0) return static_cast<int>(Fail(GuestEbadf));
 #else
     struct stat status{};
     if (::fstat(fd, &status) != 0) return static_cast<int>(Fail(GuestEbadf));
 #endif
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return static_cast<int>(Fail(GuestEinval));
+    RequireGuestOwner("fchown", uid, gid);
     return 0;
 }
 
