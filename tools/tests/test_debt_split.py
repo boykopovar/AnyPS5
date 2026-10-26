@@ -224,6 +224,69 @@ class DebtSplitTests(unittest.TestCase):
                          "\n\n### Functional\n\n" +
                          "\n".join(entry.replace("../../", "../../../") for entry in (added, A_FUNCTIONAL)) + "\n")
 
+    def test_resolve_preserves_an_entry_moved_before_another_in_its_file(self):
+        first = "- [libSceA](../../core/libs/prx/libSceA/First.cpp) - first limitation"
+        second = "- [libSceA](../../core/libs/prx/libSceA/Second.cpp) - second limitation"
+        self.write(INDEX, index([first, second], []))
+        self.git("add", "--", INDEX)
+        self.git("commit", "-qm", "docs: record ordered debt")
+        self.git("checkout", "-qb", "reorder")
+        self.write(INDEX, index([second, first], []))
+        self.git("commit", "-qam", "docs: reorder debt")
+        self.git("checkout", "-q", "main")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "docs: split technical debt")
+        self.git("checkout", "-q", "reorder")
+        result = self.git("rebase", "main", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.tool("resolve")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("rebase", "--continue")
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
+                         "# libSceA technical debt\n\n### Silent stubs\n\n" +
+                         "\n".join(entry.replace("../../", "../../../") for entry in (second, first)) + "\n")
+
+    def test_apply_changes_preserve_original_occurrences_and_upstream_entries(self):
+        a = "- [libSceA](../../core/libs/prx/libSceA/A.cpp) - a"
+        b = "- [libSceA](../../core/libs/prx/libSceA/B.cpp) - b"
+        c = "- [libSceA](../../core/libs/prx/libSceA/C.cpp) - c"
+        u, v = "- upstream first", "- upstream last"
+        cases = (
+            ([a, b], [a, b], [b, a], [b, a]),
+            ([a, b, c], [a, u, b, c, v], [c, a, b], [c, a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [a, a, b], [a, a, u, b, v]),
+            ([a, b, c, a], [a, u, b, c, a, v], [a, c, a, b], [a, c, a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [b, a], [u, b, a, v]),
+            ([a, b, a], [a, u, b, a, v], [a, b], [a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [a, b, a + " revised"], [a, u, b, a + " revised", v]),
+            ([a, b, a], [a, u, b, a, v], [a, b, a, c], [a, u, b, a, c, v]),
+            ([a, b], [a, u, b, v], [a, c, c, b], [a, c, c, u, b, v]),
+            ([a, b], [a, u, b, v], [], [u, v]),
+            ([a, b, a], [a, u, b, a, v], [a + " revised", a, c], [a + " revised", a, u, c, v]),
+            ([a, b], [a, u, b + " upstream", v], [a + " revised", b], [a + " revised", u, b + " upstream", v]),
+        )
+        path = "docs/dev/debt/libSceA.md"
+        for before, upstream, after, expected in cases:
+            with self.subTest(before=before, after=after):
+                self.write(path, "# libSceA technical debt\n\n### Functional\n\n" +
+                           "\n".join(entry.replace("../../", "../../../") for entry in upstream) + "\n")
+                debt_split.apply_change(self.root, index([], before), index([], after), index([], []))
+                self.assertEqual(self.read(path), "# libSceA technical debt\n\n### Functional\n\n" +
+                                 "\n".join(entry.replace("../../", "../../../") for entry in expected) + "\n")
+
+    def test_apply_changes_missing_original_does_not_write_files(self):
+        original = "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") + "\n"
+        a_path, b_path = "docs/dev/debt/libSceA.md", "docs/dev/debt/libSceB.md"
+        self.write(a_path, original)
+        self.write(b_path, "# libSceB technical debt\n\n### Silent stubs\n\n- changed upstream\n")
+        before = {path: self.read(path) for path in (a_path, b_path)}
+        with self.assertRaises(LookupError):
+            debt_split.apply_change(self.root, index([A_STUB, B_STUB], []),
+                                    index([A_STUB + " revised", B_STUB + " revised"], []), index([], []))
+        self.assertEqual({path: self.read(path) for path in (a_path, b_path)}, before)
+
     def test_indented_continuation_after_a_blank_line_moves_with_its_entry(self):
         note = "  - sub note about sceAOne"
         self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + A_STUB + "\n\n" + note + "\n")

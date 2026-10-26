@@ -15,6 +15,9 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 - Convert every module the title loads from its own folders (`sce_module/`, `Media/Modules/`, `Media/Plugins/`). Unity titles need `--module-dir Media/Modules --module-dir Media/Plugins`. The relinker writes each converted module as `<name>.guest.prx` into `app0/` beside the output, in the module's own folder, and lists it in the `Arrange the files like this` tree it prints. Keep the original `.prx` next to it.
 - `libs/` holds only AnyPS5's own libraries, from `build/core/libs/libs` (not `unpatched/`). A game module placed there fails to load (error 193 on Windows). A self-built `libs/` on Windows also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the toolchain's `mingw64/bin`, or every library fails with error 126 ([USAGE](../user/USAGE.md#input-and-conversion)).
 - Run `tools/import_audit.py` on the registries. Exit code 1 lists imports that will fail or throw.
+  `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
+  unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
+  files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
 
 ## Launch

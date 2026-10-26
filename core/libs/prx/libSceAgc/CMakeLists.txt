@@ -293,6 +293,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_wait_on_address_size_tests EXCLUDE_FROM_ALL tests/WaitOnAddressSize.cpp)
+target_include_directories(agc_wait_on_address_size_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_wait_on_address_size_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_wait_on_address_size_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_wait_on_address_size_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_wait_on_address_size COMMAND agc_wait_on_address_size_tests)
+    if(WIN32)
+        set_tests_properties(agc_wait_on_address_size PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_interpolant_mapping_tests EXCLUDE_FROM_ALL
         tests/InterpolantMapping.cpp
         Shader/src/InterpolantMapping.cpp

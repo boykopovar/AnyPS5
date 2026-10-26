@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <atomic>
 #include <cinttypes>
 #include <cstdio>
 #include <cstddef>
@@ -13,6 +14,13 @@
 namespace {
 
 constexpr std::size_t DesScheduleBytes = 128;
+constexpr int CryptoNumLocks = 41;
+
+static_assert(sizeof(CryptoThreadId) == 16);
+
+std::atomic<void*> lockingCallback{nullptr};
+std::atomic<void*> addLockCallback{nullptr};
+std::atomic<void*> threadIdCallback{nullptr};
 
 }
 
@@ -204,14 +212,15 @@ int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
+    void* expected = nullptr;
+    return threadIdCallback.compare_exchange_strong(expected, callback) ? 1 : 0;
 }
 
-int APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value) {
+    if (id == nullptr) APS5_INVALID_ARG_EX;
+    *id = {};
+    id->val = value;
 }
 
 int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
@@ -220,18 +229,15 @@ int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
 }
 
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CryptoNumLocks;
 }
 
-int APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void* callback) {
+    addLockCallback.store(callback);
 }
 
-int APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void* callback) {
+    lockingCallback.store(callback);
 }
 
 void APS5_VABI DES_ecb_encrypt_nid_postfix(const unsigned char* input, unsigned char* output, const unsigned char* schedule, int enc) {
@@ -1158,11 +1164,6 @@ int APS5_VABI SSL_accept_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_alert_desc_string_long_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1383,9 +1384,8 @@ int APS5_VABI SSL_write_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSLeay_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI SSLeay_nid_postfix(void) {
+    return 0x20000000;
 }
 
 int APS5_VABI SSLv23_client_method_nid_postfix(void) {

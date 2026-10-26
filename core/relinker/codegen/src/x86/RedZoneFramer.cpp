@@ -78,6 +78,11 @@ struct MemoryUse {
     bool Address = false;
 };
 
+bool xopPrefixed(const std::uint8_t* code, const Insn& insn) {
+    const auto at = insn.Info.OpcodeOffset;
+    return code[at] == 0x8f && at + 1 < insn.Length && (code[at + 1] & 0x1f) >= 8;
+}
+
 void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x, bool& b) {
     const auto& info = insn.Info;
     r = x = b = false;
@@ -88,7 +93,7 @@ void extensionBits(const std::uint8_t* code, const Insn& insn, bool& r, bool& x,
         return;
     }
     const auto lead = code[info.OpcodeOffset];
-    if ((lead == 0xc4 || lead == 0x8f || lead == 0x62) && info.OpcodeOffset + 1 < insn.Length) {
+    if ((lead == 0xc4 || lead == 0x62 || xopPrefixed(code, insn)) && info.OpcodeOffset + 1 < insn.Length) {
         r = (code[info.OpcodeOffset + 1] & 0x80) == 0;
         x = (code[info.OpcodeOffset + 1] & 0x40) == 0;
         b = (code[info.OpcodeOffset + 1] & 0x20) == 0;
@@ -128,7 +133,7 @@ MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     const auto mod = static_cast<std::uint8_t>(modrm >> 6);
     const auto reg = static_cast<std::uint8_t>((modrm >> 3) & 7);
     const auto rm = static_cast<std::uint8_t>(modrm & 7);
-    const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || code[info.OpcodeOffset] == 0x8f);
+    const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || xopPrefixed(code, insn));
     if (!vex && !info.IsTwoByteOpcode && reg == kRegRsp && !r) {
         const auto op = info.Opcode;
         if ((op <= 0x3f && (op & 7) <= 3) || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;

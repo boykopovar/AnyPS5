@@ -11,7 +11,8 @@ from contextlib import nullcontext
 from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
-DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only")
+DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
+        "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",

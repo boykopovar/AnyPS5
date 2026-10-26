@@ -6,6 +6,7 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -201,12 +202,24 @@ static int SceIoErrorFromErrno(int error) {
 }
 
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
+    if (AppArchiveHasDirectory_nid_no_patch(native)) {
+        std::error_code error;
+        const auto status = std::filesystem::status(native, error);
+        const bool hostDirectory = !error && std::filesystem::is_directory(status);
+        if (hostDirectory || AppArchiveOnly_nid_no_patch(native)) {
+            if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
+                (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
+            const int fd = File::OpenDirectoryDescriptor(native);
+            if (fd < 0) return SceErrorFromErrno(errno);
+            File::RememberDescriptor(fd, flags);
+            return fd;
+        }
+    }
     if (const auto archived = File::OpenArchivedFile(native, flags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
         File::RememberDescriptor(*archived, flags);
         return *archived;
     }
-    File::RefuseMergedDirectory(native);
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
@@ -312,9 +325,9 @@ int APS5_VABI sceKernelClose(int d) {
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
 #ifdef _WIN32
-    File::ForgetDirectoryDescriptor(d);
     File::ForgetFileLock(d);
 #endif
+    File::ForgetDirectoryDescriptor(d);
     if (NativeClose(d) != 0) {
         if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
@@ -323,6 +336,7 @@ int APS5_VABI sceKernelClose(int d) {
 }
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
+    if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -342,6 +356,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
+    if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -351,6 +366,7 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
         const char empty = 0;
         return sceKernelWrite(d, &empty, 0);
     }
+    const File::WriteSync sync(d);
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     auto n = NativeWrite(d, buf, nbytes);
     if (n < 0) return SceIoErrorFromErrno(errno);
@@ -375,12 +391,10 @@ std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
     if (const auto archived = File::SeekArchivedFile(d, offset, whence)) return *archived < 0 ? SceIoErrorFromErrno(-*archived) : *archived;
-#ifdef _WIN32
     if (const auto directory = File::SeekDirectoryDescriptor(d, offset, whence)) {
         if (*directory < 0) return SceIoErrorFromErrno(errno);
         return *directory;
     }
-#endif
     std::int64_t result = NativeLseek(d, offset, whence);
     if (result < 0) {
         const int error = errno;

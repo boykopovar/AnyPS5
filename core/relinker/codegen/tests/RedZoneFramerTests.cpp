@@ -297,6 +297,31 @@ void skipsLeavesThatCopyRsp() {
     require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 2, "a leaf that copies rsp into another register was framed");
 }
 
+void tellsPopsWithoutRexFromXop() {
+    std::vector<std::uint8_t> popBelowRsp = StoreBelowPushes;
+    append(popBelowRsp, {0x52, 0x8f, 0x44, 0x24, 0xf0});
+    std::vector<std::uint8_t> popRspWithFramePointer = StoreBelowPushes;
+    append(popRspWithFramePointer, {0x52, 0x8f, 0xc4});
+    std::vector<std::uint8_t> popRsp = StoreBelowRsp;
+    append(popRsp, {0x8f, 0xc4});
+    const auto pops = image({leaf(popBelowRsp), leaf(popRspWithFramePointer), framelessLeaf(FramelessPrologue, popRsp, FramelessExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(pops.bytes, pops.segments, pops.functions, {}, report, displacements);
+    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 3, "a pop without REX to an rsp operand or into rsp, read as an XOP prefix, was framed");
+    require(report.Skipped.at("other use of rsp") == 3, "a pop without REX to an rsp operand or into rsp was not reported as another use of rsp");
+
+    std::vector<std::uint8_t> xopAtR12 = StoreBelowRsp;
+    append(xopAtR12, {0x8f, 0xc8, 0x78, 0xc0, 0x04, 0x24, 0x01});
+    std::vector<std::uint8_t> xopBelowRsp = StoreBelowRsp;
+    append(xopBelowRsp, {0x8f, 0xe8, 0x78, 0xc0, 0x44, 0x24, 0xf0, 0x01});
+    const auto xops = image({framelessLeaf(FramelessPrologue, xopAtR12, FramelessExit), framelessLeaf(FramelessPrologue, xopBelowRsp, FramelessExit)});
+    Codegen::RedZoneFrameReport xopReport;
+    std::vector<Codegen::RedZoneDisplacement> xopDisplacements;
+    const auto xopSites = Codegen::FrameRedZoneFunctions(xops.bytes, xops.segments, xops.functions, {}, xopReport, xopDisplacements);
+    require(xopReport.Framed == 2 && xopReport.MovedOperands == 3 && xopReport.OperandStubs == 0 && xopSites.size() == 4, "an XOP operand was not read with the base register extension of its XOP prefix");
+}
+
 const std::vector<std::uint8_t> InflatePrologue{0x55, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x40};
 const std::vector<std::uint8_t> InflatePops{0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f, 0x5d, 0xc3};
 const std::vector<std::uint8_t> InflateFree{0x48, 0x83, 0xc4, 0x40};
@@ -616,6 +641,7 @@ int main() {
         keepsLoopsAlignedAfterAJump();
         framesAPointerOnlyFunctionByItsOwnBounds();
         leavesCodeWithoutAFunctionRange();
+        tellsPopsWithoutRexFromXop();
         std::cout << "red-zone framer tests passed\n";
         return 0;
     } catch (const std::exception& error) {

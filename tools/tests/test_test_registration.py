@@ -15,6 +15,30 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
+    def test_quoted_continuations_follow_cmake(self):
+        for ending, backslashes in (("\n", 1), ("\r\n", 1), ("\n", 2), ("\n", 3), ("\n", 4)):
+            with self.subTest(ending=repr(ending), backslashes=backslashes), tempfile.TemporaryDirectory() as directory:
+                content = 'add_test("real" "tools/tests/test_' + '\\' * backslashes + ending + 'bounds.py")\n'
+                script = Path(directory) / "oracle.cmake"
+                script.write_bytes(('function(add_test)\n'
+                                    'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/argument.txt" "${ARGV1}")\n'
+                                    'endfunction()\n' + content).encode())
+                subprocess.run(["cmake", "-P", str(script)], capture_output=True, text=True, check=True)
+                actual = (Path(directory) / "argument.txt").read_text()
+                expected = "tools/tests/test_" + '\\' * (backslashes // 2) + ("\n" if backslashes % 2 == 0 else "") + "bounds.py"
+                self.assertEqual(actual, expected)
+                self.assertEqual(list(check_test_registration.commands(content)), [("add_test", ["real", actual])])
+                if backslashes == 1:
+                    (Path(directory) / "CMakeLists.txt").write_bytes(content.encode())
+                    self.assertEqual(check_test_registration.run_scripts(Path(directory), ["CMakeLists.txt"]), {actual})
+
+    def test_literal_escaped_newline_and_bracket_continuation_are_preserved(self):
+        quoted = r'add_test("real" "a\nb")' + '\n'
+        bracket = 'add_test("real" [=[a' + '\\' + '\n' + 'b]=])\n'
+        self.assertEqual(list(check_test_registration.commands(quoted)), [("add_test", ["real", "a\nb"])])
+        self.assertEqual(list(check_test_registration.commands(bracket)), [("add_test", ["real", "a\\\nb"])])
+
     def test_bracket_arguments_ignore_only_one_initial_newline(self):
         values = (("path", "path"), ("\npath", "path"), ("\n\npath", "\npath"),
                   ("\n path", " path"), (" \npath", " \npath"), ("\\npath", "\\npath"),

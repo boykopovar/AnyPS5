@@ -2010,6 +2010,41 @@ void testWaitRegMem64ZeroHighMaskDrain() {
     check(outstanding == 1, "WAIT_REG_MEM_64 with zero high mask at 4 mod 8 skipped the drain of a pending write to the dword it compares");
 }
 
+void testWaitRegMemMisalignedBehindBusyPipeline() {
+    alignas(8) static std::uint64_t target = 0;
+    alignas(8) static std::uint32_t other = 0;
+    static std::uint32_t done = 0;
+    const auto base = reinterpret_cast<std::uintptr_t>(&target);
+    const auto otherAddr = reinterpret_cast<std::uintptr_t>(&other);
+    const std::vector<std::uint32_t> waits[]{
+        makePacket(0x3c, {0x13, static_cast<std::uint32_t>(base + 1), static_cast<std::uint32_t>((base + 1) >> 32u), 42, 0xffffffffu, 0}),
+        makePacket(0x93, {0x13, static_cast<std::uint32_t>(base + 3), static_cast<std::uint32_t>((base + 3) >> 32u), 42, 0, 0xffffffffu, 0xffffffffu, 0})};
+    for (const auto& wait : waits) {
+        std::atomic_ref<std::uint64_t>(target).store(0);
+        std::atomic_ref<std::uint32_t>(done).store(0);
+        std::atomic<bool> hold{true};
+        std::atomic<bool> started{false};
+        AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+            started.store(true);
+            while (hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }, { {otherAddr, otherAddr + 4} });
+        while (!started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto opcode = (wait[0] >> 8u) & 0xffu;
+        const auto drainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode);
+        auto words = joinPackets({wait, writeWord(done, 1)});
+        submitWords(words, 0);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode) == drainsBefore && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const bool drained = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode) != drainsBefore;
+        std::atomic_ref<std::uint64_t>(target).store(42);
+        hold.store(false);
+        AgcDriverWaitIdle_nid_postfix();
+        waitDrawPipelineIdle();
+        check(drained, "unsatisfied misaligned WAIT_REG_MEM behind a busy draw pipeline did not drain it");
+        check(std::atomic_ref<std::uint32_t>(done).load() == 1, "misaligned WAIT_REG_MEM behind a busy draw pipeline did not finish");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "failure") {
@@ -2086,6 +2121,7 @@ int main(int argc, char** argv) {
         testWaitRegMemMasking();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
+        testWaitRegMemMisalignedBehindBusyPipeline();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;
