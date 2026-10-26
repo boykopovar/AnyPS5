@@ -56,6 +56,11 @@ int main() {
     Require(Throws([] { sceHttp2WebSocketSetPingInterval(0, 1000000); }));
     Require(sceHttp2CookieFlush(context) == 0);
     Require(sceHttp2SendRequest(request, nullptr, 0) == static_cast<int>(0x80436063));
+    int statusCode = 0x5a5a;
+    Require(sceHttp2GetStatusCode(request, &statusCode) == static_cast<int>(0x80436063) && statusCode == 0x5a5a);
+    int lengthResult = 0x5a5a;
+    std::uint64_t contentLength = 0x5a5a;
+    Require(sceHttp2GetResponseContentLength(request, &lengthResult, &contentLength) == static_cast<int>(0x80436063) && lengthResult == 0x5a5a && contentLength == 0x5a5a);
 
     RequireSslSetters(0, InvalidId);
     RequireSslSetters(-1, InvalidId);
