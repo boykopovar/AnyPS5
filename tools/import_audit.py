@@ -90,6 +90,7 @@ def elf_program_dynamic_symbols(path, data):
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
     if dynamic_size % 16:
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
+    take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     terminated = False
@@ -207,6 +208,7 @@ def elf_imports(path, data):
         if kind == 11:
             if entry != 24 or size % 24 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic symbol table (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic symbol table")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
@@ -218,6 +220,7 @@ def elf_imports(path, data):
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic section")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             terminated = False
@@ -273,6 +276,8 @@ def pe_headers(path, data):
 def pe_exports(path, data):
     to_offset, directory, _ = pe_headers(path, data)
     rva, size = unpack("<II", data, directory, path, "export data directory")
+    if not rva and not size:
+        return set()
     if not rva or size < 40:
         raise AuditError(f"{path}: PE file has no export table")
 
@@ -603,7 +608,7 @@ def source_stub_classes(source):
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
         for file in nid_names.source_files(library):
-            for nid, name in nid_names.source_aliases(file.read_text(errors="ignore")):
+            for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
         if "shared_sources" in group:
@@ -917,6 +922,10 @@ def render(summary, records, missing, stops, missing_hosts=(), located=None):
 
 
 def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="classify the imports of a converted game against the built system libraries")
     parser.add_argument("registries", nargs="+", type=Path, help="JSON written by 'relinker --registry'")
     parser.add_argument("--libs", action="append", required=True, help="directory of built .prx files; repeat for several")
@@ -976,7 +985,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

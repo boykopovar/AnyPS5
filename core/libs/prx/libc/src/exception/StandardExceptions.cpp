@@ -237,7 +237,11 @@ static GuestLocale::String* APS5_VABI CategoryMessage_nid_no_patch(GuestLocale::
 static ErrorCode APS5_VABI CategoryCondition_nid_no_patch(const CategoryObject* self, int value) { return {0, value, self}; }
 static bool APS5_VABI CategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
     using Condition = ErrorCode (APS5_VABI *)(const CategoryObject*, int);
+#ifdef __APPLE__
+    const auto mapped = reinterpret_cast<Condition>(const_cast<void*>(static_cast<const void* const*>(self->vtable)[4]))(self, value);
+#else
     const auto mapped = reinterpret_cast<Condition>(static_cast<const void* const*>(self->vtable)[4])(self, value);
+#endif
     return condition->category == mapped.category && condition->value == mapped.value;
 }
 static bool APS5_VABI CategoryEquivalentCode_nid_no_patch(const CategoryObject* self, const ErrorCode* code, int value) {
@@ -503,6 +507,10 @@ void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject
 LibcException::TypeRecord _ZTISt14overflow_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St14overflow_error", &_ZTISt13runtime_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt14overflow_error_nid_postfix {0, &_ZTISt14overflow_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt14overflow_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
+
+LibcException::TypeRecord _ZTISt15underflow_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St15underflow_error", &_ZTISt13runtime_error_nid_postfix};
+LibcException::ExceptionVtable _ZTVSt15underflow_error_nid_postfix {0, &_ZTISt15underflow_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
+void APS5_VABI _ZNSt15underflow_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 
 LibcException::TypeRecord _ZTINSt8ios_base7failureE_nid_postfix {LibcException::SingleTypeVtable + 2, "NSt8ios_base7failureE", &_ZTISt12system_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVNSt8ios_base7failureE_nid_postfix {0, &_ZTINSt8ios_base7failureE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};

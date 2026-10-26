@@ -186,6 +186,12 @@ def place_segments(data, headers, records):
         if header["type"] == PT_LOAD:
             continue
         if header["index"] in placed:
+            host = load_for(header["vaddr"], header["size"])
+            if host is not None:
+                offset = header["vaddr"] - host["vaddr"]
+                if (host["size"] and offset <= host["size"] and header["size"] <= host["size"] - offset
+                        and header["source"] == host["source"] + offset):
+                    header["host"] = host
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue

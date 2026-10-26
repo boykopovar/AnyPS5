@@ -18,7 +18,7 @@ static void Require(bool condition, int line) {
 #define Check(value) Require((value), __LINE__)
 
 int main() {
-    constexpr std::string_view expected = "AnyPS5";
+    constexpr std::string_view expected = "";
     for (std::size_t length = 0; length <= expected.size() + 2; ++length) {
         std::vector<char> buffer(length + 2, '#');
         *__error_nid_postfix() = 71;

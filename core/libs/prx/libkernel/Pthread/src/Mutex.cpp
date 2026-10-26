@@ -1,8 +1,10 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -10,6 +12,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -17,6 +20,7 @@ constexpr int sceNotPermitted = static_cast<int>(0x80020001u);
 constexpr int sceDeadlock = static_cast<int>(0x8002000bu);
 constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
+constexpr std::int32_t posixFailure = -1;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -135,6 +139,17 @@ int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
     delete *attr;
     *attr = nullptr;
     return 0;
+}
+
+int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind) {
+    if (!attr || !*attr) return sceKernelError(posixFailure);
+    if (kind < static_cast<int>(MutexType::ErrorCheck) || kind > static_cast<int>(MutexType::Adaptive))
+        NotImplemented_nid_no_patch("scePthreadMutexattrSetkind with a kind other than 1 to 4");
+    return scePthreadMutexattrSettype(attr, kind);
+}
+
+int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr) {
+    return sceKernelError(attr ? static_cast<std::int32_t>(attr->type) : posixFailure);
 }
 
 int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {

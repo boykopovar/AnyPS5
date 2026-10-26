@@ -25,7 +25,7 @@ std::mutex& InitializationMutex() {
 }
 
 PthreadCond destroyedCond() {
-    return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
+    return reinterpret_cast<PthreadCond>(std::uintptr_t{1});
 }
 
 PthreadMutex destroyedMutex() {
@@ -36,10 +36,9 @@ PthreadMutex adaptiveInitializer() {
     return reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
 }
 
-std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockId = nullptr) {
+PthreadCond resolveLocked(PthreadCond* cond) {
     if (!cond)
         throw std::invalid_argument("Condition variable pointer is null");
-    std::lock_guard lock(InitializationMutex());
     std::atomic_ref<PthreadCond> slot(*cond);
     auto current = slot.load(std::memory_order_acquire);
     if (current == destroyedCond())
@@ -48,6 +47,14 @@ std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockI
         current = new PthreadCondPrivate();
         slot.store(current, std::memory_order_release);
     }
+    return current;
+}
+
+std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockId = nullptr) {
+    std::lock_guard lock(InitializationMutex());
+    const auto current = resolveLocked(cond);
+    if (!current)
+        return nullptr;
     if (clockId) *clockId = current->_clockid;
     return current->_cv;
 }
@@ -136,6 +143,16 @@ int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, co
     return waitUntil(std::move(condition), mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
 }
 
+int CondOperations::SetName(PthreadCond* cond, const char* name) {
+    if (!name)
+        throw std::invalid_argument("Condition variable name is null");
+    std::lock_guard lock(InitializationMutex());
+    const auto current = resolveLocked(cond);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
+    return 0;
+}
+
 extern "C" {
 
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) {
@@ -153,7 +170,9 @@ int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
 }
 
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
+    constexpr KernelClockid realtime = 0, virtualTime = 1, profiling = 2, monotonic = 4;
     if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    if (clockId != realtime && clockId != virtualTime && clockId != profiling && clockId != monotonic) return SCE_KERNEL_ERROR_EINVAL;
     (*attr)->_clockid = static_cast<int>(clockId);
     return 0;
 }
@@ -175,6 +194,8 @@ int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) {
     std::lock_guard lock(InitializationMutex());
     if (*cond == destroyedCond())
         return SCE_KERNEL_ERROR_EINVAL;
+    if (*cond == nullptr)
+        return 0;
     delete *cond;
     std::atomic_ref<PthreadCond>(*cond).store(destroyedCond(), std::memory_order_release);
     return 0;
