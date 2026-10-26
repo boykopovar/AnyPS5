@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -320,8 +322,13 @@ int APS5_VABI EC_GROUP_get_degree_nid_postfix(const EcGroup* group) {
 }
 
 EcPoint* APS5_VABI EC_POINT_new_nid_postfix(const EcGroup* group) {
-    if (group == nullptr) return nullptr;
-    return new EcPoint(group->curve);
+    if (group == nullptr) {
+        LibreSslPutError_nid_no_patch(16, 0xfff, 67);
+        return nullptr;
+    }
+    EcPoint* point = new (std::nothrow) EcPoint(group->curve);
+    if (point == nullptr) LibreSslPutError_nid_no_patch(16, 0xfff, 65);
+    return point;
 }
 
 void APS5_VABI EC_POINT_free_nid_postfix(EcPoint* point) {
@@ -350,42 +357,6 @@ std::size_t APS5_VABI EC_POINT_point2oct_nid_postfix(const EcGroup* group, const
     return size;
 }
 
-int APS5_VABI EC_POINT_oct2point_nid_postfix(const EcGroup* group, EcPoint* point, const unsigned char* buffer, std::size_t length, void*) {
-    if (group == nullptr || point == nullptr) APS5_INVALID_ARG_EX;
-    RequireSameCurve(*group, point->curve, "EC_POINT_oct2point: a point of another curve");
-    if (length == 0) return 0;
-    if (buffer == nullptr) APS5_INVALID_ARG_EX;
-    const int yBit = buffer[0] & 1;
-    const int form = buffer[0] & ~1;
-    if (form != 0 && form != PointConversionCompressed && form != PointConversionUncompressed && form != PointConversionHybrid) return 0;
-    if ((form == 0 || form == PointConversionUncompressed) && yBit) return 0;
-    if (form == 0) {
-        if (length != 1) return 0;
-        Check(mbedtls_ecp_set_zero(&point->point), __func__);
-        return 1;
-    }
-    const std::size_t fieldSize = FieldSize(*group);
-    if (length != (form == PointConversionCompressed ? 1 + fieldSize : 1 + 2 * fieldSize)) return 0;
-    const mbedtls_ecp_group& curve = group->group;
-    Mpi coordinate;
-    Check(mbedtls_mpi_read_binary(&coordinate.value, buffer + 1, fieldSize), __func__);
-    if (mbedtls_mpi_cmp_mpi(&coordinate.value, &curve.P) >= 0) return 0;
-    if (form == PointConversionCompressed) {
-        if (mbedtls_mpi_get_bit(&curve.P, 1) == 0) NotImplemented_nid_no_patch("EC_POINT_oct2point: a compressed point on a curve whose prime is not 3 mod 4");
-        Point decoded;
-        Check(mbedtls_ecp_point_read_binary(&curve, &decoded.value, buffer, length), __func__);
-        if (mbedtls_ecp_check_pubkey(&curve, &decoded.value) != 0) return 0;
-        Check(mbedtls_ecp_copy(&point->point, &decoded.value), __func__);
-        return 1;
-    }
-    Check(mbedtls_mpi_read_binary(&coordinate.value, buffer + 1 + fieldSize, fieldSize), __func__);
-    if (mbedtls_mpi_cmp_mpi(&coordinate.value, &curve.P) >= 0) return 0;
-    if (form == PointConversionHybrid && yBit != (buffer[length - 1] & 1)) return 0;
-    std::vector<unsigned char> uncompressed(buffer, buffer + length);
-    uncompressed[0] = PointConversionUncompressed;
-    Check(mbedtls_ecp_point_read_binary(&curve, &point->point, uncompressed.data(), uncompressed.size()), __func__);
-    return mbedtls_ecp_check_pubkey(&curve, &point->point) == 0 ? 1 : 0;
-}
 
 EcKey* APS5_VABI EC_KEY_new_nid_postfix(void) {
     return new EcKey;
