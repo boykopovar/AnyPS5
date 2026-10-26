@@ -164,7 +164,7 @@ void RunCpuFallback(Slot& slot, const Shape& shape) {
     Require(recorder != nullptr, "the CPU fallback test has no active recorder");
     device->Dispatch(producer, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AddressWriterCode.data()), preparedProducer);
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&slot.arguments[2]);
-    Require(device->WriteLabelOnGpu(labelAddress, std::as_bytes(std::span(&shape.threads[2], 1)), 1, Compute, false) == 0, "the argument label was not recorded on the GPU");
+    Require(device->WriteLabelOnGpu(labelAddress, std::as_bytes(std::span(&shape.threads[2], 1)), 1, Compute, false) == 5, "the argument label was not held behind the completion of the producer that stores through the BDA table");
     const auto outcome = device->DispatchIndirect(consumer, reinterpret_cast<std::uintptr_t>(slot.arguments.data()), {}, reinterpret_cast<std::uintptr_t>(CounterCode.data()), preparedConsumer, nullptr, shape.group);
     Require(outcome.cpuReason == 2, std::string(shape.name) + ": the indirect dispatch did not take the pending-label CPU fallback (reason " + std::to_string(outcome.cpuReason) + ")");
     recorder->Sync();
