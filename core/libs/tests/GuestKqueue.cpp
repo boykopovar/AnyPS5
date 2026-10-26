@@ -1276,6 +1276,8 @@ static void KqueueDescriptorOperations() {
     char byte = 0;
     RequireFailure(static_cast<int>(read_nid_postfix(kq, &byte, 1)), GuestEopnotsupp);
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, &byte, 0) == 0);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
     RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
     RequireFailure(fsync_nid_postfix(kq), GuestEinval);
     RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
