@@ -1,13 +1,6 @@
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void*, void*);
-int APS5_VABI sceNpUnregisterNpReachabilityStateCallback();
-int APS5_VABI sceNpGetNpReachabilityState(int, uint32_t*);
-int APS5_VABI sceNpCheckCallback();
-int APS5_VABI sceNpCheckNpAvailability(int, const NpOnlineId*, std::uint8_t*);
-}
 
 static constexpr int ErrorArgument = static_cast<int>(0x80550003);
 static constexpr int ErrorAlreadyRegistered = static_cast<int>(0x80550008);

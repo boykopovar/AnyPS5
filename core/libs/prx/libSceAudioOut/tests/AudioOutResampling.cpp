@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -6,12 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-int APS5_VABI sceAudioOutClose(int);
-}
 
 namespace {
 

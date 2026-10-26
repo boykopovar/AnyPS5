@@ -86,6 +86,8 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x4fu, RdnaOpcode::ImageGather4CLz, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero, false, true, false},
     {0x57u, RdnaOpcode::ImageGather4LzO, nullptr, RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x58u, RdnaOpcode::ImageGather4CO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset, false, true, false},
+    {0xc8u, RdnaOpcode::ImageGather4C, "image_gather4_c_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, false, true, false},
+    {0xd8u, RdnaOpcode::ImageGather4CO, "image_gather4_c_o_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, false, true, false},
     {0x5fu, RdnaOpcode::ImageGather4CLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x61u, RdnaOpcode::ImageGather4h, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
     {0x62u, RdnaOpcode::ImageGather4hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},

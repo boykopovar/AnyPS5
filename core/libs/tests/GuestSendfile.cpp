@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -6,27 +8,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-struct Iovec {
-    const void* base;
-    std::uint64_t length;
-};
-struct Hdtr {
-    const Iovec* headers;
-    int headerCount;
-    const Iovec* trailers;
-    int trailerCount;
-};
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI ioctl_nid_postfix(int, std::uint64_t, void*);
-int APS5_VABI sendfile_nid_postfix(int, int, std::int64_t, std::uint64_t, const Hdtr*, std::int64_t*, int);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static bool Fails(int result, int error) { return result == -1 && *__error_nid_postfix() == error; }
 static std::string Receive(int descriptor, std::size_t length) {
@@ -59,9 +41,9 @@ int main() {
     const int file = OpenWritten("sendfile_probe.bin", content);
     int pair[2];
     Require(socketpair_nid_postfix(1, 1, 0, pair) == 0);
-    const Iovec header[] = {{"GET", 3}, {" ", 1}};
-    const Iovec trailer[] = {{"END", 3}};
-    const Hdtr parts{header, 2, trailer, 1};
+    KernelIovec header[] = {{const_cast<char*>("GET"), 3}, {const_cast<char*>(" "), 1}};
+    KernelIovec trailer[] = {{const_cast<char*>("END"), 3}};
+    const GuestSendfileHeaders parts{header, 2, trailer, 1};
     std::int64_t sent = -1;
     Require(sendfile_nid_postfix(file, pair[0], 5, 10, &parts, &sent, 0) == 0 && sent == 17);
     Require(Receive(pair[1], 17) == "GET " + content.substr(5, 10) + "END");
@@ -75,21 +57,21 @@ int main() {
     Require(Receive(pair[1], 4) == content.substr(content.size() - 4));
     Require(sendfile_nid_postfix(file, pair[0], size + 10, 0, &parts, &sent, 0) == 0 && sent == 7);
     Require(Receive(pair[1], 7) == "GET END");
-    const Hdtr nullHeaders{nullptr, 5, trailer, 1};
+    const GuestSendfileHeaders nullHeaders{nullptr, 5, trailer, 1};
     Require(sendfile_nid_postfix(file, pair[0], 0, 3, &nullHeaders, nullptr, 0) == 0);
     Require(Receive(pair[1], 6) == content.substr(0, 3) + "END");
     Require(lseek_nid_postfix(file, 0, 1) == 0);
 
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, pair[0], -1, 0, nullptr, &sent, 0), 22) && sent == 77);
-    const std::vector<Iovec> many(1025, Iovec{"x", 1});
-    const Hdtr tooMany{many.data(), 1025, nullptr, 0};
+    std::vector<KernelIovec> many(1025, KernelIovec{const_cast<char*>("x"), 1});
+    const GuestSendfileHeaders tooMany{many.data(), 1025, nullptr, 0};
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &tooMany, &sent, 0), 22) && sent == 77);
-    const Hdtr negative{nullptr, 0, trailer, -1};
+    const GuestSendfileHeaders negative{nullptr, 0, trailer, -1};
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &negative, &sent, 0), 22) && sent == 77);
     Require(Fails(sendfile_nid_postfix(pair[1], pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
     sent = 77;
-    Require(Fails(sendfile_nid_postfix(file, file, 0, 0, nullptr, &sent, 0), 9) && sent == 0);
+    Require(Fails(sendfile_nid_postfix(file, file, 0, 0, nullptr, &sent, 0), 38) && sent == 0);
     const int datagram = socket_nid_postfix(2, 2, 0);
     Require(datagram >= 0);
     sent = 77;
@@ -98,6 +80,17 @@ int main() {
     Require(unconnected >= 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, unconnected, size + 10, 0, nullptr, &sent, 0), 57) && sent == 0);
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 16, &parts, &sent, 0), 22) && sent == 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(queue, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    Require(close_nid_postfix(queue) == 0 && close_nid_postfix(random) == 0);
 
     const std::string large = Content(32 << 20);
     const int largeFile = OpenWritten("sendfile_large.bin", large);
@@ -108,10 +101,13 @@ int main() {
     Require(sent > 0 && sent < static_cast<std::int64_t>(large.size()));
     Require(Receive(pair[1], static_cast<std::size_t>(sent)) == large.substr(0, static_cast<std::size_t>(sent)));
 
+    Require(close_nid_postfix(unconnected) == 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(file, unconnected, 0, 0, nullptr, &sent, 0), 9) && sent == 0);
     Require(close_nid_postfix(largeFile) == 0 && close_nid_postfix(file) == 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, nullptr, &sent, 0), 9) && sent == 77);
-    Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(unconnected) == 0);
+    Require(close_nid_postfix(datagram) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     std::filesystem::remove("sendfile_probe.bin");
     std::filesystem::remove("sendfile_large.bin");

@@ -101,8 +101,12 @@ SubmissionCapture::SubmissionCapture(const std::filesystem::path& directory) : d
 
 SubmissionCapture* SubmissionCapture::Active() {
     static SubmissionCapture* const capture = [] {
+#ifdef _WIN32
+        const wchar_t* directory = _wgetenv(L"APS5_DUMP_SUBMITS");
+#else
         const char* directory = std::getenv("APS5_DUMP_SUBMITS");
-        return directory != nullptr && *directory != '\0' ? new SubmissionCapture(directory) : nullptr;
+#endif
+        return directory != nullptr && *directory != 0 ? new SubmissionCapture(directory) : nullptr;
     }();
     return capture;
 }

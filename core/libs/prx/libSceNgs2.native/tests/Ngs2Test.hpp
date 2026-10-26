@@ -44,6 +44,8 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t, const Ngs2VoiceCommand*, size_t
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t, Ngs2VoiceState*, size_t);
 int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t, uint32_t*);
 int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t, uintptr_t*, uint32_t*);
+int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t, uint32_t, Ngs2VoiceMatrixInfo*, size_t);
+int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t, uint32_t, Ngs2CustomModuleInfo*, size_t);
 int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t, uint32_t, Ngs2VoicePortInfo*, size_t);
 int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t, uint32_t, void*, size_t);
 int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam*);

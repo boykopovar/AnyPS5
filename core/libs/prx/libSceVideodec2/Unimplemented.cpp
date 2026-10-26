@@ -1,3 +1,4 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 

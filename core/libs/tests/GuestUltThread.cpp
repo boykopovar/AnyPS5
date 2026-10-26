@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdio>
@@ -10,41 +11,6 @@
 
 struct UltConditionVariableInfo;
 struct UltWaitingThreadInfo;
-
-extern "C" {
-int APS5_VABI sceUltInitialize();
-int APS5_VABI sceUltFinalize();
-std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t, std::uint32_t);
-int APS5_VABI sceUltUlthreadRuntimeCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltUlthreadCreate(void*, const char*, UltUlthreadEntry, std::uint64_t, void*, std::uint64_t, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltUlthreadJoin(void*, std::int32_t*);
-int APS5_VABI sceUltUlthreadTryJoin(void*, std::int32_t*);
-int APS5_VABI sceUltUlthreadRuntimeDestroy(void*);
-int APS5_VABI _sceUltUlthreadRuntimeOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI _sceUltUlthreadRuntimeCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*);
-int APS5_VABI _sceUltUlthreadCreate(void*, const char*, UltUlthreadEntry, std::uint64_t, void*, std::uint64_t, void*, const void*);
-int APS5_VABI _sceUltWaitingQueueResourcePoolCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*);
-int APS5_VABI _sceUltSemaphoreCreate(void*, const char*, std::uint32_t, void*, const void*);
-int APS5_VABI sceUltSemaphoreTryAcquire(void*, std::int32_t);
-int APS5_VABI sceUltSemaphoreAcquire(void*, std::int32_t);
-int APS5_VABI sceUltSemaphoreRelease(void*, std::int32_t);
-int APS5_VABI _sceUltMutexOptParamInitialize(void*, std::uint32_t);
-int APS5_VABI _sceUltMutexCreate(void*, const char*, void*, const void*);
-int APS5_VABI sceUltMutexLock(void*);
-int APS5_VABI sceUltMutexUnlock(void*);
-int APS5_VABI _sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*, void*, const void*);
-int APS5_VABI _sceUltQueueCreate(void*, const char*, std::uint64_t, void*, void*, const void*);
-int APS5_VABI sceUltQueuePush(void*, const void*);
-int APS5_VABI sceUltQueuePop(void*, void*);
-int APS5_VABI sceUltMutexDestroy(void*);
-int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void*);
-int APS5_VABI sceUltSemaphoreDestroy(void*);
-int APS5_VABI sceUltQueueDestroy(void*);
-int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
-int APS5_VABI sceUltConditionVariableDestroy(void*);
-int APS5_VABI sceUltReaderWriterLockDestroy(void*);
-int APS5_VABI sceUltGetConditionVariableInfo(void*, UltConditionVariableInfo*, UltWaitingThreadInfo*, std::uint32_t);
-}
 
 static constexpr int Ok = 0;
 static constexpr int Null = -2139029503;
@@ -120,13 +86,7 @@ static void Validation() {
     CHECK(sceUltUlthreadRuntimeGetWorkAreaSize(1, 1) == 1184);
     CHECK(sceUltConditionVariableDestroy(nullptr) == -2139029503);
     CHECK(sceUltReaderWriterLockDestroy(nullptr) == Null);
-    bool threwInfo = false;
-    try {
-        sceUltGetConditionVariableInfo(nullptr, nullptr, nullptr, 0);
-    } catch (const std::runtime_error&) {
-        threwInfo = true;
-    }
-    CHECK(threwInfo);
+    CHECK(sceUltGetConditionVariableInfo(nullptr, nullptr, nullptr, 0) == Null);
 }
 
 static void TryJoin() {
@@ -139,7 +99,7 @@ static void TryJoin() {
     std::uint8_t optParam[128];
     std::memset(optParam, 0xff, sizeof(optParam));
     CHECK(_sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(optParam, 0) == Ok && optParam[0] == 0);
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0);
     CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "parked", Parked, 0x3C, nullptr, 0, &runtime, nullptr) == Ok);
     while (!gStarted.load(std::memory_order_acquire)) std::this_thread::yield();
@@ -217,29 +177,29 @@ static void UnderscoredCreate() {
     alignas(8) static std::uint8_t mutex[256];
     std::memset(mutexOptParam, 0xFF, sizeof(mutexOptParam));
     CHECK(_sceUltMutexOptParamInitialize(nullptr, 0) == Null);
-    CHECK(_sceUltMutexOptParamInitialize(mutexOptParam + 1, 0) == Alignment);
+    CHECK(_sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(mutexOptParam + 1), 0) == Alignment);
     CHECK(mutexOptParam[0] == 0xFF && mutexOptParam[127] == 0xFF);
-    CHECK(_sceUltMutexOptParamInitialize(mutexOptParam, 0x12345678) == Ok);
+    CHECK(_sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(mutexOptParam), 0x12345678) == Ok);
     UltMutexOptParam options{};
     std::memcpy(&options, mutexOptParam, sizeof(options));
     CHECK(options.header[0] == 0x6C696275 && options.header[1] == 0x6C746D61 && options.header[2] == 0x67696300);
     CHECK(options.buildVersion == 0x12345678 && options.attribute == 0);
     for (std::size_t index = 16; index < 128; ++index) CHECK(mutexOptParam[index] == 0);
     for (std::size_t index = 128; index < sizeof(mutexOptParam); ++index) CHECK(mutexOptParam[index] == 0xFF);
-    CHECK(_sceUltMutexCreate(mutex, nullptr, pool, mutexOptParam) == Null);
-    CHECK(_sceUltMutexCreate(mutex, "mutex", nullptr, mutexOptParam) == Null);
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam + 1) == Alignment);
+    CHECK(_sceUltMutexCreate(mutex, nullptr, pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Null);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", nullptr, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Null);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam + 1)) == Alignment);
     mutexOptParam[127] = 1;
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam) == Invalid);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Invalid);
     mutexOptParam[127] = 0;
     mutexOptParam[16] = 2;
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam) == Invalid);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Invalid);
     mutexOptParam[16] = 0;
     mutexOptParam[0] = 0;
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam) == Invalid);
-    CHECK(_sceUltMutexOptParamInitialize(mutexOptParam, 0) == Ok);
-    CHECK(_sceUltMutexCreate(nullptr, "mutex", pool, mutexOptParam) == Null);
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam) == Ok);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Invalid);
+    CHECK(_sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(mutexOptParam), 0) == Ok);
+    CHECK(_sceUltMutexCreate(nullptr, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Null);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Ok);
     CHECK(sceUltMutexLock(mutex) == Ok);
     CHECK(sceUltMutexLock(mutex) == State);
     std::thread foreignUnlock([&] { CHECK(sceUltMutexUnlock(mutex) == Permission); });
@@ -248,7 +208,7 @@ static void UnderscoredCreate() {
     CHECK(sceUltMutexUnlock(mutex) == Permission);
     CHECK(sceUltMutexDestroy(mutex) == Ok);
     mutexOptParam[16] = 1;
-    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, mutexOptParam) == Ok);
+    CHECK(_sceUltMutexCreate(mutex, "mutex", pool, reinterpret_cast<const UltMutexOptParam*>(mutexOptParam)) == Ok);
     CHECK(sceUltMutexLock(mutex) == Ok);
     CHECK(sceUltMutexLock(mutex) == Ok);
     CHECK(sceUltMutexUnlock(mutex) == Ok);

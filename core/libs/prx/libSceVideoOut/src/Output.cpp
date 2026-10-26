@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -19,7 +20,7 @@ static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
 
 static VideoOutOutputStatus outputStatus(const auto& cfg) {
     VideoOutOutputStatus status{};
-    status.resolution = (cfg.width >= 3840 || cfg.height >= 2160) ? 2u : 1u;
+    status.resolution = VideoOutDriver::Get().GetDisplayResolution();
     const bool hdr = AgcDriver::CurrentHostHdr().available;
     status.dynamicRange = hdr ? VIDEO_OUT_DYNAMIC_RANGE_HDR : VIDEO_OUT_DYNAMIC_RANGE_SDR;
     status.refreshRate = (cfg.outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
@@ -368,6 +369,31 @@ int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutCo
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settings_size) {
+    if (settings_size < sizeof(VideoOutColorSettings)) throw std::runtime_error("sceVideoOutAdjustColor_: VIDEO_OUT_ERROR_INVALID_VALUE");
+    return sceVideoOutAdjustColor(handle, settings);
+}
+
+int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings, float gamma, uint32_t settings_size) {
+    if (settings_size < sizeof(VideoOutColorSettings)) throw std::runtime_error("sceVideoOutColorSettingsSetGamma_: VIDEO_OUT_ERROR_INVALID_VALUE");
+    return sceVideoOutColorSettingsSetGamma(settings, gamma);
+}
+
+int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(VideoOutColorSpaceConversionSettings* settings, uint32_t settings_size) {
+    if (settings_size < sizeof(VideoOutColorSpaceConversionSettings)) throw std::runtime_error("sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_: VIDEO_OUT_ERROR_INVALID_VALUE");
+    return sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(settings);
+}
+
+int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(VideoOutColorSpaceConversionSettings* settings, float lumaScale, uint32_t option, uint32_t settings_size) {
+    if (settings_size < sizeof(VideoOutColorSpaceConversionSettings)) throw std::runtime_error("sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_: VIDEO_OUT_ERROR_INVALID_VALUE");
+    return sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(settings, lumaScale, option);
+}
+
+int APS5_VABI sceVideoOutAdjustColorSpaceConversion_(int handle, const VideoOutColorSpaceConversionSettings* settings, uint32_t settings_size) {
+    if (settings_size < sizeof(VideoOutColorSpaceConversionSettings)) throw std::runtime_error("sceVideoOutAdjustColorSpaceConversion_: VIDEO_OUT_ERROR_INVALID_VALUE");
+    return sceVideoOutAdjustColorSpaceConversion(handle, settings);
 }
 
 int APS5_VABI sceVideoOutSetGlobalBlendSpace(int handle, uint32_t space, uint32_t option) try {

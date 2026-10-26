@@ -1,11 +1,9 @@
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <numbers>
 #include <stdexcept>
-#include <string>
 
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
@@ -57,14 +55,16 @@ static void AddBetweenSpeakers(const Ngs2PanWork& work, std::uint32_t speaker, f
 int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
     if (work == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (speaker_angles != nullptr && !IsUnitAngle(unit_angle)) return SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE;
-    const auto* layout = LayoutFor(num_speakers);
-    if (layout == nullptr) {
-        if (speaker_angles == nullptr && num_speakers == 0) APS5_INVALID_ARG_EX;
-        return SCE_NGS2_ERROR_INVALID_PAN_SPEAKER;
+    if (speaker_angles == nullptr && num_speakers == 0) {
+        Ngs2PanInit(work, nullptr, DEGREES, 7);
+        work->unit_angle = unit_angle == RADIANS ? RADIANS : DEGREES;
+        return SCE_NGS2_OK;
     }
-    *work = {};
-    work->num_speakers = num_speakers;
+    const auto* layout = LayoutFor(num_speakers);
+    if (layout == nullptr) return SCE_NGS2_ERROR_INVALID_PAN_SPEAKER;
     if (speaker_angles == nullptr) {
+        *work = {};
+        work->num_speakers = num_speakers;
         for (std::uint32_t i = 0; i < num_speakers; i++) work->speaker_angles[i] = layout->defaultDegrees[i];
         work->speaker_angles[num_speakers] = layout->defaultDegrees[0] + DEGREES;
         work->unit_angle = DEGREES;
@@ -76,39 +76,39 @@ int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle
     }
     for (std::uint32_t i = 0; i < num_speakers; i++) {
         float angle = speaker_angles[layout->inputOrder[i]];
-        if (!std::isfinite(angle)) APS5_INVALID_ARG_EX;
         while (angle < 0.0f) {
-            if (angle + unit_angle == angle) throw std::runtime_error("NGS2: pan angles too large to wrap are not implemented");
+            if (angle + unit_angle == angle) throw std::runtime_error("NGS2: pan speaker angles too large to wrap are not implemented (the PS5 library did not return for them within 60 s)");
             angle += unit_angle;
         }
         while (angle >= unit_angle) {
-            if (!(unit_angle < angle)) APS5_INVALID_ARG_EX;
-            if (angle - unit_angle == angle) throw std::runtime_error("NGS2: pan angles too large to wrap are not implemented");
+            if (!(unit_angle < angle)) throw std::runtime_error("NGS2: a pan speaker angle that wraps to the unit angle is not implemented (the PS5 library did not return for it within 60 s)");
+            if (angle - unit_angle == angle) throw std::runtime_error("NGS2: pan speaker angles too large to wrap are not implemented (the PS5 library did not return for them within 60 s)");
             angle -= unit_angle;
         }
         work->speaker_angles[i] = angle;
     }
     work->speaker_angles[num_speakers] = work->speaker_angles[0] + unit_angle;
     work->unit_angle = unit_angle;
+    work->num_speakers = num_speakers;
     return SCE_NGS2_OK;
 }
 
 int Ngs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
-    if (work == nullptr || params == nullptr) APS5_INVALID_ARG_EX;
+    if (work == nullptr) return SCE_NGS2_ERROR_INVALID_PAN_WORK;
+    if (params == nullptr) return SCE_NGS2_ERROR_INVALID_PAN_PARAM;
     if (out_volume_matrix == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (matrix_format != 1 && matrix_format != 2 && matrix_format != 6 && matrix_format != 8) APS5_INVALID_ARG_EX;
+    if (matrix_format != 1 && matrix_format != 2 && matrix_format != 6 && matrix_format != 8) return SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT;
     const auto* layout = LayoutFor(work->num_speakers);
-    if (layout == nullptr || !IsUnitAngle(work->unit_angle) || !std::isfinite(work->speaker_angles[0]) || num_params > MAX_PAN_PARAMS) APS5_INVALID_ARG_EX;
-    for (std::uint32_t p = 0; p < num_params; p++) {
-        if (!std::isfinite(params[p].angle) || std::isnan(params[p].distance)) APS5_INVALID_ARG_EX;
-    }
+    if (layout == nullptr) return SCE_NGS2_ERROR_INVALID_PAN_SPEAKER;
+    if (!IsUnitAngle(work->unit_angle)) return SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE;
+    if (num_params > MAX_PAN_PARAMS) return SCE_NGS2_ERROR_INVALID_NUM_CHANNELS;
     std::memset(out_volume_matrix, 0, static_cast<std::size_t>(num_params) * matrix_format * sizeof(float));
     const std::uint32_t numSpeakers = work->num_speakers;
     const float unit = work->unit_angle;
     const float first = work->speaker_angles[0];
     for (std::uint32_t p = 0; p < num_params; p++) {
         const auto& param = params[p];
-        const float distance = std::max(-1.0f, std::min(1.0f, param.distance));
+        const float distance = param.distance > 1.0f ? 1.0f : param.distance < -1.0f ? -1.0f : param.distance;
         const float towardWeight = std::sin((distance + 1.0f) * 0.5f * std::numbers::pi_v<float> * 0.5f);
         const float oppositeWeight = std::sin((1.0f - distance) * 0.5f * std::numbers::pi_v<float> * 0.5f);
         float angle = param.angle;
@@ -116,7 +116,7 @@ int Ngs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32
             const float before = angle;
             if (angle >= first + unit) angle -= unit;
             if (angle < first) angle += unit;
-            if (angle == before) throw std::runtime_error("NGS2: pan angles too large to wrap are not implemented");
+            if (angle == before) throw std::runtime_error("NGS2: pan angles that do not wrap into one turn are not implemented (the PS5 library did not return for them within 60 s)");
         }
         float opposite = angle + unit * 0.5f;
         if (!(opposite < first + unit)) opposite -= unit;

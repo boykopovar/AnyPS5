@@ -42,6 +42,34 @@ class StubgenTests(unittest.TestCase):
 
 
 class StubGeneratorTests(unittest.TestCase):
+    def test_long_output_names(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            if os.name == "nt":
+                root = Path("\\\\?\\" + str(root))
+            limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            expected = stubgen.generate("libSceExample", ["AAAAAAAAAAA"], {})
+            for option, extra, content in (("--out", [], expected[0]),
+                                           ("--td-out", ["--td-only"], expected[1])):
+                for existing in (False, True):
+                    with self.subTest(option=option, existing=existing):
+                        output = root / ("a" * (limit - 4) + ".txt")
+                        output.write_bytes(b"previous output\n")
+                        if not existing:
+                            output.unlink()
+                        result = subprocess.run(
+                            [sys.executable, str(Path(stubgen.__file__)), "--module", "libSceExample",
+                             "--nids", str(nids), option, str(output), *extra],
+                            capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(output.read_text(encoding="utf-8"), content)
+                        self.assertEqual(nids.read_text(encoding="utf-8"), "AAAAAAAAAAA\n")
+                        self.assertEqual(set(root.iterdir()), {nids, output})
+                        output.unlink()
+
     @unittest.skipUnless(os.name == "nt", "Windows denies replacing read-only output files")
     def test_readonly_second_output_preserves_both_outputs(self):
         import subprocess

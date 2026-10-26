@@ -24,8 +24,17 @@ DT_OS_PLTRELSZ = 0x6100002D
 DT_OS_SYMTABSZ = 0x6100003F
 
 
+TARGET_OPTIONS = {
+    "windows": ["--windows"],
+    "macos": ["--macos"],
+    "lazy": ["--lazy-binding"],
+    "fixed": ["--linux-fixed-base", "0x10000000"],
+}
+
+
 def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
-            symbol_bytes=48, symbol_index=1, relocation_type=None, data_relocations=False, linux=False):
+            symbol_bytes=48, symbol_index=1, relocation_type=None, data_relocations=False, linux=False,
+            addend=0):
     image = bytearray(0x1000)
     if relocation_type is None:
         relocation_type = 6 if data_relocations else 7
@@ -62,7 +71,7 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
             struct.pack_into("<I", image, 64 + index * 56, 0x6fffff01)
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
-    struct.pack_into("<QQq", image, 0x700, target, (symbol_index << 32) | relocation_type, 0)
+    struct.pack_into("<QQq", image, 0x700, target, (symbol_index << 32) | relocation_type, addend)
     symbol = symtab + symbol_index * 24
     if symbol <= len(image) - 4:
         struct.pack_into("<I", image, symbol, 8)
@@ -76,7 +85,7 @@ def run(relinker, work, name, image, expected_error=None, target="windows"):
     source = work / (name + ".elf")
     output = work / (name + ".out")
     source.write_bytes(image)
-    options = ["--windows"] if target == "windows" else []
+    options = TARGET_OPTIONS.get(target, [])
     result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
                             capture_output=True, text=True, timeout=20)
     if expected_error is None:
@@ -124,6 +133,18 @@ def main():
                         "Symbol table entry out of bounds", target=output_target)
                     run(relinker, work, prefix + "-none", fixture(symbol_bytes=0, symbol_index=0xFFFFFFFF,
                                                                  relocation_type=0, **options), target=output_target)
+                else:
+                    run(relinker, work, prefix + "-unsupported-plt-type", fixture(relocation_type=6, **options),
+                        "Unsupported PLT relocation type", target=output_target)
+                    run(relinker, work, prefix + "-relative-in-plt", fixture(relocation_type=8, **options),
+                        "Unsupported PLT relocation type", target=output_target)
+        for output_target in ("linux", "fixed", "lazy", "windows", "macos"):
+            for data in (False, True):
+                prefix = f"{output_target}-{'glob-dat' if data else 'jump-slot'}-addend"
+                run(relinker, work, prefix + "-zero", fixture(linux=True, data_relocations=data), target=output_target)
+                for addend in (0x10, -8):
+                    run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
+                        "GLOB_DAT/JUMP_SLOT relocation has a nonzero addend (offset 0x300)", target=output_target)
     print("Jump relocation table bounds tests passed")
 
 

@@ -123,10 +123,24 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     return drawShapeSightings->SeenBefore(shape);
 }
 
-void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape) {
+void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {
     std::lock_guard cacheLock(drawCacheMutex);
     auto& counters = drawEntryCounters;
-    ++counters.inserts;
+    if (replaceShape && shape != 0) {
+        ++counters.shapeUpdates;
+        if (const auto shapeOf = drawShapes.find(shape); shapeOf != drawShapes.end() && shapeOf->second != key) {
+            if (const auto previous = drawCache.find(shapeOf->second); previous != drawCache.end()) {
+                for (const auto& variants : previous->second->stages) {
+                    for (const auto& variant : variants) accountDrawVariant(*variant, false);
+                }
+                drawOrder.erase(previous->second->order);
+                drawCache.erase(previous);
+            }
+            drawShapes.erase(shapeOf);
+        }
+    } else {
+        ++counters.inserts;
+    }
     const auto found = drawCache.find(key);
     auto replacement = std::make_shared<DrawEntry>();
     replacement->stages.resize(fresh.size());

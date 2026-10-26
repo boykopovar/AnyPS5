@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -12,13 +13,10 @@ static std::atomic<bool> g_chatEnabled{false};
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2Initialize(void) {
-    return 0;
-}
-
 int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
     (void)param;
-    return sceAudioOut2Initialize();
+    AudioOut2MarkInitialized_nid_no_patch();
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {

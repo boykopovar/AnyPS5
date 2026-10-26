@@ -1,0 +1,16 @@
+add_library(libSceNpScoreRanking SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpScoreRanking PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpScoreRanking)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_score_offline_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpScoreOffline.cpp)
+    target_include_directories(guest_np_score_offline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_score_offline_tests PRIVATE libSceNpScoreRanking)
+    configure_windows_unwind(guest_np_score_offline_tests)
+    add_test(NAME guest_np_score_offline COMMAND guest_np_score_offline_tests)
+    set_tests_properties(guest_np_score_offline PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_score_offline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpScoreRanking>")
+    endif()
+endif()

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -6,16 +7,6 @@
 #include "prx/libc/include/General.hpp"
 #include "../include/Pthread.hpp"
 #include "Common.hpp"
-
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
-int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, std::size_t size);
-int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched);
-int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
-int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
-}
 
 static constexpr int GuestSchedFifo = 1;
 static constexpr int GuestSchedRr = 3;
@@ -33,12 +24,16 @@ int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr) {
 
 int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr) {
     if (!thread || !Valid(attr)) return PosixThread::GUEST_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return PosixThread::GUEST_ESRCH;
     auto* p = *attr;
     p->_stacksize = thread->stackSize;
     p->stackAddress = thread->stackAddress;
     p->_detachstate = thread->_detached ? 1 : 0;
     p->_schedpriority = thread->priority.load(std::memory_order_relaxed);
     p->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    p->_inheritsched = thread->inheritSched;
+    p->_createSuspended = thread->createdSuspended;
     p->_affinity = thread->affinity.load(std::memory_order_relaxed);
     p->_affinityExplicit = true;
     p->_scope = thread->scope;

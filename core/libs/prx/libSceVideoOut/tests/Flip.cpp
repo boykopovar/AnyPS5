@@ -1,6 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -24,11 +26,6 @@
 #include <vector>
 
 #undef main
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-extern "C" int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-extern "C" int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 
 namespace {
 
@@ -449,6 +446,22 @@ void testControls() {
     }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
+    expectFailure([&] { sceVideoOutColorSettingsSetGamma_(&settings, 1.0f, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutColorSettingsSetGamma_(&settings, 1.2f, sizeof(VideoOutColorSettings)) == 0, "gamma wrapper rejected valid size");
+    check(settings.gamma == 1.2f, "gamma wrapper failed to forward value");
+
+    expectFailure([&] { sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings)) == 0, "adjust color wrapper rejected valid size");
+
+    VideoOutColorSpaceConversionSettings cscSettings{};
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "default SDR to HDR wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "SDR to HDR conversion wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "adjust color space conversion wrapper rejected valid size");
     KernelEqueue queue = 0;
     check(sceKernelCreateEqueue(&queue, "VideoOut test") == 0, "event queue creation failed");
     auto owner = EqueuePin_nid_postfix(queue);
@@ -579,36 +592,51 @@ void testOverlay() {
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     check(sceVideoOutRegisterBuffers2(mainHandle, 0, 0, &mainBuffer, 1, &attribute, 0, nullptr) == 0, "main buffer registration failed");
     check(sceVideoOutRegisterBuffers2(overlayHandle, 0, 0, &overlayBuffer, 1, &attribute, 0, nullptr) == 0, "overlay buffer registration failed");
-    const auto flip = [](int handle, const std::shared_ptr<VideoOutConfig>& cfg, std::int64_t argument) {
+    const auto flip = [](int handle, const std::shared_ptr<VideoOutConfig>& cfg, std::int64_t argument, int index = 0) {
         std::uint64_t target;
         {
             std::lock_guard lock(cfg->mutex);
             target = cfg->flipStatus.count + 1;
         }
-        check(sceVideoOutSubmitFlip(handle, 0, 1, argument) == 0, "the flip was not accepted");
+        check(sceVideoOutSubmitFlip(handle, index, 1, argument) == 0, "the flip was not accepted");
         std::unique_lock lock(cfg->mutex);
         check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == target; }), "the flip did not complete");
         if (cfg->failure) std::rethrow_exception(cfg->failure);
-        check(cfg->flipStatus.flipArg == argument && cfg->flipStatus.currentBuffer == 0 && cfg->flipStatus.flipPendingNum == 0, "flip status is wrong");
+        check(cfg->flipStatus.flipArg == argument && cfg->flipStatus.currentBuffer == index && cfg->flipStatus.flipPendingNum == 0, "flip status is wrong");
     };
     const auto presentsAfter = [](std::uint64_t previous) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (AgcDriver::VulkanDevice::PresentCounts().presents == previous && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         return AgcDriver::VulkanDevice::PresentCounts().presents;
     };
+    const auto planes = [] { return AgcDriver::VulkanDevice::PresentCounts().planes; };
     const auto start = AgcDriver::VulkanDevice::PresentCounts().presents;
+    const auto planesAtStart = planes();
     flip(mainHandle, mainCfg, 1);
     const auto afterMain = presentsAfter(start);
     check(afterMain > start, "a main-bus flip was not presented");
+    check(planes() == planesAtStart, "a main-bus flip composited an overlay that never flipped");
     flip(overlayHandle, overlayCfg, 2);
     flip(overlayHandle, overlayCfg, 3);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     check(AgcDriver::VulkanDevice::PresentCounts().presents == afterMain, "an overlay-bus flip replaced the main output");
     flip(mainHandle, mainCfg, 4);
-    check(presentsAfter(afterMain) > afterMain, "a main-bus flip after overlay flips was not presented");
+    const auto afterOverlay = presentsAfter(afterMain);
+    check(afterOverlay > afterMain, "a main-bus flip after overlay flips was not presented");
+    check(planes() == planesAtStart + 1, "the overlay bus's displayed buffer was not composited over the main output");
+    flip(overlayHandle, overlayCfg, 5, VIDEO_OUT_BUFFER_INDEX_BLACK);
+    flip(mainHandle, mainCfg, 6);
+    const auto afterBlack = presentsAfter(afterOverlay);
+    check(afterBlack > afterOverlay && planes() == planesAtStart + 1, "an overlay flipped to black was composited");
+    flip(overlayHandle, overlayCfg, 7);
     sceVideoOutUnregisterBuffers(overlayHandle, 0);
-    sceVideoOutUnregisterBuffers(mainHandle, 0);
+    flip(mainHandle, mainCfg, 8);
+    const auto afterUnregister = presentsAfter(afterBlack);
+    check(afterUnregister > afterBlack && planes() == planesAtStart + 1, "an unregistered overlay buffer was composited");
     sceVideoOutClose(overlayHandle);
+    flip(mainHandle, mainCfg, 9);
+    check(presentsAfter(afterUnregister) > afterUnregister && planes() == planesAtStart + 1, "a closed overlay port was composited");
+    sceVideoOutUnregisterBuffers(mainHandle, 0);
     sceVideoOutClose(mainHandle);
     LibcRunShutdown_nid_postfix();
 }
@@ -1022,6 +1050,81 @@ void testOneDevice() {
     check(next.Serial() == 2, "the GPU work and the flip used more than one device");
 }
 
+void testOutputResolution() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t expected = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    VideoOutOutputStatus status{};
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "a port without buffers did not report the display's resolution");
+    const std::uint32_t width = expected == 2u ? 1920u : 3840u;
+    const std::uint32_t height = expected == 2u ? 1080u : 2160u;
+    std::vector<std::byte> allocation(static_cast<std::size_t>(width) * height * 4 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = width;
+    attribute.height = height;
+    attribute.tiling_mode = 1;
+    attribute.pitch_in_pixel = width;
+    attribute.pixel_format = 0x8000000000000000ull;
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+        check(cfg->width == width && cfg->height == height, "the port did not record the buffer size");
+    }
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "the flipped buffer's size changed the reported resolution");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void setOutputResolution(const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("APS5_OUTPUT_RESOLUTION", value) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#else
+    check((*value != '\0' ? setenv("APS5_OUTPUT_RESOLUTION", value, 1) : unsetenv("APS5_OUTPUT_RESOLUTION")) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#endif
+}
+
+void testOutputResolutionOverride() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    const auto reported = [&] {
+        VideoOutOutputStatus status{};
+        check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
+        return status.resolution;
+    };
+    setOutputResolution("");
+    check(reported() == following, "an unset override changed the display's resolution");
+    const std::pair<const char*, std::uint32_t> overrides[] = {{"1920x1080", 1u}, {"1280x720", 1u}, {"3840x2160", 2u}, {"2560x2160", 2u}, {"3840X1", 2u}};
+    for (const auto& [value, expected] : overrides) {
+        setOutputResolution(value);
+        check(reported() == expected, (std::string("the override ") + value + " did not set the reported resolution").c_str());
+        std::array<std::byte, 80> raw{};
+        VideoOutOutputStatus withVrr{};
+        check(sceVideoOutGetOutputStatusWithVrr(handle, raw.data()) == 0, "the VRR status was not returned");
+        std::memcpy(&withVrr, raw.data(), sizeof(withVrr));
+        check(withVrr.resolution == expected,(std::string("the override ") + value + " did not reach the VRR status").c_str());
+    }
+    for (const char* value : {"1920", "1920x", "x1080", "0x1080", "1920x0", "1920x1080x2", " 1920x1080", "1920x1080 ", "-1920x1080", "1920*1080", "4294967296x1080", "high"}) {
+        setOutputResolution(value);
+        const auto message = expectFailure([&] { reported(); });
+        check(message.find("APS5_OUTPUT_RESOLUTION") != std::string::npos && message.find(value) != std::string::npos, (std::string("the malformed value ") + value + " was not rejected by name").c_str());
+    }
+    setOutputResolution("");
+    check(reported() == following, "clearing the override did not restore the display's resolution");
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1047,6 +1150,8 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
         else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
+        else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
+        else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;

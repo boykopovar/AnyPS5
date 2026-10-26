@@ -1,3 +1,4 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -14,110 +15,14 @@
 #include "HevcFixture.hpp"
 #include "Vp9Fixture.hpp"
 
-struct DecoderConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct DecoderMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    bool isAccepted;
-};
-
-struct OutputInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    bool isErrorFrame;
-    std::uint8_t pictureCount;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    std::uint32_t frameFormat;
-    std::uint32_t framePitchInBytes;
-};
-
-struct AvcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint8_t idrPictureFlag;
-    std::uint8_t profileIdc;
-    std::uint8_t levelIdc;
-    std::uint32_t picWidthInLumaSamples;
-    std::uint32_t picHeightInLumaSamples;
-};
-
-struct Vp9PictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t profile;
-    std::uint32_t level;
-    std::uint32_t keyFrameFlag;
-    std::uint32_t intraOnly;
-    std::uint8_t bitDepth;
-    std::uint8_t colorRange;
-    std::uint32_t colorSpace;
-    std::uint32_t numFrames;
-    std::uint32_t frameWidth;
-    std::uint32_t frameHeight;
-    std::uint32_t renderWidth;
-    std::uint32_t renderHeight;
-};
+using namespace SceVideodec2;
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
 
-extern "C" {
-int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfigInfo*, DecoderMemoryInfo*);
-int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo*, const DecoderMemoryInfo*, std::uint64_t*);
-int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t);
-int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t, const InputData*, FrameBuffer*, OutputInfo*);
-int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t, FrameBuffer*, OutputInfo*);
-int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t);
-int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, void*);
-int APS5_VABI sceVideodec2GetVp9PictureInfo_nid_postfix(const OutputInfo*, Vp9PictureInfo*);
-int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, AvcPictureInfo*);
-}
-
 namespace {
+
+using namespace SceVideodec2;
 
 using namespace H264Fixture;
 using namespace HevcFixture;
@@ -173,7 +78,6 @@ void check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-
 template <typename TAction>
 void checkThrows(TAction action) {
     bool threw = false;
@@ -217,8 +121,10 @@ void testFailures() {
             input.auData = unit.data();
             input.auSize = unit.size();
             sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+
         }
         sceVideodec2Flush_nid_postfix(handle, &frame, &output);
+
     });
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
@@ -672,6 +578,53 @@ void testEmptyAccessUnit() {
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
 
+void testDiscardedFrameFlag() {
+    static_assert(sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, pictureCount) == 0xa && offsetof(OutputInfo, codecType) == 0xc);
+    std::vector<std::uint8_t> buffer(frameBufferBytes());
+    const auto decodeAll = [&](std::uint64_t handle, const std::vector<std::vector<std::uint8_t>>& units, std::size_t expected, bool lastPicturesFromFlush) {
+        std::size_t pictures = 0;
+        std::size_t flushed = 0;
+        const auto call = [&](const InputData* input) {
+            FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+            OutputInfo output;
+            std::memset(&output, 0xff, sizeof(output));
+            output.thisSize = sizeof(OutputInfo);
+            const auto result = input ? sceVideodec2Decode_nid_postfix(handle, input, &frame, &output) : sceVideodec2Flush_nid_postfix(handle, &frame, &output);
+            check(result == 0, "decode or flush failed");
+            std::uint8_t discarded = 0;
+            std::memcpy(&discarded, reinterpret_cast<const std::uint8_t*>(&output) + 0xb, 1);
+            check(!output.isValid || discarded == 0, "a returned picture is marked as discarded");
+            check(output.isValid || discarded == 0xff, "a result without a picture wrote the discarded flag");
+            if (output.isValid) {
+                ++pictures;
+                if (!input) ++flushed;
+            }
+            return output.isValid;
+        };
+        {
+            FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+            OutputInfo output;
+            std::memset(&output, 0xff, sizeof(output));
+            output.thisSize = sizeof(OutputInfo);
+            const InputData empty{sizeof(InputData), units[0].data(), 0, 0, 0, 0};
+            check(sceVideodec2Decode_nid_postfix(handle, &empty, &frame, &output) == static_cast<int>(0x811D010Du), "an empty access unit was accepted");
+            std::uint8_t discarded = 0;
+            std::memcpy(&discarded, reinterpret_cast<const std::uint8_t*>(&output) + 0xb, 1);
+            check(discarded == 0xff, "a refused access unit wrote the discarded flag");
+        }
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0};
+            call(&input);
+        }
+        while (call(nullptr)) {}
+        check(pictures == expected, "a picture is missing");
+        check(!lastPicturesFromFlush || flushed > 0, "no picture came back from Flush");
+        check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+    };
+    decodeAll(createDecoder(CodecVp9, 0), ivfFrames(), Vp9Hashes.size(), false);
+    decodeAll(createDecoder(1, 100), accessUnits(false), PictureHashes.size(), true);
+}
+
 void testFlushAfterEveryUnit() {
     std::vector<std::vector<std::uint8_t>> units;
     for (std::size_t index = 0; index + 4 < AvcIpppStream.size(); ++index) {
@@ -882,6 +835,7 @@ int main() {
         testTenBit();
         testDecodeAfterFlush();
         testEmptyAccessUnit();
+        testDiscardedFrameFlag();
         testFlushAfterEveryUnit();
         testPictureOwnership();
         testConcurrentOwnership();

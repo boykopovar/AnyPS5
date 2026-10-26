@@ -1,33 +1,13 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <cstdint>
 #include <future>
 #include <initializer_list>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf(void);
-int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param);
-int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSchedParam* param);
-int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param);
-int APS5_VABI pthread_getprio_nid_postfix(Pthread thread);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy);
-int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
-int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_SCHED_FIFO = 1;

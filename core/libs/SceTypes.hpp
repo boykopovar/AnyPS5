@@ -655,6 +655,13 @@ struct AudioOutPortState {
     std::uint64_t activeState;
 };
 
+struct AudioOutSystemState {
+    float loudness;
+    std::uint8_t reserved8[4];
+    std::uint64_t reserved[3];
+};
+static_assert(sizeof(AudioOutSystemState) == 32);
+
 struct Audio3dOpenParameters {
     std::uint64_t size_this;
     std::uint32_t granularity;
@@ -1495,6 +1502,15 @@ struct SharePlayConnectionInfoA {
     std::int32_t visitorUserId;
 };
 static_assert(sizeof(SharePlayConnectionInfoA) == 72 && offsetof(SharePlayConnectionInfoA, hostAccountId) == 48 && offsetof(SharePlayConnectionInfoA, hostUserId) == 64);
+struct SharePlayConnectionInfo {
+    std::int32_t status;
+    std::int32_t mode;
+    NpOnlineId hostOnlineId;
+    NpOnlineId visitorOnlineId;
+    std::int32_t hostUserId;
+    std::int32_t visitorUserId;
+};
+static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
 struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
 struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };

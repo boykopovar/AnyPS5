@@ -59,6 +59,8 @@ def package(platform, build, output, version):
     if "libSceVorbisDec.prx" in expected:
         licenses.append((ROOT / "3rdparty/ogg/COPYING", "libs/licenses/ogg.txt"))
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
+    if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
+        licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
@@ -110,8 +112,12 @@ def collect_docs(source, output):
             raise RuntimeError(f"Duplicate release asset name: {document.name}")
         names.add(document.name.casefold())
     output.mkdir(parents=True, exist_ok=True)
-    for document in documents:
-        shutil.copy2(document, output / document.name)
+    with tempfile.TemporaryDirectory(prefix=".docs-", dir=output) as temporary:
+        staging = Path(temporary)
+        for document in documents:
+            shutil.copy2(document, staging / document.name)
+        for document in documents:
+            (staging / document.name).replace(output / document.name)
 
 
 def package_web(build, output, version, revision):

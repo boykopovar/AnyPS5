@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -47,7 +48,6 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
     std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
     return 0;
 }
-
 
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
