@@ -63,6 +63,7 @@ static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I32L = 0x16;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32L = 0x18;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32B = 0x19;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F64L = 0x1a;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_VAG = 0x1c;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_ATRAC9 = 0x40;
 
 static constexpr std::uint32_t SCE_NGS2_VOICE_EVENT_PLAY = 1;

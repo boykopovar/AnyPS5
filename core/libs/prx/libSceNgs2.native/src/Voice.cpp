@@ -230,6 +230,7 @@ void Ngs2Voice::ResetSetup() {
     sampleRate = 0;
     waveformType = 0;
     atrac9 = {};
+    vag = {};
     pitch = 1.0f;
     phase = 0;
     blocks.clear();
@@ -286,7 +287,8 @@ static bool EmptySamplerFormat(const Ngs2WaveformFormat& format) {
 }
 
 static void ValidateSamplerFormat(const Ngs2WaveformFormat& format) {
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_VAG) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_VAG && format.config_data != 0) throw std::runtime_error("NGS2: configured VAG waveforms are not implemented");
     if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.config_data != 0) {
         throw std::runtime_error("NGS2: configured PCM waveforms are not implemented");
     }
@@ -377,9 +379,12 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
     ValidateBlocks(shape.channels, param);
     const bool reset = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET) != 0;
     if (!shape.accepts && !reset) throw std::invalid_argument("NGS2: the voice waveform was already closed");
-    const bool compressed = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9;
+    const bool atrac9 = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9;
+    const bool vag = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG;
+    const bool compressed = atrac9 || vag;
     const std::size_t frameBytes = shape.channels == 0 || compressed ? 0 : shape.channels * Ngs2PcmSampleBytes(shape.waveformType);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
+        if (vag) throw std::runtime_error("NGS2: appending VAG data is not implemented");
         if ((reset || shape.blocks == 0) && !shape.decodePending) throw std::invalid_argument("NGS2: appending data requires a waveform");
         for (std::uint32_t i = 0; i < param.num_blocks; ++i) {
             if (param.blocks[i].data_size != 0 && !compressed && param.blocks[i].data_size % frameBytes != 0) {
@@ -397,13 +402,16 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
             if (shape.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for this format");
             continue;
         }
-        const std::uint64_t bytes = compressed ? Ngs2Atrac9BlockBytes(shape.frame, block) : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
+        const std::uint64_t bytes = atrac9 ? Ngs2Atrac9BlockBytes(shape.frame, block)
+                                  : vag ? Ngs2VagBlockBytes(shape.channels, block)
+                                  : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
-        const bool compressedStream = compressed && accepts && block.num_repeats == 0;
+        const bool compressedStream = atrac9 && accepts && block.num_repeats == 0;
         if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
+        if (vag) Ngs2CheckVag(shape.channels, static_cast<const std::uint8_t*>(param.data) + block.data_offset, block);
     }
 }
 
@@ -833,6 +841,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         voice.blocks.clear();
         voice.samplerReplayBlocks.clear();
         voice.samplerWritePosition = 0;
+        voice.vag = {};
     }
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param);
@@ -851,6 +860,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
             continue;
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
+        if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG) Ngs2DecodeVag(voice, voice.blocks.back());
         Ngs2SaveSamplerBlock(voice, voice.blocks.back());
     }
     if (preservePcm && !voice.blocks.empty()) {
