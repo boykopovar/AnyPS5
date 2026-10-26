@@ -27,6 +27,7 @@ endif()
 
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
+target_sources(libSceFreeType PRIVATE src/OutlineOrientation.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_request_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeRequestSize.cpp)
