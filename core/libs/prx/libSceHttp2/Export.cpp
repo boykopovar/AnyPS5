@@ -5,6 +5,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -19,6 +21,10 @@
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
+static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
+static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
+static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
+static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
 
@@ -27,6 +33,7 @@ struct Http2Handle {
     int owner;
     std::size_t poolSize;
     std::shared_ptr<std::byte[]> cookieMemory;
+    bool webSocket = false;
 };
 
 static std::atomic<int> g_nextHandle{1};
@@ -56,6 +63,22 @@ static std::vector<int> ReleaseOwnedHandles(int owner) {
         removed.push_back(id);
     }
     return removed;
+}
+
+static bool IsWebSocket(int id) {
+    std::lock_guard lock(g_handlesMutex);
+    const Http2Handle* handle = FindHandle(id, Http2Kind::Request);
+    return handle != nullptr && handle->webSocket;
+}
+
+static int WebSocketScheme(const char* url) {
+    std::size_t required = 0;
+    if (const int result = sceHttpUriParse(nullptr, url, nullptr, &required, 0); result < 0) return result;
+    std::vector<char> pool(required);
+    SceHttpUriElement element{};
+    if (const int result = sceHttpUriParse(&element, url, pool.data(), nullptr, pool.size()); result < 0) return result;
+    if (strcasecmp_nid_postfix(element.scheme, "ws") == 0 || strcasecmp_nid_postfix(element.scheme, "wss") == 0) return 0;
+    return ERROR_UNSUPPORTED_SCHEME;
 }
 
 static bool HandleIsLive(int id) {
@@ -208,6 +231,7 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
     (void)post_data;
     (void)size;
+    if (IsWebSocket(req_id)) NotImplemented_nid_no_patch("sceHttp2SendRequestAsync (WebSocket handshake, which a PS5 also reports to the error callback from its own thread)");
     return CompleteAsync(__func__, req_id, kqueue_option, option);
 }
 
@@ -381,34 +405,51 @@ int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
 }
 
 int APS5_VABI sceHttp2WebSocketCreateRequest(std::int32_t templateId, const char* url, Http2WebSocketTextCallback textCallback, Http2WebSocketDataCallback dataCallback, Http2WebSocketCloseCallback closeCallback, Http2WebSocketErrorCallback errorCallback, void* receiveBuffer, std::size_t receiveBufferSize, void* userData, const void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)userData;
+    if (textCallback == nullptr || dataCallback == nullptr || closeCallback == nullptr || errorCallback == nullptr || receiveBuffer == nullptr || receiveBufferSize == 0 || option != nullptr) return ERROR_INVALID_VALUE;
+    std::memset(receiveBuffer, 0, receiveBufferSize);
+    std::lock_guard lock(g_handlesMutex);
+    if (FindHandle(templateId, Http2Kind::Template) == nullptr) return ERROR_INVALID_ID;
+    if (const int result = WebSocketScheme(url); result < 0) return result;
+    const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    g_handles[id] = {Http2Kind::Request, templateId, 0, {}, true};
+    return id;
 }
 
 int APS5_VABI sceHttp2WebSocketCloseAsync(std::int32_t requestId, const std::uint16_t* status, const char* reason, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)flags;
+    (void)asyncOption;
+    if (option != nullptr || (reason != nullptr && status == nullptr)) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2WebSocketSendTextMessageAsync(std::int32_t requestId, const char* text, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)text;
+    (void)flags;
+    (void)asyncOption;
+    if (option != nullptr) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)data;
+    (void)dataSize;
+    (void)flags;
+    (void)asyncOption;
+    if (option != nullptr) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t requestId, std::uint32_t intervalMicroseconds) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (intervalMicroseconds != 0 && intervalMicroseconds < WEBSOCKET_MIN_PERIOD) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (timeoutMicroseconds < WEBSOCKET_MIN_PERIOD) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? 0 : ERROR_INVALID_ID;
 }
+
 int APS5_VABI sceHttp2AddCookie(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
