@@ -45,6 +45,7 @@ int main() {
     result.result = kErrBusy;
 
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    Require(sceUsbStorageDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceUsbStorageDialogOpen(&param) == kErrNotInitialized);
     Require(sceUsbStorageDialogClose() == kErrNotInitialized);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotInitialized);
