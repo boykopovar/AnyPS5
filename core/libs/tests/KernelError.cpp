@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <array>
@@ -5,9 +7,6 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
-
-extern "C" std::int32_t APS5_VABI sceKernelError(std::int32_t);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static void Require(bool value) { if (!value) throw std::runtime_error("Kernel error conversion check failed"); }
 

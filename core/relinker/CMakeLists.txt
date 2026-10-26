@@ -33,6 +33,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileIdentity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/RedZoneFramer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
@@ -108,6 +109,16 @@ if(BUILD_TESTING)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
     add_test(NAME relinker_conversion COMMAND relinker_conversion_tests)
     set_tests_properties(relinker_conversion PROPERTIES TIMEOUT 20)
+
+    add_test_executable(native_path_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/NativePathTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
+    target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    add_test(NAME native_path COMMAND native_path_tests)
+    set_tests_properties(native_path PROPERTIES TIMEOUT 20)
+
     add_test_executable(relinker_game_patch_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GamePatchTests.cpp)
     target_link_libraries(relinker_game_patch_tests PRIVATE relinker_core)
     add_test(NAME relinker_game_patch COMMAND relinker_game_patch_tests)
@@ -300,6 +311,16 @@ if(BUILD_TESTING)
     )
     add_test(NAME rewrite_boundaries COMMAND rewrite_boundaries_tests)
     set_tests_properties(rewrite_boundaries PROPERTIES TIMEOUT 20)
+
+    add_test_executable(red_zone_framer_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerTests.cpp)
+    target_link_libraries(red_zone_framer_tests PRIVATE relinker_core)
+    add_test(NAME red_zone_framer COMMAND red_zone_framer_tests)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        add_test_executable(red_zone_framer_execution_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerExecutionTests.cpp)
+        target_link_libraries(red_zone_framer_execution_tests PRIVATE relinker_core)
+        add_test(NAME red_zone_framer_execution COMMAND red_zone_framer_execution_tests)
+        set_tests_properties(red_zone_framer_execution PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    endif()
 
     add_test_executable(cli_args_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/CliArgsTests.cpp
@@ -537,7 +558,7 @@ if(BUILD_TESTING)
         foreach(opcode IN ITEMS add or adc sbb and sub xor cmp)
             list(APPEND tlsCoverageGroups alu_${opcode})
         endforeach()
-        list(APPEND tlsCoverageGroups gs_traps gs_traps_implicit)
+        list(APPEND tlsCoverageGroups gs_traps gs_traps_implicit gs_non_memory)
         foreach(group IN LISTS tlsCoverageGroups)
             add_test(NAME tls_function_coverage_${group} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_function_coverage.py $<TARGET_FILE:relinker> ${group})
@@ -565,6 +586,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_executable_exports.py $<TARGET_FILE:relinker>)
         add_test(NAME executable_tls_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_tls_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME executable_export_bounds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_bounds.py $<TARGET_FILE:relinker>)
         add_test(NAME macos_empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_empty_tls.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_empty_tls PROPERTIES TIMEOUT 60)
@@ -605,6 +628,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_trap.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls_export_references.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_tls_export_references PROPERTIES TIMEOUT 30)
         add_test(NAME guest_needed_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_modules.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_dir COMMAND ${Python3_EXECUTABLE}
@@ -615,12 +641,21 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_game_patches.py $<TARGET_FILE:relinker>)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
+            add_test(NAME patch_advisor_integration COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor.py $<TARGET_FILE:relinker>)
+            set_tests_properties(patch_advisor_integration PROPERTIES TIMEOUT 40)
+        endif()
         add_test(NAME sce_module_path COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_module_path.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_guest_stack COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_stack.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbol_names COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbol_names.py $<TARGET_FILE:relinker>)
+        add_test(NAME import_symbol_types COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_import_symbol_types.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_registry COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME needed_libraries COMMAND ${Python3_EXECUTABLE}
@@ -699,7 +734,7 @@ if(BUILD_TESTING)
                 set(msvcrtImportLibrary "${CMAKE_CURRENT_BINARY_DIR}/windows_stdio_msvcrt_import.a")
                 add_custom_command(OUTPUT "${msvcrtImportLibrary}"
                     COMMAND "${mingwDlltoolExecutable}" -d "${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsMsvcrt.def"
-                        -l "${msvcrtImportLibrary}" -D msvcrt.dll
+                        -l "${msvcrtImportLibrary}" -D msvcrt.dll --temp-prefix windows_stdio_msvcrt_import
                     DEPENDS elfpatcher/tests/WindowsMsvcrt.def
                     VERBATIM)
                 add_custom_target(windows_stdio_msvcrt_import DEPENDS "${msvcrtImportLibrary}")
@@ -764,6 +799,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME jmprel_table_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_jmprel_table_bounds.py $<TARGET_FILE:relinker>)
+        add_test(NAME copy_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_copy_relocations.py $<TARGET_FILE:relinker>)
         if(WIN32)
             add_test(NAME windows_diagnostic_fixture_isolation COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests>)

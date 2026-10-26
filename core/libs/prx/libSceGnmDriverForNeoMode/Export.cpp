@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
@@ -5,6 +6,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
 namespace {
 
@@ -26,6 +28,23 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
     if (size != packetWords) return 0;
     std::copy(state.begin(), state.end(), cmdbuf);
     return static_cast<int>(packetWords);
+}
+
+constexpr std::uint32_t OpSetContextReg = 0x69;
+constexpr std::uint32_t OpSetShReg = 0x76;
+
+std::uint32_t* EmitPacket(std::uint32_t* at, std::uint32_t opcode, std::initializer_list<std::uint32_t> body) {
+    *at++ = 0xc0000000u | ((static_cast<std::uint32_t>(body.size()) - 1) << 16) | (opcode << 8);
+    for (const auto word : body) *at++ = word;
+    return at;
+}
+
+std::uint32_t AddressLo(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
+}
+
+std::uint32_t AddressHi(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 40);
 }
 
 constexpr int Failure = static_cast<int>(0x8EEE00FFu);
@@ -69,15 +88,6 @@ bool IndexedIndirectStage(std::uint32_t stage) {
 
 constexpr std::uint32_t OpSetUconfigReg = 0x79;
 constexpr std::uint32_t IaMultiVgtParam = 0x40000258u;
-
-constexpr std::uint32_t OpSetContextReg = 0x69;
-constexpr std::uint32_t OpSetShReg = 0x76;
-
-std::uint32_t* EmitPacket(std::uint32_t* at, std::uint32_t opcode, std::initializer_list<std::uint32_t> body) {
-    *at++ = 0xc0000000u | ((static_cast<std::uint32_t>(body.size()) - 1) << 16) | (opcode << 8);
-    for (const auto word : body) *at++ = word;
-    return at;
-}
 
 std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* regs) {
     auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, regs[0], 0});
@@ -609,13 +619,33 @@ int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t
     return 0;
 }
 
-int APS5_VABI sceGnmSetEmbeddedPsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (shaderId > 1) return Failure;
+    const bool black = shaderId == 0;
+    const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {8, AddressLo(code), AddressHi(code)});
+    at = EmitPacket(at, OpSetShReg, {10, black ? 0xc0000u : 0x2000u, black ? 4u : 0u});
+    at = EmitPacket(at, OpSetContextReg, {0x1c4, 0, black ? 4u : 2u});
+    at = EmitPacket(at, OpSetContextReg, {0x1b3, 2, 2});
+    at = EmitPacket(at, OpSetContextReg, {0x1b6, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1b8, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x203, 0x10});
+    at = EmitPacket(at, OpSetContextReg, {0x8f, black ? 0xfu : 3u});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
     return 0;
 }
 
-int APS5_VABI sceGnmSetEmbeddedVsShader(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (shaderId != 0) return Failure;
+    const auto* code = GnmNeo::FullscreenVs.data();
+    auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
+    at = EmitPacket(at, OpSetShReg, {0x4a, 0xc0000, 4});
+    at = EmitPacket(at, OpSetContextReg, {0x207, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1b1, 0});
+    at = EmitPacket(at, OpSetContextReg, {0x1c3, 4});
+    at[0] = 0xc00a1000u;
+    at[1] = 0;
     return 0;
 }
 

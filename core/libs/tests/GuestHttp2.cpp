@@ -1,47 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceHttp2Init(int, int, std::size_t, int);
-int APS5_VABI sceHttp2CreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttp2CreateRequestWithURL(int, const char*, const char*, std::uint64_t);
-int APS5_VABI sceHttp2CreateCookieBox(std::size_t);
-int APS5_VABI sceHttp2DeleteCookieBox(int);
-int APS5_VABI sceHttp2SetCookieBox(int, int);
-int APS5_VABI sceHttp2CookieFlush(int);
-int APS5_VABI sceHttp2SetRequestNoContentLength(int);
-int APS5_VABI sceHttp2SendRequest(int, const void*, std::size_t);
-int APS5_VABI sceHttp2SendRequestAsync(int, const void*, std::size_t, Http2AsyncOption*, void*);
-int APS5_VABI sceHttp2WaitAsync(int, Http2AsyncResult*, std::uint32_t*, void*);
-int APS5_VABI sceHttp2DeleteRequest(int);
-int APS5_VABI sceHttp2DeleteTemplate(int);
-int APS5_VABI sceHttp2SetMinSslVersion(int, std::uint32_t);
-int APS5_VABI sceHttp2SslEnableOption(int, std::uint32_t);
-int APS5_VABI sceHttp2SslDisableOption(int, std::uint32_t);
-int APS5_VABI sceHttp2Term(int);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
-int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
-uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
-void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
-}
-
-struct Http2MemoryPoolStats {
-    std::size_t pool_size;
-    std::size_t max_inuse_size;
-    std::size_t current_inuse_size;
-    std::int32_t reserved;
-};
-
-extern "C" {
-int APS5_VABI sceHttp2GetMemoryPoolStats(int, Http2MemoryPoolStats*);
-int APS5_VABI sceHttp2SetResolveRetry(int, std::int32_t);
-int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t, std::uint32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

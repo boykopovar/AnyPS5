@@ -1,23 +1,10 @@
+#include "prx/libSceCamera/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceCameraIsAttached(std::int32_t index);
-int APS5_VABI sceCameraOpen(void);
-int APS5_VABI sceCameraClose(void);
-int APS5_VABI sceCameraStart(void);
-int APS5_VABI sceCameraStop(void);
-int APS5_VABI sceCameraGetConfig(void);
-int APS5_VABI sceCameraSetConfig(void);
-int APS5_VABI sceCameraSetAttribute(void);
-int APS5_VABI sceCameraGetDeviceInfo(void);
-int APS5_VABI sceCameraGetFrameData(void);
-int APS5_VABI sceCameraIsValidFrameData(void);
-}
 
 namespace {
 

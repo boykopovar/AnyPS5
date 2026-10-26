@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -13,11 +14,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-std::uint32_t APS5_VABI FT_Get_Sfnt_Name_Count_nid_postfix(GuestFaceRec*);
-int APS5_VABI FT_Get_Sfnt_Name_nid_postfix(GuestFaceRec*, std::uint32_t, GuestSfntName*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

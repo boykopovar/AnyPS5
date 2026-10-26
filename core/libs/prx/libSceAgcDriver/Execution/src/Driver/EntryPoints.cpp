@@ -157,6 +157,14 @@ extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix() {
     return AgcDriver::DriverDetail::Driver::Get().DispatchesAdoptedAhead();
 }
 
+extern "C" std::uint64_t AgcDriverDispatchesRejectedAhead_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().DispatchesRejectedAhead();
+}
+
+extern "C" void AgcDriverSetAheadAdoptHook_nid_postfix(void (*hook)()) {
+    AgcDriver::DriverDetail::Driver::Get().SetAheadAdoptHook(hook);
+}
+
 extern "C" void AgcDriverRegisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output) {
     AgcDriver::RegisterVideoOutput(handle, output);
 }

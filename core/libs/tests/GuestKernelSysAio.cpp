@@ -1,3 +1,6 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
@@ -12,48 +15,10 @@
 
 namespace {
 
-struct Sigevent {
-    int notify;
-    int signo;
-    std::int64_t value;
-    std::int64_t extra[8];
-};
-
-struct Aiocb {
-    int fildes;
-    std::int64_t offset;
-    void* buf;
-    std::uint64_t nbytes;
-    int spare[2];
-    void* spare2;
-    int lioOpcode;
-    int reqprio;
-    std::int64_t status;
-    std::int64_t error;
-    void* kernelinfo;
-    Sigevent sigevent;
-};
-
-struct Timespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
-
 }
 
 extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-int APS5_VABI close_nid_postfix(int descriptor);
-int APS5_VABI pipe_nid_postfix(int* descriptors);
-int APS5_VABI aio_read_nid_postfix(Aiocb* aiocb);
-int APS5_VABI aio_write_nid_postfix(Aiocb* aiocb);
-int APS5_VABI aio_fsync_nid_postfix(int operation, Aiocb* aiocb);
-int APS5_VABI aio_error_nid_postfix(const Aiocb* aiocb);
-std::int64_t APS5_VABI aio_return_nid_postfix(Aiocb* aiocb);
-int APS5_VABI aio_suspend_nid_postfix(const Aiocb* const* list, int count, const Timespec* timeout);
-std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(Aiocb** result, const Timespec* timeout);
-int APS5_VABI aio_cancel_nid_postfix(int descriptor, Aiocb* aiocb);
+
 void AioHoldWorkerForTest_nid_no_patch(bool hold);
 }
 
@@ -84,8 +49,8 @@ int Error() {
     return *__error_nid_postfix();
 }
 
-Aiocb Request(int descriptor, void* buffer, std::uint64_t bytes, std::int64_t offset = 0) {
-    Aiocb request{};
+GuestAiocb Request(int descriptor, void* buffer, std::uint64_t bytes, std::int64_t offset = 0) {
+    GuestAiocb request{};
     request.fildes = descriptor;
     request.buf = buffer;
     request.nbytes = bytes;
@@ -93,14 +58,14 @@ Aiocb Request(int descriptor, void* buffer, std::uint64_t bytes, std::int64_t of
     return request;
 }
 
-void Wait(Aiocb& request) {
-    const Aiocb* list[] = {&request};
+void Wait(GuestAiocb& request) {
+    const GuestAiocb* list[] = {&request};
     Require(aio_suspend_nid_postfix(list, 1, nullptr) == 0);
 }
 
 void BeforeUse() {
-    Aiocb request{};
-    const Aiocb* list[] = {&request};
+    GuestAiocb request{};
+    const GuestAiocb* list[] = {&request};
     Require(aio_error_nid_postfix(&request) == Einval);
     Require(aio_return_nid_postfix(&request) == -1 && Error() == Einval);
     Require(aio_suspend_nid_postfix(list, 1, nullptr) == -1 && Error() == Eagain);
@@ -163,12 +128,12 @@ void ReadAndWrite(int file) {
     Wait(empty);
     Require(aio_return_nid_postfix(&empty) == 0);
 
-    const Aiocb* none[] = {&request};
+    const GuestAiocb* none[] = {&request};
     Require(aio_suspend_nid_postfix(none, 1, nullptr) == 0);
     Require(aio_suspend_nid_postfix(none, 0, nullptr) == 0);
     Require(aio_suspend_nid_postfix(none, -1, nullptr) == -1 && Error() == Einval);
     Require(aio_suspend_nid_postfix(none, 257, nullptr) == -1 && Error() == Einval);
-    const Timespec badTime{0, 1000000000};
+    const KernelTimespec badTime{0, 1000000000};
     Require(aio_suspend_nid_postfix(none, 1, &badTime) == -1 && Error() == Einval);
 }
 
@@ -179,8 +144,8 @@ void Cancel(int file) {
     auto second = Request(file, buffer, sizeof(buffer));
     Require(aio_read_nid_postfix(&first) == 0 && aio_read_nid_postfix(&second) == 0);
     Require(first.error == Einprogress && aio_error_nid_postfix(&first) == Einprogress);
-    const Aiocb* list[] = {&first};
-    const Timespec brief{0, 5000000};
+    const GuestAiocb* list[] = {&first};
+    const KernelTimespec brief{0, 5000000};
     Require(aio_suspend_nid_postfix(list, 1, &brief) == -1 && Error() == Eagain);
 
     Require(aio_cancel_nid_postfix(file, &first) == AioCanceled);
@@ -207,14 +172,14 @@ void SyncOrder(int file) {
     Require(aio_error_nid_postfix(&sync) == Einprogress);
     AioHoldWorkerForTest_nid_no_patch(false);
 
-    Aiocb* done = nullptr;
+    GuestAiocb* done = nullptr;
     Require(aio_waitcomplete_nid_postfix(&done, nullptr) == 7 && done == &write);
     Require(aio_waitcomplete_nid_postfix(&done, nullptr) == 0 && done == &sync && sync.status == 0);
-    const Timespec zero{0, 0};
+    const KernelTimespec zero{0, 0};
     Require(aio_waitcomplete_nid_postfix(&done, &zero) == -1 && Error() == Eagain && done == nullptr);
-    const Timespec brief{0, 5000000};
+    const KernelTimespec brief{0, 5000000};
     Require(aio_waitcomplete_nid_postfix(&done, &brief) == -1 && Error() == Eagain);
-    const Timespec badTime{0, -1};
+    const KernelTimespec badTime{0, -1};
     Require(aio_waitcomplete_nid_postfix(&done, &badTime) == -1 && Error() == Einval);
 }
 

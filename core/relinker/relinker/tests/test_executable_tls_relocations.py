@@ -31,15 +31,16 @@ TLS_NAME, DATA_NAME, IMPORT_NAME = 1, 5, 10
 NULL, TLS_SYMBOL, DATA_SYMBOL, IMPORTED = 0, 1, 2, 3
 
 
-def image(relocations, tls=True, symbol_bytes=None):
-    """The load-alignment fixture with a writable segment (vaddr 0x1000) holding a GOT and an 8-byte
-    TLS template, a symbol table and the given (offset, type, symbol, addend) relocations."""
+def image(relocations, tls=True, symbol_bytes=None, tls_memsz=TLS_MEMSZ):
+    """The load-alignment fixture with a writable segment (vaddr 0x1000) holding a GOT and a PT_TLS of
+    tls_memsz bytes with an up to 8-byte template, a symbol table and the given (offset, type, symbol,
+    addend) relocations."""
     data = fixture()
     struct.pack_into("<Q", data, 24, 0x200)
     data[0x4200:0x4206] = b"\xb8\x2a\x00\x00\x00\xc3"
     struct.pack_into("<IIQQQQQQ", data, 64 + 2 * 56, PT_LOAD, 6, 0x5000, 0x1000, 0x1000, 0x1000, 0x1000, 0x4000)
     if tls:
-        struct.pack_into("<IIQQQQQQ", data, 64 + 3 * 56, PT_TLS, 4, 0x5800, 0x1800, 0x1800, 8, TLS_MEMSZ, TLS_ALIGN)
+        struct.pack_into("<IIQQQQQQ", data, 64 + 3 * 56, PT_TLS, 4, 0x5800, 0x1800, 0x1800, min(8, tls_memsz), tls_memsz, TLS_ALIGN)
     data[0x5800:0x5808] = bytes(range(1, 9))
     data[0x4600:0x4600 + len(STRINGS)] = STRINGS
     struct.pack_into("<IBBHQQ", data, 0x4900 + TLS_SYMBOL * 24, TLS_NAME, 0x16, 0, 1, 0x10, 4)
@@ -144,7 +145,7 @@ def main():
             ("tpoff32-invalid-sym", [(0x1000, TPOFF32, 0x1234, 0)], True, (), "Unsupported relocation type 0x17"),
             ("unknown-reloc-invalid-sym", [(0x1000, 0x99, 0x1234, 0)], True, (), "Unsupported relocation type 0x99"),
             ("not-tls-symbol", [(0x1000, TPOFF64, DATA_SYMBOL, 0)], True, (), "not STT_TLS"),
-            ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a PT_TLS segment"),
+            ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a non-empty PT_TLS segment"),
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),
             ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
@@ -156,6 +157,19 @@ def main():
             result, output = relink(relinker, directory, name, image(relocations, has_tls), *flags)
             assert result.returncode == 2 and error in result.stderr, (name, result.returncode, result.stderr)
             assert not output.exists(), name
+
+        empty_tls = "FAIL: TLS relocation in an executable without a non-empty PT_TLS segment (offset 0x4700)"
+        for kind, addend in ((TPOFF64, 4), (DTPOFF64, 4), (DTPMOD64, 0)):
+            for symbol in (NULL, TLS_SYMBOL):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-empty-tls-{kind}-{symbol}"
+                    data = image([(0x1000, kind, symbol, addend)], tls_memsz=0)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and empty_tls in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+
+        result, output = relink(relinker, directory, "linux-empty-tls-import", image([(0x1000, TPOFF64, IMPORTED, 0)], tls_memsz=0))
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
     print("Executable TLS relocation test passed")
 
 

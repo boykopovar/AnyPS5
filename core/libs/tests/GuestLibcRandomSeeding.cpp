@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -6,13 +7,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-extern "C" {
-std::int64_t APS5_VABI random_nid_postfix();
-void APS5_VABI srandom_nid_postfix(std::uint64_t);
-char* APS5_VABI initstate_nid_postfix(std::uint64_t, char*, std::int64_t);
-char* APS5_VABI setstate_nid_postfix(char*);
-}
 
 static int failures = 0;
 

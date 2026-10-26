@@ -1,3 +1,4 @@
+#include "prx/libSceJson2/include/Api.hpp"
 #include <algorithm>
 #include <bit>
 #include <cerrno>
@@ -20,70 +21,13 @@
 
 namespace {
 
-enum ValueType : std::int32_t {
-    TypeNull = 0,
-    TypeBoolean = 1,
-    TypeInteger = 2,
-    TypeUInteger = 3,
-    TypeReal = 4,
-    TypeString = 5,
-    TypeArray = 6,
-    TypeObject = 7,
-};
+using namespace SceJson2;
 
 constexpr int JsonErrorParse = static_cast<int>(0x80848101);
 
-struct Node;
-struct Value { Node* node; };
-struct String { std::string* text; };
-struct Array { std::list<Value>* items; };
-struct Pair;
-struct Object { std::list<Pair>* items; };
-struct ArrayIteratorState {
-    std::list<Value>::iterator position;
-    std::list<Value>::iterator end;
-};
-struct ArrayIterator { ArrayIteratorState* state; };
-struct ObjectIteratorState {
-    std::list<Pair>* owner = nullptr;
-    std::list<Pair>::iterator position{};
-};
-struct ObjectIterator { ObjectIteratorState* state; };
-struct Pair {
-    String key;
-    std::uint64_t reserved;
-    Value value;
-};
 static_assert(sizeof(Value) == 8 && sizeof(String) == 8 && sizeof(Array) == 8 && sizeof(Object) == 8);
 static_assert(sizeof(ArrayIterator) == 8 && sizeof(ObjectIterator) == 8);
 static_assert(offsetof(Pair, value) == 0x10);
-
-using TypeMismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
-using SpecialFloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-using ElementAccessFailureHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-
-struct Handlers {
-    TypeMismatchHandler typeMismatch = nullptr;
-    void* typeMismatchContext = nullptr;
-    SpecialFloatHandler specialFloat = nullptr;
-    void* specialFloatContext = nullptr;
-    ElementAccessFailureHandler elementAccessFailure = nullptr;
-    void* elementAccessFailureContext = nullptr;
-};
-
-struct Node {
-    ValueType type = TypeNull;
-    bool boolean = false;
-    std::int64_t integer = 0;
-    std::uint64_t uinteger = 0;
-    double real = 0;
-    String string{};
-    Array array{};
-    Object object{};
-    Handlers handlers{};
-};
-
-using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 
 struct Globals {
     std::mutex mutex;
@@ -375,8 +319,6 @@ Value& ObjectEntry(Object& object, const std::string& key) {
     }
 }
 
-using ParserReadCallback = int (APS5_VABI*)(char&, void*);
-
 class Parser {
 public:
     Parser(const char* text, std::size_t size, const Handlers& handlers) : text(text), end(text + size), handlers(handlers) {}
@@ -550,10 +492,9 @@ private:
                 skip();
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                 for (;;) {
-                    Value item{};
+                    auto& item = out.array.items->emplace_back();
                     Construct(item);
                     item.node->handlers = handlers;
-                    out.array.items->push_back(item);
                     skip();
                     if (!value(*item.node)) return false;
                     skip();
@@ -622,7 +563,6 @@ void* const JsonMemAllocatorVtable[] = {
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
 };
-
 
 }
 
@@ -888,6 +828,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator*
     if (self->state && self->state->owner) {
         while (count) {
             _ZN3sce4Json6Object8iteratorppEv(self);
+
             --count;
         }
     }
@@ -1098,7 +1039,6 @@ int APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Stri
     return 0;
 }
 
-
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
     Parser parser(read, context, NodeOf(*out).handlers);
@@ -1112,26 +1052,12 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     return ParseValue(out, parser);
 }
 
-
-struct InitParameterRtti {
-    void* allocParam;
-    void* userData;
-    std::size_t fileBufferSize;
-};
-
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
     self->allocParam = allocParam;
     self->userData = userData;
     self->fileBufferSize = fileBufferSize;
 }
 
-struct InitParameter2 {
-    void* allocator;
-    void* userData;
-    std::size_t fileBufferSize;
-    std::int32_t specialFloatFormatType;
-    std::uint32_t reserved[3];
-};
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
@@ -1141,6 +1067,7 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
     _ZN3sce4Json14InitParameter2C1Ev(self);
+
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
@@ -1268,6 +1195,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* result, ArrayIterator* self, int) {
     _ZN3sce4Json5Array8iteratorC1ERKS2_(result, self);
     _ZN3sce4Json5Array8iteratorppEv(self);
+
     return result;
 }
 
@@ -1290,6 +1218,7 @@ void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* result, ObjectIterator* self, int) {
     auto state = self->state ? std::make_unique<ObjectIteratorState>(*self->state) : nullptr;
     _ZN3sce4Json6Object8iteratorppEv(self);
+
     result->state = state.release();
     return result;
 }

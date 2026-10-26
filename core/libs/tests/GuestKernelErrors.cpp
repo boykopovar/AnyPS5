@@ -1,3 +1,9 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "prx/libSceSaveData/SaveDataCore.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -8,55 +14,11 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI sceKernelCreateSema(KernelSema*, const char*, std::uint32_t, int, int, void*);
-int APS5_VABI sceKernelDeleteSema(KernelSema);
-int APS5_VABI sceKernelSignalSema(KernelSema, int);
-int APS5_VABI sceKernelPollSema(KernelSema, int);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr);
-int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type);
-int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr);
-int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr);
-int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
-int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, std::uint32_t attr, std::uint64_t init_pattern, const void* param);
-int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
-int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name);
-int APS5_VABI sceKernelCloseEventFlag(KernelEventFlag ef);
-int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern);
-int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern);
-int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
-int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat);
-int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat, KernelUseconds* timeout);
+
 int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle);
 }
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_EDEADLK = static_cast<int>(0x8002000B);
-static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
-static constexpr int SCE_KERNEL_ERROR_EACCES = static_cast<int>(0x8002000D);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
-static constexpr int SCE_KERNEL_ERROR_ENAMETOOLONG = static_cast<int>(0x8002003F);
-static constexpr int SCE_KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
 static constexpr std::uint32_t EVF_ATTR_SINGLE = 0x10;
 static constexpr std::uint32_t EVF_ATTR_MULTI = 0x20;
 static constexpr std::uint32_t EVF_ATTR_SHARED = 0x100;
@@ -65,6 +27,7 @@ static constexpr std::uint32_t EVF_WAITMODE_OR = 0x02;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_ALL = 0x10;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_PAT = 0x20;
 static constexpr int MUTEX_TYPE_ERRORCHECK = 1;
+static constexpr int MUTEX_TYPE_NORMAL = 3;
 static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
@@ -79,6 +42,13 @@ static void WaitForEventFlagWaiters(KernelEventFlag handle, int expected) {
         if (std::chrono::steady_clock::now() >= deadline) Require(false);
         std::this_thread::yield();
     }
+}
+
+template <typename TLock>
+static void RequireTimesOut(TLock lock) {
+    const auto start = std::chrono::steady_clock::now();
+    Require(lock(20000) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
 }
 
 int main() {
@@ -129,6 +99,7 @@ int main() {
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&mutex, usec); });
     Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EBUSY);
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
@@ -140,8 +111,40 @@ int main() {
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
     Require(scePthreadMutexLock(&adaptive) == SCE_OK);
     Require(scePthreadMutexLock(&adaptive) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&adaptive, usec); });
     Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
     Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
+
+    PthreadMutex timedDefault = nullptr;
+    Require(scePthreadMutexInit(&timedDefault, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&timedDefault) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&timedDefault, usec); });
+    Require(scePthreadMutexUnlock(&timedDefault) == SCE_OK);
+    Require(scePthreadMutexTimedlock(&timedDefault, 20000) == SCE_OK);
+    Require(scePthreadMutexUnlock(&timedDefault) == SCE_OK);
+    Require(scePthreadMutexDestroy(&timedDefault) == SCE_OK);
+
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_NORMAL) == SCE_OK);
+    PthreadMutex normal = nullptr;
+    Require(scePthreadMutexInit(&normal, &attr, nullptr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexLock(&normal) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&normal, usec); });
+    Require(scePthreadMutexUnlock(&normal) == SCE_OK);
+    Require(scePthreadMutexDestroy(&normal) == SCE_OK);
+
+    PthreadRwlock rwlock = nullptr;
+    Require(scePthreadRwlockInit(&rwlock, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadRwlockWrlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&rwlock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockWrlock(&rwlock) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedrdlock(&rwlock, usec); });
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedwrlock(&rwlock, usec); });
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTimedwrlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&rwlock) == SCE_OK);
 
     PthreadMutex adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
     Require(scePthreadMutexLock(&adaptiveStatic) == SCE_OK);

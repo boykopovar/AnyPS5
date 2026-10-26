@@ -1,3 +1,5 @@
+#include "prx/libSceAudioPropagation/include/Api.hpp"
+#include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
 #include "prx/libc/include/General.hpp"
 

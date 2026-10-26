@@ -1,9 +1,12 @@
+#include "prx/libc/include/Api.hpp"
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
+#include <algorithm>
 #include <condition_variable>
 #include <exception>
 #include <future>
@@ -20,8 +23,6 @@
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
-extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
-
 namespace {
 
 std::mutex shutdownMutex;
@@ -34,7 +35,7 @@ std::exception_ptr shutdownFailure;
 std::stop_source shutdownSource;
 std::atomic<bool> exitRequested{false};
 std::atomic<bool> exitStarted{false};
-using GuestExitCallback = void (APS5_VABI*)();
+
 thread_local bool runningExit = false;
 
 void APS5_VABI RunGuestExitCallback(void* callback) {
@@ -271,6 +272,7 @@ int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
     }
     for (auto it = callbacks.rbegin(); it != callbacks.rend(); ++it) (*it)();
     _Exit_nid_postfix(status);
+
 }
 
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
@@ -278,6 +280,129 @@ int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
     (void)noClose;
     NotImplemented_nid_no_patch("daemon: forking into the background");
     return -1;
+}
+
+#ifdef _WIN32
+namespace {
+struct ChildProcess {
+    std::int32_t processId;
+    std::int64_t processHandle;
+};
+
+std::mutex childProcessMutex;
+std::vector<ChildProcess> childProcesses;
+
+int ChildProcessWaitStatus(DWORD code) {
+    switch (code) {
+    case 0xC0000005u:
+    case 0xC00000FDu: return 11;
+    case 0xC000001Du:
+    case 0xC0000096u: return 4;
+    case 0x80000003u: return 5;
+    case 0xC0000094u:
+    case 0xC0000095u: return 8;
+    case 0xC0000409u:
+    case 0xC0000374u: return 6;
+    default: return static_cast<int>(code & 0xffu) << 8;
+    }
+}
+}
+
+extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::int64_t processHandle) {
+    std::lock_guard lock(childProcessMutex);
+    childProcesses.push_back({processId, processHandle});
+}
+
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status) {
+    const bool noWait = (options & 1u) != 0;
+    const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
+    {
+        std::lock_guard lock(childProcessMutex);
+        if (std::none_of(childProcesses.begin(), childProcesses.end(), matches)) return -2;
+    }
+    int encoded = 0;
+    while (true) {
+        std::int32_t reaped = 0;
+        {
+            std::lock_guard lock(childProcessMutex);
+            for (std::size_t index = 0; index < childProcesses.size(); ++index) {
+                auto& child = childProcesses[index];
+                if (!matches(child)) continue;
+                const HANDLE handle = reinterpret_cast<HANDLE>(child.processHandle);
+                if (WaitForSingleObject(handle, 0) != WAIT_OBJECT_0) continue;
+                DWORD code = 0;
+                if (!GetExitCodeProcess(handle, &code)) {
+                    *__error_nid_postfix() = 14;
+                    return -1;
+                }
+                encoded = ChildProcessWaitStatus(code);
+                CloseHandle(handle);
+                reaped = child.processId;
+                childProcesses.erase(childProcesses.begin() + static_cast<std::ptrdiff_t>(index));
+                break;
+            }
+        }
+        if (reaped != 0) {
+            if (status != nullptr) *status = encoded;
+            return reaped;
+        }
+        std::vector<HANDLE> handles;
+        {
+            const std::lock_guard lock(childProcessMutex);
+            for (const auto& child : childProcesses) {
+                if (!matches(child)) continue;
+                handles.push_back(reinterpret_cast<HANDLE>(child.processHandle));
+            }
+        }
+        if (handles.empty()) return -2;
+        if (noWait) return 0;
+        constexpr std::size_t groupSize = MAXIMUM_WAIT_OBJECTS;
+        bool timedOut = true;
+        for (std::size_t start = 0; start < handles.size() && timedOut; start += groupSize) {
+            const std::size_t count = std::min(handles.size() - start, groupSize);
+            timedOut = WaitForMultipleObjects(static_cast<DWORD>(count), handles.data() + start, FALSE, 250) == WAIT_TIMEOUT;
+        }
+    }
+}
+#endif
+
+}
+
+namespace {
+constexpr int SaRestart = 0x2;
+std::atomic<SigactionFn_nid_no_patch> registeredSigaction{nullptr};
+std::atomic<std::uint32_t*> registeredInterruptSet{nullptr};
+
+struct InterruptSigaction {
+    std::uintptr_t handler;
+    int flags;
+    std::uint32_t mask[4];
+};
+static_assert(sizeof(InterruptSigaction) == 32 && offsetof(InterruptSigaction, flags) == 8 && offsetof(InterruptSigaction, mask) == 12);
+}
+
+extern "C" {
+
+void RegisterSigaction_nid_no_patch(SigactionFn_nid_no_patch fn, std::uint32_t* interruptSet) {
+    registeredInterruptSet.store(interruptSet, std::memory_order_release);
+    registeredSigaction.store(fn, std::memory_order_release);
+}
+
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag) {
+    const auto sigaction = registeredSigaction.load(std::memory_order_acquire);
+    auto* const interruptSet = registeredInterruptSet.load(std::memory_order_acquire);
+    if (sigaction == nullptr || interruptSet == nullptr) throw std::runtime_error("siginterrupt: libkernel has not registered sigaction");
+    InterruptSigaction action{};
+    if (sigaction(guest, nullptr, &action) != 0) return -1;
+    const auto index = static_cast<std::uint32_t>(guest - 1);
+    if (flag) {
+        interruptSet[index >> 5] |= 1u << (index & 31);
+        action.flags &= ~SaRestart;
+    } else {
+        interruptSet[index >> 5] &= ~(1u << (index & 31));
+        action.flags |= SaRestart;
+    }
+    return sigaction(guest, &action, nullptr);
 }
 
 }

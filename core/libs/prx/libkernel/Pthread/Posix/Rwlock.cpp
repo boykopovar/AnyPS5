@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -37,8 +38,6 @@ void initializeStatic(PthreadRwlock* rwlock, const char* funcName) {
 
 extern "C" {
 
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
-
 int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
     if (!rwlock) throw std::runtime_error("pthread_rwlock_destroy: null rwlock");
     if (*rwlock == nullptr) return 0;
@@ -68,6 +67,25 @@ int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr,
     if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     if (!attr || !*attr) throw std::runtime_error("pthread_rwlockattr_setpshared: null attr");
     return 0;
+}
+
+int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
+    if (!attr || !*attr) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
+    if (!type) throw std::runtime_error("pthread_rwlockattr_gettype_np: null type");
+    *type = (*attr)->type;
+    return 0;
+}
+
+int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type) {
+    return PosixThread::ToSce(pthread_rwlockattr_gettype_np_nid_postfix(attr, type));
+}
+
+int APS5_VABI scePthreadRwlockattrSetpshared(PthreadRwlockattr* attr, int pshared) {
+    return PosixThread::ToSce(pthread_rwlockattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int* pshared) {
+    return PosixThread::ToSce(pthread_rwlockattr_getpshared_nid_postfix(attr, pshared));
 }
 
 int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {

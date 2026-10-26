@@ -1,3 +1,4 @@
+#include "prx/libSceAcm/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -216,7 +217,6 @@ int APS5_VABI sceAcm_IFFT() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 
 int APS5_VABI sceAcmBatchJobNotification() {
     NotImplemented_nid_no_patch(__func__);

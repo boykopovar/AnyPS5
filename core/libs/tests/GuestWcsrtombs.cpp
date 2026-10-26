@@ -1,12 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" std::size_t APS5_VABI wcsrtombs_nid_postfix(char*, const std::uint16_t**, std::size_t, void*);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static void Require(bool value, const char* message) {
     if (!value) {
