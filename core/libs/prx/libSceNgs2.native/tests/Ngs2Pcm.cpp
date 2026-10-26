@@ -113,7 +113,7 @@ static void TestFramesAndPositions(const PcmFixture& fixture, std::uint32_t chan
         }
         const auto state = playback.State();
         Require(state.num_decoded_samples == (pass + 1) * Grain);
-        Require(state.decoded_data_size == (pass + 1) * Grain * frameBytes);
+        Require(state.decoded_data_size == Grain * 2 * frameBytes);
         Require(state.waveform_data == data.data() + 3 + (skip + (pass + 1) * Grain) * frameBytes);
     }
     Require(Flags(playback.voice) == 0);
@@ -136,7 +136,7 @@ static void TestRepeatAndTransition(const PcmFixture& fixture) {
     constexpr std::uint32_t indices[] = {1, 2, 3, 1, 2, 3, 4, 5};
     for (std::uint32_t i = 0; i < Grain; i++) Require(first[i] == fixture.samples[indices[i]]);
     auto state = playback.State();
-    Require(state.num_decoded_samples == 8 && state.decoded_data_size == 8 * fixture.bytes);
+    Require(state.num_decoded_samples == 8 && state.decoded_data_size == 10 * fixture.bytes);
     Require(state.waveform_data == fixture.data.data() + 6 * fixture.bytes);
     const auto last = playback.Render();
     Require(last[0] == fixture.samples[6] && last[1] == fixture.samples[7]);
@@ -163,7 +163,7 @@ static void TestResampling(const PcmFixture& fixture) {
             const auto expected = i % 2 == 0 ? fixture.samples[sample] : std::lerp(fixture.samples[sample], fixture.samples[next], 0.5f);
             Require(output[i] == expected);
         }
-        Require(playback.State().decoded_data_size == (pass + 1) * 4 * fixture.bytes);
+        Require(playback.State().decoded_data_size == 8 * fixture.bytes);
     }
     Require(playback.State().num_decoded_samples == 8);
 }

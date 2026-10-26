@@ -142,7 +142,7 @@ static void TestPcmBlockEnd() {
     Ngs2SamplerVoiceState state{};
     Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state) - 8) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
     Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
-    Require(state.num_decoded_samples == Grain && state.decoded_data_size == Grain * 2 && state.user_data == 0x55);
+    Require(state.num_decoded_samples == Grain && state.decoded_data_size == pcm.size() * sizeof(std::int16_t) && state.user_data == 0x55);
     Require(state.waveform_data == pcm.data() + Grain);
 
     out = RenderI16(system);
@@ -540,7 +540,7 @@ static void TestPcmCallbackSetup() {
             Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
             Require(callback.calls == 1 && std::equal(output.begin(), output.end(), callback.pcm.begin()));
             Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
-            Require(state.num_decoded_samples == Grain && state.decoded_data_size == Grain * channels * sizeof(std::int16_t));
+            Require(state.num_decoded_samples == Grain && state.decoded_data_size == callback.pcm.size() * sizeof(std::int16_t));
             Require(state.waveform_data == callback.pcm.data() + Grain * channels);
             Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
         }

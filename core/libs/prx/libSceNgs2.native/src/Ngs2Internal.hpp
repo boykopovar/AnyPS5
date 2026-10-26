@@ -31,6 +31,7 @@ struct Ngs2Piece {
     const std::uint8_t* data;
     std::uint64_t firstFrame;
     std::uint64_t frames;
+    std::vector<std::uint8_t> pcm;
 };
 
 struct Ngs2Block {
@@ -43,6 +44,7 @@ struct Ngs2Block {
     std::uint64_t availableFrames = 0;
     std::vector<Ngs2Piece> pieces;
     bool started = false;
+    std::vector<std::uint8_t> pcm;
 };
 
 struct Ngs2Atrac9DecoderDeleter {
@@ -150,6 +152,7 @@ struct Ngs2Voice {
     bool rendering = false;
     bool rendered = false;
     bool hasSamples = false;
+    std::array<std::vector<std::uint8_t>, 2> pcmPool;
 
     void SetEvent(std::uint32_t eventId);
     void ResetSetup();
@@ -240,6 +243,7 @@ std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock
 void Ngs2RestartAtrac9(Ngs2Voice& voice);
 void Ngs2ConsumeAtrac9(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t systemRate);
 bool Ngs2FinishBlock(Ngs2Voice& voice);
+void Ngs2RecyclePcm(Ngs2Voice& voice, Ngs2Block& block);
 int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option, std::uint32_t maxInputs);
 void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
