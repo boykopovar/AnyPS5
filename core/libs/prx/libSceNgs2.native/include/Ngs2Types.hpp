@@ -49,10 +49,14 @@ static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SAMPLER = 0x4001;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER = 0x4002;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_MASTERING = 0x4003;
 
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_U8 = 0x11;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16L = 0x12;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16B = 0x13;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I24L = 0x14;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I32L = 0x16;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32L = 0x18;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32B = 0x19;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F64L = 0x1a;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_ATRAC9 = 0x40;
 
 static constexpr std::uint32_t SCE_NGS2_VOICE_EVENT_PLAY = 1;

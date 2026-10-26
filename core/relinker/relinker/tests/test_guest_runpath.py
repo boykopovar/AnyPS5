@@ -52,7 +52,8 @@ def main():
                     if resolved != expected or (label.startswith("absolute") and actual != run_path):
                         failures.append((str(relative), label, actual, str(resolved), str(expected)))
                     checked += 1
-        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share")):
+        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share",
+                                          "$ORIGIN/libs:", "$ORIGIN::/opt/libs", "$ORIGIN:relative/libs", "/opt/libs:")):
             output = work / f"invalid-{index}.elf"
             result = subprocess.run([str(relinker), "--rpath", run_path, str(source), str(output)],
                                     capture_output=True, text=True, timeout=20)

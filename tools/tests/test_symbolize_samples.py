@@ -191,6 +191,38 @@ class SymbolizeSamplesTests(unittest.TestCase):
         inclusive = lines[lines.index("hottest by inclusive:") + 1:]
         self.assertIn("6 100.0%  libSceAgcDriver.prx!short", inclusive[0])
 
+    def test_since_does_not_verify_a_module_using_only_the_earlier_record(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        for collapsed in (False, True):
+            with self.subTest(collapsed=collapsed):
+                earlier = self.root / "early.txt"
+                later = self.root / "late.txt"
+                if collapsed:
+                    earlier.write_text(record + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+                    later.write_text("libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+                else:
+                    earlier.write_text(record + "# 4 samples\nlibSceAgcDriver.prx 0x1011 4 4\n", encoding="utf-8")
+                    later.write_text("# 7 samples\nlibSceAgcDriver.prx 0x1011 7 7\n", encoding="utf-8")
+                lines, errors = self.run_main(later, "--since", earlier, "--libs", self.libs)
+                self.assertEqual(lines[0], "3 samples")
+                self.assertIn("libSceAgcDriver.prx+0x1011", "\n".join(lines))
+                self.assertNotIn("libSceAgcDriver.prx!short", "\n".join(lines))
+                self.assertIn("no '# module' record", errors)
+                lines, errors = self.run_main(later, "--since", earlier, "--libs", self.libs, "--unverified")
+                self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
+                self.assertEqual(errors, "")
+
+    def test_since_keeps_the_later_module_identity_when_the_build_changes(self):
+        earlier = self.root / "early.txt"
+        later = self.root / "late.txt"
+        earlier.write_text(f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+                           "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        later.write_text(f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP + 1:#x}\n"
+                         "libSceAgcDriver.prx+0x1011 7\n", encoding="utf-8")
+        lines, errors = self.run_main(later, "--since", earlier, "--libs", self.libs)
+        self.assertIn("libSceAgcDriver.prx+0x1011", "\n".join(lines))
+        self.assertIn("timestamp", errors)
+
     def test_malformed_lines_are_rejected_with_their_line_number(self):
         bad = self.root / "bad.collapsed.txt"
         bad.write_text("# header\nlibSceAgcDriver.prx+0x1011 many\n", encoding="utf-8")

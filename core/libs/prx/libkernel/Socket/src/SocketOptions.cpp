@@ -322,6 +322,12 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     return Copy(value, length, &number, sizeof(number));
 }
 
+bool HasPeer(std::uintptr_t native) {
+    sockaddr_storage peer{};
+    socklen_t size = sizeof(peer);
+    return ::getpeername(static_cast<NativeHandle>(native), reinterpret_cast<sockaddr*>(&peer), &size) == 0;
+}
+
 int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length) {
     if (!tcp) return ErrorInvalid;
     if (option != GuestTcpNoDelay && option != GuestTcpMaximumSegment && option != GuestTcpKeepIdle && option != GuestTcpKeepInterval &&
@@ -336,8 +342,8 @@ int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp,
     }
     const auto unsignedNumber = static_cast<unsigned int>(number);
     if (option == GuestTcpMaximumSegment) {
-        if (number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
-        state.tcpMaximumSegment = number;
+        if (!HasPeer(native) || number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
+        state.tcpMaximumSegment = std::max(number, MinimumSegment);
         return 0;
     }
     if (option == GuestTcpKeepCount) {

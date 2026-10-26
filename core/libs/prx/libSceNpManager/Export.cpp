@@ -17,7 +17,13 @@ static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
+static constexpr int SCE_NP_ERROR_INVALID_ID = static_cast<int>(0x80550015);
 static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
+static constexpr int NP_ID_MAPPER_REFUSED_ARGUMENT = static_cast<int>(0x80553083);
+static constexpr int NP_ID_MAPPER_REFUSED_REQUEST_ID = static_cast<int>(0x80553085);
+static constexpr int NP_MANAGER_INT_REQUEST_DUPLICATE = static_cast<int>(0x80559D03);
+static constexpr int NP_MANAGER_INT_REQUEST_TABLE_FULL = static_cast<int>(0x80559D05);
+static constexpr int NP_MANAGER_INT_REQUEST_NOT_IN_TABLE = static_cast<int>(0x80559D0A);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
@@ -38,6 +44,14 @@ int AddRequest() {
     liveRequests.insert(reqId);
     return reqId;
 }
+
+std::mutex idMapperMutex;
+std::uint32_t nextIdMapperRequest = 1;
+std::unordered_set<int> idMapperRequests;
+constexpr std::size_t NP_MANAGER_INT_REQUEST_SLOTS = 64;
+std::mutex managerIntMutex;
+std::uint32_t nextManagerIntRequest = 1;
+std::unordered_set<int> managerIntRequests;
 
 int SignedOutRequest(int reqId) {
     if (reqId == 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
@@ -284,9 +298,10 @@ int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, int8_t* age, v
     if (!age || !info || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SignedOutRequest(reqId);
 }
-int APS5_VABI sceNpIdMapperAbortRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperAbortRequest(int reqId) {
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    std::lock_guard lock(idMapperMutex);
+    return idMapperRequests.count(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 int APS5_VABI sceNpIdMapperAccountIdToNpId(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -297,20 +312,29 @@ int APS5_VABI sceNpIdMapperAccountIdToOnlineId(void) {
     return 0;
 }
 int APS5_VABI sceNpIdMapperCreateRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard lock(idMapperMutex);
+    const int reqId = static_cast<int>(nextIdMapperRequest++);
+    idMapperRequests.insert(reqId);
+    return reqId;
 }
-int APS5_VABI sceNpIdMapperDeleteRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperDeleteRequest(int reqId) {
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    std::lock_guard lock(idMapperMutex);
+    return idMapperRequests.erase(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
-int APS5_VABI sceNpIdMapperNpIdToAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperNpIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpIdMapperOnlineIdToAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpInGameMessageAbortHandle(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -361,9 +385,9 @@ int APS5_VABI sceNpIsPlusMember(int, bool* isMember) {
     *isMember = false;
     return 0;
 }
-int APS5_VABI sceNpManagerIntAbortRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntAbortRequest(int reqId) {
+    std::lock_guard lock(managerIntMutex);
+    return managerIntRequests.count(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 int APS5_VABI sceNpManagerIntAddActiveSigninStateCallback(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -438,16 +462,20 @@ int APS5_VABI sceNpManagerIntCreateLoginRequest(void) {
     return 0;
 }
 int APS5_VABI sceNpManagerIntCreateRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard lock(managerIntMutex);
+    if (managerIntRequests.size() >= NP_MANAGER_INT_REQUEST_SLOTS) return NP_MANAGER_INT_REQUEST_TABLE_FULL;
+    const int reqId = static_cast<int>(nextManagerIntRequest++);
+    if (reqId <= 0) return reqId;
+    if (!managerIntRequests.insert(reqId).second) return NP_MANAGER_INT_REQUEST_DUPLICATE;
+    return reqId;
 }
 int APS5_VABI sceNpManagerIntDeleteLoginContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntDeleteRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntDeleteRequest(int reqId) {
+    std::lock_guard lock(managerIntMutex);
+    return managerIntRequests.erase(reqId) ? 0 : NP_MANAGER_INT_REQUEST_NOT_IN_TABLE;
 }
 int APS5_VABI sceNpManagerIntGetAccessTokenViaImplicitFlow(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -955,7 +983,7 @@ int APS5_VABI sceNpRegisterStateCallbackA(NpStateCallbackA callback, void* userd
 }
 
 int APS5_VABI sceNpUnregisterStateCallbackA(int callbackId) {
-    if (callbackId < 1 || callbackId > NP_STATE_CALLBACK_MAX) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (static_cast<uint32_t>(callbackId) - 1u >= static_cast<uint32_t>(NP_STATE_CALLBACK_MAX)) return SCE_NP_ERROR_INVALID_ID;
     std::lock_guard lock(stateMutex);
     auto& entry = stateCallbacksA[callbackId - 1];
     if (!entry.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;

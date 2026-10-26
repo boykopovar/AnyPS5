@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
@@ -44,16 +45,6 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 int Error() {
     return *__error_nid_postfix();
-}
-
-bool PathconfThrows(const char* path, int name) {
-    try {
-        pathconf_nid_postfix(path, name);
-
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 bool ChrootThrows(const std::string& path) {
@@ -360,11 +351,13 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
         Require(pathconf_nid_postfix(path.c_str(), 18) == 1024);
         Require(pathconf_nid_postfix(path.c_str(), 54) == 0);
         Require(pathconf_nid_postfix(path.c_str(), 55) == 0);
+        for (const int name : {10, 14, 16, 21}) Require(pathconf_nid_postfix(path.c_str(), name) == 65536);
+        Require(pathconf_nid_postfix(path.c_str(), 17) == 16384);
+        Require(pathconf_nid_postfix(path.c_str(), 60) == 3);
+        for (const int name : {59, 63, 64}) Require(pathconf_nid_postfix(path.c_str(), name) == 0);
     }
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {0, 2, 3, 9, 11, 53, 61, 62, 65, -1})
         Require(pathconf_nid_postfix(file.c_str(), name) == -1 && Error() == 22);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 53, 59, 60, 63, 64})
-        Require(PathconfThrows(file.c_str(), name));
     const auto missing = (root / "missing").string();
     Require(pathconf_nid_postfix(missing.c_str(), 4) == -1 && Error() == 2);
     Require(pathconf_nid_postfix(missing.c_str(), 0) == -1 && Error() == 2);
@@ -376,6 +369,31 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     Require(pathconf_nid_postfix((directory + "/missing/" + std::string(256, 'n')).c_str(), 4) == -1 && Error() == 2);
     const auto longPath = directory + "/" + std::string(1024, 'p');
     Require(pathconf_nid_postfix(longPath.c_str(), 4) == -1 && Error() == 63);
+}
+
+void CheckSettimeofday() {
+    KernelTimezone zone{-1, -1};
+    Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    const KernelTimezone west{60, 1};
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    const KernelTimeval valid{1000000000, 0};
+    bool rejected = false;
+    try {
+        settimeofday_nid_postfix(&valid, &west);
+    } catch (const std::runtime_error& error) {
+        rejected = std::strstr(error.what(), "settimeofday: setting the time to 1000000000.000000") != nullptr;
+    }
+    Require(rejected);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(settimeofday_nid_postfix(nullptr, &west) == 0);
+    KernelTimeval now{};
+    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
+    const KernelTimezone zero{0, 0};
+    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
 void DirectoryRenameTests(const std::filesystem::path& parent) {
@@ -477,16 +495,6 @@ static void CheckProcessQueries() {
 }
 
 template <typename F>
-bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
-    try {
-        fn(descriptor, name);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
-template <typename F>
 void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 1) == 32767);
     Require(fn(descriptor, 4) == 255);
@@ -500,11 +508,13 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 18) == 1024);
     Require(fn(descriptor, 54) == 0);
     Require(fn(descriptor, 55) == 0);
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {10, 14, 16, 21}) Require(fn(descriptor, name) == 65536);
+    Require(fn(descriptor, 17) == 16384);
+    Require(fn(descriptor, 60) == 3);
+    for (const int name : {59, 63, 64}) Require(fn(descriptor, name) == 0);
+    for (const int name : {0, 2, 3, 9, 11, 61, 62, 65, -1})
         Require(fn(descriptor, name) == -1 && Error() == 22);
     Require(fn(descriptor, 53) == 200112);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
-        Require(DescriptorPathconfThrows(fn, descriptor, name));
     Require(fn(-1, 4) == -1 && Error() == 9);
     Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
 }
@@ -666,7 +676,13 @@ int main() {
 #endif
     std::error_code error;
     const auto link = (root / "link").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(link).c_str(), L"sub\\target.txt", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        error = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink("sub/target.txt", link, error);
+#endif
     if (!error) {
         std::memset(buffer, '#', sizeof(buffer));
         Require(readlink_nid_postfix(link.c_str(), buffer, sizeof(buffer)) == 14);
@@ -711,6 +727,7 @@ int main() {
     Require(link_nid_postfix(nullptr, linked.c_str()) == -1 && Error() == 14);
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
+    CheckSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
@@ -1074,7 +1091,12 @@ int main() {
 #endif
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
+    Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);
+    Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0) == 0);
     Require(fchown_nid_postfix(-1, 0, 0) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 1, 0) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 0, 1) == -1 && Error() == 9);
+    Require(fchown_nid_postfix(-1, 1, 1) == -1 && Error() == 9);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);

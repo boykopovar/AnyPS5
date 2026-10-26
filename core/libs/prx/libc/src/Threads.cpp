@@ -498,13 +498,21 @@ void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
     RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_unlock");
 }
 
-void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+static void LaunchPad_nid_no_patch(GuestPad* pad, void** attrSlot, void** thread) {
     if (!pad || !thread) APS5_INVALID_ARG_EX;
     const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
     if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
-    const int created = create(thread, nullptr, PadEntry_nid_no_patch, pad);
+    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad);
     if (created != 0) ThrowCppError_nid_no_patch(6);
     while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+    LaunchPad_nid_no_patch(pad, nullptr, thread);
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread) {
+    LaunchPad_nid_no_patch(pad, attrSlot, thread);
 }
 
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {

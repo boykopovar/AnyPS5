@@ -78,6 +78,7 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_posix_spawn_tests)
     add_test(NAME guest_posix_spawn COMMAND guest_posix_spawn_tests)
     set_tests_properties(guest_posix_spawn PROPERTIES TIMEOUT 20)
+    add_asan_test_options(guest_posix_spawn handle_sigbus=0)
     if(WIN32)
         set_tests_properties(guest_posix_spawn PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")

@@ -5,15 +5,15 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -242,7 +242,10 @@ struct HostPadThread {
     void* result = nullptr;
 };
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* arg) {
+static const void* lastCreateAttrSlot = nullptr;
+
+static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg) {
+    lastCreateAttrSlot = attrSlot;
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, arg] { handle->result = entry(arg); });
     *thread = handle;
@@ -270,6 +273,80 @@ static unsigned APS5_VABI TestPadGo(GuestPad* base) {
     _ZNSt4_Pad8_ReleaseEv_nid_postfix(base);
 
     return 42;
+}
+
+static void RequireExit(bool value, const char* message) {
+    if (!value) {
+        std::fprintf(stderr, "CRT exit lifecycle: %s\n", message);
+        std::abort();
+    }
+}
+
+struct CrtExitState {
+    int code = 0;
+    int key = -1;
+    std::barrier<>* ready = nullptr;
+    void* parent = nullptr;
+    void* self = nullptr;
+    std::atomic<unsigned> destructors{0};
+    std::atomic<bool> returned{false};
+};
+
+static void APS5_VABI CrtExitDestructor(void* value) {
+    auto& state = *static_cast<CrtExitState*>(value);
+    RequireExit(_Thrd_current_nid_postfix() == state.self, "identity during destructor");
+    RequireExit(_Tss_get_nid_postfix(state.key) == nullptr, "value cleared before destructor");
+    if (state.destructors.fetch_add(1) == 0)
+        RequireExit(_Tss_set_nid_postfix(state.key, &state) == 0, "reinstall value for another cleanup pass");
+}
+
+static auto volatile crtExit = &_Thrd_exit_nid_postfix;
+
+static void* APS5_VABI CrtExitEntry(void* value) {
+    auto& state = *static_cast<CrtExitState*>(value);
+    state.self = _Thrd_current_nid_postfix();
+    RequireExit(state.self && _Thrd_equal_nid_postfix(state.self, state.self) == 1, "current identity");
+    RequireExit(_Thrd_equal_nid_postfix(state.self, state.parent) == 0, "different parent identity");
+    RequireExit(_Tss_get_nid_postfix(state.key) == nullptr, "child starts with empty value");
+    RequireExit(_Tss_set_nid_postfix(state.key, &state) == 0, "set child value");
+    state.ready->arrive_and_wait();
+    RequireExit(_Tss_get_nid_postfix(state.key) == &state, "child value isolation");
+    crtExit(state.code);
+    state.returned = true;
+    return nullptr;
+}
+
+static void ThreadExitLifecycle() {
+    constexpr std::array<int, 5> codes{0, 42, -1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()};
+    constexpr std::array<std::uintptr_t, 5> expected{0, 42, 0xffffffffu, 0x80000000u, 0x7fffffffu};
+    std::barrier ready(6);
+    std::array<CrtExitState, 5> states;
+    std::array<Pthread, 5> threads{};
+    int key = -1, parentValue = 31;
+    void* parent = _Thrd_current_nid_postfix();
+    RequireExit(_Tss_create_nid_postfix(&key, CrtExitDestructor) == 0, "create destructor key");
+    RequireExit(_Tss_set_nid_postfix(key, &parentValue) == 0, "set parent value");
+    for (unsigned i = 0; i < states.size(); ++i) {
+        states[i].code = codes[i];
+        states[i].key = key;
+        states[i].ready = &ready;
+        states[i].parent = parent;
+        RequireExit(scePthreadCreate(&threads[i], nullptr, CrtExitEntry, &states[i], "CRT exit audit") == 0, "create child");
+    }
+    RequireExit(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated before release");
+    ready.arrive_and_wait();
+    for (unsigned i = 0; i < states.size(); ++i) {
+        void* result = nullptr;
+        RequireExit(scePthreadJoin(threads[i], &result) == 0, "join exiting child");
+        RequireExit(reinterpret_cast<std::uintptr_t>(result) == expected[i], "full zero-extended exit result");
+        RequireExit(!states[i].returned, "exit must not return");
+        RequireExit(states[i].destructors == 2, "reinstalled destructor runs twice before join returns");
+        RequireExit(states[i].self == threads[i], "created and current identity match");
+    }
+    RequireExit(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated after children exit");
+    RequireExit(_Tss_delete_nid_postfix(key) == 0, "delete key");
+    RequireExit(_Tss_get_nid_postfix(key) == nullptr, "deleted key value unavailable");
+    std::puts("PASS CRT lifecycle: five concurrent exit codes, full return width, identity, parent/child isolation, two destructor passes, key deletion");
 }
 
 static void PadLaunchAndJoin() {
@@ -303,11 +380,38 @@ static void PadLaunchAndJoin() {
     _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &thread);
 
     Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(lastCreateAttrSlot == nullptr);
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
 
     int code = 0;
     Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
     Require(_Thrd_join_nid_postfix(nullptr, &code) == 4);
+
+    RegisterPthreadCreate_nid_no_patch(nullptr);
+    RegisterPthreadJoin_nid_no_patch(nullptr);
+}
+
+static void PadLaunchWithAttributes() {
+    unsigned (APS5_VABI* vtable[1])(GuestPad*) = {TestPadGo};
+    RegisterPthreadCreate_nid_no_patch(HostPthreadCreate);
+    RegisterPthreadJoin_nid_no_patch(HostPthreadJoin);
+
+    TestPad pad{};
+    pad.vtable = vtable;
+    _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
+    int attribute = 0;
+    void* attrSlot = &attribute;
+    void* thread = nullptr;
+    lastCreateAttrSlot = nullptr;
+    _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &attrSlot, &thread);
+    Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(attrSlot == &attribute);
+    Require(lastCreateAttrSlot == &attrSlot);
+
+    _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+    int code = 0;
+    Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
 
     RegisterPthreadCreate_nid_no_patch(nullptr);
     RegisterPthreadJoin_nid_no_patch(nullptr);
@@ -478,6 +582,7 @@ static void ThreadHelpers() {
 }
 
 int main() {
+    ThreadExitLifecycle();
     KernelKeys();
     VersionedSync();
     ForwardedCalls();
@@ -488,6 +593,7 @@ int main() {
     ConditionBroadcast();
     ConditionSignal();
     PadLaunchAndJoin();
+    PadLaunchWithAttributes();
     PadDetach();
     ThreadHelpers();
 }

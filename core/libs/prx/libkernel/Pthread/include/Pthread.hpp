@@ -134,6 +134,7 @@ struct PthreadPrivate {
     std::atomic<bool> suspended{false};
     bool createdSuspended = false;
     std::atomic<int> schedPolicy{1};
+    int inheritSched = 4;
     void* wakeEvent = nullptr;
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
