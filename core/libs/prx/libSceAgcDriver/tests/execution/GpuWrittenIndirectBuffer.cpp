@@ -128,13 +128,25 @@ void HeldWaitAfterRewrite(const GuestBlock& block) {
     Packet secondDcb{second.data(), static_cast<std::uint32_t>(second.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&firstDcb) == 0 && sceAgcDriverSubmitDcb(&secondDcb) == 0, "GPU-written indirect buffer: the label submissions failed");
     Store(block, GateOffset, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
-    const auto early = Load(block, MarkerOffset);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    bool blocked = false;
+    std::uint32_t early = 0;
+    while (!blocked && early == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        blocked = std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const AgcDriver::AwaitedWait& wait) { return wait.address == label && wait.reference == 1; });
+        AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
+        early = Load(block, MarkerOffset);
+        if (!blocked && early == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    AgcDriver::GuestMemory::FlushGpuWrites(label, sizeof(std::uint32_t));
+    const auto rewritten = Load(block, LabelOffset);
     Store(block, LabelOffset, 1);
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
     Require(early == 0, "a wait on a label that a rewritten indirect buffer before it sets to 0 passed on the value 1 it held at submission");
+    Require(blocked, "the wait after the rewritten indirect buffer did not block on the label within 10 s");
+    Require(rewritten == 0, "the wait after the rewritten indirect buffer blocked before the rewritten WRITE_DATA set the label to 0: the label is " + std::to_string(rewritten));
     Require(Load(block, MarkerOffset) == 1, "the wait after the rewritten indirect buffer did not pass once the label was 1 again");
 }
 
