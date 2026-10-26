@@ -164,6 +164,10 @@ void PadInput::streamHaptics() {
         if (std::all_of(samples.begin(), samples.end(), [](std::int8_t sample) { return sample == 0; })) continue;
         next = DualSenseHaptics::NextReport(next, std::chrono::steady_clock::now());
         PreciseSleepUntil(next);
+        if (const auto due = hapticsReconfigureAt.load(); due != 0 && std::chrono::steady_clock::now().time_since_epoch().count() >= due) {
+            hapticsReconfigureAt = 0;
+            if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
+        }
         if (!write(DualSenseHaptics::Report(sequence++, counter++, samples))) return;
     }
 }
@@ -175,6 +179,8 @@ void PadInput::closeHaptics() {
     if (hapticsThread.joinable()) hapticsThread.join();
     SDL_hid_close(haptics);
     haptics = nullptr;
+    hapticsRumbled = false;
+    hapticsReconfigureAt = 0;
 }
 
 void PadInput::closeController(int slot) {
@@ -267,6 +273,10 @@ void PadInput::applyOutput() {
         slots[slot].outputPending = false;
         slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
         SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+        if (slot == 0 && haptics != nullptr) {
+            if (hapticsRumbled && !rumbling) hapticsReconfigureAt = (now + DualSenseHaptics::RumbleSettle).time_since_epoch().count();
+            hapticsRumbled = rumbling;
+        }
         if (slots[slot].outputState.triggerTouched) {
             if (isPs5) {
                 TriggerEffectCache::Effect effect{};

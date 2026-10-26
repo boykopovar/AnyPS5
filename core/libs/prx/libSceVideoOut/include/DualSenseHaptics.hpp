@@ -17,6 +17,7 @@ constexpr std::size_t SamplesOffset = 13;
 constexpr std::size_t SamplesBytes = 64;
 constexpr std::uint8_t ControllerQueueFrames = 64;
 constexpr std::chrono::nanoseconds ReportInterval{1'000'000'000LL * SamplesBytes / 2 / 3000};
+constexpr std::chrono::milliseconds RumbleSettle{100};
 
 inline std::chrono::steady_clock::time_point NextReport(std::chrono::steady_clock::time_point previous, std::chrono::steady_clock::time_point now) {
     return std::max(previous + ReportInterval, now);
