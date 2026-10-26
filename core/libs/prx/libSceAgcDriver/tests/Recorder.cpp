@@ -4194,6 +4194,44 @@ private:
     static inline DescriptorUpdates* active = nullptr;
 };
 
+void movedWordUploadTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    DescriptorUpdates updates(context);
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        Recorder snapshots(context);
+        snapshots.Activate();
+        ShaderRecompiler::RecompileResult program;
+        ShaderRecompiler::DescriptorBinding data{};
+        data.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+        data.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
+        data.binding = 2;
+        data.count = 1;
+        data.guestDescriptor = {1, 2, 3, 4};
+        program.bindings.push_back(data);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        ShaderResources resources(context, shader);
+        const std::array<std::uint32_t, 4> firstWords{5, 6, 7, 8};
+        const std::array<std::uint32_t, 4> secondWords{9, 10, 11, 12};
+        const ShaderResources::MovedBuffer movedFirst{0, 0, 16, firstWords};
+        const ShaderResources::MovedBuffer movedSecond{0, 0, 16, secondWords};
+        const auto first = resources.PrepareDrawBindings(snapshots, std::span(&movedFirst, 1));
+        const auto second = resources.PrepareDrawBindings(snapshots, std::span(&movedSecond, 1));
+        Require(first != nullptr && second != nullptr && first->snapshots.size() == 1 && second->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
+        const auto& one = first->snapshots.front();
+        const auto& two = second->snapshots.front();
+        Require(one.buffer == two.buffer, "two draws with moved words got a buffer each instead of slices of the recorder's draw upload chunk");
+        Require(one.offset != two.offset, "two draws' moved words share one slice of the upload chunk");
+        Require(one.bytes == 16 && two.bytes == 16 && std::memcmp(one.Bytes().data(), firstWords.data(), 16) == 0 && std::memcmp(two.Bytes().data(), secondWords.data(), 16) == 0, "a moved-word slice does not hold its draw's words");
+        const auto& descriptor = updates.calls.back().buffers.at({2u, 0u});
+        Require(descriptor.buffer == two.buffer->Handle() && descriptor.offset == two.offset && descriptor.range == 16, "the draw descriptor does not point at the moved words' slice");
+        snapshots.Sync();
+    }
+    ClearCachedTextures(context.device);
+    recorder.Activate();
+}
+
 void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     DescriptorUpdates updates(context);
@@ -4235,8 +4273,10 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
             Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
-                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
-                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
+                const bool movedKey = key.first == (allocation == 0 ? 2u : 7u);
+                const auto expected = movedKey ? draw->snapshots.front().buffer->Handle() : before.buffer;
+                const auto expectedOffset = movedKey ? draw->snapshots.front().offset : before.offset;
+                Require(after.buffer == expected && after.offset == expectedOffset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
             }
             for (const auto& [key, before] : original.images) {
                 const auto after = actual.images.at(key);
@@ -11823,6 +11863,11 @@ int main(int argc, char** argv) {
             overlappedRangeTests(recorder);
             spaceWriteSyncTests(device, recorder);
             std::cout << "Address space pending write tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--moved-word-upload-only") {
+            movedWordUploadTests(device, recorder);
+            std::cout << "Moved word upload tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {

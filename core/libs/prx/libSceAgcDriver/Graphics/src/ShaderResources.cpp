@@ -5616,6 +5616,15 @@ std::size_t ShaderResources::DrawUploadLimit() {
     return limit;
 }
 
+namespace {
+
+bool MovedWordUpload() {
+    static const bool enabled = std::getenv("APS5_NO_MOVED_WORD_UPLOAD") == nullptr;
+    return enabled;
+}
+
+}
+
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly) const {
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
@@ -5638,6 +5647,16 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         if (override != moved.end() && !override->words.empty()) {
+            if (MovedWordUpload() && override->size <= uploadLimit) {
+                auto slice = recorder.DrawUpload(override->size);
+                std::memcpy(slice.bytes, override->words.data(), override->size);
+                for (const auto& patch : dataPatches) {
+                    if (patch.allocation == index && patch.byte < override->size) slice.bytes[patch.byte] = static_cast<std::byte>(patch.adjustment);
+                }
+                selected.push_back(index);
+                keep({0, std::move(slice.buffer), slice.offset, override->size});
+                continue;
+            }
             constexpr std::size_t MovedWordBufferSlots = 8;
             const auto held = std::find_if(movedWordBuffers.begin(), movedWordBuffers.end(), [&](const MovedWordBuffer& entry) { return entry.allocation == index && entry.size == override->size && std::ranges::equal(entry.words, override->words); });
             std::shared_ptr<Buffer> buffer;

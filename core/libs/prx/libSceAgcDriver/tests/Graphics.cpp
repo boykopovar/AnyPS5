@@ -6146,8 +6146,8 @@ void descriptorSnapshotTests() {
                     Require(descriptor.buffer == original[index].buffer && descriptor.offset == original[index].offset && descriptor.range == original[index].range, "snapshot update changed an untouched buffer descriptor");
                 } else {
                     const auto& item = snapshots->snapshots[snapshot];
-                    Require(descriptor.buffer == item.buffer->Handle() && descriptor.offset == 0 && descriptor.range == moved[snapshot].size, "snapshot descriptor used another element's buffer or range");
-                    Require(sameBytes(bufferBytes(descriptor.buffer), moved[snapshot].words.data(), moved[snapshot].size), "snapshot descriptor lost its buffer data");
+                    Require(descriptor.buffer == item.buffer->Handle() && descriptor.offset == item.offset && descriptor.range == moved[snapshot].size, "snapshot descriptor used another element's buffer or range");
+                    Require(sameBytes(bufferBytes(descriptor.buffer).subspan(static_cast<std::size_t>(descriptor.offset)), moved[snapshot].words.data(), moved[snapshot].size), "snapshot descriptor lost its buffer data");
                     ++snapshot;
                 }
             }
