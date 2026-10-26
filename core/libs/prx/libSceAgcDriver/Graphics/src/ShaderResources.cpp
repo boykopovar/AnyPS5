@@ -6795,6 +6795,10 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             if (item.address == address && item.size == size) continue;
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
             if (written || empty || item.written) return refuse(MoveRefusal::Written);
+            const auto oldBegin = item.address - item.adjustment;
+            const auto oldBytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(item.size, item.adjustment));
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> oldRange{{{oldBegin, oldBegin + oldBytes}}};
+            if (StorageTexture::AnyPendingOverlaps(oldRange) || AnyShadowedOverlaps(oldBegin, oldBytes)) return refuse(MoveRefusal::Overlap);
             if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
             const auto begin = address - item.adjustment;
             const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
