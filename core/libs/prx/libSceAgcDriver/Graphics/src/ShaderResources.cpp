@@ -5164,6 +5164,11 @@ std::uint32_t SamplerTableCapacityFor(const Context& context, bool updateAfterBi
 
 }
 
+std::uint64_t& DeviceProcLookups() {
+    thread_local std::uint64_t count = 0;
+    return count;
+}
+
 std::uint32_t ImageTableCapacity(const Context& context) {
     const auto capacity = ImageTableCapacityFor(context, false);
     return capacity != 0u ? capacity : ImageTableCapacityFor(context, true);
