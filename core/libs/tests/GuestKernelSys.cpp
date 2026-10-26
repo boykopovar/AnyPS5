@@ -485,6 +485,21 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void SceKernelFlock() {
+    const auto path = "anyps5-sce-flock-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin";
+    const int first = open_nid_postfix(path.c_str(), 0x602, 0644);
+    const int second = open_nid_postfix(path.c_str(), 2, 0);
+    Require(first >= 0 && second >= 0);
+    Require(sceKernelFlock(first, 2 | 4) == 0);
+    Require(sceKernelFlock(second, 2 | 4) == static_cast<int>(0x80020023u));
+    Require(sceKernelFlock(first, 8) == 0);
+    Require(sceKernelFlock(second, 2 | 4) == 0);
+    Require(sceKernelFlock(second, 8) == 0);
+    Require(sceKernelFlock(-1, 2) == static_cast<int>(0x80020009u));
+    Require(close_nid_postfix(second) == 0 && close_nid_postfix(first) == 0);
+    std::filesystem::remove(path);
+}
+
 static void CheckProcessQueries() {
     KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39), ~0ull}};
     std::int32_t enabled = -1;
@@ -556,6 +571,7 @@ int main() {
 #endif
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    SceKernelFlock();
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);

@@ -32,7 +32,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
-
+#include "prx/libkernel/KernelErrors.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -357,6 +357,10 @@ int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     *info = {};
     info->capabilities[0] = 0x2000000000000000;
     return 0;
+}
+
+int APS5_VABI sceKernelFlock(int d, int operation) {
+    return flock_nid_postfix(d, operation) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
