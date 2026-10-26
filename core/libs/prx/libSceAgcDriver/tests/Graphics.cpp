@@ -4266,8 +4266,6 @@ void eqaaColorTargetTests() {
     Require(state.samples == 4 && state.colors.size() == 1 && state.colors[0].samples == 4 && state.colors[0].eqaaFragments == 2, "a 4-sample 2-fragment target did not decode as an EQAA target drawn at its 4 coverage samples");
     Require(state.colors[0].fmaskAddress == FmaskAddress && state.colors[0].cmaskAddress == cmaskAddress && state.colors[0].cmaskFastClear, "the EQAA target's FMASK or CMASK did not decode");
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a draw into an EQAA target");
-    queue.context[0x31d] = 0x00002000u;
-    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) and one fragment are unsupported");
     queue.context[0x31d] = 0x00012000u;
     const auto full = DecodeState(queue).colors[0];
     Require(full.samples == 4 && full.eqaaFragments == 0, "a 4-sample 4-fragment target decoded as EQAA");
@@ -4489,7 +4487,7 @@ void multisampledDepthTests() {
     Require(DecodeState(queue).colors[0].fmaskAddress == 0u, "an uncompressed one-fragment color target noted an FMASK address");
     queue = oneFragment();
     queue.context[0x31d] = 0xa000;
-    expectFailure([&] { DecodeState(queue); }, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) are supported only with FMASK");
     queue = oneFragment();
     queue.context[0x31d] = 0x8000;
     expectFailure([&] { DecodeState(queue); }, "color targets with more fragments than samples are unsupported");
