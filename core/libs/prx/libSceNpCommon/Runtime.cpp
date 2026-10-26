@@ -8,6 +8,7 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -861,6 +862,8 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
+    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0)
+        throw std::runtime_error("sceNpCalloutTermCtx: terminating a callout context from one of its own callouts is not implemented");
     sceNpMutexLock(&context->mutex);
 
     context->stopping = 1;

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -363,6 +364,40 @@ void TestCallouts() {
     Require(context.initialized == 0, "terminating clears the context");
     sceNpCalloutTermCtx(&context);
 
+}
+
+struct SelfTermination {
+    NpCalloutContext* context {};
+    std::atomic<int> finished {0};
+    std::string message;
+};
+
+SelfTermination g_selfTermination;
+
+void APS5_VABI TerminateOwnContext(void*) {
+    try {
+        sceNpCalloutTermCtx(g_selfTermination.context);
+    } catch (const std::runtime_error& error) {
+        g_selfTermination.message = error.what();
+    }
+    g_selfTermination.finished.store(1, std::memory_order_release);
+}
+
+void TestCalloutSelfTermination() {
+    NpCalloutContext context {};
+    NpCallout callout {};
+    g_selfTermination.context = &context;
+    Require(sceNpCalloutInitCtx(&context, "np-self-term", 0x4000, 0, 0) == 0, "a callout context starts");
+    Require(sceNpCalloutStartOnCtx(&context, &callout, 0, TerminateOwnContext, nullptr) == 0, "the terminating callout is queued");
+    for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
+    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
+    Require(context.initialized == 1, "a refused termination leaves the context running");
+
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {
@@ -1076,6 +1111,7 @@ int main() {
     TestNumbers();
     TestHexAndCopies();
     TestCallouts();
+    TestCalloutSelfTermination();
     TestIds();
     TestLanguagesAndDebugIds();
     TestJsonText();
