@@ -555,6 +555,9 @@ int ConditionWait(UserCondition* condition, UserMutex* mutex, std::uint64_t flag
     if (const int error = CheckMutex(mutex); error != 0) {
         return error;
     }
+    if ((std::atomic_ref<std::uint32_t>(mutex->flags).load() & UMUTEX_PRIO_PROTECT) != 0) {
+        NotImplemented_nid_no_patch("_umtx_op condition wait on a priority-protected umutex");
+    }
     std::optional<std::uint64_t> deadline;
     if (const int error = ConditionDeadline(condition, flags, timeArgument, deadline); error != 0) {
         return error;
@@ -666,6 +669,9 @@ int RwlockLock(UserRwlock* rwlock, bool writer, std::uint64_t operationFlags, co
                 const bool free = writer ? (current & (URWLOCK_WRITE_OWNER | URWLOCK_MAX_READERS)) == 0
                                          : (current & URWLOCK_WRITE_OWNER) == 0 && (preferReader || (current & URWLOCK_WRITE_WAITERS) == 0);
                 if (!free) {
+                    if ((current & waiterBit) == 0 && !state.compare_exchange_weak(current, current | waiterBit)) {
+                        continue;
+                    }
                     break;
                 }
                 if (!writer && (current & URWLOCK_MAX_READERS) == URWLOCK_MAX_READERS) {
@@ -678,7 +684,6 @@ int RwlockLock(UserRwlock* rwlock, bool writer, std::uint64_t operationFlags, co
                     return true;
                 }
             }
-            state.fetch_or(waiterBit);
             blocked.fetch_add(1);
             return false;
         }, deadline, caller);
