@@ -122,7 +122,6 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_tokenize PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_icu_tokenize PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()
