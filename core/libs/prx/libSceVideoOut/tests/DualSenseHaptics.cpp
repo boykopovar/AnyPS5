@@ -87,6 +87,20 @@ void BufferFollowsTheInputRate() {
     Require(buffer.Frames() == 30, "441 frames at 44.1 kHz are 30 frames at 3 kHz");
 }
 
+void ReportsArePaced() {
+    using namespace std::chrono;
+    const steady_clock::time_point start{seconds(100)};
+    Require(DualSenseHaptics::ReportInterval == nanoseconds(10666666), "one 32-frame block at 3 kHz lasts 10.67 ms");
+    auto next = DualSenseHaptics::NextReport(start - DualSenseHaptics::ReportInterval, start);
+    Require(next == start, "the first report goes out at once");
+    for (int report = 1; report <= 4; ++report) {
+        next = DualSenseHaptics::NextReport(next, start);
+        Require(next == start + report * DualSenseHaptics::ReportInterval, "buffered reports are spaced one interval apart");
+    }
+    const auto resumed = start + seconds(1);
+    Require(DualSenseHaptics::NextReport(next, resumed) == resumed, "a report after a pause goes out at once, without a catch-up burst");
+}
+
 }
 
 int main() {
@@ -94,6 +108,7 @@ int main() {
     PowerReportLayout();
     BufferAveragesTo3kHz();
     BufferFollowsTheInputRate();
+    ReportsArePaced();
     std::puts("dualsense haptics tests passed");
     return 0;
 }

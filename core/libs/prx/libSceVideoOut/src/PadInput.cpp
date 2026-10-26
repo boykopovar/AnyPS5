@@ -13,6 +13,7 @@
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/PadStatusSdl.hpp"
 #include "prx/libSceVideoOut/include/DualSenseHaptics.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
@@ -152,15 +153,17 @@ void PadInput::streamHaptics() {
     const auto write = [this](std::span<const std::uint8_t> report) {
         if (SDL_hid_write(haptics, report.data(), report.size()) >= 0) return true;
         APS5_LOG_ERR("Pad: a Bluetooth DualSense haptics report failed (%s); haptics stop until the controller reconnects", SDL_GetError());
-        PadSetHapticStreamOpen_nid_postfix(false);
         hapticsRunning = false;
         return false;
     };
     if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
+    auto next = std::chrono::steady_clock::now() - DualSenseHaptics::ReportInterval;
     while (hapticsRunning) {
         std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};
         if (!PadWaitTakeHapticBlock_nid_postfix(samples.data(), 50)) continue;
         if (std::all_of(samples.begin(), samples.end(), [](std::int8_t sample) { return sample == 0; })) continue;
+        next = DualSenseHaptics::NextReport(next, std::chrono::steady_clock::now());
+        PreciseSleepUntil(next);
         if (!write(DualSenseHaptics::Report(sequence++, counter++, samples))) return;
     }
 }
