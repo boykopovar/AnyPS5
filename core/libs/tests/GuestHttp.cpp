@@ -442,6 +442,14 @@ int main() {
     Require(sceHttpSetRequestStatusCallback(request, RequestStatusCallback, &callbackCount) == 0);
     Require(sceHttpSendRequest(request, nullptr, 0) == static_cast<int>(0x80431063u));
     Require(callbackCount == 0);
+    int statusCode = 0x5a5a;
+    Require(sceHttpGetStatusCode(request, &statusCode) == static_cast<int>(0x80431063u) && statusCode == 0x5a5a);
+    int lengthResult = 0x5a5a;
+    std::uint64_t contentLength = 0x5a5a;
+    Require(sceHttpGetResponseContentLength(request, &lengthResult, &contentLength) == static_cast<int>(0x80431063u) && lengthResult == 0x5a5a && contentLength == 0x5a5a);
+    char* allHeaders = nullptr;
+    std::size_t allHeadersSize = 0x5a5a;
+    Require(sceHttpGetAllResponseHeaders(request, &allHeaders, &allHeadersSize) == static_cast<int>(0x80431063u) && allHeaders == nullptr && allHeadersSize == 0x5a5a);
     Require(sceHttpSetRequestStatusCallback(request, nullptr, nullptr) == 0);
     Require(sceHttpSetRequestStatusCallback(-1, RequestStatusCallback, &callbackCount) == static_cast<int>(0x80431100u));
     constexpr int outOfMemory = static_cast<int>(0x80431022);
