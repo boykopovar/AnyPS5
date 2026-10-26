@@ -1660,6 +1660,16 @@ int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
+#ifdef __APPLE__
+static std::int64_t EmptyIovecsResult(int d, bool write, bool positioned) {
+    const int flags = ::fcntl(d, F_GETFL);
+    if (flags < 0) return SceErrorFromErrno(errno);
+    if ((flags & O_ACCMODE) == (write ? O_RDONLY : O_WRONLY)) return SceErrorFromErrno(EBADF);
+    if (positioned && ::lseek(d, 0, SEEK_CUR) < 0) return SceErrorFromErrno(errno);
+    return 0;
+}
+#endif
+
 int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
     std::vector<KernelIovec> vectors;
@@ -1674,7 +1684,7 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
     if (File::IsRandomDevice(d)) return ReadRandomIovecs(d, iov, iovcnt);
     if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, nullptr)) return *archived;
 #ifdef __APPLE__
-    if (iovcnt == 0) return 0;
+    if (iovcnt == 0) return EmptyIovecsResult(d, false, false);
 #endif
     const auto result = static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt));
     return result < 0 ? SceErrorFromErrno(errno) : result;
@@ -1694,7 +1704,7 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt
     const auto sharedResult = File::WritevSharedMemory_nid_no_patch(d, NativeIovecs(iov), iovcnt);
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__
-    if (iovcnt == 0) return 0;
+    if (iovcnt == 0) return EmptyIovecsResult(d, true, false);
 #endif
     const auto result = static_cast<std::int64_t>(::writev(d, NativeIovecs(iov), iovcnt));
     return result < 0 ? SceErrorFromErrno(errno) : result;
@@ -1712,7 +1722,7 @@ int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* guestIov, int iovcnt
     if (File::IsRandomDevice(d)) return ReadRandomIovecs(d, iov, iovcnt);
     if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, &offset)) return *archived;
 #ifdef __APPLE__
-    if (iovcnt == 0) return 0;
+    if (iovcnt == 0) return EmptyIovecsResult(d, false, true);
 #endif
     const auto result = static_cast<std::int64_t>(::preadv(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)));
     return result < 0 ? SceErrorFromErrno(errno) : result;
@@ -1730,7 +1740,7 @@ int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* guestIov, int iovcn
     const auto sharedResult = File::PwritevSharedMemory_nid_no_patch(d, NativeIovecs(iov), iovcnt, offset);
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__
-    if (iovcnt == 0) return 0;
+    if (iovcnt == 0) return EmptyIovecsResult(d, true, true);
     if (const auto appended = File::WritevAtEnd(d, NativeIovecs(iov), iovcnt); appended != -2) return appended < 0 ? SceErrorFromErrno(errno) : appended;
 #endif
     const auto result = static_cast<std::int64_t>(::pwritev(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)));
