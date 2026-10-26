@@ -8842,6 +8842,101 @@ bool flushWaitMipChainTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+void uploadBlockTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: upload blocks not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = std::size_t{8} << 20u;
+    struct Case {
+        const char* name;
+        std::size_t offset;
+        std::size_t registeredEnd;
+        std::size_t segments;
+    };
+    const Case cases[] = {
+        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2},
+    };
+    SetHostImportWindow(window);
+    struct Window {
+        ~Window() { SetHostImportWindow(0); }
+    } restore;
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    std::string failures;
+    for (const auto& test : cases) {
+        GuestTextureResource resource{};
+        resource.width = 1024;
+        resource.height = 1024;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+        Require(surfaceBytes == (4u << 20u) && test.offset + surfaceBytes <= test.registeredEnd, std::string(test.name) + ": the surface does not fit its pieces");
+#ifdef _WIN32
+        void* reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        void* reserved = std::aligned_alloc(window, 2 * window);
+#endif
+        Require(reserved != nullptr, "cannot allocate the upload block");
+        auto* memory = static_cast<std::uint8_t*>(reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(reserved) + window - 1) / window * window));
+        for (std::size_t i = 0; i < window; ++i) memory[i] = pattern(i);
+        std::vector<std::size_t> pieces;
+        for (std::size_t offset = 0; offset < test.registeredEnd; offset += piece) pieces.push_back(offset);
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Add(memory + offset, piece, true, true, true);
+        }
+        ClearHostImports(base.device);
+        const auto address = reinterpret_cast<std::uint64_t>(memory) + test.offset;
+        const auto before = HostImportCounters();
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        resource.baseAddress = address;
+        bool direct = false;
+        std::size_t kept = 0;
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            recorder.Keep(image);
+            const auto read = recorder.DescribePendingRead(address + surfaceBytes - piece, piece);
+            direct = read.has_value() && read->kind == Recorder::ReadKind::StorageUpload;
+            image->MarkDirty();
+            image->WriteBack();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            for (std::size_t i = test.offset; i < test.offset + surfaceBytes; ++i) kept += memory[i] == pattern(i) ? 1 : 0;
+        }
+        const auto after = HostImportCounters();
+        const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
+        std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
+        if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
+        if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
+        if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Remove(memory + offset);
+        }
+        ClearHostImports(base.device);
+        recorder.Sync();
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        std::free(reserved);
+#endif
+    }
+    if (!failures.empty()) throw std::runtime_error("upload blocks:\n" + failures);
+    std::cout << "upload blocks: ok\n";
+}
+
 void singlePassTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0 || !base.singlePassStorage) {
@@ -15119,6 +15214,7 @@ int main(int argc, char** argv) {
                 return 77;
             }
             writeBackBlockTests(device, recorder);
+            uploadBlockTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--flush-wait-mip-chain-only") return flushWaitMipChainTests(device, recorder) ? 0 : 77;
@@ -15295,6 +15391,7 @@ int main(int argc, char** argv) {
         splitWriteBackTests(device, recorder);
         writeBackBlockTests(device, recorder);
         flushWaitMipChainTests(device, recorder);
+        uploadBlockTests(device, recorder);
         singlePassTests(device, recorder, false);
         singlePassTests(device, recorder, true);
         unchangedCpuStampTests(device, recorder);
