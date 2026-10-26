@@ -301,6 +301,7 @@ static int ParseVag(std::size_t size, TRead&& read, Ngs2WaveformInfo& info) {
     info.format = {SCE_NGS2_WAVEFORM_TYPE_VAG, channels, ReadBe32(header + 0x10), 0, 0, 0};
     info.data_offset = VAG_HEADER_SIZE;
     info.data_size = dataSize;
+    if (dataSize / frameBytes > UINT32_MAX / VAG_FRAME_SAMPLES) throw std::runtime_error("NGS2: a VAG waveform of more than 2^32 samples is not implemented");
     info.num_samples = dataSize / frameBytes * VAG_FRAME_SAMPLES;
     info.audio_unit_size = frameBytes;
     info.num_audio_unit_samples = VAG_FRAME_SAMPLES;
