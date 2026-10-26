@@ -813,17 +813,7 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_cert_status_str_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_check_validity_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OCSP_crl_reason_str_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -844,11 +834,6 @@ int APS5_VABI OCSP_response_get1_basic_nid_postfix(void) {
 }
 
 int APS5_VABI OCSP_response_status_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OCSP_response_status_str_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -979,21 +964,6 @@ int APS5_VABI RSA_verify_nid_postfix(void) {
 }
 
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CIPHER_get_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CIPHER_get_version_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

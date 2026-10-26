@@ -322,6 +322,9 @@ static void CheckSpecialPort(int user, int handle) {
     Require(extended.deviceClass == -1 && extended.reserved[0] == 0);
     Require(scePadDeviceClassGetExtendedInformation(handle, &extended) == PAD_OK);
     Require(extended.deviceClass == 0);
+    std::int32_t specialType = -1;
+    Require(scePadGetControllerType(special, &specialType) == PAD_OK);
+    Require(specialType == PAD_CONTROLLER_TYPE_UNKNOWN);
     const PadVibrationParam vibration{0, 0};
     const PadLightBarParam lightBar{0, 0, 255};
     Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -688,6 +691,9 @@ int main() {
     std::uint32_t p2AccessState = 7;
     Require(scePadGetAccessibilityControllerState(handle2, &p2AccessState) == PAD_OK);
     Require(p2AccessState == 0);
+    std::int32_t p2Type = -1;
+    Require(scePadGetControllerType(handle2, &p2Type) == PAD_OK);
+    Require(p2Type == PAD_CONTROLLER_TYPE_DUAL_SENSE);
 
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);

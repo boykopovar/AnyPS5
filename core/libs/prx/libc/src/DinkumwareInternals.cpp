@@ -143,6 +143,22 @@ long double APS5_VABI _LSin_nid_postfix(long double x, unsigned int quadrant) {
     return quadrant != 0 ? cosl_nid_postfix(x) : sinl_nid_postfix(x);
 }
 
+double APS5_VABI _Divide_nid_postfix(double x, double y) {
+    return x / y;
+}
+
+float APS5_VABI _FDivide_nid_postfix(float x, float y) {
+    return x / y;
+}
+
+double APS5_VABI _Recip_nid_postfix(double x) {
+    return 1.0 / x;
+}
+
+float APS5_VABI _FRecip_nid_postfix(float x) {
+    return 1.0f / x;
+}
+
 double APS5_VABI _Log_nid_postfix(double x, int base) {
     if (base > 0) return log10_nid_postfix(x);
     return base == 0 ? log_nid_postfix(x) : log2_nid_postfix(x);

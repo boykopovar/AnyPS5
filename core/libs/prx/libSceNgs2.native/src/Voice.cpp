@@ -87,7 +87,7 @@ void Ngs2Voice::ResetSetup() {
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
     const auto& last = block.pieces.back();
-    return last.data + last.frames * voice.channels * sizeof(std::int16_t);
+    return last.data + last.frames * voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
 }
 
 const std::uint8_t* Ngs2Voice::WaveformData() const {
@@ -96,11 +96,12 @@ const std::uint8_t* Ngs2Voice::WaveformData() const {
     if (waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) return block.data + block.dataCursor;
     if (block.streaming) {
         for (const auto& piece : block.pieces) {
-            if (block.cursor >= piece.firstFrame && block.cursor - piece.firstFrame < piece.frames) return piece.data + (block.cursor - piece.firstFrame) * channels * sizeof(std::int16_t);
+            if (block.cursor >= piece.firstFrame && block.cursor - piece.firstFrame < piece.frames) return piece.data + (block.cursor - piece.firstFrame) * channels * Ngs2PcmSampleBytes(waveformType);
         }
         return Ngs2StreamEnd(*this, block);
     }
-    return block.data + (static_cast<std::size_t>(block.info.num_skip_samples) + block.cursor) * channels * sizeof(std::int16_t);
+    if (block.data == nullptr) return nullptr;
+    return block.data + (static_cast<std::size_t>(block.info.num_skip_samples) + block.cursor) * channels * Ngs2PcmSampleBytes(waveformType);
 }
 
 static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
@@ -187,8 +188,9 @@ static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
         return;
     }
     voice.ResetSetup();
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
-        throw std::runtime_error("NGS2: waveform type " + Ngs2Hex(format.waveform_type) + " is not implemented");
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.config_data != 0) {
+        throw std::runtime_error("NGS2: configured PCM waveforms are not implemented");
     }
     if (format.frame_offset != 0 || format.frame_margin != 0) throw std::runtime_error("NGS2: waveform frame offset and margin are not implemented");
     if (format.num_channels == 0 || format.num_channels > NGS2_MAX_CHANNELS || format.sample_rate == 0) APS5_INVALID_ARG_EX;
@@ -239,7 +241,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         voice.waveformEnd = nullptr;
         if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2RestartAtrac9(voice);
     }
-    const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
+    const std::size_t frameBytes = voice.channels == 0 || voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? 0 : voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
@@ -251,7 +253,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         const auto& block = param.blocks[i];
         if (block.num_samples == 0 && block.data_size == 0) continue;
         if (allowsSilence && block.data_size == 0) {
-            if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for ATRAC9 voices");
+            if (voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for this format");
             voice.blocks.push_back({nullptr, block});
             continue;
         }

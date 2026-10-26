@@ -330,7 +330,7 @@ static bool isMountedDirectory(const std::string& path) {
 
 static int deleteSave(const SaveDataDelete* del) {
     if (del == nullptr || del->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataDelete: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     const auto* nameEnd = static_cast<const char*>(std::memchr(del->dir_name->data, '\0', sizeof(del->dir_name->data)));
     if (nameEnd == nullptr) {
@@ -405,7 +405,7 @@ static SaveDataSearchInfo search_info(const std::string& real_path) {
 
 static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     if (cond == nullptr || result == nullptr) {
-        throw std::runtime_error("sceSaveDataDirNameSearch: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     result->hit_num = 0;
     result->set_num = 0;
@@ -608,7 +608,7 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
 
 static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
     if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataMount3: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
     const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;

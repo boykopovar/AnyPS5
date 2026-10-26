@@ -50,6 +50,7 @@
 #endif
 #include <io.h>
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -67,6 +68,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -322,6 +324,7 @@ public:
                 }
                 return false;
             };
+            memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
@@ -516,6 +519,21 @@ public:
         return properties;
     }
     void WaitQueue() const { Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle"); }
+    struct HeapUsage {
+        std::uint64_t deviceLocal = 0;
+        std::uint64_t host = 0;
+    };
+    std::optional<HeapUsage> MemoryUsage() const {
+        if (!memoryBudget) return std::nullopt;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget};
+        function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2")(context.physical, &properties);
+        HeapUsage usage;
+        for (std::uint32_t heap = 0; heap < properties.memoryProperties.memoryHeapCount; ++heap) {
+            ((properties.memoryProperties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 ? usage.deviceLocal : usage.host) += budget.heapUsage[heap];
+        }
+        return usage;
+    }
 
 private:
     template<typename TFunction>
@@ -545,6 +563,7 @@ private:
     bool graphics = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
+    bool memoryBudget = false;
 };
 
 using Kind = Recorder::ReadKind;
@@ -3714,7 +3733,7 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         std::cout << "host imports unavailable: read and written staging not tested\n";
         return false;
     }
-    constexpr std::size_t bytes = 16u << 20u;
+    constexpr std::size_t bytes = 40u << 20u;
 #ifdef _WIN32
     void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
@@ -3747,9 +3766,8 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     Require(boundInPlace(address + 4096, 4u << 20u, false) != context.discreteGpu, context.discreteGpu ? "a written-only 4 MiB element was bound in place on a discrete GPU" : "a written-only 4 MiB element was staged past the written window");
     Require(boundInPlace(address + 4096, 12u << 20u, false), "a written-only 12 MiB element was staged past the discrete written window");
     Require(!boundInPlace(address + 4096, 4u << 20u, true), "a read and written 4 MiB element was bound in place");
-    const auto buildInPlace = [&](std::uint64_t dispatchThreads, bool read, std::uint32_t stride, std::uint32_t extent) {
+    const auto buildInPlace = [&](std::uint64_t dispatchThreads, bool read, std::uint32_t stride, std::uint32_t extent, std::uint32_t elementBytes = 12u << 20u) {
         const auto element = address + 4096;
-        constexpr std::uint32_t elementBytes = 12u << 20u;
         const std::uint32_t records = stride != 0 ? elementBytes / stride : elementBytes;
         ShaderRecompiler::RecompileResult program;
         ShaderRecompiler::DescriptorBinding binding;
@@ -3774,7 +3792,12 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     Require(!buildInPlace((12u << 20u) / 16u, true, 16, 0), "a dispatch sweeping a read and written 12 MiB element bound it in place");
     Require(buildInPlace(1024, true, 16, 0), "a dispatch touching 16 KiB of a read and written 12 MiB element staged all of it");
     Require(buildInPlace(0, true, 16, 0), "a dispatch of unknown size staged a read and written 12 MiB element");
-    Require(buildInPlace((12u << 20u) / 16u, false, 16, 0), "a dispatch sweeping a written-only 12 MiB element staged it");
+    Require(buildInPlace((12u << 20u) / 32u, false, 32, 0) != context.discreteGpu, context.discreteGpu ? "a dispatch sweeping a written-only 12 MiB element of 32-byte records bound it in place on a discrete GPU" : "a dispatch sweeping a written-only 12 MiB element of 32-byte records staged it on a GPU without separate VRAM");
+    Require(buildInPlace((12u << 20u) / 16u, false, 16, 0), "a dispatch sweeping a written-only 12 MiB element of 16-byte records, which its stores write contiguously, staged it");
+    Require(buildInPlace(1024, false, 32, 0), "a dispatch touching 32 KiB of a written-only 12 MiB element staged all of it");
+    Require(buildInPlace((12u << 20u) / 32u, false, 0, 32), "a dispatch writing a written-only 12 MiB raw element staged it");
+    Require(buildInPlace(204800, false, 160, 0, 204800u * 160u) != context.discreteGpu, context.discreteGpu ? "a dispatch sweeping a written-only 31.25 MiB element of 160-byte records bound it in place on a discrete GPU" : "a dispatch sweeping a written-only 31.25 MiB element of 160-byte records staged it on a GPU without separate VRAM");
+    Require(buildInPlace(204800, true, 160, 0, 204800u * 160u) != context.discreteGpu, context.discreteGpu ? "a dispatch sweeping a read and written 31.25 MiB element bound it in place on a discrete GPU" : "a dispatch sweeping a read and written 31.25 MiB element staged it past the 16 MiB cap on a GPU without separate VRAM");
     Require(!buildInPlace((12u << 20u) / 32u, true, 0, 32), "a dispatch sweeping a read and written 12 MiB raw element bound it in place");
     Require(buildInPlace(1024, true, 0, 32), "a dispatch touching 32 KiB of a read and written 12 MiB raw element staged all of it");
     Require(buildInPlace((12u << 20u) / 32u, true, 0, 0), "a raw element without an access extent was staged");
@@ -10108,6 +10131,98 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
     return true;
 }
 
+std::uint64_t processPrivateBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (!K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))) return 0;
+    return counters.PrivateUsage;
+#else
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.rfind("RssAnon:", 0) == 0) return std::stoull(line.substr(8)) * 1024u;
+    }
+    return 0;
+#endif
+}
+
+// What one graphics pipeline the store keeps costs: `count` pipelines, each with its own fragment
+// module (so its own fragment shader library), built through CachedPipeline and held, after their
+// optimized relinks; process private bytes and VK_EXT_memory_budget heap usage before and after,
+// and after the store is cleared.
+int pipelineStoreMemoryBench(const Device& device, std::uint32_t count) {
+    if (!device.Graphics() || count == 0) {
+        std::cout << "skipped, the pipeline store memory bench requires a graphics queue and at least one pipeline\n";
+        return 77;
+    }
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.variantId = 21;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    std::vector<ShaderRecompiler::RecompileResult> fragments(count + 1u);
+    for (std::uint32_t index = 0; index <= count; ++index) {
+        fragments[index].variantId = 1000u + index;
+        fragments[index].spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+        fragments[index].spirv[2] = 0x50535430u + index;
+    }
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    const std::array first{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragments[count], 0}};
+    ShaderResources resources(context, first, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    const VertexInputLayout input;
+    std::vector<std::shared_ptr<Pipeline>> held;
+    held.reserve(count + 1u);
+    const auto build = [&](std::uint32_t index) {
+        const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragments[index], 0}};
+        held.push_back(CachedPipeline(context, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL));
+    };
+    struct Sample {
+        std::uint64_t privateBytes;
+        std::optional<Device::HeapUsage> heaps;
+    };
+    const auto sample = [&] {
+        WaitForOptimizedPipelines(context.device);
+        return Sample{processPrivateBytes(), device.MemoryUsage()};
+    };
+    build(count);
+    const auto before = sample();
+    const auto started = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < count; ++index) build(index);
+    const auto built = std::chrono::steady_clock::now();
+    const auto after = sample();
+    const auto linked = std::chrono::steady_clock::now();
+    const auto totals = PipelineStoreTotals();
+    held.clear();
+    ClearCachedPipelines(context.device);
+    const auto cleared = sample();
+    const auto mib = [](std::uint64_t later, std::uint64_t earlier) { return (static_cast<double>(later) - static_cast<double>(earlier)) / (1024.0 * 1024.0); };
+    const auto perPipeline = [&](std::uint64_t later, std::uint64_t earlier) { return (static_cast<double>(later) - static_cast<double>(earlier)) / 1024.0 / count; };
+    const char* linking = !context.graphicsPipelineLibrary ? "whole pipelines" : context.pipelineLinkTimeOptimization ? "libraries and optimized relinks" : "libraries, fast links only";
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "Pipeline store memory: " << count << " graphics pipelines (one fragment module each, " << linking << "), " << totals.cached << " in the store, built in "
+              << std::chrono::duration<double>(built - started).count() << " s, relinked in " << std::chrono::duration<double>(linked - built).count() << " s\n";
+    std::cout << "  process private bytes: +" << mib(after.privateBytes, before.privateBytes) << " MiB = " << perPipeline(after.privateBytes, before.privateBytes) << " KiB per pipeline; after clearing the store " << mib(cleared.privateBytes, before.privateBytes) << " MiB above the start\n";
+    if (before.heaps && after.heaps && cleared.heaps) {
+        std::cout << "  VK_EXT_memory_budget heap usage: device-local +" << mib(after.heaps->deviceLocal, before.heaps->deviceLocal) << " MiB = " << perPipeline(after.heaps->deviceLocal, before.heaps->deviceLocal) << " KiB per pipeline, host +" << mib(after.heaps->host, before.heaps->host) << " MiB = " << perPipeline(after.heaps->host, before.heaps->host)
+                  << " KiB per pipeline; after clearing the store device-local " << mib(cleared.heaps->deviceLocal, before.heaps->deviceLocal) << " MiB, host " << mib(cleared.heaps->host, before.heaps->host) << " MiB above the start\n";
+    } else {
+        std::cout << "  VK_EXT_memory_budget unavailable: no device heap usage\n";
+    }
+    return 0;
+}
+
 void pipelineCacheTests(const Device& device, bool benchmark) {
     std::thread establishThreadedProcess([] {});
     establishThreadedProcess.join();
@@ -11327,6 +11442,7 @@ int main(int argc, char** argv) {
             pipelineLibraryTests(device);
             return 0;
         }
+        if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--benchmark-pipeline-store-memory") return pipelineStoreMemoryBench(device, argc == 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 4096u);
         if (argc == 2 && (std::string_view(argv[1]) == "--benchmark-pipeline-cache" || std::string_view(argv[1]) == "--pipeline-cache-only")) {
             pipelineCacheTests(device, std::string_view(argv[1]) == "--benchmark-pipeline-cache");
             return 0;

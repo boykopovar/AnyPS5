@@ -28,6 +28,7 @@ static void RequireThrows(TCall call) {
 }
 
 constexpr int success = 0;
+constexpr int timedout = 2;
 constexpr int busy = 3;
 constexpr int plain = 0x01;
 constexpr int tryable = 0x02;
@@ -38,6 +39,14 @@ static void* CreateMutex(int type) {
     void* mutex = reinterpret_cast<void*>(std::uintptr_t{1});
     Require(_Mtx_init_nid_postfix(&mutex, type) == success && mutex != nullptr);
     return mutex;
+}
+
+static Xtime RelativeTime(int milliseconds) {
+    const auto point = std::chrono::system_clock::now() + std::chrono::milliseconds(milliseconds);
+    const auto since = point.time_since_epoch();
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(since);
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(since - seconds);
+    return {seconds.count(), nanos.count()};
 }
 
 static void MutexBasics() {
@@ -108,6 +117,37 @@ static void RecursiveMutex() {
     Require(acquired);
     _Mtx_destroy_nid_postfix(&mutex);
 
+}
+
+static void TimedMutex() {
+    void* mutex = CreateMutex(tryable);
+    Xtime future = RelativeTime(60000);
+    Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == success);
+    Require(_Mtx_timedlock_nid_postfix(&mutex, &future) == busy);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    int result = -1;
+    std::thread worker([&] {
+        Xtime deadline = RelativeTime(30);
+        result = _Mtx_timedlock_nid_postfix(&mutex, &deadline);
+    });
+    worker.join();
+    Require(result == timedout);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+
+    void* empty = nullptr;
+    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&empty, &future); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(nullptr, &future); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&mutex, nullptr); });
+    _Mtx_destroy_nid_postfix(&mutex);
+
+    void* recursiveMutex = CreateMutex(recursive);
+    Require(_Mtx_timedlock_nid_postfix(&recursiveMutex, &future) == success);
+    Require(_Mtx_timedlock_nid_postfix(&recursiveMutex, &future) == success);
+    Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success);
+    Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success);
+    _Mtx_destroy_nid_postfix(&recursiveMutex);
 }
 
 static void MutualExclusion() {
@@ -202,7 +242,10 @@ struct HostPadThread {
     void* result = nullptr;
 };
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void*, void* (APS5_VABI* entry)(void*), void* arg) {
+static const void* lastCreateAttrSlot = nullptr;
+
+static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg) {
+    lastCreateAttrSlot = attrSlot;
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, arg] { handle->result = entry(arg); });
     *thread = handle;
@@ -263,11 +306,38 @@ static void PadLaunchAndJoin() {
     _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &thread);
 
     Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(lastCreateAttrSlot == nullptr);
     _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
 
     int code = 0;
     Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
     Require(_Thrd_join_nid_postfix(nullptr, &code) == 4);
+
+    RegisterPthreadCreate_nid_no_patch(nullptr);
+    RegisterPthreadJoin_nid_no_patch(nullptr);
+}
+
+static void PadLaunchWithAttributes() {
+    unsigned (APS5_VABI* vtable[1])(GuestPad*) = {TestPadGo};
+    RegisterPthreadCreate_nid_no_patch(HostPthreadCreate);
+    RegisterPthreadJoin_nid_no_patch(HostPthreadJoin);
+
+    TestPad pad{};
+    pad.vtable = vtable;
+    _ZNSt4_PadC2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+
+    int attribute = 0;
+    void* attrSlot = &attribute;
+    void* thread = nullptr;
+    lastCreateAttrSlot = nullptr;
+    _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&pad), &attrSlot, &thread);
+    Require(thread != nullptr && pad.started && pad.ran.load());
+    Require(attrSlot == &attribute);
+    Require(lastCreateAttrSlot == &attrSlot);
+
+    _ZNSt4_PadD2Ev_nid_postfix(reinterpret_cast<GuestPad*>(&pad));
+    int code = 0;
+    Require(_Thrd_join_nid_postfix(thread, &code) == success && code == 42);
 
     RegisterPthreadCreate_nid_no_patch(nullptr);
     RegisterPthreadJoin_nid_no_patch(nullptr);
@@ -300,6 +370,7 @@ static void PadDetach() {
 
 static void KernelKeys() {
     Require(_Thrd_current_nid_postfix() == scePthreadSelf());
+    Require(_Thrd_id_nid_postfix() == scePthreadSelf());
     int key = -1;
     Require(_Tss_create_nid_postfix(&key, nullptr) == success && key >= 0);
     int value = 0;
@@ -346,10 +417,12 @@ static void ForwardedCalls() {
     Require(_Tss_set_nid_postfix(8, &flag) == success && forwardLog.key == 8 && forwardLog.value == &flag);
     Require(_Thrd_equal_nid_postfix(&flag, &key) == 1 && forwardLog.first == &flag && forwardLog.second == &key);
     Require(_Thrd_current_nid_postfix() == &forwardLog.key);
+    Require(_Thrd_id_nid_postfix() == &forwardLog.key);
     Require(_Mtx_current_owns_nid_postfix(nullptr) == 1);
 
     RegisterThreadForwards_nid_no_patch(nullptr);
     RequireThrows<std::runtime_error>([] { _Thrd_current_nid_postfix(); });
+    RequireThrows<std::runtime_error>([] { _Thrd_id_nid_postfix(); });
     RequireThrows<std::runtime_error>([] { _Tss_get_nid_postfix(0); });
 }
 
@@ -440,10 +513,12 @@ int main() {
     ForwardedCalls();
     MutexBasics();
     RecursiveMutex();
+    TimedMutex();
     MutualExclusion();
     ConditionBroadcast();
     ConditionSignal();
     PadLaunchAndJoin();
+    PadLaunchWithAttributes();
     PadDetach();
     ThreadHelpers();
 }

@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -40,10 +41,10 @@ static bool SeedIs(const std::uint16_t* seed, std::uint16_t low, std::uint16_t m
 
 static void CheckRand48() {
     std::uint16_t seed[3] = {0x330e, 0xabcd, 0x1234};
-    Require(erand48_nid_postfix(seed) == 0x657eb7255101p-48 && SeedIs(seed, 0x5101, 0xb725, 0x657e), "erand48 first value");
+    Require(erand48_nid_postfix(seed) == 0x657eb725p-32 && SeedIs(seed, 0x5101, 0xb725, 0x657e), "erand48 first value");
     Require(nrand48_nid_postfix(seed) == 1804928587 && SeedIs(seed, 0x6378, 0x0c96, 0xd72a), "nrand48 second value");
     Require(jrand48_nid_postfix(seed) == 1517566982 && SeedIs(seed, 0x2a23, 0x3c06, 0x5a74), "jrand48 third value");
-    Require(erand48_nid_postfix(seed) == 0x72534abf62f2p-48 && SeedIs(seed, 0x62f2, 0x4abf, 0x7253), "erand48 fourth value");
+    Require(erand48_nid_postfix(seed) == 0x72534abfp-32 && SeedIs(seed, 0x62f2, 0x4abf, 0x7253), "erand48 fourth value");
     Require(nrand48_nid_postfix(seed) == 684387517 && SeedIs(seed, 0x8d15, 0xd97a, 0x5195), "nrand48 fifth value");
     Require(jrand48_nid_postfix(seed) == 3807181130 && SeedIs(seed, 0xeffc, 0xf94a, 0xe2ec), "jrand48 keeps bit 31 without sign extension");
 
@@ -89,12 +90,15 @@ static void CheckRand48() {
     srand48_nid_postfix(1);
 
     for (const std::int64_t expected : consoleMrand48) Require(mrand48_nid_postfix() == expected, "mrand48 matches the console after srand48(1)");
+    constexpr std::array<double, 3> consoleDrand48 {0x4435afd7p-32, 0xae99dc60p-32, 0x43f73108p-32};
+    srand48_nid_postfix(7);
+    for (const double expected : consoleDrand48) Require(drand48_nid_postfix() == expected, "drand48 matches the titles' libc.prx after srand48(7)");
 
 #ifndef _WIN32
     std::uint16_t guest[3] = {0x1234, 0x5678, 0x9abc};
     unsigned short host[3] = {0x1234, 0x5678, 0x9abc};
     for (int round = 0; round < 64; ++round) {
-        Require(erand48_nid_postfix(guest) == ::erand48(host), "erand48 matches the host");
+        Require(erand48_nid_postfix(guest) == std::ldexp(std::floor(::erand48(host) * 0x1p32), -32), "erand48 keeps the host's upper 32 bits");
         Require(nrand48_nid_postfix(guest) == ::nrand48(host), "nrand48 matches the host");
         Require(jrand48_nid_postfix(guest) == static_cast<std::uint32_t>(::jrand48(host)), "jrand48 matches the host's 32 bits");
     }
@@ -102,7 +106,7 @@ static void CheckRand48() {
     srand48_nid_postfix(1234567);
 
     for (int round = 0; round < 32; ++round) {
-        Require(drand48_nid_postfix() == ::drand48(), "drand48 matches the host");
+        Require(drand48_nid_postfix() == std::ldexp(std::floor(::drand48() * 0x1p32), -32), "drand48 keeps the host's upper 32 bits");
         Require(lrand48_nid_postfix() == ::lrand48(), "lrand48 matches the host");
         Require(mrand48_nid_postfix() == static_cast<std::uint32_t>(::mrand48()), "mrand48 matches the host's 32 bits");
     }
