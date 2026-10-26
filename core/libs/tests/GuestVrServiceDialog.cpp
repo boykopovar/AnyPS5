@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(&param) == kErrNotInitialized);
     Require(sceVrServiceDialogClose() == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetResult(result) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
