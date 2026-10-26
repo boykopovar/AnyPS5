@@ -682,27 +682,43 @@ def check_conservation(references, records):
 MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
 
 
-def module_stem(name, fold):
+def module_suffix(name, fold):
     if fold:
         name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return name
+            return suffix
+    return None
+
+
+def module_stem(name, fold):
+    suffix = module_suffix(name, fold)
+    if suffix is None:
+        return name.lower() if fold else name
+    if fold:
+        name = name.lower()
+    return name[:-len(suffix)]
 
 
 class ModuleNames(set):
     """Title module names, matched like the relinker: by the name without its .prx, .sprx, .suprx or .debug_prx suffix, and
-    ignoring case for Windows output."""
+    ignoring case for Windows output. Exact filenames stay valid; a suffix alias needs a recognized suffix on both names."""
 
     def __init__(self, names=(), fold=False):
         super().__init__(names)
         self.fold = fold
-        self.stems = {module_stem(name, fold) for name in self}
+        self.exact = {name.lower() if fold else name for name in self}
+        self.suffixed_stems = {module_stem(name, fold) for name in self if module_suffix(name, fold)}
 
     def __contains__(self, library):
-        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+        if not isinstance(library, str):
+            return False
+        key = library.lower() if self.fold else library
+        if key in self.exact:
+            return True
+        if module_suffix(library, self.fold) is None:
+            return False
+        return module_stem(library, self.fold) in self.suffixed_stems
 
 
 def classify(nid, library, providers, stubs, modules, partial=frozenset()):

@@ -762,6 +762,32 @@ class ImportAuditTests(unittest.TestCase):
         record = next(record for record in data["imports"] if record["library"] == "shipping.debug_prx")
         self.assertEqual(record["class"], "module")
 
+    def test_suffix_aliases_need_a_recognized_suffix_on_both_names(self):
+        cases = (
+            ("shipping.prx", "shipping", False),
+            ("shipping", "shipping.prx", False),
+            ("shipping.prx", "shipping.obj", False),
+            ("shipping.obj", "shipping.prx", False),
+            ("shipping.prx", "shipping.sprx", True),
+            ("shipping", "shipping", True),
+        )
+        for module, needed, expected in cases:
+            with self.subTest(module=module, needed=needed):
+                self.assertIs(needed in import_audit.ModuleNames({module}), expected)
+
+    def test_bare_needed_library_does_not_match_a_suffixed_module(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_pe([]))
+        (work.modules / "shipping.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "shipping")])
+        import_audit.needed_registry_path(registry).write_text(json.dumps(["shipping"]), encoding="utf-8")
+        code, _, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["missing_libraries"], {"shipping": 1})
+        self.assertEqual(data["imports"][0]["class"], "absent")
+
     def test_module_names_ignore_case_for_windows_output_only(self):
         imports = [("AAAAAAAAAAA", "SDK-Shipping.debug_prx", False)]
         records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}, fold=True))
