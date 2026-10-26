@@ -85,6 +85,10 @@ static void TestParseHeader() {
     Require(sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_OK && info.data_size == 64 && info.num_samples == 84);
     PutBe32(data, 0x0c, 0);
     RequireThrows([&] { sceNgs2ParseWaveformData(data.data(), data.size(), &info); });
+    PutBe32(data, 0x0c, 0x92492490);
+    Require(sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_OK && info.num_samples == 0xffffffe0);
+    PutBe32(data, 0x0c, 0x924924a0);
+    RequireThrows([&] { sceNgs2ParseWaveformData(data.data(), data.size(), &info); });
 }
 
 static void TestParseLoop() {
