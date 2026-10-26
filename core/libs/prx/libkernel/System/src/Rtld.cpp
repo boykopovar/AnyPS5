@@ -45,8 +45,7 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
     return module;
 #elif defined(__APPLE__)
     Dl_info info{};
-    if (!dladdr(address, &info) || !info.dli_fbase)
-        throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
+    if (!dladdr(address, &info) || !info.dli_fbase) return nullptr;
     const auto* header = static_cast<const mach_header_64*>(info.dli_fbase);
     if (reference && header->filetype != MH_EXECUTE && info.dli_fname && *info.dli_fname) {
         handle = dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
