@@ -320,6 +320,86 @@ static void CheckReadStateHandle(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
 }
 
+static void RequireRestData(const PadData& data) {
+    Require(data.buttons == 0 && data.left_stick_x == 0x80 && data.left_stick_y == 0x80 && data.right_stick_x == 0x80 && data.right_stick_y == 0x80);
+    Require(data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 0 && data.padding[0] == 0 && data.padding[1] == 0);
+    Require(data.orientation_x == 0.0f && data.orientation_y == 0.0f && data.orientation_z == 0.0f && data.orientation_w == 1.0f);
+    Require(data.acceleration_x == 0.0f && data.acceleration_y == 1.0f && data.acceleration_z == 0.0f);
+    Require(data.angular_velocity_x == 0.0f && data.angular_velocity_y == 0.0f && data.angular_velocity_z == 0.0f);
+    Require(data.touch_data_touch_num == 0 && !data.connected && data.timestamp == 0 && data.connected_count == 0 && data.device_unique_data_len == 0);
+}
+
+static void CheckBeforeInit() {
+    PadData data;
+    std::memset(&data, 0x5a, sizeof(data));
+    Require(scePadReadState(PAD_HANDLE, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadState(PAD_HANDLE, &data) == PAD_ERROR_NOT_INITIALIZED);
+    RequireRestData(data);
+    Require(scePadRead_nid_postfix(PAD_HANDLE, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadRead_nid_postfix(PAD_HANDLE, &data, 0) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadRead_nid_postfix(PAD_HANDLE, &data, 65) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadGetControllerInformation(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetLightBar(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadResetLightBar(PAD_HANDLE) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetVibration(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadResetOrientation(PAD_HANDLE) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetMotionSensorState(PAD_HANDLE, true) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetTiltCorrectionState(PAD_HANDLE, true) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetAngularVelocityDeadbandState(PAD_HANDLE, true) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetTriggerEffect(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    bool remote = true;
+    Require(scePadIsRemoteController(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadIsRemoteController(PAD_HANDLE, &remote) == PAD_ERROR_NOT_INITIALIZED);
+    Require(remote);
+    PadDeviceClassExtendedInformation extended;
+    std::memset(&extended, 0x5a, sizeof(extended));
+    Require(scePadDeviceClassGetExtendedInformation(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadDeviceClassGetExtendedInformation(PAD_HANDLE, &extended) == PAD_ERROR_NOT_INITIALIZED);
+    Require(extended.reserved[0] == 0x5a);
+    PadDeviceClassData classData;
+    std::memset(&classData, 0x5a, sizeof(classData));
+    Require(scePadDeviceClassParseData(PAD_HANDLE, &data, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadDeviceClassParseData(PAD_HANDLE, &data, &classData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(classData.pad[0] == 0x5a);
+}
+
+static void CheckBadHandleArguments(int handle) {
+    static PadData data[65];
+    for (const int bad : {0, -1, 0x7fffffff}) {
+        Require(scePadRead_nid_postfix(bad, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+        Require(scePadRead_nid_postfix(bad, data, 0) == PAD_ERROR_INVALID_ARG);
+        Require(scePadRead_nid_postfix(bad, data, -1) == PAD_ERROR_INVALID_ARG);
+        Require(scePadRead_nid_postfix(bad, data, 65) == PAD_ERROR_INVALID_ARG);
+        Require(scePadRead_nid_postfix(bad, data, 64) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadReadState(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        std::memset(data, 0x5a, sizeof(data[0]));
+        Require(scePadReadState(bad, data) == PAD_ERROR_INVALID_HANDLE);
+        RequireRestData(data[0]);
+        PadControllerInformation info;
+        std::memset(&info, 0x5a, sizeof(info));
+        Require(scePadGetControllerInformation(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadGetControllerInformation(bad, &info) == PAD_ERROR_INVALID_HANDLE);
+        Require(info.connectedCount == 0x5a);
+        Require(scePadSetLightBar(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadSetVibration(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadSetTriggerEffect(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadIsRemoteController(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        PadDeviceClassExtendedInformation extended;
+        std::memset(&extended, 0x5a, sizeof(extended));
+        Require(scePadDeviceClassGetExtendedInformation(bad, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadDeviceClassGetExtendedInformation(bad, &extended) == PAD_ERROR_INVALID_HANDLE);
+        Require(extended.deviceClass == 0 && extended.reserved[0] == 0 && extended.reserved[3] == 0 && extended.classData.data[11] == 0);
+        PadDeviceClassData classData;
+        std::memset(&classData, 0x5a, sizeof(classData));
+        Require(scePadDeviceClassParseData(bad, nullptr, &classData) == PAD_ERROR_INVALID_ARG);
+        Require(scePadDeviceClassParseData(bad, data, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadDeviceClassParseData(bad, data, &classData) == PAD_ERROR_INVALID_HANDLE);
+        Require(classData.deviceClass == -1 && !classData.dataValid && classData.pad[2] == 0 && classData.classData.data[15] == 0);
+    }
+    Require(scePadRead_nid_postfix(handle, data, 65) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(handle, data, 64) >= 0);
+}
+
 static void CheckSpecialPort(int user, int handle) {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int alreadyOpened = static_cast<int>(0x80920004);
@@ -588,6 +668,7 @@ int main() {
     Require(scePadGetControllerType(PAD_HANDLE, &controllerType) == PAD_ERROR_NOT_INITIALIZED);
     Require(controllerType == -1);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
+    CheckBeforeInit();
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-state-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup {
         std::filesystem::path path;
@@ -672,6 +753,7 @@ int main() {
     CheckLatchedPressAtSlowReads(handle);
     CheckLatchedPressPerPort();
     CheckReadStateHandle(handle);
+    CheckBadHandleArguments(handle);
     CheckRemoteController(handle);
     CheckTrackerDevices(handle);
     CheckAccessibilityControllerState(handle);
