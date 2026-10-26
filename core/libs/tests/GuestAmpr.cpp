@@ -1199,6 +1199,33 @@ void TestAmmRemapAndProtect() {
     Require(sceAmprAmmMeasureAmmCommandSizeModifyMtypeProtect(returned, page, 0, 0x08, 0x03) == ammRejected);
 }
 
+struct ObservedMapping {
+    std::uintptr_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+};
+
+std::vector<ObservedMapping> observedMappings;
+
+void ObserveMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
+    observedMappings.push_back({address, bytes, generation});
+}
+
+void RequireZeroMappingObserved(std::uint64_t address, std::uint64_t size, std::uint64_t before) {
+#ifdef _WIN32
+    bool found = false;
+    for (const auto& mapping : observedMappings) {
+        if (mapping.address <= address && mapping.address + mapping.bytes >= address + size && mapping.generation > before) found = true;
+    }
+    Require(found);
+    Require(GuestArena::GuestArenaCommitGeneration_nid_postfix() > before);
+#else
+    (void)address;
+    (void)size;
+    (void)before;
+#endif
+}
+
 void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
 #ifdef _WIN32
     for (std::uint64_t offset = 0; offset < size; offset += page) {
@@ -1258,7 +1285,18 @@ void TestAmmPrt() {
     commands = release.Commands();
     Require(sceAmprAmmCommandBufferUnmapToPrt(&release.buffer, prt + page, 2 * page) == 0);
     RequireAppended(release, offset, commands, Apr::Opcode::AmmUnmapToPrt, sceAmprAmmMeasureAmmCommandSizeUnmap(prt + page, 2 * page));
+#ifdef _WIN32
+    const auto beforeRelease = GuestArena::GuestArenaCommitGeneration_nid_postfix();
+    observedMappings.clear();
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&ObserveMapping);
+#else
+    const std::uint64_t beforeRelease = 0;
+#endif
     SubmitAmm(release);
+#ifdef _WIN32
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(nullptr);
+#endif
+    RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
     RequireReadOnlyZeroPages(prt + page, 2 * page);
 
