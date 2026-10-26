@@ -235,7 +235,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         return {};
     }
 
-    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
+    if (tls->FileSize > tls->MemorySize || (tls->FileSize != 0 && (tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset)) || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.

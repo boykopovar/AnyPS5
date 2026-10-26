@@ -5,6 +5,7 @@
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
@@ -109,7 +110,7 @@ bool SignalBlocked(int guest) {
 
 struct PendingSignals {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::atomic<std::uint32_t> words[4]{};
 };
 
@@ -126,7 +127,7 @@ void MarkPending(int guest) {
         std::lock_guard lock(pending.lock);
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
-    pending.changed.notify_all();
+    pending.changed.NotifyAll();
 }
 
 bool TakePending(int guest) {
@@ -307,19 +308,24 @@ bool DeliverUnblockedPending() {
     return caught;
 }
 
+std::optional<std::uint64_t> SignalWaitDeadline(const KernelTimespec& timeout) {
+    if (timeout.tv_sec > INT32_MAX) return std::nullopt;
+    const std::uint64_t now = TimedWait::NowNanos();
+    if (timeout.tv_sec < 0) return now;
+    return now + static_cast<std::uint64_t>(timeout.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(timeout.tv_nsec);
+}
+
 int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest) {
     auto& pending = Pending();
     std::unique_lock lock(pending.lock);
-    std::optional<std::chrono::steady_clock::time_point> deadline;
+    const std::optional<std::uint64_t> deadline = waitForever ? std::nullopt : SignalWaitDeadline(*timeout);
     for (;;) {
         if (PendingInSet(set, guest)) return 0;
-        if (waitForever) {
-            pending.changed.wait(lock);
+        if (!deadline) {
+            pending.changed.Wait(lock);
             continue;
         }
-        if (!deadline) deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->tv_sec) +
-            std::chrono::nanoseconds(timeout->tv_nsec);
-        if (pending.changed.wait_until(lock, *deadline) == std::cv_status::no_timeout) continue;
+        if (pending.changed.WaitUntil(lock, *deadline)) continue;
         return PendingInSet(set, guest) ? 0 : GuestEagain;
     }
 }
@@ -338,7 +344,7 @@ void WaitForDeliverableSignal() {
         {
             std::unique_lock lock(pending.lock);
             if (!TakePendingUnblocked(&guest)) {
-                pending.changed.wait(lock);
+                pending.changed.Wait(lock);
                 continue;
             }
         }
