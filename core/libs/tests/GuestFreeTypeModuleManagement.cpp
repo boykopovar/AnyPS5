@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -10,13 +11,6 @@
 #include <initializer_list>
 
 using namespace FreeType;
-
-extern "C" {
-void* APS5_VABI FT_Get_Module_nid_postfix(GuestLibrary*, const char*);
-void* APS5_VABI FT_Get_Renderer_nid_postfix(GuestLibrary*, std::uint32_t);
-int APS5_VABI FT_Remove_Module_nid_postfix(GuestLibrary*, void*);
-void APS5_VABI FT_Add_Default_Modules_nid_postfix(GuestLibrary*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
