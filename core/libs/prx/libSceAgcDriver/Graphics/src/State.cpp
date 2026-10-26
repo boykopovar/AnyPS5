@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -314,12 +315,32 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     auto fixed = compare == 0 || compare == 7 ? 0u : face.compareMask;
     std::uint32_t invertMask = 0;
     std::uint32_t inverted = 0;
+    std::uint32_t logicMask = 0;
+    const auto logic = [](std::uint32_t op) { return op == 10 || op == 11 || op == 12 || op == 15; };
     const auto convert = [&](std::uint32_t op, bool testFailed) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
         char detail[112];
-        if (opValExport && ((op == 4 && !opValReference) || op == 5 || op == 6 || op == 8 || op == 9)) {
+        if (opValExport && ((op == 4 && !opValReference) || (op >= 5 && op != 7))) {
             std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
             throw std::runtime_error(detail);
+        }
+        if (logic(op)) {
+            const auto bits = (op == 11 || op == 12 ? opValue : ~opValue) & face.writeMask;
+            if (bits == 0) return VK_STENCIL_OP_KEEP;
+            if (logicMask != 0 && logicMask != bits) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil logic operations on write masks 0x%02x and 0x%02x are unsupported", logicMask, bits);
+                throw std::runtime_error(detail);
+            }
+            logicMask = bits;
+            if (op != 11) return op == 10 ? VK_STENCIL_OP_ZERO : VK_STENCIL_OP_INVERT;
+            if (testValExport) throw std::runtime_error("AGC graphics: stencil OR is unsupported with a pixel shader that exports the stencil test value");
+            if ((~reference & fixed & bits) != 0) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil OR of 0x%02x against test value 0x%02x (masks 0x%02x/0x%02x) is unsupported", opValue, test, face.compareMask, face.writeMask);
+                throw std::runtime_error(detail);
+            }
+            reference |= bits;
+            fixed |= bits;
+            return VK_STENCIL_OP_REPLACE;
         }
         switch (op) {
             case 0: return VK_STENCIL_OP_KEEP;
@@ -376,6 +397,15 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
         const auto active = ((ops & 0xfu) != 0u) + (((ops >> 4u) & 0xfu) != 0u) + (((ops >> 8u) & 0xfu) != 0u);
         if (inverted != active) throw std::runtime_error("AGC graphics: a stencil replacement drawn as an inversion beside another stencil operation is unsupported");
         face.writeMask = invertMask;
+    }
+    if (logicMask != 0) {
+        const auto other = [&](std::uint32_t op) { return op != 0 && !logic(op); };
+        if ((other(ops & 0xfu) || other((ops >> 4u) & 0xfu) || other((ops >> 8u) & 0xfu)) && logicMask != face.writeMask) {
+            char detail[128];
+            std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operations 0x%03x combine a logic operation on write mask 0x%02x with write mask 0x%02x", ops & 0xfffu, logicMask, face.writeMask);
+            throw std::runtime_error(detail);
+        }
+        face.writeMask = logicMask;
     }
     face.reference = reference;
     Require(!opValReference || compare == 0 || compare == 7 || face.compareMask == 0, "a stencil compare against the test value is unsupported with a pixel shader that exports the stencil operation value");
@@ -1324,6 +1354,27 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     blend.srcAlphaBlendFactor = routing->factors[2];
     blend.dstAlphaBlendFactor = routing->factors[3];
     return {blend, routing->code};
+}
+
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
+    if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
+    ValidateDepthBounds(context, state);
+    Require(!context.depthRangeUnrestricted, "the depth bounds test without the depthBounds feature is emulated only where stored depth stays in [0, 1]");
+    Require(state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT, "the depth bounds test on a normalized depth target needs the depthBounds feature");
+    Require(!state.depthTest && !state.depthWrite, "the depth bounds test with depth testing needs the depthBounds feature");
+    Require(!pixel.posZ && !pixel.depthExportEnable, "the depth bounds test from a pixel program that reads or exports depth needs the depthBounds feature");
+    const auto keepsOnFail = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
+    Require(!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)), "the depth bounds test with a stencil test that writes on a failed test needs the depthBounds feature");
+    const bool upper = state.minDepthBounds <= 0.0f;
+    Require(upper || state.maxDepthBounds >= 1.0f, "the depth bounds test with both bounds inside (0, 1) needs the depthBounds feature");
+    const float bound = upper ? state.maxDepthBounds : state.minDepthBounds;
+    state.depthBoundsTest = false;
+    state.depthTest = true;
+    state.depthCompare = upper ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
+    state.depthBias = false;
+    state.depthBiasPerFace = false;
+    state.viewport.minDepth = bound;
+    state.viewport.maxDepth = bound;
 }
 
 void ApplyDepthRemap(const Context& context, State& state) {

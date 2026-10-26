@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleDumps_spv.h"
@@ -3134,6 +3135,26 @@ std::uint64_t Recorder::PendingWriterSerial(std::uint64_t address, std::size_t b
     return 0;
 }
 
+std::uint64_t Recorder::PendingWriterSerial(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> exceptNotes) const {
+    if (exceptNotes.empty()) return PendingWriterSerial(address, bytes);
+    if (bytes == 0) return 0;
+    const auto end = address + bytes;
+    const auto writes = [&](const Batch& batch) {
+        for (std::size_t index = 0; index < batch.writes.size(); ++index) {
+            const auto& [begin, finish] = batch.writes[index];
+            if (address >= finish || begin >= end) continue;
+            if (index < batch.writeNotes.size() && std::find(exceptNotes.begin(), exceptNotes.end(), batch.writeNotes[index]) != exceptNotes.end()) continue;
+            return true;
+        }
+        return readOverlap(batch, address, end, ReadKind::AddressBased).has_value();
+    };
+    if (open != nullptr && writes(*open)) return OpenSerial();
+    for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it) {
+        if (writes(**it)) return (*it)->serial;
+    }
+    return 0;
+}
+
 bool Recorder::signaled(const Batch& batch) const {
     return batch.submitted && fenceStatus(batch.fence) == VK_SUCCESS;
 }
@@ -3659,6 +3680,7 @@ void Recorder::Submit() {
         submission.pSignalSemaphores = &timeline;
     }
     if (hold != VK_NULL_HANDLE || timeline != VK_NULL_HANDLE) submission.pNext = &timelineInfo;
+    DestroyDeferredAtIdle(context);
     const auto submitStart = std::chrono::steady_clock::now();
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
     if (result == VK_ERROR_DEVICE_LOST) {

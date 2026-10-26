@@ -110,6 +110,9 @@ int main(int argc, char** argv) {
     Require(writeAt(descriptor, nullptr, 0, 0) == 0);
     Require(writeAt(descriptor, nullptr, 1, 0) == -1 && *error() == 14);
     Require(writeAt(descriptor, "x", 1, -1) == -1 && *error() == 22);
+    Require(writeAt(descriptor, nullptr, 0, -5) == -1 && *error() == 22);
+    Require(writeAt(descriptor, nullptr, 1, -1) == -1 && *error() == 22);
+    Require(writeAt(-1, nullptr, 1, -1) == -1 && *error() == 9);
     Require(writeAt(-1, "x", 1, 0) == -1 && *error() == 9);
     Require(writeAt(-1, nullptr, 0, 0) == -1 && *error() == 9);
     const auto oversized = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) + 1;

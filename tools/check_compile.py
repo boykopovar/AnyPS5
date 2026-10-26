@@ -11,7 +11,8 @@ from contextlib import nullcontext
 from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
-DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only")
+DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
+        "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
@@ -159,18 +160,30 @@ def syntax_only(entry, source):
     return syntax_arguments(arguments, directory, source)
 
 
-def validate_preprocessor_arguments(argument):
+def preprocessor_arguments(argument):
     forwarded = argument[4:].split(",")
     if any(option.startswith("@") for option in forwarded):
         raise ValueError(f"unsupported forwarded compiler option response file in {argument}")
     options = iter(forwarded)
+    kept = []
     for option in options:
+        if option in ("-MD", "-MMD", "-MF", "-MT", "-MQ", "--write-dependencies", "--write-user-dependencies"):
+            if not next(options, None):
+                raise ValueError(f"missing value for {option} in {argument}")
+            continue
+        if option in ("-M", "-MM", "-MG", "-MP", "--dependencies", "--user-dependencies",
+                      "--print-missing-file-dependencies") or option.startswith(("-MF", "-MT", "-MQ")):
+            continue
+        kept.append(option)
         if option in ("-D", "-U", "-I", "-F", "-include", "--include", "-imacros", "--imacros",
                       "-isystem", "-iquote", "-idirafter", "-isysroot"):
-            if not next(options, None):
+            value = next(options, None)
+            if not value:
                 raise ValueError(f"missing operand for {option} in {argument}")
+            kept.append(value)
         elif not (option.startswith(("-D", "-U", "-I", "-F")) and len(option) > 2):
             raise ValueError(f"unsupported forwarded compiler option {option} in {argument}")
+    return "-Wp," + ",".join(kept) if kept else None
 
 
 def syntax_arguments(arguments, directory, source):
@@ -203,7 +216,10 @@ def syntax_arguments(arguments, directory, source):
             index += 2
             continue
         if not positional and argument.startswith("-Wp,"):
-            validate_preprocessor_arguments(argument)
+            if forwarded := preprocessor_arguments(argument):
+                trimmed.append(forwarded)
+            index += 1
+            continue
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue

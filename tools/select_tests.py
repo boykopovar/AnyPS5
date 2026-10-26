@@ -172,11 +172,12 @@ def chunks(names):
 def dump(build, out):
     deps = collections.defaultdict(set)
     current = None
-    for line in build.run("-t", "deps").splitlines():
-        if not line.startswith(" ") and ": #deps" in line:
-            current = build.key(line.split(": #deps")[0])
+    recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
+    for line in recorded.splitlines():
+        if not line.startswith(b" ") and b": #deps" in line:
+            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(line.strip())
+            path = build.repo(line.strip().decode("utf-8"))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
