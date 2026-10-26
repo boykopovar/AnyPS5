@@ -40,7 +40,8 @@ static void TestGetExtCount() {
 static void TestGetExt() {
     int first = 0;
     int second = 0;
-    char* slots[] {reinterpret_cast<char*>(&first), reinterpret_cast<char*>(&second), nullptr};
+    int third = 0;
+    char* slots[] {reinterpret_cast<char*>(&first), reinterpret_cast<char*>(&second), reinterpret_cast<char*>(&third)};
     LibreSsl3Stack extensions {};
     LibreSsl3ExtensionsCertInfo info {};
     LibreSsl3ExtensionsX509 certificate {};
@@ -56,7 +57,7 @@ static void TestGetExt() {
     Require(X509_get_ext_nid_postfix(&certificate, INT_MIN) == nullptr);
     Require(X509_get_ext_nid_postfix(&certificate, INT_MAX) == nullptr);
     extensions.num = 3;
-    Require(X509_get_ext_nid_postfix(&certificate, 2) == nullptr);
+    Require(X509_get_ext_nid_postfix(&certificate, 2) == &third);
     Require(X509_get_ext_nid_postfix(&certificate, 3) == nullptr);
 }
 
