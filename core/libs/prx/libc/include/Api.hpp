@@ -692,6 +692,8 @@ void APS5_VABI srand_nid_postfix(unsigned int seed);
 int APS5_VABI __fpclassifyd_nid_postfix(double value);
 double APS5_VABI _Sinh_nid_postfix(double x, double y);
 double APS5_VABI _Cosh_nid_postfix(double x, double y);
+long double APS5_VABI _LCosh_nid_postfix(long double x, long double y);
+long double APS5_VABI _LSinh_nid_postfix(long double x, long double y);
 int APS5_VABI _Fltrounds_nid_postfix(void);
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment);
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y);

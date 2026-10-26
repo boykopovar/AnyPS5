@@ -392,6 +392,57 @@ class ReleasePackageTests(unittest.TestCase):
 
 
 class DocumentationAssetsTests(unittest.TestCase):
+    def test_source_copy_failure_does_not_publish_partial_documents(self):
+        for existing, failing in ((False, "A.md"), (False, "B.md"), (True, "A.md"), (True, "B.md")):
+            with self.subTest(existing=existing, failing=failing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, output = root / "source", root / "assets"
+                source.mkdir()
+                (source / "A.md").write_bytes(b"first document")
+                (source / "B.md").write_bytes(b"second document")
+                expected = {}
+                if existing:
+                    output.mkdir()
+                    (output / "existing.zip").write_bytes(b"existing asset")
+                    expected["existing.zip"] = b"existing asset"
+                real_copy = package_release.shutil.copy2
+
+                def fail_copy(source_path, destination, *args, **kwargs):
+                    if Path(source_path).name == failing:
+                        Path(destination).write_bytes(b"partial document")
+                        raise OSError("simulated source read failure")
+                    return real_copy(source_path, destination, *args, **kwargs)
+
+                with patch.object(package_release.shutil, "copy2", side_effect=fail_copy):
+                    with self.assertRaisesRegex(OSError, "simulated source read failure"):
+                        package_release.collect_docs(source, output)
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+                self.assertEqual((source / "A.md").read_bytes(), b"first document")
+                self.assertEqual((source / "B.md").read_bytes(), b"second document")
+                package_release.collect_docs(source, output)
+                expected.update({"A.md": b"first document", "B.md": b"second document"})
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+
+    def test_readonly_source_metadata_survives_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / "source", root / "assets"
+            source.mkdir()
+            document = source / "Readonly.md"
+            document.write_bytes(b"readonly documentation")
+            document.chmod(stat.S_IREAD)
+            try:
+                package_release.collect_docs(source, output)
+                published = output / document.name
+                self.assertEqual(published.read_bytes(), document.read_bytes())
+                self.assertEqual(stat.S_IMODE(published.stat().st_mode), stat.S_IMODE(document.stat().st_mode))
+                self.assertEqual(published.stat().st_mtime_ns, document.stat().st_mtime_ns)
+                self.assertEqual({path.name for path in output.iterdir()}, {document.name})
+            finally:
+                document.chmod(stat.S_IREAD | stat.S_IWRITE)
+                if (output / document.name).exists():
+                    (output / document.name).chmod(stat.S_IREAD | stat.S_IWRITE)
+
     def test_source_not_directory_raises_runtime_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(RuntimeError, "not a directory"):
