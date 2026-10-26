@@ -9,6 +9,14 @@ struct Http2MemoryPoolStats {
     int32_t reserved;
 };
 
+struct Http2CookieStats {
+    std::size_t currentInuseSize;
+    std::uint32_t currentInuseNum;
+    std::size_t maxInuseSize;
+    std::uint32_t maxInuseNum;
+    std::uint32_t removedNum;
+};
+
 using Http2WebSocketTextCallback = void (APS5_VABI*)(std::int32_t requestId, const char* text, std::uint32_t flags, void* userData);
 
 using Http2WebSocketDataCallback = void (APS5_VABI*)(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint32_t flags, void* userData);
@@ -63,21 +71,21 @@ int APS5_VABI sceHttp2WebSocketSendTextMessageAsync(std::int32_t requestId, cons
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option);
 int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t requestId, std::uint32_t intervalMicroseconds);
 int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds);
-int APS5_VABI sceHttp2AddCookie(void);
+int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* cookie, std::size_t cookieLength);
 int APS5_VABI sceHttp2AuthCacheFlush(void);
 int APS5_VABI sceHttp2CookieExport(void);
 int APS5_VABI sceHttp2CookieImport(void);
 int APS5_VABI sceHttp2GetAuthEnabled(void);
 int APS5_VABI sceHttp2GetAutoRedirect(void);
-int APS5_VABI sceHttp2GetCookie(void);
+int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared);
 int APS5_VABI sceHttp2GetCookieBox(void);
-int APS5_VABI sceHttp2GetCookieStats(void);
+int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats);
 int APS5_VABI sceHttp2RedirectCacheFlush(void);
 int APS5_VABI sceHttp2RemoveRequestHeader(void);
 int APS5_VABI sceHttp2SetAuthInfoCallback(void);
-int APS5_VABI sceHttp2SetCookieMaxNum(void);
-int APS5_VABI sceHttp2SetCookieMaxNumPerDomain(void);
-int APS5_VABI sceHttp2SetCookieMaxSize(void);
+int APS5_VABI sceHttp2SetCookieMaxNum(int cookieBoxId, std::uint32_t num);
+int APS5_VABI sceHttp2SetCookieMaxNumPerDomain(int cookieBoxId, std::uint32_t num);
+int APS5_VABI sceHttp2SetCookieMaxSize(int cookieBoxId, std::uint32_t size);
 int APS5_VABI sceHttp2SetCookieRecvCallback(void);
 int APS5_VABI sceHttp2SetCookieSendCallback(void);
 int APS5_VABI sceHttp2SetPreSendCallback(void);

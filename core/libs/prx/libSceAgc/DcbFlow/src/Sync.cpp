@@ -26,7 +26,7 @@ std::uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, std::uint8_t si
 }
 
 uint32_t APS5_VABI sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
-    return size == 0 ? 56 : 64;
+    return size == 0 ? 56 : size == 1 ? 64 : 0;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {

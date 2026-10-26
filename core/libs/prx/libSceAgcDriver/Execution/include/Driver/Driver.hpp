@@ -59,6 +59,8 @@ public:
     void Shutdown();
     void WaitIdle();
     std::uint64_t DispatchesAdoptedAhead() const;
+    std::uint64_t DispatchesRejectedAhead() const;
+    void SetAheadAdoptHook(void (*hook)());
     void CheckFailure();
     void ReportFailure(std::exception_ptr error);
     void Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip = false);
@@ -74,7 +76,7 @@ public:
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
-    void Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context);
+    void Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context);
     void ReleaseWindow(void* window);
     void RegisterShader(const Shader* shader);
     void ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
@@ -317,7 +319,7 @@ private:
         std::chrono::steady_clock::time_point resolvedAt{};
     };
     struct GroupCaptureStats {
-        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0, argumentMismatches = 0;
+        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, memoryMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0, argumentMismatches = 0;
         double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
@@ -474,6 +476,8 @@ private:
     std::atomic<std::uint64_t> evidenceReads{0};
     std::atomic<std::uint64_t> evidenceValidations{0};
     std::atomic<std::uint64_t> dispatchesAdoptedAhead{0};
+    std::atomic<std::uint64_t> dispatchesRejectedAhead{0};
+    std::atomic<void (*)()> aheadAdoptHook{nullptr};
 
     AgcDriver::Mutex writtenBuffersMutex;
     std::deque<WrittenBuffer> writtenBuffers;

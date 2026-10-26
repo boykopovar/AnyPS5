@@ -29,6 +29,9 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
     Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
+    AppContentMountPoint uninitializedMount{};
+    Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
+    Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataFormat(nullptr) == notInitialized);

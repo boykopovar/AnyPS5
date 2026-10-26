@@ -279,6 +279,37 @@ static void CheckRandom() {
     Require(std::any_of(values.begin() + 1, values.end(), [&](std::uint32_t value) { return value != values[0]; }));
 }
 
+static void CheckInitParam() {
+    alignas(8) std::array<std::uint8_t, 64> parameter{};
+    const auto* initialize = reinterpret_cast<const NetInitializeParameter*>(parameter.data());
+    std::uint32_t randomOutput = 0;
+    Require(sceNetTerm() == 0);
+    Require(Failed(sceNetGetRandom(&randomOutput), 200));
+    Require(Failed(sceNetInitParam(nullptr), 22));
+    Require(Failed(sceNetGetRandom(&randomOutput), 200));
+    Require(sceNetInitParam(initialize) == 0);
+    Require(sceNetGetRandom(&randomOutput) == 0);
+    Require(Failed(sceNetInitParam(initialize), 16));
+    Require(Failed(sceNetInitParam(nullptr), 16));
+    Require(sceNetTerm() == 0);
+    Require(Failed(sceNetInitParam(initialize), 16));
+    Require(Failed(sceNetGetRandom(&randomOutput), 200));
+    Require(sceNetInit_nid_postfix() == 0);
+}
+
+static void CheckIfFlags() {
+    std::uint32_t flags = 0x5a5a5a5a;
+    Require(sceNetConfigGetIfFlags(0, &flags) == 0);
+    Require(flags == 0x8049);
+    for (const std::uint32_t interfaceId : {10u, 0xffffffffu}) {
+        flags = 0x5a5a5a5a;
+        Require(sceNetConfigGetIfFlags(interfaceId, &flags) == -1);
+        Require(flags == 0x5a5a5a5a);
+    }
+    Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
+    Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
+}
+
 static void CheckNetMemory() {
     *sceNetErrnoLoc() = 33;
     for (const std::int32_t size : {0, -1, INT32_MIN}) {
@@ -1890,6 +1921,7 @@ int main() {
     Require(Failed(sceNetShowNetstat(), 200));
     Require(Failed(sceNetShowIfconfig(), 200));
     Require(sceNetInit_nid_postfix() == 0);
+    CheckInitParam();
     CheckEpollWritable();
     CheckSocketHostErrors();
     CheckPoolStats();
@@ -1898,6 +1930,7 @@ int main() {
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();
+    CheckIfFlags();
     CheckRejectedArguments();
     CheckDontWait();
     CheckAddressText(2, "127.0.0.1");

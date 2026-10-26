@@ -107,6 +107,12 @@ def parse_elf(data):
     if header[4] != 2 or header[5] != 1:
         raise Refused("inner ELF is not 64-bit little-endian")
     program_offset = struct.unpack_from("<Q", header, 0x20)[0]
+    machine = struct.unpack_from("<H", header, 0x12)[0]
+    if machine != 62:
+        raise Refused("unsupported inner ELF machine %d (expected 62)" % machine)
+    header_size = struct.unpack_from("<H", header, 0x34)[0]
+    if header_size != 64:
+        raise Refused("invalid inner ELF header size %d (expected 64)" % header_size)
     entry_size = struct.unpack_from("<H", header, 0x36)[0]
     count = struct.unpack_from("<H", header, 0x38)[0]
     if entry_size != 56 or count == 0:
@@ -186,6 +192,12 @@ def place_segments(data, headers, records):
         if header["type"] == PT_LOAD:
             continue
         if header["index"] in placed:
+            host = load_for(header["vaddr"], header["size"])
+            if host is not None:
+                offset = header["vaddr"] - host["vaddr"]
+                if (host["size"] and offset <= host["size"] and header["size"] <= host["size"] - offset
+                        and header["source"] == host["source"] + offset):
+                    header["host"] = host
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue

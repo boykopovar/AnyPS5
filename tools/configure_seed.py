@@ -18,6 +18,11 @@ def checks(cache):
         if match and match.group(2) == "INTERNAL" and CHECK.match(doc):
             found[match.group(1)] = (match.group(3), doc[2:])
         doc = ""
+    architecture_sizes = {name for name, (value, doc) in found.items()
+                          if value == "0" and doc.startswith("CHECK_TYPE_SIZE: ")}
+    if architecture_sizes:
+        return {name: entry for name, entry in found.items()
+                if name not in architecture_sizes and not entry[1].startswith("Result of TRY_COMPILE")}
     return found
 
 

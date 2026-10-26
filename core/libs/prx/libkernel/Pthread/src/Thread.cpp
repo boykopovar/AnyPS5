@@ -488,6 +488,7 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
     const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
+    if (attr) inheritSched = attr->_inheritsched;
     const int inheritedPolicy = parent ? parent->schedPolicy.load(std::memory_order_relaxed) : schedPolicy.load(std::memory_order_relaxed);
     schedPolicy.store(explicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
     const int attrPriority = attr ? attr->_schedpriority : DEFAULT_THREAD_PRIORITY;
