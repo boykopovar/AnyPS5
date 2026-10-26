@@ -28,6 +28,14 @@ public:
         return &slot;
     }
 
+    template <typename Completed, typename Prepare>
+    Slot* Acquire(Completed completed, Prepare prepare) {
+        Slot* slot = Acquire(completed);
+        if (prepare(slot->record)) return slot;
+        Release(slot, false);
+        return nullptr;
+    }
+
     void Release(Slot* slot, bool submitted) {
         std::lock_guard lock(m_mutex);
         slot->submitted = submitted;
