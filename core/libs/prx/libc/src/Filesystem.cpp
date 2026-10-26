@@ -98,6 +98,39 @@ extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     }
 }
 
+extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& native) {
+#ifdef _WIN32
+    const auto target = FollowedPath(native);
+    if (target.empty() || GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    DWORD size = 0;
+    constexpr auto information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    GetFileSecurityW(target.c_str(), information, nullptr, 0, &size);
+    if (!size) return false;
+    std::vector<unsigned char> descriptor(size);
+    if (!GetFileSecurityW(target.c_str(), information, descriptor.data(), size, &size)) return false;
+    struct Token {
+        HANDLE value = nullptr;
+        ~Token() { if (value) CloseHandle(value); }
+    } source, impersonation;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY | TOKEN_DUPLICATE, TRUE, &source.value)) {
+        if (GetLastError() != ERROR_NO_TOKEN ||
+            !OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &source.value)) {
+            return false;
+        }
+    }
+    if (!DuplicateToken(source.value, SecurityImpersonation, &impersonation.value)) return false;
+    GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+    PRIVILEGE_SET privileges{};
+    DWORD privilegeSize = sizeof(privileges), granted = 0;
+    BOOL allowed = FALSE;
+    if (!AccessCheck(descriptor.data(), impersonation.value, FILE_EXECUTE, &mapping,
+                     &privileges, &privilegeSize, &granted, &allowed) || !allowed) return false;
+    return true;
+#else
+    return ::access(native.c_str(), X_OK) == 0;
+#endif
+}
+
 extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
     if (!*path) { errno = 2; return -1; }
