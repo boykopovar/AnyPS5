@@ -374,7 +374,7 @@ int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std
     for (const Cookie& stored : jar->cookies) {
         if (domainMatches(parsed.host, stored.domain) && pathMatches(parsed.path, stored.path) && (!stored.secure || parsed.secure)) matches.push_back(&stored);
     }
-    if (matches.empty()) return ERROR_NOT_FOUND;
+    if (matches.empty()) return ERROR_HTTP_NOT_FOUND;
     if (!cookie && !required) return ERROR_INVALID_VALUE;
     std::stable_sort(matches.begin(), matches.end(), [](const Cookie* left, const Cookie* right) {
         if (left->path.size() != right->path.size()) return left->path.size() > right->path.size();
