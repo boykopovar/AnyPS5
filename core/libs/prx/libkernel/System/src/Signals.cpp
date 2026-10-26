@@ -298,11 +298,13 @@ bool DeliverPendingSignal(int guest) {
     return false;
 }
 
-void DeliverUnblockedPending() {
+bool DeliverUnblockedPending() {
+    bool caught = false;
     for (int guest = 1; guest <= MaxSignal; ++guest) {
         if (SignalBlocked(guest) || !Deliverable(guest) || !TakePending(guest)) continue;
-        DeliverPendingSignal(guest);
+        if (DeliverPendingSignal(guest)) caught = true;
     }
+    return caught;
 }
 
 int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest) {
@@ -540,7 +542,7 @@ thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
 
 namespace {
 
-int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds) {
+int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr) {
     if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
     {
         std::lock_guard lock(registration);
@@ -575,10 +577,16 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
         }
     }
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    DeliverUnblockedPending();
+    if (DeliverUnblockedPending() && caught != nullptr) *caught = true;
     return 0;
 }
 
+}
+
+extern "C" int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet) {
+    bool caught = false;
+    ChangeBlockedMask(GuestSigsetmask, set, previousSet, true, &caught);
+    return caught ? 1 : 0;
 }
 
 extern "C" {

@@ -1158,11 +1158,6 @@ int APS5_VABI SSL_accept_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_alert_desc_string_long_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

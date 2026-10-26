@@ -294,7 +294,7 @@ int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_certificate_file_nid_postfix(void);
 int APS5_VABI SSL_SESSION_free_nid_postfix(void);
 int APS5_VABI SSL_accept_nid_postfix(void);
-int APS5_VABI SSL_alert_desc_string_long_nid_postfix(void);
+const char* APS5_VABI SSL_alert_desc_string_long_nid_postfix(int value);
 int APS5_VABI SSL_check_private_key_nid_postfix(void);
 int APS5_VABI SSL_connect_nid_postfix(void);
 int APS5_VABI SSL_ctrl_nid_postfix(void);

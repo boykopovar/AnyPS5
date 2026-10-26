@@ -93,11 +93,26 @@ def load_trace(path):
         return Trace(json.load(handle))
 
 
+def load_summary_lines(path):
+    records = []
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        if not isinstance(record, dict):
+            raise ValueError(f"{path}:{number}: summary record must be an object")
+        records.append(record)
+    return records
+
+
 def load_summary(path, trace_path):
     candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
     if not candidate.exists():
         return None
-    lines = [json.loads(line) for line in candidate.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    lines = load_summary_lines(candidate)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
@@ -284,7 +299,7 @@ def markdown(result):
 
 
 def load_intervals(path):
-    lines = [json.loads(line) for line in Path(path).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    lines = load_summary_lines(path)
     return [line for line in lines if "interval_start_s" in line]
 
 

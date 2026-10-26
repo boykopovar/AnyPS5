@@ -2120,6 +2120,91 @@ void scalarCompareExecution() {
     }
     munmap(code, 4096);
 }
+
+void rdpidExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPID stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    std::uint64_t processor = ~std::uint64_t{0};
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "=&a"(processor), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(processor == 0, "RDPID stub left a value other than processor 0 in RAX");
+    require(carry == 1, "RDPID stub changed the flags");
+}
+
+void rdseedExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "RDSEED replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "RDSEED replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    bool produced = false;
+    for (unsigned attempt = 0; attempt < 16 && !produced; ++attempt) {
+        std::uint64_t value = 0;
+        std::uint8_t carry = 0;
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "setc %[carry]\n\t"
+            "add $128, %%rsp\n\t"
+            : "=&a"(value), [carry] "=&q"(carry)
+            : [code] "r"(code)
+            : "memory", "cc");
+        produced = carry == 1;
+    }
+    munmap(code, 4096);
+    require(produced, "RDSEED replacement never reported a random value");
+}
+
+void clwbExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x66, 0x0F, 0xAE, 0x30};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "CLWB replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "CLWB replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    std::uint8_t line[64] = {};
+    std::uint64_t address = reinterpret_cast<std::uint64_t>(line);
+    std::uint64_t kept = 0x5A5A5A5A5A5A5A5Aull;
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "+a"(address), "+b"(kept), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(address == reinterpret_cast<std::uint64_t>(line), "CLWB replacement changed its address register");
+    require(kept == 0x5A5A5A5A5A5A5A5Aull, "CLWB replacement changed an unrelated register");
+    require(carry == 1, "CLWB replacement changed the flags");
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -2167,6 +2252,9 @@ void rdtscpExecution() {
 void rdtscpExecution() {}
 void wideStoreExecution() {}
 void scalarCompareExecution() {}
+void rdpidExecution() {}
+void rdseedExecution() {}
+void clwbExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -2229,6 +2317,9 @@ int main() {
         rdtscpExecution();
         wideStoreExecution();
         scalarCompareExecution();
+        rdpidExecution();
+        rdseedExecution();
+        clwbExecution();
         wideStoreSplit();
         converterWideStoreWindows();
         converterClaimedFollower();

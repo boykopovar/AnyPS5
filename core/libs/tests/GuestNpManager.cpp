@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -17,6 +18,7 @@ constexpr int UserNotFound = static_cast<int>(0x80550007u);
 constexpr int AlreadyRegistered = static_cast<int>(0x80550008u);
 constexpr int NotRegistered = static_cast<int>(0x80550009u);
 constexpr int RequestNotFound = static_cast<int>(0x80550014u);
+constexpr int InvalidId = static_cast<int>(0x80550015u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -112,8 +114,11 @@ void CheckStateCallbacksA() {
         Require(SignedOutOnce(stateCallsA[index], &userdata[index]), "each callback gets SIGNED_OUT once");
     }
     Require(stateCallsA[8].calls == 0, "a rejected callback was called");
-    Require(sceNpUnregisterStateCallbackA(0) == InvalidArgument, "callback id 0");
-    Require(sceNpUnregisterStateCallbackA(9) == InvalidArgument, "callback id 9");
+    Require(sceNpUnregisterStateCallbackA(0) == InvalidId, "callback id 0");
+    Require(sceNpUnregisterStateCallbackA(9) == InvalidId, "callback id 9");
+    Require(sceNpUnregisterStateCallbackA(-1) == InvalidId, "callback id -1");
+    Require(sceNpUnregisterStateCallbackA(std::numeric_limits<int>::min()) == InvalidId, "callback id INT_MIN");
+    Require(sceNpUnregisterStateCallbackA(std::numeric_limits<int>::max()) == InvalidId, "callback id INT_MAX");
     Require(sceNpUnregisterStateCallbackA(ids[3]) == 0, "unregistering one state callback");
     for (int index = 0; index < 8; ++index) {
         if (index == 3) continue;

@@ -952,7 +952,8 @@ int main(int argc, char** argv) {
         });
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == branched, "concurrent raw compute readers lost snapshot reuse");
-        alignas(256) std::array<std::array<std::uint32_t, 64>, 65> programs{};
+        struct alignas(256) RawProgram : std::array<std::uint32_t, 64> {};
+        std::vector<RawProgram> programs(4097);
         for (auto& program : programs) program[0] = 0xbf810000;
         const auto firstAddress = reinterpret_cast<std::uintptr_t>(programs.front().data());
         readers.clear();
@@ -962,6 +963,9 @@ int main(int argc, char** argv) {
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == concurrent.front(), "concurrent raw compute misses duplicated snapshots");
         const auto evicted = AgcDriver::DriverDetail::ReadRawShader(firstAddress);
+        for (std::size_t i = 1; i <= 400; ++i)
+            AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
+        check(AgcDriver::DriverDetail::ReadRawShader(firstAddress) == evicted, "raw shader cache evicted a program while a title used only 401");
         for (std::size_t i = 1; i < programs.size(); ++i)
             AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
         check(AgcDriver::DriverDetail::ReadRawShader(firstAddress) != evicted && evicted->code[0] == 0xbf810000,

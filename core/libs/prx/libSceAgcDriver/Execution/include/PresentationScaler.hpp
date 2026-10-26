@@ -46,6 +46,8 @@ private:
     std::uint32_t sourceHeight = 0;
     VkImage sourceImage = VK_NULL_HANDLE;
     VkDeviceMemory sourceMemory = VK_NULL_HANDLE;
+    VkDeviceSize sourceBytes = 0;
+    std::uint32_t sourceMemoryType = 0;
     VkImage blackImage = VK_NULL_HANDLE;
     VkDeviceMemory blackMemory = VK_NULL_HANDLE;
 };
