@@ -6241,6 +6241,8 @@ void ShaderResources::WriteBackBuffers() {
 }
 
 bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) const {
+    static const bool walk = std::getenv("APS5_NO_READS_OVERLAP_WALK") == nullptr;
+    if (walk) return guestMemory.InPlaceReadsOverlap(address, bytes);
     const auto reads = guestMemory.InPlaceReads();
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
 }
