@@ -39,10 +39,9 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
     if (cfg.closing) {
         throw std::runtime_error(function + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    for (int i = 0; i < bufferNum; i++) {
-        if (cfg.buffers[bufferIndexStart + i].Occupied()) {
-            if (!group.ps4) return VIDEO_OUT_ERROR_SLOT_OCCUPIED;
-            throw std::runtime_error(function + ": VIDEO_OUT_ERROR_SLOT_OCCUPIED");
+    if (!group.ps4) {
+        for (int i = 0; i < bufferNum; i++) {
+            if (cfg.buffers[bufferIndexStart + i].Occupied()) return VIDEO_OUT_ERROR_SLOT_OCCUPIED;
         }
     }
     if (setIndex < 0) {
@@ -53,6 +52,11 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
         }
     } else if (cfg.groups[setIndex].occupied) {
         throw std::runtime_error(function + ": VIDEO_OUT_ERROR_INVALID_INDEX");
+    }
+    for (int i = 0; i < bufferNum; i++) {
+        if (cfg.buffers[bufferIndexStart + i].Occupied()) {
+            throw std::runtime_error(function + ": VIDEO_OUT_ERROR_SLOT_OCCUPIED");
+        }
     }
     std::array<VideoOutBuffer, VIDEO_OUT_BUFFER_NUM_MAX> registered{};
     for (int i = 0; i < bufferNum; ++i) {
