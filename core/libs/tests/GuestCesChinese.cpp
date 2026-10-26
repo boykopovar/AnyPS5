@@ -82,7 +82,7 @@ static std::uint32_t Gb18030Decode(const void* gb, std::uint32_t packed) {
     std::uint32_t code = 0xDEADBEEF;
     const int result = sceCesGbToUtf32(gb, bytes, size, &consumed, &code);
     if (result != 0) {
-        Require(result == unassignedCode && consumed == 0x55 && code == 0xDEADBEEF);
+        Require(result == unassignedCode && consumed == size && code == 0);
         return 0;
     }
     Require(consumed == size);
@@ -98,12 +98,13 @@ static std::uint32_t Gb18030Encode(const void* gb, std::uint32_t code) {
     return packed;
 }
 
-static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error) {
+static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error, std::uint32_t length) {
     std::uint32_t consumed = 0x55;
     std::uint32_t utf32 = 0xDEADBEEF;
-    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == 0x55 && utf32 == 0xDEADBEEF);
+    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == length && utf32 == 0);
     std::uint16_t ucs2 = 0xBEEF;
-    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == 0x55 && ucs2 == 0xBEEF);
+    consumed = 0x55;
+    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == length && ucs2 == 0);
 }
 
 static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByteHash, std::uint32_t fourByteHash, std::uint32_t encodeHash, int fourByteOneWay, int codeOneWay) {
@@ -164,25 +165,25 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
         if (revision2005 && entry.fallback) Require(Gb18030Encode(gb, entry.code2000) == entry.bytes);
     }
 
-    RequireGb18030Error(gb, "\x80", 1, invalidEncode);
-    RequireGb18030Error(gb, "\xFF", 1, invalidEncode);
-    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode);
+    RequireGb18030Error(gb, "\x80", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\xFF", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd, 2);
+    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode, 4);
 
     std::uint32_t consumed = 0x55;
     std::uint32_t produced = 0x55;

@@ -480,13 +480,44 @@ def block(lines, start):
     return lines[start + 1:end]
 
 
+def flow_mapping(value):
+    tokens = re.findall(r'''"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^{}\[\],:\s]+|[{}\[\],:]''', value)
+    if not tokens or tokens[0] != "{" or tokens[-1] != "}":
+        return {}
+    result = {}
+    stack = []
+    start, colon = 1, None
+    for index, token in enumerate(tokens):
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]"):
+            if not stack or stack.pop() != ("{" if token == "}" else "["):
+                return {}
+            if not stack and index != len(tokens) - 1:
+                return {}
+        if len(stack) == 1 and token == ":" and colon is None:
+            colon = index
+        if (len(stack) == 1 and token == ",") or (not stack and token == "}"):
+            if colon == start + 1:
+                result[tokens[start].strip("'\"")] = " ".join(tokens[colon + 1:index])
+            elif start != index:
+                return {}
+            start, colon = index + 1, None
+    return result if not stack else {}
+
+
 def pull_request_filtered(lines, trigger):
     _, _, _, value = trigger
     if value:
+        if value.lstrip().startswith("{"):
+            triggers = flow_mapping(value)
+            return "pull_request" not in triggers or bool({"paths", "paths-ignore"} & flow_mapping(triggers["pull_request"]).keys())
         return "pull_request" not in re.findall(r"[A-Za-z_]+", value)
     triggers = block(lines, lines.index(trigger))
     for index, (_, indent, name, value) in enumerate(triggers):
         if name == "pull_request" and indent == triggers[0][1]:
+            if value:
+                return bool({"paths", "paths-ignore"} & flow_mapping(value).keys())
             return any(entry[2] in ("paths", "paths-ignore") for entry in block(triggers, index))
     return True
 

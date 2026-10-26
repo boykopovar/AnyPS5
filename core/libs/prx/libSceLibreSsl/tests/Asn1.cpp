@@ -36,6 +36,16 @@ void RequireThrows(TAction action, const char* message) {
     Require(false, message);
 }
 
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, message);
+}
+
 void CheckConversion(int type, std::span<const unsigned char> input, std::span<const unsigned char> expected, int length = -2) {
     std::vector<unsigned char> storage(input.begin(), input.end());
     storage.push_back(0);
@@ -65,9 +75,9 @@ void Accessors() {
     Require(ASN1_STRING_data_nid_postfix(&value) == nullptr, "null data is preserved");
     Require(ASN1_STRING_length_nid_postfix(&value) == -9, "length is returned without normalization");
     Require(ASN1_STRING_type_nid_postfix(&value) == 0x7fffffff, "type is returned without normalization");
-    RequireThrows([] { ASN1_STRING_data_nid_postfix(nullptr); }, "null data accessor input");
-    RequireThrows([] { ASN1_STRING_length_nid_postfix(nullptr); }, "null length accessor input");
-    RequireThrows([] { ASN1_STRING_type_nid_postfix(nullptr); }, "null type accessor input");
+    RequireInvalidArgument([] { ASN1_STRING_data_nid_postfix(nullptr); }, "null data accessor input");
+    RequireInvalidArgument([] { ASN1_STRING_length_nid_postfix(nullptr); }, "null length accessor input");
+    RequireInvalidArgument([] { ASN1_STRING_type_nid_postfix(nullptr); }, "null type accessor input");
 }
 
 void Integers() {

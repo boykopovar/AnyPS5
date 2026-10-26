@@ -2360,6 +2360,64 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 }
 
+void retiredImportWatchTests(const Context& context) {
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the write watch of retired imports not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t bytes = 2 * piece;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x5a, bytes);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(bytes);
+    SetHostImportDeferredSettles(false);
+    ClearHostImports(importing.device);
+    const auto decided = PrepareImportWatch(importing);
+    SetImportWatch(importing, ImportWatch::Unwatch);
+    const auto registry = [&](std::size_t offset, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, piece, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    registry(0, true);
+    build();
+    Require(HostImportCovers(importing, address, piece), "the first 64 KiB piece was not imported on its own");
+    Require(!AgcDriver::GuestMemory::Watched(address, piece), "an unwatched 64 KiB import kept its piece in the write watch");
+    registry(piece, true);
+    SetHostImportBudget(4096);
+    const auto before = MirrorCounters();
+    build();
+    Require(!HostImportCovers(importing, address, piece), "the piece's import outlived the run that grew past it, or a 128 KiB block fit a 4 KiB budget");
+    Require(AgcDriver::GuestMemory::Watched(address, piece), "a 64 KiB piece whose import retired when its run grew into a block stayed outside the write watch");
+    Require(MirrorCounters().heapMirrors == before.heapMirrors + 2, "a 64 KiB piece whose import retired when its run grew into a block was copied, not heap mirrored, once no import fit");
+    registry(piece, false);
+    registry(0, false);
+    build();
+    SetImportWatch(importing, decided);
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    SetHostImportDeferredSettles(true);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+#else
+    static_cast<void>(context);
+#endif
+}
+
 void importedFreshTests(const Context& context) {
 #ifndef _WIN32
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
@@ -3574,6 +3632,200 @@ void hostWriteWatchExclusionTests() {
 #endif
 }
 
+void sparseJoinedHeapMirrorTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t half = 1u << 20u;
+    constexpr std::size_t reserved = 2 * half;
+    constexpr std::size_t page = 65536;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: sparse heap mirrors over adjacent ranges not tested\n";
+        return;
+    }
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(reserved, page);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    GuestArena::GuestArenaCommit_nid_postfix(guest, page, PAGE_READWRITE, page);
+    GuestArena::GuestArenaCommit_nid_postfix(guest + half, page, PAGE_READWRITE, page);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: sparse heap mirrors over adjacent ranges not tested\n";
+        return;
+    }
+    void* mapping = mmap(nullptr, reserved + page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "cannot reserve the sparse heap over adjacent ranges");
+    auto* guest = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapping) + page - 1) & ~std::uintptr_t{page - 1});
+    Require(mprotect(guest, page, PROT_READ | PROT_WRITE) == 0 && mprotect(guest + half, page, PROT_READ | PROT_WRITE) == 0, "cannot commit the sparse heap pages");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, reserved);
+    void* block = guest;
+#endif
+    auto* second = guest + half;
+    std::memset(guest, 0x5a, page);
+    std::memset(second, 0x6b, page);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) {
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, half, true, true, true);
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, second, half, true, true, true);
+        } else {
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, second);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto sweep = [&] {
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        memory.Upload(true);
+        memory.WriteBack();
+    };
+    sweep();
+    registry(true);
+    const auto bind = [&] {
+        GuestBufferMemory memory(context);
+        memory.AddWritable(base, reserved);
+        memory.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(base, reserved, adjustment);
+        Require(adjustment == 0, "a sparse heap view over adjacent ranges is adjusted");
+        const auto bytes = access.bytes(view.buffer);
+        Require(view.range >= half + page && bytes[view.offset + page - 1] == std::byte{0x5a} && bytes[view.offset + page] == std::byte{} && bytes[view.offset + half] == std::byte{0x6b}, "a sparse heap over adjacent ranges is not bound to its committed extent");
+        bytes[view.offset + half + 8] = std::byte{0x77};
+        memory.WriteBack();
+        return view;
+    };
+    const auto before = MirrorCounters();
+    const auto first = bind();
+    const auto made = MirrorCounters();
+    Require(made.sparseBinds == before.sparseBinds + 1 && made.heapMirrors == before.heapMirrors + 1, "a sparse heap whose committed span crosses an adjacent range was not mirrored");
+    Require(second[8] == 0x77, "a store to the adjacent range of a mirrored sparse heap was not written back");
+    second[8] = 0x6b;
+    const auto again = bind();
+    Require(again.buffer == first.buffer && MirrorCounters().rebuilds == made.rebuilds && MirrorCounters().sparseBinds == made.sparseBinds + 1, "a sparse heap over unchanged adjacent ranges did not reuse its mirror");
+    registry(false);
+    sweep();
+    Require(MirrorCounters().heapMirrors == before.heapMirrors && MirrorCounters().heapBytes == before.heapBytes, "the sparse heap mirror over adjacent ranges outlived its ranges");
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(block, reserved);
+    GuestArena::GuestArenaRelease_nid_postfix(block, reserved);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, reserved);
+    munmap(mapping, reserved + page);
+#endif
+}
+
+void joinedHeapMirrorPartialImportTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t half = 1u << 20u;
+    constexpr std::size_t committed = 2 * half;
+    constexpr std::size_t reserved = 4 * half;
+    constexpr std::size_t page = 65536;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: joined heap mirrors under a partial import not tested\n";
+        return;
+    }
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(reserved, half);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    GuestArena::GuestArenaCommit_nid_postfix(guest, committed, PAGE_READWRITE, page);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: joined heap mirrors under a partial import not tested\n";
+        return;
+    }
+    void* mapping = mmap(nullptr, reserved + half, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "cannot reserve the joined heap");
+    auto* guest = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapping) + half - 1) & ~std::uintptr_t{half - 1});
+    Require(mprotect(guest, committed, PROT_READ | PROT_WRITE) == 0, "cannot commit the joined heap ranges");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, reserved);
+    void* block = guest;
+#endif
+    std::memset(guest, 0x3c, committed);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) {
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, half, true, true, true);
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + half, half, true, true, true);
+        } else {
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + half);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto sweep = [&](const Context& with) {
+        GuestBufferMemory memory(with);
+        memory.AcquireRegistered();
+        memory.Upload(true);
+        memory.WriteBack();
+    };
+    const auto bind = [&] {
+        GuestBufferMemory memory(context);
+        memory.AddWritable(base, reserved);
+        memory.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(base, reserved, adjustment);
+        Require(adjustment == 0 && access.bytes(view.buffer)[view.offset + half + 32] == std::byte{0x3c}, "a heap bound across two committed ranges did not read its second range");
+        memory.WriteBack();
+        return view;
+    };
+    sweep(context);
+    registry(true);
+    const auto before = MirrorCounters();
+    const auto first = bind();
+    const auto made = MirrorCounters();
+    Require(made.heapMirrors == before.heapMirrors + 1 && made.sparseBinds == before.sparseBinds + 1, "a heap bound across two committed ranges was not mirrored over both");
+    auto importing = context;
+    importing.hostImportAlignment = page;
+    SetHostImportWindow(half);
+    SetHostImportRangeWindow(half);
+    SetHostImportBudget(HostImportLiveBytes() + half);
+    {
+        GuestBufferMemory memory(importing);
+        memory.AcquireRegistered();
+        Require(ExistingHostImportFor(importing, base, half) != nullptr && ExistingHostImportFor(importing, base + half, half) == nullptr, "the joined heap partial-import fixture did not import exactly its first range");
+        Require(HeapMirrorsWithin(base, base + half).mirrors == 1, "an address build that imported one range of a joined heap mirror released the mirror");
+        memory.Upload(true);
+        memory.WriteBack();
+    }
+    const auto partial = MirrorCounters();
+    const auto again = bind();
+    Require(again.buffer == first.buffer && MirrorCounters().rebuilds == partial.rebuilds, "a joined heap mirror was rebuilt after an import of one of its ranges");
+    {
+        GuestBufferMemory memory(importing);
+        memory.AcquireRegistered();
+        memory.AddWritable(base + half, 32);
+        memory.Upload(true);
+        if (ExistingHostImportFor(importing, base + half, 32) != nullptr) guest[half] = 0x71;
+        else {
+            std::uint32_t adjustment = 0;
+            const auto view = memory.Descriptor(base + half, 32, adjustment);
+            access.bytes(view.buffer)[view.offset + adjustment] = std::byte{0x71};
+        }
+        guest[half + 8] = 0x52;
+        memory.WriteBack();
+    }
+    Require(guest[half] == 0x71 && guest[half + 8] == 0x52, "a joined heap address build lost GPU or genuine CPU stores");
+    const auto refreshed = bind();
+    Require(refreshed.buffer == first.buffer && access.bytes(refreshed.buffer)[refreshed.offset + half] == std::byte{0x71} && access.bytes(refreshed.buffer)[refreshed.offset + half + 8] == std::byte{0x52}, "the retained joined mirror did not refresh stores from an address build");
+    SetHostImportBudget(HostImportLiveBytes() + committed);
+    GuestAllocations::GuestAllocationsEnd_nid_postfix(GuestAllocations::GuestAllocationsBegin_nid_postfix());
+    sweep(importing);
+    Require(ExistingHostImportFor(importing, base, half) != nullptr && ExistingHostImportFor(importing, base + half, half) != nullptr, "the joined heap full-import fixture did not import both ranges");
+    Require(HeapMirrorsWithin(base, base + committed).mirrors == 0, "imports covering every joined heap range left a heap mirror allocated");
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    SetHostImportRangeWindow(std::uint64_t{64} << 20u);
+    ClearHostImports(context.device);
+    registry(false);
+    sweep(context);
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(block, reserved);
+    GuestArena::GuestArenaRelease_nid_postfix(block, reserved);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, reserved);
+    munmap(mapping, reserved + half);
+#endif
+}
+
 void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) {
 #ifdef _WIN32
     if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
@@ -3974,6 +4226,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     heapMirrorTests(context, access);
     partialHeapImportBudgetTests(context, access);
     importedHeapMirrorTests(context, access);
+    retiredImportWatchTests(context);
     importWatchTests();
     importedFreshTests(context);
     gpuMappingTests(context);
@@ -3982,6 +4235,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceCommittedPagesTests(context, access);
     hostWriteWatchExclusionTests();
     sparseHeapMirrorTests(context, access);
+    sparseJoinedHeapMirrorTests(context, access);
+    joinedHeapMirrorPartialImportTests(context, access);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");

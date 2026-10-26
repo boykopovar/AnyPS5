@@ -1,6 +1,7 @@
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -16,6 +17,7 @@ static constexpr int SCE_NP_COMMUNITY_ERROR_ABORTED = static_cast<int>(0x8055070
 static constexpr int SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT = static_cast<int>(0x8055070C);
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_ID = static_cast<int>(0x8055070E);
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_TYPE = static_cast<int>(0x80550711);
+static constexpr int SCE_NP_LOOKUP_ERROR_SYNCHRONOUS_REQUEST = static_cast<int>(0x80550307);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
@@ -23,7 +25,9 @@ static constexpr std::size_t MAX_REQUESTS = 32;
 static constexpr int WORD_FILTER_TITLE_CTX_ID_OFFSET = 0x01000000;
 static constexpr int WORD_FILTER_REQUEST_ID_OFFSET = 0x02000000;
 static constexpr std::size_t WORD_FILTER_COMMENT_MAX_LENGTH = 0x400;
-static constexpr std::uint64_t WORD_FILTER_ASYNC_PARAMETER_SIZE = 0x18;
+static constexpr std::uint64_t ASYNC_REQUEST_PARAMETER_SIZE = 0x18;
+static constexpr std::uint32_t RESOLVE_TIMEOUT_MIN = 1000000;
+static constexpr std::uint32_t TRANSFER_TIMEOUT_MIN = 10000000;
 
 namespace {
 struct Request {
@@ -38,6 +42,7 @@ struct Request {
 struct Service {
     Service(int firstTitleContext, int firstRequest) : nextTitleContext(firstTitleContext), nextRequest(firstRequest) {}
     std::mutex mutex;
+    std::condition_variable finished;
     std::unordered_set<int> titleContexts;
     std::unordered_map<int, Request> requests;
     int nextTitleContext;
@@ -60,6 +65,7 @@ int DeleteTitleContext(Service& service, int titleCtxId) {
     std::lock_guard lock(service.mutex);
     if (!service.titleContexts.erase(titleCtxId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     std::erase_if(service.requests, [titleCtxId](const auto& entry) { return entry.second.titleCtxId == titleCtxId; });
+    service.finished.notify_all();
     return 0;
 }
 
@@ -74,7 +80,9 @@ int CreateRequest(Service& service, int titleCtxId, bool async) {
 
 int DeleteRequest(Service& service, int reqId) {
     std::lock_guard lock(service.mutex);
-    return service.requests.erase(reqId) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (!service.requests.erase(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    service.finished.notify_all();
+    return 0;
 }
 
 int StartOffline(Service& service, int reqId) {
@@ -86,7 +94,60 @@ int StartOffline(Service& service, int reqId) {
     request->second.used = true;
     request->second.finished = true;
     request->second.result = SCE_NP_ERROR_SIGNED_OUT;
+    service.finished.notify_all();
     return request->second.async ? 0 : SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int AbortRequest(Service& service, int reqId) {
+    std::lock_guard lock(service.mutex);
+    const auto request = service.requests.find(reqId);
+    if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    request->second.aborted = true;
+    if (!request->second.finished) {
+        request->second.finished = true;
+        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+        service.finished.notify_all();
+    }
+    return 0;
+}
+
+int PollAsync(Service& service, int reqId, int* result, int synchronousError) {
+    if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(service.mutex);
+    const auto request = service.requests.find(reqId);
+    if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (!request->second.async) return synchronousError;
+    if (!request->second.finished) return POLL_RUNNING;
+    *result = request->second.result;
+    return POLL_FINISHED;
+}
+
+int WaitAsync(Service& service, int reqId, int* result, int synchronousError) {
+    if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::unique_lock lock(service.mutex);
+    auto request = service.requests.find(reqId);
+    if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (!request->second.async) return synchronousError;
+    service.finished.wait(lock, [&] {
+        request = service.requests.find(reqId);
+        return request == service.requests.end() || request->second.finished;
+    });
+    if (request == service.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    *result = request->second.result;
+    return 0;
+}
+
+bool ValidTimeout(std::uint32_t timeout, std::uint32_t minimum) {
+    return timeout == 0 || timeout >= minimum;
+}
+
+int SetTimeout(Service& service, int id, int resolveRetry, std::uint32_t resolveTimeout, std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout) {
+    if (resolveRetry < 0 || !ValidTimeout(resolveTimeout, RESOLVE_TIMEOUT_MIN) || !ValidTimeout(connTimeout, TRANSFER_TIMEOUT_MIN) ||
+        !ValidTimeout(sendTimeout, TRANSFER_TIMEOUT_MIN) || !ValidTimeout(recvTimeout, TRANSFER_TIMEOUT_MIN))
+        return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (resolveRetry == 0 && resolveTimeout == 0 && connTimeout == 0 && sendTimeout == 0 && recvTimeout == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(service.mutex);
+    return service.titleContexts.contains(id) || service.requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
 int CheckComment(const char* comment) {
@@ -237,14 +298,6 @@ int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpLookupAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupCreateAsyncRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpLookupCreateTitleCtxA() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -310,18 +363,6 @@ int APS5_VABI sceNpLookupNetSetTimeout() {
     return 0;
 }
 int APS5_VABI sceNpLookupNetTerm() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupPollAsync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupSetTimeout() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpLookupWaitAsync() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -421,14 +462,6 @@ int APS5_VABI sceNpWordFilterCreateTitleCtxA() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpWordFilterSetTimeout() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpWordFilterWaitAsync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 }
 
 extern "C" {
@@ -436,6 +469,15 @@ extern "C" {
 int APS5_VABI sceNpBandwidthTestInitStart() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpLookupAbortRequest(int reqId) {
+    return AbortRequest(lookup, reqId);
+}
+
+int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
+    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return CreateRequest(lookup, titleCtxId, true);
 }
 
 int APS5_VABI sceNpLookupCreateRequest(int titleCtxId) {
@@ -460,16 +502,20 @@ int APS5_VABI sceNpLookupNpId(int reqId, const NpOnlineId* onlineId, void* npId,
     return StartOffline(lookup, reqId);
 }
 
+int APS5_VABI sceNpLookupPollAsync(int reqId, int* result) {
+    return PollAsync(lookup, reqId, result, SCE_NP_LOOKUP_ERROR_SYNCHRONOUS_REQUEST);
+}
+
+int APS5_VABI sceNpLookupSetTimeout(int id, int resolveRetry, std::uint32_t resolveTimeout, std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout) {
+    return SetTimeout(lookup, id, resolveRetry, resolveTimeout, connTimeout, sendTimeout, recvTimeout);
+}
+
+int APS5_VABI sceNpLookupWaitAsync(int reqId, int* result) {
+    return WaitAsync(lookup, reqId, result, SCE_NP_LOOKUP_ERROR_SYNCHRONOUS_REQUEST);
+}
+
 int APS5_VABI sceNpWordFilterAbortRequest(int reqId) {
-    std::lock_guard lock(wordFilter.mutex);
-    const auto request = wordFilter.requests.find(reqId);
-    if (request == wordFilter.requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    request->second.aborted = true;
-    if (!request->second.finished) {
-        request->second.finished = true;
-        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
-    }
-    return 0;
+    return AbortRequest(wordFilter, reqId);
 }
 
 int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void* option) {
@@ -480,7 +526,7 @@ int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void*
 }
 
 int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param) {
-    if (!param || *param != WORD_FILTER_ASYNC_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!param || *param != ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return CreateRequest(wordFilter, titleCtxId, true);
 }
 
@@ -501,13 +547,7 @@ int APS5_VABI sceNpWordFilterDeleteTitleCtx(int titleCtxId) {
 }
 
 int APS5_VABI sceNpWordFilterPollAsync(int reqId, int* result) {
-    if (!result) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    std::lock_guard lock(wordFilter.mutex);
-    const auto request = wordFilter.requests.find(reqId);
-    if (request == wordFilter.requests.end() || !request->second.async) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.finished) return POLL_RUNNING;
-    *result = request->second.result;
-    return POLL_FINISHED;
+    return PollAsync(wordFilter, reqId, result, SCE_NP_COMMUNITY_ERROR_INVALID_ID);
 }
 
 int APS5_VABI sceNpWordFilterSanitizeComment(int reqId, const char* comment, char* sanitizedComment, void* option) {
@@ -515,6 +555,14 @@ int APS5_VABI sceNpWordFilterSanitizeComment(int reqId, const char* comment, cha
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckComment(comment)) return error;
     return StartOffline(wordFilter, reqId);
+}
+
+int APS5_VABI sceNpWordFilterSetTimeout(int id, int resolveRetry, std::uint32_t resolveTimeout, std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout) {
+    return SetTimeout(wordFilter, id, resolveRetry, resolveTimeout, connTimeout, sendTimeout, recvTimeout);
+}
+
+int APS5_VABI sceNpWordFilterWaitAsync(int reqId, int* result) {
+    return WaitAsync(wordFilter, reqId, result, SCE_NP_COMMUNITY_ERROR_INVALID_ID);
 }
 
 }

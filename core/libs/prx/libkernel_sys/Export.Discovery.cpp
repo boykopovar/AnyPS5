@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -67,11 +69,6 @@ int APS5_VABI futimesat_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI get_authinfo_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI get_module_info_list_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -98,11 +95,6 @@ int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
 }
 
 int APS5_VABI getfsstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI getlogin_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -287,8 +279,10 @@ int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
+    constexpr int GuestEinval = 22;
+    if (!attr || !*attr) return GuestEinval;
+    (*attr)->_createSuspended = true;
     return 0;
 }
 
@@ -323,7 +317,7 @@ int APS5_VABI pthread_getstack_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_multi_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+    pthread_resume_all_np_nid_postfix();
     return 0;
 }
 
@@ -357,14 +351,15 @@ int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_resume_all_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI pthread_resume_all_np_nid_postfix(void) {
+    ResumeAllGuestThreads_nid_no_patch();
+    scePthreadTestcancel();
 }
 
-int APS5_VABI pthread_resume_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI pthread_resume_np_nid_postfix(Pthread thread) {
+    constexpr int GuestEinval = 22;
+    if (!thread) return GuestEinval;
+    return ResumeGuestThread_nid_no_patch(thread);
 }
 
 int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
@@ -373,11 +368,6 @@ int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_rwlock_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -979,11 +969,6 @@ int APS5_VABI sceKernelGetMemoryPstate(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetOpenPsIdForSystem(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetPagingStatsOfAllObjects(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1405,17 +1390,7 @@ int APS5_VABI sceKernelIsAuthenticNeo(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsCEX(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsDebuggerAttached(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsDevKit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1508,10 +1483,6 @@ int APS5_VABI sceKernelKernelHeapUsage(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelLoadStartModuleForSysmodule(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceKernelLoadStartModuleInternalForMono(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -2124,9 +2095,9 @@ int APS5_VABI scePthreadAttrGetscope(const PthreadAttr* attr, int* scope) {
     return SceResult(pthread_attr_getscope_nid_postfix(attr, scope));
 }
 
-int APS5_VABI scePthreadAttrSetcreatesuspend(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadAttrSetcreatesuspend(PthreadAttr* attr) {
+    const int error = pthread_attr_setcreatesuspend_np_nid_postfix(attr);
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
 int APS5_VABI scePthreadAttrSetscope(PthreadAttr* attr, int scope) {
@@ -2171,14 +2142,10 @@ int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
     return SceResult(pthread_getcpuclockid_nid_postfix(thread, clockId));
 }
 
-int APS5_VABI scePthreadMain(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI scePthreadMulti(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const int error = pthread_multi_np_nid_postfix();
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
 int APS5_VABI scePthreadMutexGetprioceiling(void) {
@@ -2206,11 +2173,6 @@ int APS5_VABI scePthreadMutexattrGetgen(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrGetkind(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexattrInitForInternalLibc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2221,19 +2183,13 @@ int APS5_VABI scePthreadMutexattrSetgen(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrSetkind(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadResume(Pthread thread) {
+    const int error = pthread_resume_np_nid_postfix(thread);
+    return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI scePthreadResume(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadResumeAll(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI scePthreadResumeAll(void) {
+    pthread_resume_all_np_nid_postfix();
 }
 
 int APS5_VABI scePthreadSetBesteffort(void) {
@@ -2296,11 +2252,6 @@ int APS5_VABI set_phys_fmem_limit_nid_postfix(void) {
 }
 
 int APS5_VABI setlogin_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI settimeofday_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

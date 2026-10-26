@@ -3,7 +3,12 @@
 
 #include <chrono>
 #include <cstdio>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -109,7 +114,7 @@ void queueOverflowIsCounted() {
 void contractPadAndPresentLines() {
     const auto directory = freshDirectory("contract");
     {
-        auto writer = VideoOutTelemetry::OpenFromEnvironment(directory.c_str(), "abc123");
+        auto writer = VideoOutTelemetry::OpenFromEnvironment(directory.string().c_str(), "abc123");
         check(writer != nullptr, "variable must open a writer");
         PadInputState state;
         state.buttons = 0x4000;
