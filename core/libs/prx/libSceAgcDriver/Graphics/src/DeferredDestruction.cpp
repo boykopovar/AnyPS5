@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::size_t DrainObjects = 512;
 constexpr auto DrainAge = std::chrono::milliseconds(100);
+constexpr auto IdleDrainAge = std::chrono::milliseconds(30);
 
 struct Deferred {
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
@@ -87,14 +88,15 @@ PFN_vkGetDeviceProcAddr DeferDestructionToIdle(VkDevice device, PFN_vkGetDeviceP
     return &deferringDeviceProc;
 }
 
-void DestroyDeferredAtIdle(const Context& context, std::chrono::steady_clock::time_point now) {
+void DestroyDeferredAtIdle(const Context& context, std::chrono::steady_clock::time_point now, bool queueIdle) {
     auto& state = registry();
     {
         std::lock_guard lock(state.mutex);
         const auto found = state.devices.find(context.device);
         if (found == state.devices.end()) return;
         const auto objects = found->second.buffers.size() + found->second.memory.size();
-        if (objects == 0 || (objects < DrainObjects && now - found->second.oldest < DrainAge)) return;
+        const auto age = now - found->second.oldest;
+        if (objects == 0 || (objects < DrainObjects && age < DrainAge && !(queueIdle && age >= IdleDrainAge))) return;
     }
     const auto idle = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
     if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) throw std::runtime_error("AGC graphics: vkQueueWaitIdle before destroying deferred objects: Vulkan result " + std::to_string(idle));
