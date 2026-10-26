@@ -191,6 +191,7 @@ struct RequestData {
     bool bodyDone = false;
     std::uint64_t chunkRemaining = 0;
     bool needChunkTerminator = false;
+    std::size_t trailerMaximum = 0;
 };
 
 std::mutex g_objectsMutex;
@@ -268,6 +269,16 @@ std::shared_ptr<RequestData> FindRequest(const int id) {
     return found == g_requests.end() ? nullptr : found->second;
 }
 
+void DropConsumed(std::vector<unsigned char>& pending, std::size_t& offset) {
+    if (offset == pending.size()) {
+        pending.clear();
+        offset = 0;
+    } else if (offset >= kIoBufferSize) {
+        pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(offset));
+        offset = 0;
+    }
+}
+
 int ReadLine(NetworkStream& stream, std::vector<unsigned char>& pending, std::size_t& offset, std::string& line,
     const std::size_t limit) {
     line.clear();
@@ -283,6 +294,7 @@ int ReadLine(NetworkStream& stream, std::vector<unsigned char>& pending, std::si
             return 0;
         }
         if (pending.size() - offset > limit) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
+        DropConsumed(pending, offset);
         std::array<unsigned char, kIoBufferSize> buffer{};
         const int received = stream.Read(buffer.data(), buffer.size());
         if (received <= 0) return ERROR_NETWORK;
@@ -297,6 +309,7 @@ int ReadPending(NetworkStream& stream, std::vector<unsigned char>& pending, std:
         const auto count = std::min(size, pending.size() - offset);
         std::memcpy(output, pending.data() + offset, count);
         offset += count;
+        DropConsumed(pending, offset);
         return static_cast<int>(count);
     }
     return stream.Read(output, size);
@@ -596,6 +609,7 @@ int ReadRequestHeaders(RequestData& request, const std::shared_ptr<RequestData>&
     const auto maxHeader = static_cast<std::size_t>(std::min<std::uint64_t>(settings.responseHeaderMaxSize,
         static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())));
     if (maxHeader == 0) return ERROR_INVALID_VALUE;
+    request.trailerMaximum = maxHeader;
     const int result = ParseResponseHeaders(request, *request.stream, maxHeader);
     if (result != 0) {
         request.lastError = result;
@@ -709,8 +723,11 @@ int ReadChunkedBody(RequestData& request, void* output, const std::size_t size) 
             if (lineResult != 0) return lineResult;
             if (const int parseResult = ParseChunkSize(line, request.chunkRemaining); parseResult != 0) return parseResult;
             if (request.chunkRemaining == 0) {
+                std::size_t trailerBytes = 0;
                 for (;;) {
                     if (ReadLine(*request.stream, request.pending, request.pendingOffset, line, kMaximumChunkLine) != 0) return ERROR_NETWORK;
+                    trailerBytes += line.size() + 2;
+                    if (trailerBytes > request.trailerMaximum) return ERROR_PARSE_HTTP_INVALID_RESPONSE;
                     if (line.empty()) break;
                 }
                 request.bodyDone = true;

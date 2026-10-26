@@ -58,6 +58,7 @@ int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpGetResponseContentLength(int, int*, std::uint64_t*);
 int APS5_VABI sceHttpGetAllResponseHeaders(int, char**, std::size_t*);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
+int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
 }
 
 #ifdef _WIN32
@@ -382,6 +383,38 @@ static void CheckChunkedResponse() {
     DeleteRequest(objects);
 }
 
+static void CheckOversizedChunkTrailer() {
+    std::string response = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n";
+    for (int line = 0; line < 64; ++line) response += "X-Trailer-" + std::to_string(line) + ": " + std::string(48, 't') + "\r\n";
+    response += "\r\n";
+    HttpServer server({response});
+    const auto objects = CreateRequest(server.Port(), 0);
+    Require(sceHttpSetResponseHeaderMaxSize(objects.request, 1024) == 0);
+    Require(sceHttpSendRequest(objects.request, nullptr, 0) == 0);
+    std::array<char, 16> buffer{};
+    Require(sceHttpReadData(objects.request, buffer.data(), 3) == 3 && std::string_view(buffer.data(), 3) == "abc");
+    Require(sceHttpReadData(objects.request, buffer.data(), buffer.size()) == static_cast<int>(0x80431063u));
+    int lastError = 0;
+    Require(sceHttpGetLastErrno(objects.request, &lastError) == 0 && lastError == static_cast<int>(0x80432060u));
+    DeleteRequest(objects);
+}
+
+static void CheckLongChunkedResponse() {
+    std::string response = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+    std::string expected;
+    for (int chunk = 0; chunk < 20000; ++chunk) {
+        const std::string value(2, static_cast<char>('a' + chunk % 26));
+        response += "2\r\n" + value + "\r\n";
+        expected += value;
+    }
+    response += "0\r\n\r\n";
+    HttpServer server({response});
+    const auto objects = CreateRequest(server.Port(), 0);
+    Require(sceHttpSendRequest(objects.request, nullptr, 0) == 0);
+    Require(ReadBody(objects.request) == expected);
+    DeleteRequest(objects);
+}
+
 static void CheckTlsTransport() {
     TlsHttpServer server;
     Require(sceNetInit_nid_postfix() == 0);
@@ -478,6 +511,8 @@ int main() {
     Require(sceNetInit_nid_postfix() == 0);
     CheckContentLengthResponse();
     CheckChunkedResponse();
+    CheckOversizedChunkTrailer();
+    CheckLongChunkedResponse();
     CheckRedirect();
     CheckTlsTransport();
     CheckConnectTimeout();
