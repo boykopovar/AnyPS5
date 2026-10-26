@@ -231,7 +231,7 @@ int main() {
     received = 0;
     Require(raise_nid_postfix(30) == 0 && received == 0);
     Require(sigsuspend_nid_postfix(&suspendWithKillAndStop) == -1 && received == 30);
-    Require(maskInHandler.bits[0] == (1u << 28));
+    Require(maskInHandler.bits[0] == ((1u << 28) | (1u << 29)));
     Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == user.bits[0]);
     Require(signal_nid_postfix(30, Callback) != invalid);
     received = 0;

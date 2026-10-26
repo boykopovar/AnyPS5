@@ -210,10 +210,11 @@ struct JisChange {
     uint16_t code;
 };
 
-constexpr JisChange JIS_X0208_CHANGES[6] = {{0x2141, 0x301C}, {0x2142, 0x2016}, {0x215D, 0x2212}, {0x2171, 0x00A2}, {0x2172, 0x00A3}, {0x224C, 0x00AC}};
-constexpr uint16_t JIS_X0208_UNSETTLED_CELL = 0x2140;
-constexpr uint16_t JIS_X0208_UNSETTLED_CODE = 0xFF3C;
-constexpr const char* JIS_X0208_UNSETTLED = "libSceCesCs: the console's mapping of JIS X 0208 cell 0x2140 (U+005C or U+FF3C) is unknown";
+constexpr JisChange JIS_X0208_CHANGES[7] = {{0x213D, 0x2014}, {0x2141, 0x301C}, {0x2142, 0x2016}, {0x215D, 0x2212}, {0x2171, 0x00A2}, {0x2172, 0x00A3}, {0x224C, 0x00AC}};
+constexpr uint16_t JIS_X0208_BACKSLASH_CELL = 0x2140;
+constexpr JisChange JIS_X0208_EUC_FALLBACKS[2] = {{0x216F, 0x00A5}, {0x2131, 0x203E}};
+
+enum class JisStrict { None, Sjis, Euc };
 
 constexpr uint32_t jisIndex(uint16_t jis) {
     return ((jis >> 8) - 0x21) * 94 + (jis & 0xFF) - 0x21;
@@ -223,22 +224,21 @@ bool isCp932ExtensionRow(uint32_t row) {
     return row == 13 || (row >= 89 && row <= 92);
 }
 
-uint16_t strictJisX0208(uint32_t index) {
-    if (isCp932ExtensionRow(index / 94 + 1) || index == jisIndex(JIS_X0208_UNSETTLED_CELL)) return 0;
+uint16_t strictJisX0208(JisStrict strict, uint32_t index) {
+    if (isCp932ExtensionRow(index / 94 + 1)) return 0;
+    if (index == jisIndex(JIS_X0208_BACKSLASH_CELL)) return strict == JisStrict::Sjis ? 0x005C : 0xFF3C;
     for (const JisChange& change : JIS_X0208_CHANGES) {
         if (jisIndex(change.jis) == index) return change.code;
     }
     return JisX0208::TO_UCS2[index];
 }
 
-uint32_t jisX0208ToUnicode(bool strict, uint32_t index) {
-    if (!strict) return JisX0208::TO_UCS2[index];
-    if (index == jisIndex(JIS_X0208_UNSETTLED_CELL)) throw std::runtime_error(JIS_X0208_UNSETTLED);
-    return strictJisX0208(index);
+uint32_t jisX0208ToUnicode(JisStrict strict, uint32_t index) {
+    return strict == JisStrict::None ? JisX0208::TO_UCS2[index] : strictJisX0208(strict, index);
 }
 
-void requireSettledSjisX0208(uint32_t code) {
-    if (code == 0x5C || code == 0x7E || code == 0xA5 || code == 0x203E) throw std::runtime_error("libSceCesCs: the console's mapping of Shift-JIS bytes 0x5C and 0x7E (ASCII or JIS X 0201 Roman) is unknown");
+uint32_t sjisX0208Single(uint8_t byte) {
+    return byte == 0x5C ? 0x00A5 : byte == 0x7E ? 0x203E : byte;
 }
 
 constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', '6'};
@@ -256,6 +256,36 @@ bool isSbc(const void* profile) {
     return profile == CP1252_PROFILE || sbcHighTable(profile) != nullptr;
 }
 
+int rejectLead(uint32_t& length) {
+    length = 1;
+    return CES_ERROR_INVALID_ENCODE;
+}
+
+int needBytes(uint32_t size, uint32_t& length) {
+    length = size;
+    return CES_ERROR_SRC_BUFFER_END;
+}
+
+int rejectTrail(uint8_t trail, uint32_t size, uint32_t& length) {
+    length = trail == 0 ? 1 : size;
+    return CES_ERROR_INVALID_ENCODE;
+}
+
+bool stopsAtNul(const uint8_t* mbcs, uint32_t mbcsMax, uint32_t from, uint32_t size, uint32_t& length) {
+    for (uint32_t index = from; index < size && index < mbcsMax; ++index) {
+        if (mbcs[index] == 0) {
+            length = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+int unassigned(uint32_t size, uint32_t& length) {
+    length = size;
+    return CES_ERROR_UNASSIGNED_CODE;
+}
+
 int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
     const uint8_t lead = mbcs[0];
     if (lead < 0x80) {
@@ -269,12 +299,12 @@ int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_
         code = 0x20AC;
         return 0;
     }
-    if (lead == 0xFF || (!gbk && lead < 0xA1)) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (lead == 0xFF || (!gbk && lead < 0xA1)) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
     const uint8_t trail = mbcs[1];
-    if (trail == 0xFF || (gbk ? trail < 0x40 || trail == 0x7F : trail < 0xA1)) return CES_ERROR_INVALID_ENCODE;
+    if (trail == 0xFF || (gbk ? trail < 0x40 || trail == 0x7F : trail < 0xA1)) return rejectTrail(trail, 2, length);
     code = Cp936::TO_UCS2[(lead - 0x81) * 190 + (trail < 0x7F ? trail - 0x40 : trail - 0x41)];
-    if (code == 0) return CES_ERROR_UNASSIGNED_CODE;
+    if (code == 0) return unassigned(2, length);
     length = 2;
     return 0;
 }
@@ -372,20 +402,21 @@ int decodeGb18030(const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbc
         code = lead;
         return 0;
     }
-    if (lead == 0x80 || lead == 0xFF) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (lead == 0x80 || lead == 0xFF) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
     const uint8_t second = mbcs[1];
     if (second >= 0x30 && second <= 0x39) {
-        if (mbcsMax < 4) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[2] < 0x81 || mbcs[2] == 0xFF || mbcs[3] < 0x30 || mbcs[3] > 0x39) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 2, 4, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 4) return needBytes(4, length);
+        if (mbcs[2] < 0x81 || mbcs[2] == 0xFF || mbcs[3] < 0x30 || mbcs[3] > 0x39) return rejectTrail(mbcs[2], 4, length);
         const uint32_t linear = (((lead - 0x81) * 10 + (second - 0x30)) * 126 + (mbcs[2] - 0x81)) * 10 + (mbcs[3] - 0x30);
         const uint32_t* run = findRun(tables.fourByte, linear);
-        if (!run) return CES_ERROR_UNASSIGNED_CODE;
+        if (!run) return unassigned(4, length);
         length = 4;
         code = run[1] + linear - run[0];
         return 0;
     }
-    if (second < 0x40 || second == 0x7F || second == 0xFF) return CES_ERROR_INVALID_ENCODE;
+    if (second < 0x40 || second == 0x7F || second == 0xFF) return rejectTrail(second, 2, length);
     length = 2;
     code = gb18030Cell(tables, (lead - 0x81) * 190 + (second < 0x7F ? second - 0x40 : second - 0x41));
     return 0;
@@ -501,11 +532,11 @@ int decodeCp949(bool unified, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& l
         code = lead;
         return 0;
     }
-    if (lead < (unified ? 0x81 : 0xA1) || lead == 0xFF) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (lead < (unified ? 0x81 : 0xA1) || lead == 0xFF) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
     const uint8_t trail = mbcs[1];
     const bool extended = unified && ((trail >= 0x41 && trail <= 0x5A) || (trail >= 0x61 && trail <= 0x7A) || (trail >= 0x81 && trail <= 0xA0));
-    if (!extended && (trail < 0xA1 || trail == 0xFF)) return CES_ERROR_INVALID_ENCODE;
+    if (!extended && (trail < 0xA1 || trail == 0xFF)) return rejectTrail(trail, 2, length);
     length = 2;
     code = Cp949::TO_UCS2[(lead - 0x81) * 190 + (trail - 0x41)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
@@ -518,11 +549,11 @@ int decodeCp950(const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_
         code = lead;
         return 0;
     }
-    if (lead == 0x80 || lead == 0xFF) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (lead == 0x80 || lead == 0xFF) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
     const uint8_t trail = mbcs[1];
-    if (trail < 0x40 || (trail > 0x7E && trail < 0xA1) || trail == 0xFF) return CES_ERROR_INVALID_ENCODE;
-    if (lead < 0xA1 || lead > 0xF9) return CES_ERROR_UNASSIGNED_CODE;
+    if (trail < 0x40 || (trail > 0x7E && trail < 0xA1) || trail == 0xFF) return rejectTrail(trail, 2, length);
+    if (lead < 0xA1 || lead > 0xF9) return unassigned(2, length);
     length = 2;
     code = Cp950::TO_UCS2[(lead - 0xA1) * 157 + (trail < 0xA1 ? trail - 0x40 : trail - 0xA1 + 63)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
@@ -633,27 +664,28 @@ int decodeEucJp(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint
         return 0;
     }
     if (lead == 0x8E && hasSs2(profile)) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         code = 0xFF61 + (mbcs[1] - 0xA1);
         return 0;
     }
     if (lead >= 0xA1 && lead <= 0xFE) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
         length = 2;
-        code = jisX0208ToUnicode(isEucJpX0208(profile), (lead - 0xA1) * 94 + (mbcs[1] - 0xA1));
+        code = jisX0208ToUnicode(isEucJpX0208(profile) ? JisStrict::Euc : JisStrict::None, (lead - 0xA1) * 94 + (mbcs[1] - 0xA1));
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8F && hasSs3(profile)) {
-        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 1, 3, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 3) return needBytes(3, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return rejectTrail(mbcs[1], 3, length);
         length = 3;
         code = JisX0212::TO_UCS2[(mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    return CES_ERROR_INVALID_ENCODE;
+    return rejectLead(length);
 }
 
 int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
@@ -669,9 +701,8 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
         if (lead < 0x80) {
-            if (strict) requireSettledSjisX0208(lead);
             length = 1;
-            code = lead;
+            code = strict ? sjisX0208Single(lead) : lead;
             return 0;
         }
         if (lead >= 0xA1 && lead <= 0xDF) {
@@ -680,9 +711,9 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
             return 0;
         }
         if ((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC)) {
-            if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+            if (mbcsMax < 2) return needBytes(2, length);
             const uint8_t trail = mbcs[1];
-            if (trail < 0x40 || trail == 0x7F || trail > 0xFC) return CES_ERROR_INVALID_ENCODE;
+            if (trail < 0x40 || trail == 0x7F || trail > 0xFC) return rejectTrail(trail, 2, length);
             if (lead >= 0xFA && !strict) {
                 const uint32_t trailIdx = trail < 0x7F ? trail - 0x40 : trail - 0x41;
                 const uint32_t offset = (lead - 0xFA) * 188 + trailIdx;
@@ -696,22 +727,22 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
                     const int row = 89 + kanjiIdx / 94;
                     const int cell = 1 + kanjiIdx % 94;
                     code = JisX0208::TO_UCS2[(row - 1) * 94 + (cell - 1)];
-                    if (code == 0) return CES_ERROR_UNASSIGNED_CODE;
+                    if (code == 0) return unassigned(2, length);
                     length = 2;
                     return 0;
                 }
-                return CES_ERROR_UNASSIGNED_CODE;
+                return unassigned(2, length);
             }
             int row = 0;
             int cell = 0;
             sjisToJis(lead, trail, row, cell);
-            if (row < 1 || row > 94 || cell < 1 || cell > 94) return CES_ERROR_UNASSIGNED_CODE;
-            code = jisX0208ToUnicode(strict, (row - 1) * 94 + (cell - 1));
-            if (code == 0) return CES_ERROR_UNASSIGNED_CODE;
+            if (row < 1 || row > 94 || cell < 1 || cell > 94) return unassigned(2, length);
+            code = jisX0208ToUnicode(strict ? JisStrict::Sjis : JisStrict::None, (row - 1) * 94 + (cell - 1));
+            if (code == 0) return unassigned(2, length);
             length = 2;
             return 0;
         }
-        return CES_ERROR_INVALID_ENCODE;
+        return rejectLead(length);
     }
     return decodeEucJp(profile, mbcs, mbcsMax, length, code);
 }
@@ -722,12 +753,15 @@ struct JisCell {
     bool supplementary;
 };
 
-std::vector<JisCell> buildJisReverse(bool strict) {
+std::vector<JisCell> buildJisReverse(JisStrict strict) {
     std::vector<JisCell> entries;
     entries.reserve(2 * 94 * 94);
     for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
-        const uint16_t code = strict ? strictJisX0208(cell) : JisX0208::TO_UCS2[cell];
+        const uint16_t code = static_cast<uint16_t>(jisX0208ToUnicode(strict, cell));
         if (code != 0) entries.push_back({code, static_cast<uint16_t>(cell), false});
+    }
+    if (strict == JisStrict::Euc) {
+        for (const JisChange& fallback : JIS_X0208_EUC_FALLBACKS) entries.push_back({fallback.code, static_cast<uint16_t>(jisIndex(fallback.jis)), false});
     }
     for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
         if (JisX0212::TO_UCS2[cell] != 0) entries.push_back({JisX0212::TO_UCS2[cell], static_cast<uint16_t>(cell), true});
@@ -737,13 +771,11 @@ std::vector<JisCell> buildJisReverse(bool strict) {
     return entries;
 }
 
-const std::vector<JisCell>& jisReverse(bool strict) {
-    if (strict) {
-        static const auto strictReverse = buildJisReverse(true);
-        return strictReverse;
-    }
-    static const auto reverse = buildJisReverse(false);
-    return reverse;
+const std::vector<JisCell>& jisReverse(JisStrict strict) {
+    static const auto reverse = buildJisReverse(JisStrict::None);
+    static const auto sjisReverse = buildJisReverse(JisStrict::Sjis);
+    static const auto eucReverse = buildJisReverse(JisStrict::Euc);
+    return strict == JisStrict::Sjis ? sjisReverse : strict == JisStrict::Euc ? eucReverse : reverse;
 }
 
 uint32_t jisAlias(uint32_t code) {
@@ -772,8 +804,12 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
-        if (strict) requireSettledSjisX0208(code);
-        if (code < 0x80) {
+        if (strict && (code == 0x00A5 || code == 0x203E)) {
+            length = 1;
+            mbcs[0] = code == 0x00A5 ? 0x5C : 0x7E;
+            return 0;
+        }
+        if (code < 0x80 && !(strict && (code == 0x5C || code == 0x7E))) {
             length = 1;
             mbcs[0] = static_cast<uint8_t>(code);
             return 0;
@@ -790,8 +826,7 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
             return 0;
         }
         if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
-        if (strict && code == JIS_X0208_UNSETTLED_CODE) throw std::runtime_error(JIS_X0208_UNSETTLED);
-        const auto& reverse = jisReverse(strict);
+        const auto& reverse = jisReverse(strict ? JisStrict::Sjis : JisStrict::None);
         const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
         if (found == reverse.end() || found->code != code || found->supplementary) return CES_ERROR_UNASSIGNED_CODE;
         jisToSjis(found->cell / 94 + 1, found->cell % 94 + 1, mbcs[0], mbcs[1]);
@@ -818,8 +853,7 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
         return 0;
     }
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
-    if (strict && code == JIS_X0208_UNSETTLED_CODE) throw std::runtime_error(JIS_X0208_UNSETTLED);
-    const auto& reverse = jisReverse(strict);
+    const auto& reverse = jisReverse(strict ? JisStrict::Euc : JisStrict::None);
     const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
     if (found == reverse.end() || found->code != code || (found->supplementary && !hasSs3(profile))) return CES_ERROR_UNASSIGNED_CODE;
     if (found->supplementary) {
@@ -894,6 +928,15 @@ int convertString(const void* context, const Source* source, uint32_t sourceMax,
     return result;
 }
 
+template<typename Unit>
+int rejected(int result, uint32_t length, uint32_t* sourceSize, Unit* character, uint32_t* produced) {
+    if (length == 0) return result;
+    if (sourceSize) *sourceSize = length;
+    if (character) *character = 0;
+    if (produced) *produced = 0;
+    return result;
+}
+
 int mbcsToUtf8(bool accepted, const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, uint8_t* utf8, uint32_t utf8Max, uint32_t* utf8Len) {
     if (!accepted) return CES_ERROR_INVALID_PARAMETER;
     if (!mbcs) return CES_ERROR_INVALID_SRC_BUFFER;
@@ -901,7 +944,7 @@ int mbcsToUtf8(bool accepted, const void* profile, const uint8_t* mbcs, uint32_t
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
     uint32_t consumed = 0;
     uint32_t code = 0;
-    if (const int result = decodeMbcs(profile, mbcs, mbcsMax, consumed, code); result != 0) return result;
+    if (const int result = decodeMbcs(profile, mbcs, mbcsMax, consumed, code); result != 0) return rejected<uint8_t>(result, consumed, mbcsLen, nullptr, utf8Len);
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
     if (utf8Max < produced) return CES_ERROR_DST_BUFFER_END;
@@ -959,10 +1002,11 @@ int decodeProfiled(bool (*matches)(const void*), const void* profile, const uint
     return decodeMbcs(profile, source, sourceMax, length, code);
 }
 
+
 int profiledToUcs2(bool (*matches)(const void*), const void* profile, const uint8_t* source, uint32_t sourceMax, uint32_t* sourceSize, uint16_t* ucs2) {
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeProfiled(matches, profile, source, sourceMax, ucs2, length, code); result != 0) return result;
+    if (const int result = decodeProfiled(matches, profile, source, sourceMax, ucs2, length, code); result != 0) return rejected(result, length, sourceSize, ucs2, nullptr);
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
     *ucs2 = static_cast<uint16_t>(code);
     if (sourceSize) *sourceSize = length;
@@ -972,7 +1016,7 @@ int profiledToUcs2(bool (*matches)(const void*), const void* profile, const uint
 int profiledToUtf8(bool (*matches)(const void*), const void* profile, const uint8_t* source, uint32_t sourceMax, uint32_t* sourceSize, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len) {
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf8, length, code); result != 0) return result;
+    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf8, length, code); result != 0) return rejected<uint8_t>(result, length, sourceSize, nullptr, utf8Len);
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
     if (utf8max < produced) return CES_ERROR_DST_BUFFER_END;
@@ -986,7 +1030,7 @@ template<bool BigEndian>
 int profiledToUtf16(bool (*matches)(const void*), const void* profile, const uint8_t* source, uint32_t sourceMax, uint32_t* sourceSize, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf16, length, code); result != 0) return result;
+    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf16, length, code); result != 0) return rejected<uint16_t>(result, length, sourceSize, nullptr, utf16Len);
     const uint32_t units = code < 0x10000 ? 1 : 2;
     if (utf16max < units) return CES_ERROR_DST_BUFFER_END;
     if (units == 1) {
@@ -1004,7 +1048,7 @@ template<bool BigEndian>
 int profiledToUtf32(bool (*matches)(const void*), const void* profile, const uint8_t* source, uint32_t sourceMax, uint32_t* sourceSize, uint32_t* utf32) {
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf32, length, code); result != 0) return result;
+    if (const int result = decodeProfiled(matches, profile, source, sourceMax, utf32, length, code); result != 0) return rejected(result, length, sourceSize, utf32, nullptr);
     storeUnit<uint32_t, BigEndian>(utf32, code);
     if (sourceSize) *sourceSize = length;
     return 0;

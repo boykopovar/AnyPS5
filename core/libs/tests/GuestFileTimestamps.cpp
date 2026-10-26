@@ -226,7 +226,14 @@ int main() {
     Require(utimes_nid_postfix(path.c_str(), second) == 0, "utimes target to second");
     std::error_code symlinkError;
     const auto linkPath = (root / "link.txt").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(linkPath).c_str(), std::filesystem::path(path).c_str(),
+            SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        symlinkError = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink(path, linkPath, symlinkError);
+#endif
     if (!symlinkError) {
         Require(lutimes_nid_postfix(linkPath.c_str(), first) == 0, "lutimes modifies symlink");
         FileStat targetStatus{};

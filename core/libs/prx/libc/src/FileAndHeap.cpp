@@ -465,6 +465,15 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
     return *result ? 0 : errno;
 }
 
+int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
+    constexpr int GuestEinval = 22;
+    if (!result) return GuestEinval;
+    *result = nullptr;
+    if (!mode || !stream) return GuestEinval;
+    *result = freopen_nid_postfix(filename, mode, stream);
+    return *result ? 0 : errno;
+}
+
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) {
         std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
