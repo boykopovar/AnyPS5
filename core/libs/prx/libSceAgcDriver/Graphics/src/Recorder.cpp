@@ -2821,8 +2821,7 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
     if (offset != nullptr) *offset = 0;
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto held = std::max(from, found->second.from);
-    if (held >= bytes) return {};
-    if (!sameRegistry || !GuestMemory::UnchangedSince(address + held, bytes - held, found->second.generation)) {
+    if (!sameRegistry || (held < bytes && !GuestMemory::UnchangedSince(address + held, bytes - held, found->second.generation))) {
         if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
             eraseDrawSnapshot(found);
             return {};
@@ -2830,8 +2829,9 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         found->second.generation = generation;
     }
     if (found->second.from > from) {
-        GuestMemory::Read(address + from, found->second.buffer->Bytes().subspan(from, found->second.from - from), 1);
-        found->second.from = from;
+        const auto start = from - std::min(from, std::get<2>(found->first) - found->second.from);
+        GuestMemory::Read(address + start, found->second.buffer->Bytes().subspan(start, found->second.from - start), 1);
+        found->second.from = start;
     }
     auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
     recency.splice(recency.end(), recency, found->second.recent);

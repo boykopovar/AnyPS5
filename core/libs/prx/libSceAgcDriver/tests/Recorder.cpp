@@ -4669,6 +4669,35 @@ void drawSnapshotUploadTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
 }
 
+void vertexWindowSeriesTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 65536;
+    void* block = AllocateWatched(bytes, 65536);
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 7;
+    const auto& context = device.GetContext();
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    constexpr std::size_t quad = 4 * 32;
+    constexpr std::size_t draws = bytes / quad;
+    std::shared_ptr<Buffer> served;
+    for (std::size_t k = 0; k < draws; ++k) {
+        const auto from = (draws - 1 - k) * quad;
+        const auto copy = CopyDrawInput(context, &recorder, address, from + quad, 1, Use::Vertex, from);
+        Require(std::memcmp(copy.buffer->Bytes().data() + from, reinterpret_cast<const void*>(address + from), quad) == 0, "a draw at a falling lowest vertex got other bytes than the guest's");
+        KeepDrawInput(&recorder, address, copy, Use::Vertex, 0);
+        if (k == 0) served = copy.buffer;
+        Require(copy.buffer == served, "a draw below the vertex window of an earlier draw over the same buffer was copied again instead of filled into its snapshot");
+    }
+    words[(bytes - quad) / 4] = 0x4242;
+    const auto stored = CopyDrawInput(context, &recorder, address, bytes, 1, Use::Vertex, bytes - quad);
+    Require(!stored.reused && std::memcmp(stored.buffer->Bytes().data() + bytes - quad, reinterpret_cast<const void*>(address + bytes - quad), quad) == 0, "a store in the vertex window that served the falling draws was not seen");
+}
+
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
@@ -4758,7 +4787,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     Require(!past.reused && sameAsGuest(past, 8192, 16384), "filling in a vertex window hid a store past the read that filled it");
     KeepDrawInput(&recorder, window, past, Use::Vertex, 0);
     const auto below = CopyDrawInput(context, &recorder, window, 4096, 1, Use::Vertex, 1024);
-    Require(!below.reused && below.buffer != past.buffer && sameAsGuest(below, 1024, 4096), "a read below a vertex window was served by its snapshot");
+    Require(below.reused && below.buffer == past.buffer && sameAsGuest(below, 1024, 4096), "a read below a vertex window was not filled in from the guest into its snapshot");
     Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).buffer == past.buffer, "a read below a vertex window dropped its snapshot");
     const auto filled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex);
     Require(filled.reused && filled.buffer == past.buffer && sameAsGuest(filled, 0, 16384), "a whole read did not fill in the kept vertex window from the guest");
@@ -11316,6 +11345,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--draw-input-reuse-only") {
             if (!AgcDriver::GuestMemory::WriteWatched()) return 77;
             drawInputReuseTests(device, recorder);
+            vertexWindowSeriesTests(device, recorder);
             std::cout << "Draw input reuse tests passed\n";
             return 0;
         }
@@ -11403,6 +11433,7 @@ int main(int argc, char** argv) {
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
         drawInputReuseTests(device, recorder);
+        if (AgcDriver::GuestMemory::WriteWatched()) vertexWindowSeriesTests(device, recorder);
         drawInputInPlaceTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);
