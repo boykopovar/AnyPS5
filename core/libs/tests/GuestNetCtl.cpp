@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -31,26 +32,13 @@ struct NetCtlDefaultRoute {
 };
 #endif
 
-union NetCtlInfoV6;
 
 extern "C" {
-int APS5_VABI sceNetCtlInit(void);
-int APS5_VABI sceNetCtlCheckCallback(void);
-int APS5_VABI sceNetCtlGetInfo(int, NetCtlInfo*);
-int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo*);
-int APS5_VABI sceNetCtlGetState(int*);
-int APS5_VABI sceNetCtlGetStateV6(int*);
-int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t, NetCtlInfoV6*);
-int APS5_VABI sceNetCtlGetResult(int, int*);
-int APS5_VABI sceNetCtlGetResultV6(int, int*);
+
 #ifdef __APPLE__
 std::size_t NetCtlDefaultRoutes_nid_no_patch(const char*, std::size_t, NetCtlDefaultRoute*, std::size_t);
 #endif
-int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback, void*, int*);
-int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
-void APS5_VABI sceNetCtlTerm(void);
-int APS5_VABI sceNetCtlUnregisterCallback(int);
-int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
+
 }
 
 namespace {
@@ -283,6 +271,9 @@ int main() {
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallback(-1) == invalidId);
     Require(sceNetCtlUnregisterCallbackV6(-1) == invalidId);
+    Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
     CheckCallbacks();
 
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);

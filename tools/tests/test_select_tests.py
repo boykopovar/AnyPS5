@@ -156,6 +156,53 @@ class SelectTests(unittest.TestCase):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+    def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
+        cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            script.write_text('execute_process(COMMAND "${FIXTURE}" RESULT_VARIABLE result)\n'
+                              'if(NOT result STREQUAL "0")\n  message(FATAL_ERROR "fixture: ${result}")\nendif()\n',
+                              encoding="utf-8")
+            cmake.write_text(original + "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DFIXTURE=$<TARGET_FILE:alpha_tests>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            graph = self.build / "run-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"alpha_run", "beta", "beta_setup", "script"})
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            output = self.tool("ctest", self.build, "-R", "alpha_run", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
+    def test_script_test_builds_an_excluded_executable_it_gets_as_a_definition(self):
+        cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            script.write_text('execute_process(COMMAND "${TOOL}" RESULT_VARIABLE result)\n'
+                              'if(NOT result STREQUAL "0")\n  message(FATAL_ERROR "tool: ${result}")\nendif()\n',
+                              encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool EXCLUDE_FROM_ALL main.c)\n"
+                                        "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DTOOL=$<TARGET_FILE:alpha_tool>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            graph = self.build / "run-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"alpha_run", "beta", "beta_setup", "script"})
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            output = self.tool("ctest", self.build, "-R", "alpha_run", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
     def test_retargeted_test_does_not_prune_its_previous_executable(self):
         cmake = self.source / "alpha/CMakeLists.txt"
         original = cmake.read_text(encoding="utf-8")
@@ -253,6 +300,31 @@ class FixtureBuildTests(unittest.TestCase):
         output = self.run_selected("alpha/main.c", older)
         for name in ("alpha", "alpha_data", "beta", "beta_setup", "beta_cleanup"):
             self.assertIn(name, output)
+
+
+@unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
+class NonAsciiDirectoryTests(unittest.TestCase):
+    def test_header_under_a_non_ascii_directory_is_an_input_of_its_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "ação"
+            if os.name == "nt":
+                try:
+                    str(root).encode("mbcs", "strict")
+                except UnicodeEncodeError:
+                    self.skipTest("the ANSI code page cannot represent the fixture directory")
+            source, build, graph = root / "source", root / "build", root / "graph.json"
+            for name, content in PROJECT.items():
+                (source / name).parent.mkdir(parents=True, exist_ok=True)
+                (source / name).write_text(content, encoding="utf-8")
+            compiler = shutil.which("gcc") or shutil.which("cc")
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
+            SelectTests.tool("dump", build, graph)
+            reasons = {}
+            select_tests.select(json.loads(graph.read_text(encoding="utf-8")), ["alpha/alpha.h"], reasons)
+        self.assertIn("input: alpha/alpha.h", reasons["alpha"])
+        self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
 
 class BuildErrorTests(unittest.TestCase):

@@ -1,3 +1,4 @@
+#include "prx/libSceNpSessionSignaling/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -24,79 +25,6 @@ struct SessionSignalingContext {
 static std::mutex g_mutex;
 static bool g_initialized = false;
 static std::array<SessionSignalingContext, 10> g_contexts{};
-
-struct SessionSignalingInitParam {
-    std::int32_t userId;
-    std::uint64_t poolSize;
-    std::uint64_t affinityMask;
-    std::int32_t threadPriority;
-    std::uint64_t stackSize;
-};
-
-struct SessionSignalingMemoryInfo {
-    std::uint64_t poolSize;
-    std::uint64_t usedSize;
-    std::uint64_t peakUsedSize;
-};
-
-struct SessionSignalingPeerAddress {
-    std::uint64_t accountId;
-    std::uint32_t platform;
-};
-
-struct SessionSignalingSessionParam {
-    std::uint32_t mode;
-    std::uint32_t option;
-};
-
-struct SessionSignalingNetAddress {
-    std::uint32_t address;
-    std::uint16_t port;
-};
-
-union SessionSignalingConnectionInfo {
-    std::uint32_t value;
-    SessionSignalingNetAddress netAddress;
-    SessionSignalingPeerAddress peerAddress;
-};
-
-struct SessionSignalingLocalNetInfo {
-    std::uint32_t localAddress;
-    std::uint32_t mappedAddress;
-    std::uint32_t mappedPort;
-    std::uint32_t mappingStatus;
-};
-
-using SessionSignalingEventCallback = void (APS5_VABI *)(std::uint32_t, std::uint32_t, std::int32_t, const SessionSignalingPeerAddress*, std::int32_t, void*);
-using SessionSignalingConnectionCallback = void (APS5_VABI *)(std::uint32_t, std::uint32_t, std::int32_t, std::int32_t, void*);
-using SessionSignalingConnectionCallback2 = void (APS5_VABI *)(std::uint32_t, std::uint32_t, std::uint32_t, std::int32_t, std::int32_t, void*);
-
-template<typename TConnectionCallback>
-struct SessionSignalingContextParam {
-    std::int32_t userId;
-    std::uint32_t serviceLabel;
-    SessionSignalingEventCallback prepareCallback;
-    void* prepareUserData;
-    SessionSignalingEventCallback sessionCallback;
-    void* sessionUserData;
-    TConnectionCallback connectionCallback;
-    void* connectionUserData;
-};
-
-using SessionSignalingContextParam1 = SessionSignalingContextParam<SessionSignalingConnectionCallback>;
-using SessionSignalingContextParam2 = SessionSignalingContextParam<SessionSignalingConnectionCallback2>;
-
-struct SessionSignalingConnectionStatistics {
-    std::uint32_t peakConnectionCount;
-    std::uint32_t connectionCount;
-    std::uint32_t connectingCount;
-    std::uint32_t connectedCount;
-};
-
-struct SessionSignalingGroupInfo {
-    std::uint32_t connectionIds[64];
-    std::uint64_t connectionCount;
-};
 
 static_assert(sizeof(SessionSignalingMemoryInfo) == 24);
 static_assert(sizeof(SessionSignalingInitParam) == 40);

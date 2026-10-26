@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestList.hpp"
 
 #include <array>
@@ -6,18 +7,11 @@
 #include <map>
 #include <random>
 #include <vector>
+#include <type_traits>
+#include <ft2build.h>
+#include FT_LIST_H
 
 using namespace FreeType;
-
-extern "C" {
-GuestListNodeRec* APS5_VABI FT_List_Find_nid_postfix(GuestListRec*, void*);
-void APS5_VABI FT_List_Add_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Insert_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Remove_nid_postfix(GuestListRec*, GuestListNodeRec*);
-void APS5_VABI FT_List_Up_nid_postfix(GuestListRec*, GuestListNodeRec*);
-int APS5_VABI FT_List_Iterate_nid_postfix(GuestListRec*, GuestListIterator, void*);
-void APS5_VABI FT_List_Finalize_nid_postfix(GuestListRec*, GuestListDestructor, GuestMemoryRec*, void*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -29,9 +23,11 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 constexpr std::size_t Count = 16;
-using Nodes = std::array<FT_ListNodeRec, Count>;
+template<typename TNode>
+using Nodes = std::array<TNode, Count>;
 
-static int Index(FT_ListNode node, const Nodes& nodes) {
+template<typename TNode>
+static int Index(TNode* node, const Nodes<TNode>& nodes) {
     if (!node) return -1;
     for (std::size_t i = 0; i < nodes.size(); ++i) if (node == &nodes[i]) return static_cast<int>(i);
     Require(false);
@@ -39,10 +35,10 @@ static int Index(FT_ListNode node, const Nodes& nodes) {
 }
 
 struct Lists {
-    FT_ListRec guest{};
+    GuestListRec guest{};
     FT_ListRec native{};
-    Nodes actual{};
-    Nodes expected{};
+    Nodes<GuestListNodeRec> actual{};
+    Nodes<FT_ListNodeRec> expected{};
     std::array<int, 4> values{11, 22, 33, 44};
 
     Lists() {
@@ -62,6 +58,7 @@ struct Lists {
     void Fill() {
         for (std::size_t i = 0; i < Count; ++i) {
             FT_List_Add_nid_postfix(&guest, &actual[i]);
+
             FT_List_Add(&native, &expected[i]);
         }
         Match();
@@ -79,10 +76,12 @@ static void Mutations() {
         if (active[i]) {
             if (choice) {
                 FT_List_Up_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Up(&lists.native, &lists.expected[i]);
                 ++operations[3];
             } else {
                 FT_List_Remove_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Remove(&lists.native, &lists.expected[i]);
                 active[i] = false;
                 ++operations[2];
@@ -90,10 +89,12 @@ static void Mutations() {
         } else {
             if (choice) {
                 FT_List_Insert_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Insert(&lists.native, &lists.expected[i]);
                 ++operations[1];
             } else {
                 FT_List_Add_nid_postfix(&lists.guest, &lists.actual[i]);
+
                 FT_List_Add(&lists.native, &lists.expected[i]);
                 ++operations[0];
             }
@@ -118,9 +119,10 @@ static void Mutations() {
     std::printf("list mutations: 2048 states compared with native FreeType\n");
 }
 
+template<typename TNode>
 struct Walk {
-    FT_List list;
-    Nodes* nodes;
+    std::conditional_t<std::is_same_v<TNode, GuestListNodeRec>, GuestListRec, FT_ListRec>* list;
+    Nodes<TNode>* nodes;
     bool guest;
     bool remove;
     std::size_t stop;
@@ -128,12 +130,13 @@ struct Walk {
     std::vector<int> visits;
 };
 
-static int Visit(FT_ListNode node, void* user, bool guest) {
-    auto& state = *static_cast<Walk*>(user);
+template<typename TNode>
+static int Visit(TNode* node, void* user, bool guest) {
+    auto& state = *static_cast<Walk<TNode>*>(user);
     Require(state.guest == guest);
     state.visits.push_back(Index(node, *state.nodes));
     if (state.remove) {
-        if (guest) FT_List_Remove_nid_postfix(state.list, node);
+        if constexpr (std::is_same_v<TNode, GuestListNodeRec>) FT_List_Remove_nid_postfix(state.list, node);
         else FT_List_Remove(state.list, node);
         node->prev = nullptr;
         node->next = nullptr;
@@ -176,8 +179,9 @@ struct Event {
     bool operator==(const Event&) const = default;
 };
 
+template<typename TList>
 struct Disposal {
-    FT_List list;
+    TList* list;
     FT_Memory native;
     GuestMemoryRec* guest;
     void* user;
@@ -185,34 +189,36 @@ struct Disposal {
     std::vector<Event> events;
 };
 
-static void Release(Disposal& state, void* block) {
+template<typename TList>
+static void Release(Disposal<TList>& state, void* block) {
     const auto found = state.live.find(block);
     Require(found != state.live.end());
     state.events.push_back({2, found->second, state.list->head == nullptr || state.list->tail == nullptr});
     state.live.erase(found);
-    delete static_cast<FT_ListNode>(block);
+    using Node = std::conditional_t<std::is_same_v<TList, GuestListRec>, GuestListNodeRec, FT_ListNodeRec>;
+    delete static_cast<Node*>(block);
 }
 
 static void NativeFree(FT_Memory memory, void* block) {
-    auto& state = *static_cast<Disposal*>(memory->user);
+    auto& state = *static_cast<Disposal<FT_ListRec>*>(memory->user);
     Require(state.native == memory);
     Release(state, block);
 }
 
 static void APS5_VABI GuestFree(GuestMemoryRec* memory, void* block) {
-    auto& state = *static_cast<Disposal*>(memory->user);
+    auto& state = *static_cast<Disposal<GuestListRec>*>(memory->user);
     Require(state.guest == memory);
     Release(state, block);
 }
 
 static void NativeDestroy(FT_Memory memory, void* data, void* user) {
-    auto& state = *static_cast<Disposal*>(memory->user);
+    auto& state = *static_cast<Disposal<FT_ListRec>*>(memory->user);
     Require(state.native == memory && state.user == user);
     state.events.push_back({1, data ? *static_cast<int*>(data) : -1, state.list->head == nullptr || state.list->tail == nullptr});
 }
 
 static void APS5_VABI GuestDestroy(GuestMemoryRec* memory, void* data, void* user) {
-    auto& state = *static_cast<Disposal*>(memory->user);
+    auto& state = *static_cast<Disposal<GuestListRec>*>(memory->user);
     Require(state.guest == memory && state.user == user);
     state.events.push_back({1, data ? *static_cast<int*>(data) : -1, state.list->head == nullptr || state.list->tail == nullptr});
 }
@@ -220,7 +226,8 @@ static void APS5_VABI GuestDestroy(GuestMemoryRec* memory, void* data, void* use
 static void FinalizationCases() {
     for (const bool destroy : {false, true}) {
         for (const unsigned count : {0u, 1u, 8u}) {
-            FT_ListRec guestList{}, nativeList{};
+            GuestListRec guestList{};
+            FT_ListRec nativeList{};
             std::array<int, 8> ids{0, 1, 2, 3, 4, 5, 6, 7};
             int token = 9;
             Disposal guest{&guestList, nullptr, nullptr, &token, {}, {}};
@@ -230,20 +237,24 @@ static void FinalizationCases() {
             guest.guest = &guestMemory;
             native.native = &nativeMemory;
             for (unsigned i = 0; i < count; ++i) {
-                auto* a = new FT_ListNodeRec{};
+                auto* a = new GuestListNodeRec{};
                 auto* b = new FT_ListNodeRec{};
                 a->data = b->data = i == 0 ? nullptr : &ids[i];
                 guest.live.emplace(a, i);
                 native.live.emplace(b, i);
                 FT_List_Add_nid_postfix(&guestList, a);
+
                 FT_List_Add(&nativeList, b);
             }
             const auto savedHead = guestList.head;
             FT_List_Finalize_nid_postfix(&guestList, GuestDestroy, nullptr, &token);
+
             Require(guestList.head == savedHead && guest.events.empty());
             FT_List_Finalize_nid_postfix(nullptr, GuestDestroy, &guestMemory, &token);
+
             Require(guest.events.empty());
             FT_List_Finalize_nid_postfix(&guestList, destroy ? GuestDestroy : nullptr, &guestMemory, &token);
+
             FT_List_Finalize(&nativeList, destroy ? NativeDestroy : nullptr, &nativeMemory, &token);
             Require(guestList.head == nullptr && guestList.tail == nullptr && nativeList.head == nullptr && nativeList.tail == nullptr);
             Require(guest.live.empty() && native.live.empty());

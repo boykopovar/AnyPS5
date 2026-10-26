@@ -1,18 +1,10 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include <cstdlib>
 
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetscope(const PthreadAttr* attr, int* scope);
-int APS5_VABI scePthreadAttrSetscope(PthreadAttr* attr, int scope);
-int APS5_VABI scePthreadAtfork(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child);
-int APS5_VABI scePthreadSetconcurrency(int level);
-int APS5_VABI scePthreadGetconcurrency();
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCOPE_PROCESS = 0;
 static constexpr int SCOPE_SYSTEM = 2;
 

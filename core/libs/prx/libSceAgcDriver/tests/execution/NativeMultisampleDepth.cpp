@@ -15,6 +15,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
@@ -54,6 +55,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -65,26 +68,22 @@ public:
             app.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &app;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0u;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
             Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            int selected = -1;
-            for (const auto physical : devices) {
-                VkPhysicalDeviceProperties properties{};
-                function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(physical, &properties);
-                if (const auto* wanted = std::getenv("ANYPS5_GPU"); wanted != nullptr && std::string(properties.deviceName).find(wanted) == std::string::npos) continue;
-                const int rank = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
-                if (properties.apiVersion < VK_API_VERSION_1_1 || rank <= selected) continue;
-                context.physical = physical;
-                context.limits = properties.limits;
-                selected = rank;
-            }
-            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             VkPhysicalDeviceProperties selectedProperties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &selectedProperties);
+            context.limits = selectedProperties.limits;
             std::printf("Selected GPU name=%s vendor=0x%x device=0x%x driver=%u\n", selectedProperties.deviceName, selectedProperties.vendorID, selectedProperties.deviceID, selectedProperties.driverVersion);
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
             queues(context.physical, &count, nullptr);
@@ -672,6 +671,39 @@ void CheckDrawFeedback() {
     std::puts("Native depth feedback refused through the draw resource path; a written surface refused and a depth-tested one retired on guest read");
 }
 
+void CheckDepthAttachmentAlias() {
+    const auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "native depth attachment alias requires Vulkan");
+    const auto context = device->graphicsContext();
+    constexpr VkExtent2D extent{5u, 3u};
+    constexpr std::uint32_t samples = 4u;
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    TargetMemory memory(bytes), firstMetadata(65536u), secondMetadata(65536u);
+    std::memset(memory.Data(), 0x3c, bytes);
+    std::memset(firstMetadata.Data(), 0, 65536u);
+    std::memset(secondMetadata.Data(), 0, 65536u);
+    struct Cleanup {
+        AgcDriver::VulkanDevice& device;
+        ~Cleanup() { device.WaitIdle(); ClearCachedTextures(device.Device()); ClearDepthSurfaces(device.Device()); }
+    } cleanup{*device};
+    DepthTarget first{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, firstMetadata.Address(), false, samples};
+    first.depthSwizzle = 24u;
+    first.iterate256 = first.htilePipeAligned = first.htileDepthOnly = true;
+    const auto firstView = DepthSurfaceView(context, first);
+    const auto words = DepthSampleWords(first);
+    auto kept = DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
+    Require(kept != nullptr, "attachment alias fixture has no held native depth view");
+    auto second = first;
+    second.extent.width = 6u;
+    second.htileAddress = secondMetadata.Address();
+    Require(MultisampledDepthBytes_nid_no_patch(second.extent, 4u, samples) <= bytes, "attachment alias fixture exceeds its backing");
+    const auto secondView = DepthSurfaceView(context, second);
+    Require(secondView != VK_NULL_HANDLE && secondView != firstView, "an aliased depth attachment reused the previous layout's view");
+    Require(DepthSurfaceView(context, second) == secondView, "an unchanged native depth attachment was not reused");
+    for (std::size_t offset = 0u; offset < bytes; ++offset) Require(memory.Data()[offset] == std::byte{0x3c}, "retiring an unwritten attachment alias changed guest bytes");
+    std::puts("native depth attachment alias changes layout while retaining held GPU views");
+}
+
 enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite };
 
 void CheckClearDispatch() {
@@ -927,10 +959,10 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     Require(probe[0] == std::byte{0xa5}, "resident depth guard blocked an unrelated read");
     auto alias = target;
     alias.htileAddress += 65536u;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
     alias = target;
     alias.htileDepthOnly = !target.htileDepthOnly;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
     auto resource = DecodeTextureResource(words);
     for (std::uint32_t field = 0u; field < 18u; ++field) {
         auto changed = resource;
@@ -1042,7 +1074,7 @@ void CheckHtileRouting(Context context, VkFormat format, std::uint32_t fragments
     auto alias = target;
     alias.samples = 1u;
     alias.address = single.Address();
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "layout or metadata changed");
+    Require(DepthSurfaceView(context, alias) != VK_NULL_HANDLE, "a single-sample bind could not retire an unwritten native HTILE owner");
     Require(untouched(), "a single-sample bind over a native owner's HTILE stored expanded words into it");
     std::printf("Native depth format=%u samples=%u: binds over the owner's HTILE left its words alone\n", static_cast<std::uint32_t>(format), fragments);
 }
@@ -1304,6 +1336,7 @@ int main(int argc, char** argv) {
         }
         CheckDrawFeedback();
         const auto context = device->GetContext();
+        if (argc == 1) CheckDepthAttachmentAlias();
         std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
         Require(DepthSupported(context, VK_FORMAT_D32_SFLOAT, 4u), "the native depth regression requires sampled D32 with four samples");
         if (argc == 2 && std::string_view(argv[1]) == "--clear-refusals") {

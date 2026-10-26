@@ -16,6 +16,7 @@ struct Args {
     bool skipSceModule = false;
     bool toIntel = false;
     bool toRosetta = false;
+    bool frameRedZone = false;
     bool writeRegistry = false;
     bool toWindows = false;
     bool toMacos = false;

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,15 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pipe_nid_postfix(int* descriptors);
-int APS5_VABI close_nid_postfix(int descriptor);
-std::int64_t APS5_VABI write_nid_postfix(int descriptor, const char* buffer, std::int64_t size);
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
-int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask);
-}
 
 namespace {
 

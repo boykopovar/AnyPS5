@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/System/include/ThermalSensors.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"

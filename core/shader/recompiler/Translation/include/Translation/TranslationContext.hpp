@@ -25,6 +25,7 @@ public:
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
+    void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
@@ -81,7 +82,7 @@ private:
     IrU32 flushTinyF16Conversion(IrF32 value, IrU32 bits);
     void writeF16Conversion(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
-    IrU32 flushF32Denormal(IrU32 bits);
+    IrU32 flushF32Denormal(IrU32 bits, std::uint32_t flushBit = 1u);
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
@@ -387,6 +388,7 @@ private:
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
     std::uint32_t f32DenormalFlush = 0u;
     bool float32FlushToZero = false;
+    bool float32DenormPreserve = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
 };

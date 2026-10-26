@@ -71,7 +71,8 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 names = {}
                 for file in files:
-                    if not file.filename.startswith("libs/") or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename:
+                    if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
+                            or any(part in ("..", ".", "") for part in file.filename.rstrip("/").split("/")) or "\\" in file.filename):
                         raise ValueError("Invalid library archive layout")
                     name = file.filename.rstrip("/").lower()
                     if name in names:
@@ -90,6 +91,8 @@ def publish_libraries(output, release=None):
             path = f"libraries/{platform}-{checksum}.zip"
             temporary.replace(output / path)
             manifest["platforms"][platform] = {"path": path, "size": size, "expandedBytes": expanded, "sha256": checksum}
+        except zipfile.BadZipFile as error:
+            raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
         finally:
             temporary.unlink(missing_ok=True)
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -158,6 +161,8 @@ def publish_release(output):
                     raise RuntimeError(f"Could not restore release output. Previous site is preserved at {previous}") from error
             raise
         published = True
+    except zipfile.BadZipFile as error:
+        raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
     finally:
         if published or not previous.exists():
             shutil.rmtree(temporary)

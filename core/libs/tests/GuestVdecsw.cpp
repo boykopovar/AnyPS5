@@ -1,3 +1,4 @@
+#include "prx/libSceVdecsw/include/Api.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -11,197 +12,16 @@
 #include "H264Fixture.hpp"
 #include "HevcFixture.hpp"
 
-struct ComputeMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-};
+using namespace SceVdecsw;
 
-struct ComputeConfigInfo {
-    std::uint64_t thisSize;
-    std::uint16_t computePipeId;
-    std::uint16_t computeQueueId;
-    bool checkMemoryType;
-};
-
-struct DecoderConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-    std::uint64_t computeQueue;
-    std::uint64_t cpuAffinityMask;
-    std::int32_t cpuThreadPriority;
-    bool optimizeProgressiveVideo;
-    std::uint8_t reserved[19];
-};
-
-struct DecoderMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct InputResult {
-    std::uint64_t thisSize;
-    const void* decodedAu;
-    std::uint32_t outputFrameCount;
-    std::uint32_t reserved;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-};
-
-struct OutputInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    bool isLastFrame;
-    bool isErrorFrame;
-    std::uint8_t pictureCount;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    bool isDiscardedFrame;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    std::uint32_t frameFormat;
-    std::uint32_t framePitchInBytes;
-};
-
-struct Vp9PictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t profile;
-    std::uint32_t level;
-    std::uint32_t keyFrameFlag;
-    std::uint32_t intraOnly;
-    std::uint8_t bitDepth;
-    std::uint8_t colorRange;
-    std::uint32_t colorSpace;
-    std::uint32_t numFrames;
-    std::uint32_t frameWidth;
-    std::uint32_t frameHeight;
-    std::uint32_t renderWidth;
-    std::uint32_t renderHeight;
-};
-
-static_assert(sizeof(Vp9PictureInfo) == 0x58 && offsetof(Vp9PictureInfo, ptsData) == 0x10 && offsetof(Vp9PictureInfo, profile) == 0x28 && offsetof(Vp9PictureInfo, bitDepth) == 0x38 && offsetof(Vp9PictureInfo, colorSpace) == 0x3c && offsetof(Vp9PictureInfo, renderHeight) == 0x50);
-
-struct AvcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint8_t idrPictureFlag;
-    std::uint8_t profileIdc;
-    std::uint8_t levelIdc;
-    std::uint32_t picWidthInMbsMinus1;
-    std::uint32_t picHeightInMapUnitsMinus1;
-    std::uint8_t frameMbsOnlyFlag;
-    std::uint8_t frameCroppingFlag;
-    std::uint32_t frameCropLeftOffset;
-    std::uint32_t frameCropRightOffset;
-    std::uint32_t frameCropTopOffset;
-    std::uint32_t frameCropBottomOffset;
-    std::uint8_t vui[44];
-};
-
-struct HevcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t picWidthInLumaSamples;
-    std::uint32_t picHeightInLumaSamples;
-    std::uint8_t bitDepthLumaMinus8;
-    std::uint8_t bitDepthChromaMinus8;
-    std::uint8_t timingInfoPresentFlag;
-    std::uint32_t numUnitsInTick;
-    std::uint32_t timeScale;
-    std::uint32_t aspectRatioInfoPresentFlag;
-    std::uint8_t aspectRatioIdc;
-    std::uint16_t sarWidth;
-    std::uint16_t sarHeight;
-    std::uint8_t videoSignal[8];
-    std::uint32_t picStruct;
-    std::uint32_t sourceScanType;
-    std::uint32_t duplicateFlag;
-    std::uint32_t conformanceWindowFlag;
-    std::uint32_t confWinLeftOffset;
-    std::uint32_t confWinRightOffset;
-    std::uint32_t confWinTopOffset;
-    std::uint32_t confWinBottomOffset;
-    std::uint32_t defaultDisplayWindow[5];
-    std::uint8_t chromaLocation[4];
-    std::uint8_t presentFlags[11];
-    std::uint8_t idrPictureFlag;
-    std::uint8_t irapPictureFlag;
-    std::uint8_t generalProfileSpace;
-    std::uint8_t generalTierFlag;
-    std::uint8_t generalProfileIdc;
-    std::uint8_t generalSourceFlags[3];
-    std::uint8_t generalLevelIdc;
-    std::uint8_t subLayer[9];
-    std::uint8_t frameCroppingFlag;
-    std::uint32_t frameCropLeftOffset;
-    std::uint32_t frameCropRightOffset;
-    std::uint32_t frameCropTopOffset;
-    std::uint32_t frameCropBottomOffset;
-};
+static_assert(sizeof(SceVideodec2::Vp9PictureInfo) == 0x58 && offsetof(SceVideodec2::Vp9PictureInfo, ptsData) == 0x10 && offsetof(SceVideodec2::Vp9PictureInfo, profile) == 0x28 && offsetof(SceVideodec2::Vp9PictureInfo, bitDepth) == 0x38 && offsetof(SceVideodec2::Vp9PictureInfo, colorSpace) == 0x3c && offsetof(SceVideodec2::Vp9PictureInfo, renderHeight) == 0x50);
 
 static_assert(sizeof(HevcPictureInfo) == 0xb8 && offsetof(HevcPictureInfo, idrPictureFlag) == 0x93 && offsetof(HevcPictureInfo, frameCroppingFlag) == 0xa5);
-static_assert(sizeof(DecoderConfigInfo) == 0x50 && sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isLastFrame) == 9 && offsetof(OutputInfo, pictureCount) == 0xb && sizeof(AvcPictureInfo) == 0x78);
-
-extern "C" {
-int APS5_VABI sceVdecswQueryComputeMemoryInfo(ComputeMemoryInfo*);
-int APS5_VABI sceVdecswAllocateComputeQueue(const ComputeConfigInfo*, const ComputeMemoryInfo*, std::uint64_t*);
-int APS5_VABI sceVdecswReleaseComputeQueue(std::uint64_t);
-int APS5_VABI sceVdecswQueryDecoderMemoryInfo(const DecoderConfigInfo*, DecoderMemoryInfo*);
-int APS5_VABI sceVdecswCreateDecoder(const DecoderConfigInfo*, const DecoderMemoryInfo*, std::uint64_t*);
-int APS5_VABI sceVdecswDeleteDecoder(std::uint64_t);
-int APS5_VABI sceVdecswSetDecodeInput(std::uint64_t, const InputData*);
-int APS5_VABI sceVdecswTrySyncDecodeInput(std::uint64_t, InputResult*);
-int APS5_VABI sceVdecswSyncDecodeInput(std::uint64_t, InputResult*);
-int APS5_VABI sceVdecswSetDecodeOutput(std::uint64_t, const FrameBuffer*);
-int APS5_VABI sceVdecswTrySyncDecodeOutput(std::uint64_t, OutputInfo*);
-int APS5_VABI sceVdecswSyncDecodeOutput(std::uint64_t, OutputInfo*);
-int APS5_VABI sceVdecswGetVp9PictureInfo(const OutputInfo*, Vp9PictureInfo*);
-int APS5_VABI sceVdecswGetAvcPictureInfo(const OutputInfo*, AvcPictureInfo*, AvcPictureInfo*);
-int APS5_VABI sceVdecswGetHevcPictureInfo(const OutputInfo*, HevcPictureInfo*);
-int APS5_VABI sceVdecswFinalizeDecodeSequence(std::uint64_t);
-int APS5_VABI sceVdecswResetDecoder(std::uint64_t);
-}
+static_assert(sizeof(SceVdecsw::DecoderConfigInfo) == 0x50 && sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isLastFrame) == 9 && offsetof(OutputInfo, pictureCount) == 0xb && sizeof(AvcPictureInfo) == 0x78);
 
 namespace {
+
+using namespace SceVdecsw;
 
 using namespace H264Fixture;
 using namespace HevcFixture;
@@ -221,14 +41,14 @@ void check(bool condition, const std::string& message) {
 struct Session {
     std::uint64_t queue = 0;
     std::uint64_t decoder = 0;
-    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    SceVideodec2::DecoderMemoryInfo memory{sizeof(SceVideodec2::DecoderMemoryInfo)};
 
     explicit Session(std::uint32_t codec = CodecAvc, std::uint32_t profile = 100, std::uint32_t level = 42) {
-        ComputeMemoryInfo compute{sizeof(ComputeMemoryInfo)};
+        SceVideodec2::ComputeMemoryInfo compute{sizeof(SceVideodec2::ComputeMemoryInfo)};
         check(sceVdecswQueryComputeMemoryInfo(&compute) == 0 && compute.cpuGpuMemorySize != 0, "compute memory query failed");
-        const ComputeConfigInfo computeConfig{sizeof(ComputeConfigInfo), 3, 3, true};
+        const SceVideodec2::ComputeConfigInfo computeConfig{sizeof(SceVideodec2::ComputeConfigInfo), 3, 3, true};
         check(sceVdecswAllocateComputeQueue(&computeConfig, &compute, &queue) == 0, "compute queue allocation failed");
-        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, codec, profile, level, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue, 0x3f, 0, true, {}};
+        SceVdecsw::DecoderConfigInfo config{{sizeof(SceVdecsw::DecoderConfigInfo), 1, codec, profile, level, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3}, queue, 0x3f, 0, true, {}};
         check(sceVdecswQueryDecoderMemoryInfo(&config, &memory) == 0 && memory.maxFrameBufferSize != 0, "decoder memory query failed");
         check(sceVdecswCreateDecoder(&config, &memory, &decoder) == 0, "decoder creation failed");
     }
@@ -236,6 +56,7 @@ struct Session {
     ~Session() {
         sceVdecswDeleteDecoder(decoder);
         sceVdecswReleaseComputeQueue(queue);
+
     }
 };
 
@@ -280,7 +101,7 @@ void testDecode() {
     };
     std::uint32_t produced = 0;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
         InputResult consumed{sizeof(InputResult)};
         check(sceVdecswTrySyncDecodeInput(session.decoder, &consumed) == 0 && consumed.decodedAu == units[unit].data(), "an access unit was not consumed");
@@ -326,6 +147,7 @@ void testHevc() {
             bool avcThrows = false;
             try {
                 sceVdecswGetAvcPictureInfo(&output, &avc, nullptr);
+
             } catch (const std::exception&) {
                 avcThrows = true;
             }
@@ -335,7 +157,7 @@ void testHevc() {
         }
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "HEVC decode input was rejected");
         InputResult consumed{sizeof(InputResult)};
         check(sceVdecswTrySyncDecodeInput(session.decoder, &consumed) == 0 && consumed.decodedAu == units[unit].data(), "an HEVC access unit was not consumed");
@@ -351,7 +173,7 @@ void testHevcCrop() {
     std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
     const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
     check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "cropped HEVC output buffer was rejected");
-    const InputData input{sizeof(InputData), HevcCroppedStream.data(), HevcCroppedStream.size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), HevcCroppedStream.data(), HevcCroppedStream.size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "cropped HEVC decode input was rejected");
     InputResult consumed{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the cropped HEVC access unit was not consumed");
@@ -368,7 +190,7 @@ void testHevcCrop() {
 void testWithoutOutput() {
     Session session;
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
     InputResult result{sizeof(InputResult)};
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "an input was not decoded before an output buffer was set");
@@ -388,7 +210,7 @@ void testSyncWrappers() {
     InputResult idle{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &idle) == InputQueueEmpty, "sync input on an idle decoder did not report an empty queue");
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
     InputResult result{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "sync input did not consume the access unit");
@@ -402,6 +224,7 @@ void testSyncWrappers() {
     bool hevcThrows = false;
     try {
         sceVdecswGetHevcPictureInfo(&output, &hevc);
+
     } catch (const std::exception&) {
         hevcThrows = true;
     }
@@ -411,14 +234,14 @@ void testSyncWrappers() {
 struct Vp9Session {
     std::uint64_t queue = 0;
     std::uint64_t decoder = 0;
-    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    SceVideodec2::DecoderMemoryInfo memory{sizeof(SceVideodec2::DecoderMemoryInfo)};
 
     Vp9Session() {
-        ComputeMemoryInfo compute{sizeof(ComputeMemoryInfo)};
+        SceVideodec2::ComputeMemoryInfo compute{sizeof(SceVideodec2::ComputeMemoryInfo)};
         check(sceVdecswQueryComputeMemoryInfo(&compute) == 0 && compute.cpuGpuMemorySize != 0, "compute memory query failed");
-        const ComputeConfigInfo computeConfig{sizeof(ComputeConfigInfo), 3, 3, true};
+        const SceVideodec2::ComputeConfigInfo computeConfig{sizeof(SceVideodec2::ComputeConfigInfo), 3, 3, true};
         check(sceVdecswAllocateComputeQueue(&computeConfig, &compute, &queue) == 0, "compute queue allocation failed");
-        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecVp9, 0, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue, 0x3f, 0, true, {}};
+        SceVdecsw::DecoderConfigInfo config{{sizeof(SceVdecsw::DecoderConfigInfo), 1, CodecVp9, 0, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3}, queue, 0x3f, 0, true, {}};
         check(sceVdecswQueryDecoderMemoryInfo(&config, &memory) == 0 && memory.maxFrameBufferSize != 0, "VP9 decoder memory query failed");
         check(sceVdecswCreateDecoder(&config, &memory, &decoder) == 0, "VP9 decoder creation failed");
     }
@@ -426,6 +249,7 @@ struct Vp9Session {
     ~Vp9Session() {
         sceVdecswDeleteDecoder(decoder);
         sceVdecswReleaseComputeQueue(queue);
+
     }
 };
 
@@ -439,20 +263,20 @@ bool throws(TAction action) {
     return false;
 }
 
-Vp9PictureInfo sentinelVp9Info(std::uint64_t size = sizeof(Vp9PictureInfo)) {
-    Vp9PictureInfo info;
+SceVideodec2::Vp9PictureInfo sentinelVp9Info(std::uint64_t size = sizeof(SceVideodec2::Vp9PictureInfo)) {
+    SceVideodec2::Vp9PictureInfo info;
     std::memset(&info, 0xcc, sizeof(info));
     info.thisSize = size;
     return info;
 }
 
-bool sameBytes(const Vp9PictureInfo& left, const Vp9PictureInfo& right) {
-    return std::memcmp(&left, &right, sizeof(Vp9PictureInfo)) == 0;
+bool sameBytes(const SceVideodec2::Vp9PictureInfo& left, const SceVideodec2::Vp9PictureInfo& right) {
+    return std::memcmp(&left, &right, sizeof(SceVideodec2::Vp9PictureInfo)) == 0;
 }
 
-void checkVp9Info(const Vp9PictureInfo& info, std::size_t picture) {
+void checkVp9Info(const SceVideodec2::Vp9PictureInfo& info, std::size_t picture) {
     const std::string name = "VP9 picture " + std::to_string(picture);
-    check(info.thisSize == sizeof(Vp9PictureInfo) && info.isValid, name + " has no picture info");
+    check(info.thisSize == sizeof(SceVideodec2::Vp9PictureInfo) && info.isValid, name + " has no picture info");
     check(info.ptsData == 1000 + picture && info.dtsData == picture && info.attachedData == 0xa0 + picture, name + " timestamps differ");
     check(info.profile == 0 && info.bitDepth == 8 && info.colorRange == 0 && info.colorSpace == 0 && info.numFrames == 1 && info.intraOnly == 0, name + " coded header fields differ");
     check(info.keyFrameFlag == (picture == 0 ? 1u : 0u), name + " key frame flag differs");
@@ -497,7 +321,7 @@ void testVp9PictureInfo() {
         }
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "VP9 decode input was rejected");
         InputResult consumed{sizeof(InputResult)};
         check(sceVdecswTrySyncDecodeInput(session.decoder, &consumed) == 0 && consumed.decodedAu == units[unit].data(), "a VP9 access unit was not consumed");
@@ -533,21 +357,21 @@ void testVp9PictureInfo() {
     unknown.frameBuffer = nullptr;
     check(throws([&] { sceVdecswGetVp9PictureInfo(&unknown, &info); }) && sameBytes(info, unchanged), "a null frame buffer was accepted");
 
-    const auto head = offsetof(Vp9PictureInfo, profile);
+    const auto head = offsetof(SceVideodec2::Vp9PictureInfo, profile);
     auto partial = sentinelVp9Info(head);
     check(sceVdecswGetVp9PictureInfo(&outputs[2], &partial) == 0, "a VP9 picture info with a short size field was rejected");
     check(partial.thisSize == head && partial.isValid && partial.ptsData == 1002 && partial.dtsData == 2 && partial.attachedData == 0xa2, "the leading VP9 picture info fields were not written");
     check(partial.profile == unchanged.profile && partial.frameWidth == unchanged.frameWidth && partial.renderHeight == unchanged.renderHeight, "a VP9 picture info with a short size field was written beyond it");
 
     struct Oversized {
-        Vp9PictureInfo info;
+        SceVideodec2::Vp9PictureInfo info;
         std::uint8_t tail[64];
     } oversized;
     std::memset(&oversized, 0xcc, sizeof(oversized));
     oversized.info.thisSize = sizeof(Oversized);
     check(sceVdecswGetVp9PictureInfo(&outputs[3], &oversized.info) == 0, "a VP9 picture info with a long size field was rejected");
     check(oversized.info.thisSize == sizeof(Oversized), "a long VP9 picture info size field was changed");
-    oversized.info.thisSize = sizeof(Vp9PictureInfo);
+    oversized.info.thisSize = sizeof(SceVideodec2::Vp9PictureInfo);
     checkVp9Info(oversized.info, 3);
     for (const auto byte : oversized.tail) check(byte == 0xcc, "a VP9 picture info with a long size field was written beyond the structure");
 
@@ -561,7 +385,7 @@ void testVp9PictureInfo() {
 void testVp9PictureInfoOfAvcPicture() {
     Session session;
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
     InputResult result{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &result) == 0, "the access unit was not consumed");
@@ -583,7 +407,7 @@ void testHevcMain10() {
     std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
     const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
     check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "Main 10 HEVC output buffer was rejected");
-    const InputData input{sizeof(InputData), HevcMain10Stream.data(), HevcMain10Stream.size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), HevcMain10Stream.data(), HevcMain10Stream.size(), 1000, 0, 0xa0};
     check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "Main 10 HEVC decode input was rejected");
     InputResult consumed{sizeof(InputResult)};
     check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the Main 10 HEVC access unit was not consumed");

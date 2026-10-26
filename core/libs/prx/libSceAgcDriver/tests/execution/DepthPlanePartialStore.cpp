@@ -2,6 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -225,6 +228,62 @@ int main() {
             for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(loose, unit, 1.0f, UnitTexels, "unwatched plane after a read of the first unit, a unit it does not overlap");
             Require(draw(unwatched, {.minDepth = 0.6f, .maxDepth = 0.6f}) == 0u, "a draw at depth 0.6 passed LESS over unwatched units still holding depth 0.5 on the GPU");
         }
+
+        auto* arrayBlocks = static_cast<std::byte*>(AllocateBlocks(3u * PlaneBytes, true));
+        auto* layerPlane = reinterpret_cast<float*>(arrayBlocks + PlaneBytes);
+        AgcDriver::Graphics::GuestTextureResource array{};
+        array.baseAddress = reinterpret_cast<std::uintptr_t>(arrayBlocks);
+        array.width = PlaneWidth;
+        array.height = PlaneHeight;
+        array.depthOrLastArray = 2;
+        array.mipCount = 1;
+        array.tileMode = AgcDriver::Graphics::TextureTileMode::kR64KBX;
+        array.dimension = AgcDriver::Graphics::TextureDimension::k2DArray;
+        array.format = 22;
+        array.dstSelX = 4;
+        array.dstSelY = 5;
+        array.dstSelZ = 6;
+        array.dstSelW = 7;
+        Require(AgcDriver::Graphics::DescribeSurface(array).layerBytes == PlaneBytes, "a layer of the 384x200 R32 array is not six 64 KiB tiles");
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        const auto lookup = [&](std::uint32_t first, std::uint32_t count) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            return AgcDriver::Graphics::CachedStorageLayers(context, array, first, count);
+        };
+        Fill(layerPlane, 1.0f);
+        const auto arrayImage = lookup(0, 1);
+        device->WaitIdle();
+        const auto provedBefore = AgcDriver::Graphics::StorageTexture::RefreshesProved();
+        Require(lookup(0, 1) == arrayImage && lookup(0, 1) == arrayImage, "a lookup of the first layer of an unchanged array replaced its cached image");
+        if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(array.baseAddress, 3u * PlaneBytes)) {
+            std::puts("guest memory is not write-watched here: lookups of array layers through a refresh proof are not exercised");
+        } else {
+            Require(AgcDriver::Graphics::StorageTexture::RefreshesProved() != provedBefore, "repeated lookups of the first layer of an unchanged array proved no refresh");
+        }
+        const Surface layerDepth{reinterpret_cast<std::uintptr_t>(layerPlane), 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, swizzle};
+        Require(draw(layerDepth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 over the second layer of an array did not cover the plane");
+        before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+        Require(lookup(0, 1) == arrayImage, "a depth draw over the second layer of an array replaced the array's cached image");
+        device->WaitIdle();
+        stored = Since(before);
+        Require(stored.stores == 0, "a lookup of the first layer of an array stored the depth plane over its second layer");
+        for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(layerPlane, unit, 1.0f, UnitTexels, "a lookup of the first layer of an array, the depth plane over its second layer");
+        Require(AgcDriver::Graphics::DepthPlanesStale(), "a lookup of the first layer of an array left no stale plane");
+
+        before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+        static_cast<void>(lookup(0, 2));
+        device->WaitIdle();
+        stored = Since(before);
+        Require(stored.stores == 1 && stored.units == Units, "a lookup of the first two layers of a three-layer array did not store the depth plane over its second layer");
+        for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(layerPlane, unit, 0.5f, Texels(unit), "a lookup of the first two layers of a three-layer array, the depth plane over its second layer");
+
+        Require(draw(layerDepth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .minDepth = 0.25f, .maxDepth = 0.25f}) == PlaneTexels, "the draw writing depth 0.25 over the second layer of an array did not cover the plane");
+        before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+        static_cast<void>(lookup(0, 3));
+        device->WaitIdle();
+        stored = Since(before);
+        Require(stored.stores == 1 && stored.units == Units, "a lookup of every layer of an array did not store the depth plane over its second layer");
+        for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(layerPlane, unit, 0.25f, Texels(unit), "a lookup of every layer of an array, the depth plane over its second layer");
         std::puts("depth plane partial store tests passed");
         return 0;
     } catch (const std::exception& error) {

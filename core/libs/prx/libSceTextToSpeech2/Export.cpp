@@ -1,3 +1,4 @@
+#include "prx/libSceTextToSpeech2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -8,28 +9,6 @@ namespace {
 constexpr std::int32_t SCE_KERNEL_ERROR_EOPNOTSUPP = static_cast<std::int32_t>(0x8002002D);
 
 }
-
-struct TextToSpeechInitParameter {
-    std::uint32_t version;
-    std::int32_t threadPriority;
-    std::uint64_t cpuAffinity;
-    std::uint8_t reserved[48];
-};
-
-struct TextToSpeechOpenParameter {
-    std::uint32_t language;
-    std::uint32_t voiceType;
-    std::uint8_t reserved[56];
-};
-
-struct TextToSpeechSpeakParameter {
-    const char16_t* text;
-    std::uint32_t length;
-    std::uint32_t mode;
-    std::uint32_t volume;
-    std::int32_t speed;
-    std::uint8_t reserved[40];
-};
 
 static_assert(sizeof(TextToSpeechInitParameter) == 64);
 static_assert(sizeof(TextToSpeechOpenParameter) == 64);

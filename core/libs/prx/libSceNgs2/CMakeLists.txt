@@ -12,4 +12,5 @@ if(BUILD_TESTING)
         set_tests_properties(ngs2_core_render PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNgs2>")
     endif()
+    add_sce_ngs2_test(libSceNgs2 ngs2_core_pcm Ngs2Pcm.cpp)
 endif()

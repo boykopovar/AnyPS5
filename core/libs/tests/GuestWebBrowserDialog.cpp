@@ -1,20 +1,8 @@
+#include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceWebBrowserDialogInitialize(void);
-int APS5_VABI sceWebBrowserDialogTerminate(void);
-int APS5_VABI sceWebBrowserDialogSetCookie(const void* param);
-int APS5_VABI sceWebBrowserDialogResetCookie(const void* param);
-int APS5_VABI sceWebBrowserDialogOpen(const void* param);
-int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, const WebBrowserDialogAllowList* allowList);
-int APS5_VABI sceWebBrowserDialogClose(void);
-int APS5_VABI sceWebBrowserDialogGetStatus(void);
-int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
-int APS5_VABI sceWebBrowserDialogGetResult(WebBrowserDialogResult* result);
-}
 
 namespace {
 
