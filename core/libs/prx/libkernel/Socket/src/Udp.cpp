@@ -1066,7 +1066,7 @@ std::int64_t ListenQueueLength(NativeSocket socket) {
 #ifdef _WIN32
 struct DatagramPeek {
     WSAOVERLAPPED overlapped{};
-    WSAEVENT event = WSACreateEvent();
+    WSAEVENT event = WSA_INVALID_EVENT;
     char buffer[65536];
 };
 using DatagramPeeks = KernelSocketPeek::SubmittedRecords<DatagramPeek>;
@@ -1076,12 +1076,12 @@ DatagramPeeks& PeekPool() {
 }
 std::int64_t NextDatagramSize(const Socket& socket, std::int64_t queued) {
     auto& pool = PeekPool();
-    auto* slot = pool.Acquire([](DatagramPeek& peek) { return HasOverlappedIoCompleted(&peek.overlapped); });
+    auto* slot = pool.Acquire([](DatagramPeek& peek) { return HasOverlappedIoCompleted(&peek.overlapped); }, [](DatagramPeek& peek) {
+        if (peek.event == WSA_INVALID_EVENT) peek.event = WSACreateEvent();
+        return peek.event != WSA_INVALID_EVENT;
+    });
+    if (!slot) return queued;
     auto& peek = slot->record;
-    if (peek.event == WSA_INVALID_EVENT) {
-        pool.Release(slot, false);
-        return queued;
-    }
     WSAResetEvent(peek.event);
     peek.overlapped = WSAOVERLAPPED{};
     peek.overlapped.hEvent = peek.event;
