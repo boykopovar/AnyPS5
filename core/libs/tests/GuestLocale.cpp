@@ -106,7 +106,7 @@ static void CheckCollateVtableObject() {
 }
 
 static void CheckCodecvtVtableObject() {
-    Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == 104);
+    Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == kCodecvtCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) {
         Require(slot == 0);
         slot = 0x1111;
