@@ -743,7 +743,7 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
 
 bool overwrittenTarget(const GuardedRange& range, std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten) {
     return std::ranges::any_of(guarded(), [&](const auto& plane) {
-        return plane.active == range.active && !plane.metadataValid && std::ranges::any_of(overwritten, [&](const auto& run) { return run.first <= plane.address && plane.address + plane.bytes <= run.second; });
+        return !range.fmask && plane.active == range.active && !plane.metadataValid && !plane.fmask && std::ranges::any_of(overwritten, [&](const auto& run) { return run.first <= plane.address && plane.address + plane.bytes <= run.second; });
     });
 }
 
