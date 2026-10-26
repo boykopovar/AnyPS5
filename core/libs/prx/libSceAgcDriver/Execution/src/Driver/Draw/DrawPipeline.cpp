@@ -30,6 +30,7 @@ std::uint64_t elapsedNs(std::chrono::steady_clock::time_point since) {
 
 std::atomic<std::uint64_t> heldReadRanges{0};
 std::atomic<std::uint64_t> heldReadQueries{0};
+std::atomic<std::uint64_t> heldReadWalks{0};
 std::atomic<std::uint64_t> heldReadHits{0};
 
 }
@@ -362,9 +363,13 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     const auto perDraw = enqueued == 0 ? 0.0 : static_cast<double>(fullWaitNs) / 1e3 / static_cast<double>(enqueued);
     const auto queued = enqueued == 0 ? 0.0 : static_cast<double>(depthSum) / static_cast<double>(enqueued);
     const auto decodeDrainCount = decodeDrains.load(std::memory_order_relaxed);
-    char reads[96];
-    std::snprintf(reads, sizeof(reads), " %llu read ranges, %llu stores held, %llu decode drains", static_cast<unsigned long long>(heldReadRanges.load(std::memory_order_relaxed)), static_cast<unsigned long long>(heldReadHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(decodeDrainCount - reportedDecodeDrains));
+    const auto heldReadQueryCount = heldReadQueries.load(std::memory_order_relaxed);
+    const auto heldReadWalkCount = heldReadWalks.load(std::memory_order_relaxed);
+    char reads[160];
+    std::snprintf(reads, sizeof(reads), " %llu read ranges, %llu stores held, %llu decode drains, %llu held-read queries of which %llu walked the queue", static_cast<unsigned long long>(heldReadRanges.load(std::memory_order_relaxed)), static_cast<unsigned long long>(heldReadHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(decodeDrainCount - reportedDecodeDrains), static_cast<unsigned long long>(heldReadQueryCount - reportedHeldReadQueries), static_cast<unsigned long long>(heldReadWalkCount - reportedHeldReadWalks));
     reportedDecodeDrains = decodeDrainCount;
+    reportedHeldReadQueries = heldReadQueryCount;
+    reportedHeldReadWalks = heldReadWalkCount;
     drainText += reads;
     AgcDriver::ProfilePrint_nid_no_patch("[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer, %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room, %.2f us for the lock; %llu committer wakes;%s; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, enqueued == 0 ? 0.0 : static_cast<double>(lockWaitNs) / 1e3 / static_cast<double>(enqueued), static_cast<unsigned long long>(wakes), reads, drainText.c_str());
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
@@ -471,12 +476,13 @@ std::uint64_t DrawPipeline::DrainRequestsByOpcode(std::uint32_t opcode) {
 bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     static const bool unordered = std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") != nullptr;
     if (bytes == 0 || unordered) return false;
+    heldReadQueries.fetch_add(1, std::memory_order_relaxed);
     static const bool prefilter = std::getenv("APS5_NO_HELD_READ_PREFILTER") == nullptr;
     auto& pipeline = Queue0();
     if (prefilter && pipeline.itemsWithReads.load(std::memory_order_acquire) == 0) return false;
     const auto end = address + bytes;
     std::lock_guard lock(pipeline.mutex);
-    heldReadQueries.fetch_add(1, std::memory_order_relaxed);
+    heldReadWalks.fetch_add(1, std::memory_order_relaxed);
     for (const auto& item : pipeline.items) {
         for (const auto& [begin, limit] : item.reads) {
             if (address >= limit || begin >= end) continue;
@@ -489,6 +495,10 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
 
 std::uint64_t DrawPipeline::HeldReadQueries() {
     return heldReadQueries.load(std::memory_order_relaxed);
+}
+
+std::uint64_t DrawPipeline::HeldReadWalks() {
+    return heldReadWalks.load(std::memory_order_relaxed);
 }
 
 void DrawPipeline::ReleaseRunningReads() {

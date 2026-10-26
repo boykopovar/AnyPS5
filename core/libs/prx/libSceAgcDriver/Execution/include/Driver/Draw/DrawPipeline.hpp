@@ -56,6 +56,7 @@ public:
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
     static std::uint64_t HeldReadQueries();
+    static std::uint64_t HeldReadWalks();
     void ReleaseRunningReads();
 
     static bool MetadataPassesPipelined();
@@ -88,6 +89,8 @@ private:
     std::atomic<std::uint64_t> retiredItems{0};
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
+    std::uint64_t reportedHeldReadQueries = 0;
+    std::uint64_t reportedHeldReadWalks = 0;
     std::uint32_t idleWaiters = 0;
     std::size_t resumeAt = 0;
     bool committerWaiting = false;
