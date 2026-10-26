@@ -48,6 +48,7 @@ int main() {
     Require(sceUsbStorageDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceUsbStorageDialogOpen(&param) == kErrNotInitialized);
     Require(sceUsbStorageDialogClose() == kErrNotInitialized);
+    Require(sceUsbStorageDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotInitialized);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
     Require(sceUsbStorageDialogUpdateStatus() == kStatusNone);
