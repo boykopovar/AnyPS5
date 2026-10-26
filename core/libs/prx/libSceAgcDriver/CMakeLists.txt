@@ -567,6 +567,17 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(agc_range_index_tests tests/RangeIndex.cpp)
+    target_include_directories(agc_range_index_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_range_index_tests PRIVATE libc)
+    configure_windows_unwind(agc_range_index_tests)
+    add_test(NAME agc_range_index COMMAND agc_range_index_tests)
+    set_tests_properties(agc_range_index PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_range_index PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(agc_capture_trace_tests tests/CaptureTrace.cpp)
     target_include_directories(agc_capture_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_capture_trace_tests PRIVATE libc)
