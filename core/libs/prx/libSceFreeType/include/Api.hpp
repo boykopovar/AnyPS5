@@ -106,4 +106,6 @@ int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t 
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
+int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
+int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
 }
