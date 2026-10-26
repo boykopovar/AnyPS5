@@ -87,17 +87,17 @@ std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value) {
 }
 
 unsigned char* APS5_VABI ASN1_STRING_data_nid_postfix(Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->data;
 }
 
 int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->length;
 }
 
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->type;
 }
 

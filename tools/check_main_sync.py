@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PULL_REQUEST = re.compile(r"Merge pull request #(\d+)")
+PULL_REQUEST = re.compile(r"Merge pull request #(\d+)|\(#(\d+)\)$")
 BASES = ("upstream/main", "origin/main", "main")
 
 
@@ -47,7 +47,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
     for line in lines(repo, "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
         match = PULL_REQUEST.search(line)
         if match:
-            found[int(match.group(1))] = line.split(" ", 1)[0]
+            found[int(match.group(1) or match.group(2))] = line.split(" ", 1)[0]
     return found
 
 

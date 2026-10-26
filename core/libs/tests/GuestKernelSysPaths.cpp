@@ -4,6 +4,8 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/File/include/KernelStatfs.hpp"
 #include <span>
+#include <array>
+#include <cstddef>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -173,7 +175,32 @@ int main(int argc, char** argv) {
 #endif
         {
             Require(result == 0);
+#ifdef _WIN32
+            const auto handle = CreateFileW((root / "link").c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            Require(handle != INVALID_HANDLE_VALUE);
+            std::array<std::byte, MAXIMUM_REPARSE_DATA_BUFFER_SIZE> data{};
+            DWORD size = 0;
+            const BOOL read = DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, nullptr, 0, data.data(), static_cast<DWORD>(data.size()), &size, nullptr);
+            Require(CloseHandle(handle) != FALSE);
+            Require(read != FALSE);
+            struct Header {
+                ULONG tag;
+                USHORT dataLength, reserved, substituteOffset, substituteLength, printOffset, printLength;
+                ULONG flags;
+            } header{};
+            static_assert(sizeof(Header) == 20);
+            Require(size >= sizeof(header));
+            std::memcpy(&header, data.data(), sizeof(header));
+            Require(header.tag == IO_REPARSE_TAG_SYMLINK && (header.flags & 1) != 0);
+            Require(header.dataLength == size - 8);
+            const auto begin = sizeof(header) + header.substituteOffset;
+            Require(begin <= size && header.substituteLength <= size - begin);
+            Require(header.substituteLength == 4 * sizeof(wchar_t));
+            Require(std::memcmp(data.data() + begin, L"data", header.substituteLength) == 0);
+#else
             Require(std::filesystem::read_symlink(root / "link") == "data");
+#endif
             std::ifstream stream(root / "link");
             std::string contents;
             stream >> contents;

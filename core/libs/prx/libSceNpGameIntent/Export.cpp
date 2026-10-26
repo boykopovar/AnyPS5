@@ -1,4 +1,5 @@
 #include "prx/libSceNpGameIntent/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -8,43 +9,57 @@
 
 namespace {
 
+constexpr int NpGameIntentErrorNotInitialized = -2141898750;
 constexpr int NpGameIntentErrorInvalidArgument = -2141898748;
 constexpr int NpGameIntentErrorIntentNotFound = -2141898746;
 constexpr int NpGameIntentErrorValueNotFound = -2141898745;
 constexpr int NpGameIntentUserIdInvalid = -1;
+
+std::atomic_bool& NpGameIntentInitialized() {
+    static std::atomic_bool initialized{false};
+    return initialized;
+}
 
 }
 
 extern "C" {
 
 int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) {
- if (intentData == nullptr || key == nullptr || valueBuf == nullptr || bufSize == 0) {
-  APS5_INVALID_ARG_EX;
- }
+	if (!NpGameIntentInitialized()) {
+		return NpGameIntentErrorNotInitialized;
+	}
+	if (intentData == nullptr || key == nullptr || key[0] == '\0' || valueBuf == nullptr || bufSize == 0) {
+		return NpGameIntentErrorInvalidArgument;
+	}
 
- valueBuf[0] = '\0';
- return NpGameIntentErrorValueNotFound;
+	valueBuf[0] = '\0';
+	return NpGameIntentErrorValueNotFound;
 }
 
 int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {
- (void)initParam;
- return 0;
+	(void)initParam;
+	NpGameIntentInitialized() = true;
+	return 0;
 }
 
 int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
- if (intentInfo == nullptr) {
-  APS5_INVALID_ARG_EX;
- }
+	if (!NpGameIntentInitialized()) {
+		return NpGameIntentErrorNotInitialized;
+	}
+	if (intentInfo == nullptr || intentInfo->size != 0x4140) {
+		return NpGameIntentErrorInvalidArgument;
+	}
 
- intentInfo->user_id = NpGameIntentUserIdInvalid;
- std::memset(intentInfo->intent_type, 0, sizeof(intentInfo->intent_type));
- std::memset(&intentInfo->intent_data, 0, sizeof(intentInfo->intent_data));
+	intentInfo->user_id = NpGameIntentUserIdInvalid;
+	std::memset(intentInfo->intent_type, 0, sizeof(intentInfo->intent_type));
+	std::memset(&intentInfo->intent_data, 0, sizeof(intentInfo->intent_data));
 
- return NpGameIntentErrorIntentNotFound;
+	return NpGameIntentErrorIntentNotFound;
 }
 
 int APS5_VABI sceNpGameIntentTerminate(void) {
- return 0;
+	NpGameIntentInitialized() = false;
+	return 0;
 }
 
 int APS5_VABI sceNpGameIntentInitParamInit(NpGameIntentInitParam* param) {

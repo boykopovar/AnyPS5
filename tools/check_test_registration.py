@@ -78,7 +78,9 @@ def commands(content):
                 raise ValueError(f"invalid CTest argument at position {position}")
             argument = token.group(0)
             if argument.startswith('"'):
-                argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
+                argument = re.sub(r"\\(\r?\n|.)",
+                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]),
+                                  argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
                 argument = argument[width:-width].removeprefix("\n")

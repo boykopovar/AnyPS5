@@ -64,6 +64,7 @@ struct FontWritingData {
     float penY = 0.0f;
     bool hasAggregateMetrics = false;
     bool hasCurrentStep = false;
+    bool hasCurrentCharacter = false;
     bool maskFormatCharacters = true;
     bool ownsStorage = false;
     bool hasRawGlyphMetrics = false;
@@ -684,6 +685,7 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
     if (!PopulateWritingStep(*writing, writing->nextIndex)) return nullptr;
     writing->currentIndex = writing->nextIndex;
     writing->hasCurrentStep = true;
+    writing->hasCurrentCharacter = true;
     AccumulateWritingMetrics(*writing);
     ++writing->nextIndex;
     return &writing->step;
@@ -692,7 +694,8 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
 FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting* fontWriting, const FontWritingLetterStep** pLetterStep) {
     if (pLetterStep) *pLetterStep = nullptr;
     auto* writing = GetWritingData(fontWriting);
-    if (!writing || !writing->hasCurrentStep || !writing->storage || writing->currentIndex >= writing->storage->characters.size()) return nullptr;
+    if (!writing || !writing->hasCurrentStep || !writing->hasCurrentCharacter || !writing->storage || writing->currentIndex >= writing->storage->characters.size()) return nullptr;
+    writing->hasCurrentCharacter = false;
     auto& letterStep = writing->letterStep;
     letterStep = {};
     letterStep.x = writing->step.x;

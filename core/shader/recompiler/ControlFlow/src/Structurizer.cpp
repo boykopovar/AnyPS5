@@ -1575,27 +1575,7 @@ struct TarjanState {
     std::vector<StronglyConnectedComponent> components;
 };
 
-void tarjanVisit(TarjanState& state, std::uint32_t blockId) {
-    state.index[blockId] = state.nextIndex;
-    state.lowlink[blockId] = state.nextIndex;
-    ++state.nextIndex;
-    state.stack.push_back(blockId);
-    state.onStack[blockId] = true;
-
-    const auto& block = state.graph->FindBlock(blockId);
-    for (const auto successor : block.successors) {
-        if (state.index[successor] == InvalidControlFlowId) {
-            tarjanVisit(state, successor);
-            state.lowlink[blockId] = std::min(state.lowlink[blockId], state.lowlink[successor]);
-        } else if (state.onStack[successor]) {
-            state.lowlink[blockId] = std::min(state.lowlink[blockId], state.index[successor]);
-        }
-    }
-
-    if (state.lowlink[blockId] != state.index[blockId]) {
-        return;
-    }
-
+void emitComponent(TarjanState& state, std::uint32_t blockId) {
     StronglyConnectedComponent component;
     for (;;) {
         const auto member = state.stack.back();
@@ -1623,6 +1603,45 @@ void tarjanVisit(TarjanState& state, std::uint32_t blockId) {
     sortUnique(component.entryBlocks);
     component.irreducible = cyclic && component.entryBlocks.size() > 1u;
     state.components.push_back(std::move(component));
+}
+
+void tarjanVisit(TarjanState& state, std::uint32_t root) {
+    struct Frame {
+        std::uint32_t blockId;
+        const std::vector<std::uint32_t>* successors;
+        std::size_t next;
+    };
+    std::vector<Frame> work;
+    const auto enter = [&](std::uint32_t blockId) {
+        state.index[blockId] = state.nextIndex;
+        state.lowlink[blockId] = state.nextIndex;
+        ++state.nextIndex;
+        state.stack.push_back(blockId);
+        state.onStack[blockId] = true;
+        work.push_back({blockId, &state.graph->FindBlock(blockId).successors, 0u});
+    };
+    enter(root);
+    while (!work.empty()) {
+        auto& frame = work.back();
+        const auto blockId = frame.blockId;
+        if (frame.next < frame.successors->size()) {
+            const auto successor = (*frame.successors)[frame.next++];
+            if (state.index[successor] == InvalidControlFlowId) {
+                enter(successor);
+            } else if (state.onStack[successor]) {
+                state.lowlink[blockId] = std::min(state.lowlink[blockId], state.index[successor]);
+            }
+            continue;
+        }
+        work.pop_back();
+        if (!work.empty()) {
+            auto& parent = state.lowlink[work.back().blockId];
+            parent = std::min(parent, state.lowlink[blockId]);
+        }
+        if (state.lowlink[blockId] == state.index[blockId]) {
+            emitComponent(state, blockId);
+        }
+    }
 }
 
 bool forcedFlagStructurization() {

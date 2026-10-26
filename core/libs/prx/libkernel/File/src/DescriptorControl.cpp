@@ -378,7 +378,6 @@ int ChangeStatus(int fd, Kind kind, int mask, int value, const char* function) {
     const int next = (status & ~mask) | (value & mask);
     const int changed = status ^ next;
     if ((changed & Asynchronous) && (kind == Kind::Pipe || kind == Kind::Socket || kind == Kind::Device)) Unsupported(function, "O_ASYNC", kind, fd);
-    if ((changed & Synchronous) && kind == Kind::File) Unsupported(function, "changing O_FSYNC", kind, fd);
     ApplyHostStatus(fd, kind, changed, next, function);
     status = next;
     return 0;
@@ -617,6 +616,21 @@ void ForgetDescriptor(int fd) {
     g_entries.erase(fd);
 }
 
+std::uint64_t g_synchronousWrites = 0;
+
+void SyncWrites(int fd) {
+    {
+        std::lock_guard lock(g_mutex);
+        const auto found = g_entries.find(fd);
+        if (found == g_entries.end() || !found->second.status || (*found->second.status & Synchronous) == 0) return;
+    }
+    if (Classify(fd, "write") != Kind::File) return;
+    if (const int result = sceKernelFsync(fd); result != 0)
+        throw std::runtime_error("write: syncing an O_FSYNC file failed, fd=" + std::to_string(fd) + ", error=" + std::to_string(result & 0xffff));
+    std::lock_guard lock(g_mutex);
+    ++g_synchronousWrites;
+}
+
 bool Appends(int fd) {
     std::lock_guard lock(g_mutex);
     const auto found = g_entries.find(fd);
@@ -649,4 +663,9 @@ bool IsVnode(int fd) {
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
     return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
+}
+
+extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {
+    std::lock_guard lock(g_mutex);
+    return File::g_synchronousWrites;
 }

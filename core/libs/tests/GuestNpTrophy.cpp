@@ -14,6 +14,7 @@ namespace {
 
 constexpr int InvalidArgument = static_cast<int>(0x80551604u);
 constexpr int InsufficientBuffer = static_cast<int>(0x80551605u);
+constexpr int InvalidHandle = static_cast<int>(0x80551608u);
 constexpr int InvalidContext = static_cast<int>(0x80551609u);
 constexpr int InvalidTrophyId = static_cast<int>(0x8055160au);
 constexpr int AlreadyUnlocked = static_cast<int>(0x8055160cu);
@@ -97,6 +98,12 @@ int main() {
 
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
+    Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    Require(sceNpTrophyDestroyHandle(-1) == InvalidHandle, "invalid handle destruction");
     Require(sceNpTrophyDestroyContext(missing) == 0, "destroy the second context");
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");

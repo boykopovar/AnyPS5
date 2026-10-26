@@ -6833,6 +6833,12 @@ void verifyUnnormalizedSamplers() {
     const auto adjusted = recompile(reservedDword3(0xf0800f09u), userData(normalized));
     require(proven(adjusted, false), "sampler dword 3: an image_sample_a whose S# dword 3 holds only a ballot in its reserved bits was not compiled");
     expectFailure([&] { static_cast<void>(recompile(reservedDword3(0xf0800f08u), userData(normalized))); }, "GetSamplerResource dword 3 is not a valid runtime value", "sampler dword 3: an image_sample whose S# dword 3 holds a ballot was accepted");
+    for (const auto& [adjust, plain, compiled, accepted] : {
+             std::tuple{0xf1200109u, 0xf1200108u, "sampler dword 3: an image_gather4_c_a whose S# dword 3 holds only a ballot in its reserved bits was not compiled", "sampler dword 3: an image_gather4_c with a computed S# dword 3 was accepted"},
+             std::tuple{0xf1600109u, 0xf1600108u, "sampler dword 3: an image_gather4_c_o_a whose S# dword 3 holds only a ballot in its reserved bits was not compiled", "sampler dword 3: an image_gather4_c_o with a computed S# dword 3 was accepted"}}) {
+        require(proven(recompile(reservedDword3(adjust), imageData(normalized, Type2D, Format32Float, 0u)), false), compiled);
+        expectFailure([&] { static_cast<void>(recompile(reservedDword3(plain), imageData(normalized, Type2D, Format32Float, 0u))); }, "GetSamplerResource dword 3 is not a valid runtime value", accepted);
+    }
     reject(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a cube T# was accepted");
     reject(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 3D T# was accepted");
     reject(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array sample was accepted");

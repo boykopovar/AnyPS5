@@ -32,7 +32,7 @@ int CopyOut(const void* value, std::size_t size, void* oldValue, std::size_t* ol
         return 0;
     }
     const std::size_t copied = std::min(oldLength != nullptr ? *oldLength : 0, size);
-    std::memcpy(oldValue, value, copied);
+    if (copied != 0) std::memcpy(oldValue, value, copied);
     if (oldLength != nullptr) *oldLength = copied;
     if (copied < size) {
         *__error_nid_postfix() = 12;

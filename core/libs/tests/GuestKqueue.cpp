@@ -859,6 +859,59 @@ static void DisableAndDispatch() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void RequireNext(int kq, std::uintptr_t ident) {
+    KernelEvent event{};
+    Require(Poll(kq, &event, 1) == 1 && event.ident == ident);
+}
+
+static void ReportedKnotesMoveToTail() {
+    const int kq = kqueue_nid_postfix();
+    int first[2];
+    int second[2];
+    int pair[2];
+    Require(pipe_nid_postfix(first) == 0 && pipe_nid_postfix(second) == 0);
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const std::uintptr_t level[3] = {static_cast<std::uintptr_t>(first[0]), static_cast<std::uintptr_t>(second[0]), static_cast<std::uintptr_t>(pair[0])};
+    for (const auto ident : level) {
+        Require(Apply(kq, Change(ident, EvfiltRead, EvAdd)) == 0);
+    }
+    Require(write_nid_postfix(first[1], "a", 1) == 1 && write_nid_postfix(second[1], "b", 1) == 1);
+    Require(send_nid_postfix(pair[1], "c", 1, 0) == 1);
+    for (int round = 0; round < 2; ++round) {
+        for (const auto ident : level) {
+            RequireNext(kq, ident);
+        }
+    }
+    for (const auto ident : level) {
+        Require(Apply(kq, Change(ident, EvfiltRead, EvDelete)) == 0);
+    }
+
+    KernelEvent event{};
+    for (const std::uintptr_t ident : {11, 12}) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd | EvClear)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    RequireNext(kq, 11);
+    Require(Apply(kq, Change(11, EvfiltUser, 0, NoteTrigger)) == 0);
+    RequireNext(kq, 12);
+    RequireNext(kq, 11);
+    Require(Poll(kq, &event, 1) == 0);
+
+    for (const std::uintptr_t ident : {21, 22}) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd | EvDispatch)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    RequireNext(kq, 21);
+    Require(Apply(kq, Change(21, EvfiltUser, EvEnable, NoteTrigger)) == 0);
+    RequireNext(kq, 22);
+    RequireNext(kq, 21);
+    Require(Poll(kq, &event, 1) == 0);
+
+    for (const int descriptor : {first[0], first[1], second[0], second[1], pair[0], pair[1], kq}) {
+        Require(close_nid_postfix(descriptor) == 0);
+    }
+}
+
 static void Errors() {
     const int kq = kqueue_nid_postfix();
     KernelEvent events[4]{};
@@ -1387,6 +1440,7 @@ int main() {
     EdgeTriggeredDispatch();
 #endif
     DisableAndDispatch();
+    ReportedKnotesMoveToTail();
     Errors();
     LowWaterMarks();
     FileWatch();
