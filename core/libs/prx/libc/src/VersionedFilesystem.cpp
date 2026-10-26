@@ -7,6 +7,13 @@
 #include <filesystem>
 #include <system_error>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 GuestFilesystem::FileType FromNativeType(std::filesystem::file_type type) {
@@ -29,6 +36,20 @@ bool IsNotFound(int code) {
            code == GuestFilesystem::Invalid || code == GuestFilesystem::NameTooLong;
 }
 
+#ifdef _WIN32
+std::filesystem::path StatusPath(const std::filesystem::path& path) {
+    const auto native = path.native();
+    if (native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return path;
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    if (error) return path;
+    const auto normalized = absolute.lexically_normal().make_preferred().native();
+    if (normalized.size() < MAX_PATH) return absolute;
+    return normalized.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + normalized.substr(2))
+                                          : std::filesystem::path(L"\\\\?\\" + normalized);
+}
+#endif
+
 int StatType(const char* path, int* perms, int* error) {
     errno = 0;
     std::filesystem::path native;
@@ -39,7 +60,11 @@ int StatType(const char* path, int* perms, int* error) {
         type = IsNotFound(code) ? GuestFilesystem::TypeNotFound : GuestFilesystem::TypeNone;
     } else {
         std::error_code failure;
+#ifdef _WIN32
+        const auto status = std::filesystem::status(StatusPath(native), failure);
+#else
         const auto status = std::filesystem::status(native, failure);
+#endif
         if (!failure && status.type() != std::filesystem::file_type::not_found) {
             errno = 0;
             if (perms) *perms = static_cast<int>(status.permissions()) & GuestFilesystem::PermissionBits;
