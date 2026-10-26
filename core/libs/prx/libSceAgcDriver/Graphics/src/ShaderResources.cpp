@@ -2176,7 +2176,19 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
     try {
         Require(!shaders.empty() && context.limits.maxBoundDescriptorSets >= 1, "shader descriptor set exceeds device limits");
         if (shaders.size() == 1u) refreshResourceKey = ContentKey(shaders.front(), false, true);
-        std::set<std::uint32_t> occupied;
+        std::size_t plannedBindings = 0;
+        std::size_t plannedAllocations = 0;
+        for (const auto& shader : shaders) {
+            if (shader.program == nullptr) continue;
+            plannedBindings += shader.program->bindings.size();
+            for (const auto& binding : shader.program->bindings) {
+                if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers) plannedAllocations += binding.count;
+            }
+        }
+        bindings.reserve(plannedBindings);
+        allocations.reserve(plannedAllocations);
+        std::vector<std::uint32_t> occupied;
+        occupied.reserve(plannedBindings);
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
@@ -2212,7 +2224,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     table.firstSampler = firstSampler;
                     continue;
                 }
-                Require(occupied.insert(binding.binding).second, "duplicate shader binding");
+                Require(std::find(occupied.begin(), occupied.end(), binding.binding) == occupied.end(), "duplicate shader binding");
+                occupied.push_back(binding.binding);
                 if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                     addSamplerTable(binding, flags, tableStage(shader));
                     continue;
@@ -3258,9 +3271,19 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
     }
 }
 
+bool ShaderResources::keepsTemplateRecords() const {
+    static const bool always = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
+    return always || !(usesBda || (usesFaultBuffer && LoopGuardEnabled()));
+}
+
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation() {
+    if (!keepsTemplateRecords()) {
+        validatedTextures.clear();
+        lookupLog().clear();
+        return;
+    }
     const auto& log = lookupLog();
     thread_local std::vector<const void*>* loggedSlot = nullptr;
     auto& logged = ShaderRecompiler::ThreadOwned(loggedSlot);
@@ -4792,7 +4815,7 @@ std::size_t ShaderResources::addDataBuffer(std::span<const std::uint32_t> words)
     auto buffer = std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     std::memcpy(buffer->Bytes().data(), words.data(), size);
     Allocation allocation{0, size, false, std::move(buffer)};
-    if (refreshable) allocation.dataWords.assign(words.begin(), words.end());
+    if (refreshable && keepsTemplateRecords()) allocation.dataWords.assign(words.begin(), words.end());
     allocations.push_back(std::move(allocation));
     mixDataWords(dataWordsHash, allocations.back().dataWords);
     return allocations.size() - 1;

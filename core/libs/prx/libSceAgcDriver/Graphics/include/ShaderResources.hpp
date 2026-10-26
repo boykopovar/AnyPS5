@@ -547,6 +547,7 @@ private:
         bool depth = false;
         bool valid = false;
     };
+    bool keepsTemplateRecords() const;
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
