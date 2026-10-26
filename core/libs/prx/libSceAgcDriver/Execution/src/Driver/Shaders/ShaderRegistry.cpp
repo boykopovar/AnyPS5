@@ -1498,6 +1498,17 @@ public:
         return liveWorkers.load(std::memory_order_acquire);
     }
 
+    static std::optional<std::size_t> Pending() {
+        std::size_t pending = 0;
+        for (auto* pool : {Existing(), ExistingPrebuild()}) {
+            if (pool == nullptr) continue;
+            std::unique_lock lock(pool->mutex, std::try_to_lock);
+            if (!lock.owns_lock()) return std::nullopt;
+            pending += pool->tasks.size() + pool->running;
+        }
+        return pending;
+    }
+
     static void CloseAll() {
         std::array<RegistrationPreparePool*, 2> pools{};
         {
@@ -1637,7 +1648,7 @@ private:
 
     static void* Main(void* argument) {
         auto& pool = *static_cast<RegistrationPreparePool*>(argument);
-        if (PerformanceTrace::Configured()) PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
+        PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
         for (;;) {
             Task task;
             {
@@ -1748,6 +1759,10 @@ void CloseRegistrationPreparation() {
 
 unsigned RegistrationPreparationThreads() {
     return RegistrationPreparePool::LiveWorkers();
+}
+
+std::optional<std::size_t> RegistrationPreparationsPending() {
+    return RegistrationPreparePool::Pending();
 }
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared) {

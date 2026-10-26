@@ -90,7 +90,11 @@ class Trace:
 def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
-        return Trace(json.load(handle))
+        try:
+            document = json.load(handle)
+        except RecursionError as error:
+            raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        return Trace(document)
 
 
 def load_summary_lines(path):

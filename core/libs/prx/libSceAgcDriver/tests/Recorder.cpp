@@ -25,9 +25,11 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ResidentPresent.hpp"
 #include "ImageTableAbi.hpp"
@@ -66,6 +68,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -247,6 +250,18 @@ bool hintMappingHistoryTests() {
 #else
     return false;
 #endif
+}
+
+void gpuTimingKeyTests() {
+    constexpr std::uint64_t variant = 0x2;
+    const auto key = Recorder::DrawTimingKey(variant);
+    Require(key != variant && (key & Recorder::DrawTimingFlag) != 0, "a draw's timing key is not flagged apart from the other keys");
+    char named[64];
+    std::snprintf(named, sizeof(named), "0x%llx", static_cast<unsigned long long>(variant));
+    Require(Recorder::TimingKeyLabel(key) == std::string("draw ") + named, "a draw's timing label is not 'draw ' plus the id [drawvariant] prints");
+    Require(Recorder::TimingKeyLabel(variant) == named, "a key that is not a draw's is labelled with the draw prefix");
+    Require(Recorder::TimingKeyLabel(Recorder::DrawTimingKey(0)) == "draw 0x0", "a draw with no program is not labelled as a draw");
+    Require(Recorder::TimingKeyLabel(Recorder::DrawTimingKey(0x123456789abcdefull)) == "draw 0x123456789abcdef", "a wide variant id was cut in the label");
 }
 
 void deviceSelectionTests() {
@@ -3025,15 +3040,33 @@ void requireImportServesGuest(const Context& context, Recorder& recorder, const 
     const auto bytes = static_cast<std::size_t>(end - begin);
     Require(begin >= import.base && end <= import.base + import.bytes, what + " is not inside its import");
     const auto collected = CollectWritesUncached(begin, bytes);
-    Require(collected != 0 && Watched(begin, bytes), what + " left the write watch");
-    Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    const bool watched = Watched(begin, bytes);
+    Require(!watched || collected != 0, what + " is watched but cannot collect writes");
+    if (watched) {
+        Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    } else {
+        Require(collected == 0, what + " collects writes without being watched");
+        const auto generation = WriteGeneration();
+        Require(UntrackedHint(begin, bytes) == 0 && !UnchangedSince(begin, bytes, generation), what + " provides an unchanged or untracked-hint proof without a write watch");
+        std::vector<void*> compared(bytes / page);
+        auto count = compared.size();
+        GuestArena::GuestArenaComparedPages_nid_no_patch(begin, bytes, compared.data(), &count);
+        Require(count == compared.size(), what + " left the write watch without compared shared pages");
+        for (std::size_t index = 0; index < count; ++index) {
+            Require(compared[index] == reinterpret_cast<void*>(begin + index * page), what + " has an unexpected compared shared page");
+            MEMORY_BASIC_INFORMATION memory{};
+            Require(VirtualQuery(compared[index], &memory, sizeof(memory)) == sizeof(memory) && memory.State == MEM_COMMIT, what + " has an inaccessible compared shared page");
+            const auto protection = memory.Protect & 0xff;
+            Require(protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE, what + " has a compared shared page that is not writable");
+        }
+    }
     auto* first = reinterpret_cast<std::byte*>(begin);
     auto* last = reinterpret_cast<std::byte*>(end - page);
     for (std::size_t index = 0; index < probe; ++index) {
         first[index] = static_cast<std::byte>((index * 7u + salt) & 0xffu);
         last[index] = static_cast<std::byte>((index * 13u + salt * 5u + 1u) & 0xffu);
     }
-    Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
+    if (watched) Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
     Buffer readback(context, 2 * probe, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     const auto commands = recorder.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3163,7 +3196,7 @@ int reimportBench(const Device& device) {
         const auto* tail = HostImportFor(context, begin, static_cast<std::size_t>(end - begin));
         Require(tail != nullptr && tail->base == begin && tail->base + tail->bytes == end, "the re-import bench lost the import of its kept side");
         requireImportServesGuest(context, recorder, *tail, begin, end, ++salt, std::string("the kept side after the ") + pattern.name + " cuts");
-        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; CPU stores into it are collected and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
+        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; write tracking sees its CPU stores and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
         cleanup();
         gpu.unlock();
         return again;
@@ -3284,7 +3317,7 @@ int hostImportCutTests(const Device& device) {
         }
         cleanup();
         gpu.unlock();
-        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write watch see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
+        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write tracking see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
     };
     const auto remapWhileTrimmed = [&] {
         const std::string name = "an unmap and a new mapping of the retained side while the old import is retired";
@@ -3315,7 +3348,7 @@ int hostImportCutTests(const Device& device) {
         Require(remapped->memoryBase == begin && remapped->pinnedBytes == end - begin, "after " + name + " the pages mapped again are served from the import that pinned the old ones");
         cleanup();
         gpu.unlock();
-        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and the write watch see the guest's bytes\n";
+        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and write tracking see the guest's bytes\n";
     };
     gpu.unlock();
     try {
@@ -9609,6 +9642,29 @@ void minLodTests(const Device& device, Recorder& recorder) {
     expectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
 }
 
+void failedCheckReportTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    Require(Recorder::Active() == &recorder, "the failed check test needs the active recorder");
+    TextureDetiler detiler(context);
+    GuestTextureResource resource{};
+    resource.baseAddress = 0x100000;
+    resource.width = 64;
+    resource.height = 64;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kLinear;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const std::vector<std::byte> snapshot(static_cast<std::size_t>(DescribeSurface(resource).guestBytes), std::byte{0x40});
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    Texture texture(context, detiler, resource, identity, snapshot);
+    Require(recorder.Recording(), "a texture upload was not recorded into the open batch");
+    Require(false, "a failed check stopped the test with a texture upload in its open batch");
+}
+
 void singleCubeTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
@@ -11416,7 +11472,23 @@ void Run(Context context) {
 #endif
 
 int main(int argc, char** argv) {
-    try {
+    _ZSt13set_terminatePFvvE_nid_postfix([] {
+        std::fflush(nullptr);
+        std::cout.flush();
+        if (const auto failure = std::current_exception()) {
+            try {
+                std::rethrow_exception(failure);
+            } catch (const std::exception& error) {
+                std::cerr << error.what() << '\n';
+            } catch (...) {
+                std::cerr << "terminated by an exception that is not a std::exception\n";
+            }
+        } else {
+            std::cerr << "terminated without an active exception\n";
+        }
+        LibcTerminate_nid_no_patch(1);
+    });
+    {
         if (argc == 2 && std::string_view(argv[1]) == "--collect-mapping-history-only") {
             if (!collectMappingHistoryTests()) return 77;
             std::cout << "collect mapping history tests passed\n";
@@ -11430,6 +11502,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--partial-watch-restoration-only") {
             if (!partialWatchRestorationTests()) return 77;
             std::cout << "partial private write-watch restoration tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-timing-key-only") {
+            gpuTimingKeyTests();
+            std::cout << "gpu timing key tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--device-selection-only") {
@@ -11601,6 +11678,10 @@ int main(int argc, char** argv) {
             }
             tiledResolveTests(device, recorder);
             std::cout << "CB resolves into tiled targets tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--failed-check-only") {
+            failedCheckReportTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
@@ -11940,8 +12021,5 @@ int main(int argc, char** argv) {
         recorder.Activate();
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
 }

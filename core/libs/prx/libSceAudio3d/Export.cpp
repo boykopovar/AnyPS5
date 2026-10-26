@@ -434,9 +434,13 @@ int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num
     return 0;
 }
 
-int APS5_VABI sceAudio3dStrError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI sceAudio3dStrError(std::int32_t error) {
+    static constexpr const char* descriptions[]{
+        "port does not exist", "object does not exist", "invalid parameter",
+        "out of memory", "out of resources", "not ready"
+    };
+    const auto index = static_cast<std::uint32_t>(error) - 0x80EA0002u;
+    return index < std::size(descriptions) ? descriptions[index] : "(unknown)";
 }
 
 int APS5_VABI sceAudio3dPortOpenEx(void) {

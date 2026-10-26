@@ -113,6 +113,7 @@ Project switches accept `ON` or `OFF`:
 | `-DANYPS5_BUILD_WASM=ON`         | `OFF`   | Build only the browser relinker (`relinker_web` target). Requires `emcmake` from Emscripten and `BUILD_TESTING=OFF`. |
 | `-DANYPS5_ENABLE_SPIRV_TOOLS=ON` | `OFF`   | Enable SPIR-V validation and optimization.       |
 | `-DANYPS5_ENABLE_ASAN=ON`       | `OFF`   | Build with AddressSanitizer on Linux and move the guest arena out of ASan's shadow gap. |
+| `-DANYPS5_ENABLE_TSAN=ON`       | `OFF`   | Build with ThreadSanitizer on Linux and link executables dynamically. Cannot be combined with `-DANYPS5_ENABLE_ASAN=ON`. |
 | `-DANYPS5_USE_SYSTEM_DEPS=ON`    | `OFF`   | Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the submodules. |
 | `-DAPS5_ENABLE_TIMING_LOG=ON`    | `OFF`   | Compile frame timing logging.                    |
 | `-DAPS5_ENABLE_TRACY=ON`         | `OFF`   | Build the [Tracy](#tracy) profiler client into the agc driver. |
@@ -134,6 +135,10 @@ SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridd
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg` and `vorbis` always stay bundled and still need `git submodule update --init`.
 
+## ThreadSanitizer
+
+A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. Guest memory written by the emulated GPU while a guest thread polls it, such as labels and fences, is shared without C++ atomics on purpose, as on the console, so ThreadSanitizer also reports those accesses.
+
 ## Quick syntax checks
 
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
@@ -143,6 +148,28 @@ python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
+
+## Repeated Vulkan validation
+
+`tools/vulkan_validation_gate.py` builds two pinned clean source worktrees into a new output directory and alternates the same focused CTests between them. Execution currently supports POSIX hosts only. Linux hardware runs establish GPU behaviour; macOS synthetic tool tests do not establish native Linux/Windows or GPU correctness. Windows is refused before creating output.
+
+```sh
+python3 tools/vulkan_validation_gate.py \
+  --baseline /path/to/main FULL_MAIN_COMMIT \
+  --candidate /path/to/change FULL_CHANGE_COMMIT \
+  --output /path/to/new-validation-run \
+  --target agc_driver_recorder_tests --target libs \
+  --tests '^agc_recorder_completion_labels$' --gpu 'expected device name' \
+  --repeat 20 --runtime core/libs/libs
+```
+
+Both worktrees must have the expected full commit ID and no tracked or untracked source changes. Output must be outside both worktrees and must not already exist. Each build uses Ninja, Release and `BUILD_TESTING=ON`; shared cache options can be supplied as `--cmake-arg=-DNAME=VALUE`. Test targets are explicit; the tool does not infer them. Configure and build logs, selected CTest commands, compiler/build configuration, commit IDs and hashes of selected command files and explicit build-relative `--runtime` files/directories are retained. Other dynamically loaded libraries and ignored source files are not inventoried. A clean commit alone does not identify an arbitrary existing binary, so existing build directories are not accepted.
+
+Each iteration runs serially with `ANYPS5_REQUIRE_VULKAN=1`, `ANYPS5_NO_SHADER_CACHE=1`, `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and the requested `ANYPS5_GPU`. The tool rejects declared test properties that override those values or the recorded `VK_ICD_FILENAMES`, `VK_DRIVER_FILES` and `VK_LAYER_PATH` values. The GPU name is a selection request, not an independent hardware measurement. Every iteration retains verbose output and JUnit, with CTest's passed/failed output-size limits disabled so diagnostics near either end of a long output are retained. Missing, disabled or skipped selected tests, test failures and the exact missing-layer phrase fail the gate, even if CTest returns zero.
+
+The gate compares VUID and synchronization-hazard IDs per test across all baseline and candidate iterations. A new candidate ID fails; occurrence counts are reported without treating a count increase as a new violation. Existing baseline diagnostics remain visible and do not establish a clean validation run. Parsing covers standard `Validation Error/Warning:` and `VUID/SYNC-HAZARD (ERROR/WARNING / ...)` messages in JUnit test-body output, not arbitrary application formats or verbose CTest configuration text. Retain the logs for manual review of other formats. Source identity and selected artifact hashes are checked again after testing.
+
+`report.json` records the comparison and execution order. Exit 0 means the comparison completed with no detected regression, 1 means a test/coverage/layer or new diagnostic failure, 2 means setup, attribution or incomplete evidence, and 130 means interrupted. `--test-timeout` supplies CTest's default timeout; explicit test timeout properties still apply. `--timeout` bounds each configure/build/CTest command. The active POSIX process group is killed on completion, timeout or interruption. Repetitions report observed outcomes; they do not prove absence of intermittent faults or statistical significance.
 
 ## Write watch tests
 

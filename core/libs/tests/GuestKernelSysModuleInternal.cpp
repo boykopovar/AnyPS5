@@ -29,7 +29,9 @@ static void CheckList() {
     Require(sceKernelGetModuleListInternal(shorter.data(), internal.size() - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1);
     Require(sceKernelGetModuleListInternal(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
+    std::fill(shorter.begin(), shorter.end(), -1);
     Require(sceKernelGetModuleListInternal(shorter.data(), shorter.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(shorter == internal);
 }
 
 static void CheckEachModule() {

@@ -47,16 +47,6 @@ int Error() {
     return *__error_nid_postfix();
 }
 
-bool PathconfThrows(const char* path, int name) {
-    try {
-        pathconf_nid_postfix(path, name);
-
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 bool ChrootThrows(const std::string& path) {
     try {
         chroot_nid_postfix(path.c_str());
@@ -283,6 +273,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     Require(link_nid_postfix("missing", paths.Unreadable()) == -1 && Error() == 2);
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -361,11 +352,13 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
         Require(pathconf_nid_postfix(path.c_str(), 18) == 1024);
         Require(pathconf_nid_postfix(path.c_str(), 54) == 0);
         Require(pathconf_nid_postfix(path.c_str(), 55) == 0);
+        for (const int name : {10, 14, 16, 21}) Require(pathconf_nid_postfix(path.c_str(), name) == 65536);
+        Require(pathconf_nid_postfix(path.c_str(), 17) == 16384);
+        Require(pathconf_nid_postfix(path.c_str(), 60) == 3);
+        for (const int name : {59, 63, 64}) Require(pathconf_nid_postfix(path.c_str(), name) == 0);
     }
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {0, 2, 3, 9, 11, 53, 61, 62, 65, -1})
         Require(pathconf_nid_postfix(file.c_str(), name) == -1 && Error() == 22);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 53, 59, 60, 63, 64})
-        Require(PathconfThrows(file.c_str(), name));
     const auto missing = (root / "missing").string();
     Require(pathconf_nid_postfix(missing.c_str(), 4) == -1 && Error() == 2);
     Require(pathconf_nid_postfix(missing.c_str(), 0) == -1 && Error() == 2);
@@ -503,16 +496,6 @@ static void CheckProcessQueries() {
 }
 
 template <typename F>
-bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
-    try {
-        fn(descriptor, name);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
-template <typename F>
 void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 1) == 32767);
     Require(fn(descriptor, 4) == 255);
@@ -526,11 +509,13 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 18) == 1024);
     Require(fn(descriptor, 54) == 0);
     Require(fn(descriptor, 55) == 0);
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {10, 14, 16, 21}) Require(fn(descriptor, name) == 65536);
+    Require(fn(descriptor, 17) == 16384);
+    Require(fn(descriptor, 60) == 3);
+    for (const int name : {59, 63, 64}) Require(fn(descriptor, name) == 0);
+    for (const int name : {0, 2, 3, 9, 11, 61, 62, 65, -1})
         Require(fn(descriptor, name) == -1 && Error() == 22);
     Require(fn(descriptor, 53) == 200112);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
-        Require(DescriptorPathconfThrows(fn, descriptor, name));
     Require(fn(-1, 4) == -1 && Error() == 9);
     Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
 }
@@ -794,6 +779,21 @@ int main() {
     Require(chroot_nid_postfix((root / "file.txt" / "..").string().c_str()) == -1 && Error() == 20);
     Require(chroot_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
     Require(chroot_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix("") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(0) == 0);
+    Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(0) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
     Require(fchmodat_nid_postfix(-100, throughFile.c_str(), 0600, 0) == -1 && Error() == 20);
@@ -988,6 +988,29 @@ int main() {
     std::filesystem::create_directory(root / "nonempty");
     { std::ofstream out(root / "nonempty" / "f.bin"); out << 'x'; }
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == -1 && Error() == 66);
+#ifdef _WIN32
+    const auto fullJunctionTarget = root / "junction-full-target";
+    Require(std::filesystem::create_directory(fullJunctionTarget));
+    { std::ofstream out(fullJunctionTarget / "inside.txt"); out << 'x'; }
+    const auto fullJunctionCommand = L"cmd /c mklink /J \"" + (root / "junction-full").wstring() + L"\" \"" + std::filesystem::absolute(fullJunctionTarget).wstring() + L"\"";
+    Require(_wsystem(fullJunctionCommand.c_str()) == 0);
+    Require(unlinkat_nid_postfix(base, "junction-full", 0x800) == -1 && Error() == 20);
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(unlinkat_nid_postfix(base, "junction-full", 0) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "junction-full")));
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullJunctionTarget / "inside.txt") && std::filesystem::remove(fullJunctionTarget));
+    { std::ofstream out(root / "symlink-target.bin"); out << 'x'; }
+    const int madeLink = symlink_nid_postfix("symlink-target.bin", (root / "symlink-file").string().c_str());
+    if (madeLink == 0) {
+        Require(unlinkat_nid_postfix(base, "symlink-file", 0) == 0);
+        Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "symlink-file")));
+        Require(std::filesystem::is_regular_file(root / "symlink-target.bin"));
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    } else {
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    }
+#endif
     Require(unlinkat_nid_postfix(base, "nonempty/f.bin", 0) == 0 && !std::filesystem::exists(root / "nonempty" / "f.bin"));
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == 0 && !std::filesystem::exists(root / "nonempty"));
     { std::ofstream out(root / "to_unlink.bin"); out << 'x'; }
@@ -1105,6 +1128,29 @@ int main() {
     Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
     Require(RemoveSymlink(modeLink));
 #endif
+    const auto chmodTarget = (root / "chmod-target.txt").string();
+    { std::ofstream file(chmodTarget); file << "x"; }
+    const auto chmodLink = (root / "chmod-link.txt").string();
+    const auto chmodDangling = (root / "chmod-dangling.txt").string();
+    const auto chmodLoopA = (root / "chmod-loop-a").string();
+    const auto chmodLoopB = (root / "chmod-loop-b").string();
+    if (symlink_nid_postfix("chmod-target.txt", chmodLink.c_str()) == 0) {
+        Require(symlink_nid_postfix("chmod-missing.txt", chmodDangling.c_str()) == 0);
+        Require(symlink_nid_postfix("chmod-loop-b", chmodLoopA.c_str()) == 0 && symlink_nid_postfix("chmod-loop-a", chmodLoopB.c_str()) == 0);
+        const auto writable = [&] {
+            FileStat linked{};
+            Require(stat_nid_postfix(chmodTarget.c_str(), &linked) == 0);
+            return (linked.st_mode & 0222) != 0;
+        };
+        Require(writable());
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt", 0400, 0) == 0 && !writable());
+        Require(fchmodat_nid_postfix(-100, chmodLink.c_str(), 0600, 0) == 0 && writable());
+        Require(fchmodat_nid_postfix(base, "chmod-dangling.txt", 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(-100, chmodDangling.c_str(), 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(base, "chmod-loop-a", 0600, 0) == -1 && Error() == 62);
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt/child", 0600, 0) == -1 && Error() == 20);
+        Require(RemoveSymlink(chmodLink) && RemoveSymlink(chmodDangling) && RemoveSymlink(chmodLoopA) && RemoveSymlink(chmodLoopB));
+    }
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);

@@ -42,6 +42,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
@@ -124,6 +125,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     GuestSockets::SocketOptionState options;
     bool receiveShut = false;
     bool sendShut = false;
+    std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
@@ -275,13 +277,12 @@ int AddressLengthError(const void* input, std::uint32_t length) {
     if (length < 2) return 22;
     return input ? 0 : 14;
 }
-bool Address(int family, const void* input, std::uint32_t length, sockaddr_storage& native, socklen_t& size, bool lengthFirst = false) {
+bool Address(int family, const void* input, std::uint32_t length, sockaddr_storage& native, socklen_t& size) {
     if (const int error = AddressLengthError(input, length)) { Fail(error); return false; }
     const auto* bytes = static_cast<const unsigned char*>(input);
     const bool wrongLength = (family == 2 && length != 16) || (family == 28 && length != 28);
-    if (lengthFirst && wrongLength) { Fail(22); return false; }
-    if (family == 2 && bytes[1] != 2) { Fail(47); return false; }
     if (wrongLength) { Fail(22); return false; }
+    if (family == 2 && bytes[1] != 2) { Fail(47); return false; }
     if (family == 2) {
         auto& v4 = reinterpret_cast<sockaddr_in&>(native);
         v4.sin_family = AF_INET;
@@ -566,6 +567,16 @@ constexpr short NativePollPriority = POLLPRI;
 constexpr PollFlag RequestFlags[] = {
     {0x1, NativePollIn}, {GuestPollPriority, NativePollPriority}, {0x4, POLLOUT}, {0x40, POLLRDNORM}, {0x80, POLLRDBAND}, {0x100, POLLWRBAND}};
 constexpr PollFlag StatusFlags[] = {{0x8, POLLERR}, {0x10, POLLHUP}, {GuestPollInvalid, POLLNVAL}};
+template <typename Descriptor>
+bool UrgentPending(Descriptor descriptor) {
+#ifdef __APPLE__
+    int atmark = 0;
+    return ::ioctl(static_cast<int>(descriptor), SIOCATMARK, &atmark) == 0 && atmark != 0;
+#else
+    static_cast<void>(descriptor);
+    return false;
+#endif
+}
 std::shared_ptr<Socket> Find(int descriptor) {
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -656,7 +667,7 @@ bool GuestSockets::PipeReady(int descriptor, short events, short& revents) {
 #endif
 
 namespace {
-int DuplicateSocket_nid_no_patch(int descriptor, int minimum, bool closeOnExec) {
+int DuplicateSocket_nid_no_patch(int descriptor, int minimum) {
     if (minimum < 0) return Fail(22);
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -665,8 +676,7 @@ int DuplicateSocket_nid_no_patch(int descriptor, int minimum, bool closeOnExec) 
     if (duplicate < 0) return -1;
     try {
         sockets.insert_or_assign(duplicate, found->second);
-        if (closeOnExec) closeOnExecDescriptors.insert(duplicate);
-        else closeOnExecDescriptors.erase(duplicate);
+        closeOnExecDescriptors.erase(duplicate);
     } catch (const std::bad_alloc&) {
         sockets.erase(duplicate);
         ReleaseNumber(duplicate);
@@ -677,7 +687,7 @@ int DuplicateSocket_nid_no_patch(int descriptor, int minimum, bool closeOnExec) 
 }
 
 int GuestSockets::Duplicate(int descriptor) {
-    return DuplicateSocket_nid_no_patch(descriptor, 0, false);
+    return DuplicateSocket_nid_no_patch(descriptor, 0);
 }
 
 int GuestSockets::DuplicateTo(int descriptor, int target) {
@@ -713,6 +723,8 @@ namespace {
 constexpr int GuestUnix = 1;
 constexpr int GuestCloseOnExec = 0x10000000;
 constexpr int GuestNonBlocking = 0x20000000;
+constexpr std::uint32_t NoDevice = 0xFFFFFFFFu;
+std::uint32_t lastUnixInode = 0;
 int SetNonBlocking(Socket& socket) {
 #ifdef _WIN32
     unsigned long value = 1;
@@ -873,11 +885,14 @@ int UnnamedAddress(void* address, std::uint32_t* length) {
 
 int GuestSockets::Stat(int descriptor, FileStat* status) {
     std::shared_ptr<Socket> socket;
+    std::uint32_t inode = 0;
     {
         std::lock_guard lock(socketsMutex);
         const auto found = sockets.find(descriptor);
         if (found == sockets.end()) return 9;
         socket = found->second;
+        if (socket->family == GuestUnix && socket->inode == 0) socket->inode = ++lastUnixInode != 0 ? lastUnixInode : ++lastUnixInode;
+        inode = socket->inode;
     }
     bool receiveShut = false;
     bool sendShut = false;
@@ -898,6 +913,10 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     socklen_t length = sizeof(sendBuffer);
     if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
     *status = FileStat{};
+    if (socket->family == GuestUnix) {
+        status->st_dev = NoDevice;
+        status->st_ino = inode;
+    }
     status->st_mode = 0140000;
     if (!receiveShut || available > 0) status->st_mode |= 0444;
     if (!sendShut) status->st_mode |= 0222;
@@ -1096,12 +1115,10 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         }
         return File::Fcntl(descriptor, command, argument);
     }
-    if (command == 0 || command == 17) return DuplicateSocket_nid_no_patch(descriptor, static_cast<int>(argument), command == 17);
-    if (command == 10 || command == 18) {
-        const int duplicate = dup2_nid_postfix(descriptor, static_cast<int>(argument));
-        if (duplicate >= 0 && command == 18) fcntl_nid_postfix(duplicate, 2, 1);
-        return duplicate;
-    }
+    if (command == 0) return DuplicateSocket_nid_no_patch(descriptor, static_cast<int>(argument));
+    if (command == 17) return Fail(45);
+    if (command == 10) return dup2_nid_postfix(descriptor, static_cast<int>(argument));
+    if (command == 18) return DuplicateSocket_nid_no_patch(descriptor, 0);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     std::lock_guard lock(socket->modeMutex);
@@ -1168,7 +1185,11 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
     if (!length) return Fail(22);
-    if (!value) *length = 0;
+    if (!value) {
+        const GuestArena::HostWrite lengthOutput(length, sizeof(*length));
+        if (!lengthOutput.Open()) return Fail(14);
+        *length = 0;
+    }
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, length)
@@ -1482,7 +1503,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     } else {
         sockaddr_storage native{};
         socklen_t size;
-        if (!Address(socket->family, address, addressLength, native, size, true)) return -1;
+        if (!Address(socket->family, address, addressLength, native, size)) return -1;
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered) return answered;
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
@@ -1620,6 +1641,31 @@ static bool WriteGuest(void* destination, const void* source, std::size_t bytes)
     return true;
 #endif
 }
+static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int keptFlags) {
+    std::vector<unsigned char> records;
+    if (socket.type != 2 || (socket.family != 2 && socket.family != 28)) return records;
+    const bool binary = socket.family == 2 && (keptFlags & 0x2000) != 0;
+    const bool micro = (keptFlags & 0x400) != 0;
+    if (!binary && !micro) return records;
+    KernelTimespec now{};
+    if (clock_gettime_nid_postfix(0, &now) != 0) throw std::runtime_error("recvmsg: reading CLOCK_REALTIME for the arrival time failed");
+    const auto append = [&records](int type, std::int64_t seconds, std::uint64_t fraction) {
+        constexpr std::uint32_t length = 32;
+        constexpr int level = 0xffff;
+        const auto at = records.size();
+        records.resize(at + length);
+        std::memcpy(records.data() + at, &length, sizeof(length));
+        std::memcpy(records.data() + at + 4, &level, sizeof(level));
+        std::memcpy(records.data() + at + 8, &type, sizeof(type));
+        std::memcpy(records.data() + at + 16, &seconds, sizeof(seconds));
+        std::memcpy(records.data() + at + 24, &fraction, sizeof(fraction));
+    };
+    const auto seconds = static_cast<std::int64_t>(now.tv_sec);
+    const auto nanoseconds = static_cast<std::uint64_t>(now.tv_nsec);
+    if (binary) append(4, seconds, nanoseconds * 18446744073ull);
+    if (micro) append(2, seconds, nanoseconds / 1000);
+    return records;
+}
 std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
@@ -1642,6 +1688,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     sockaddr_storage native{};
     socklen_t size = 0;
     std::int64_t received = 0;
+    std::vector<unsigned char> stamps;
     if (total != 0 || socket->type == 1 || ReadableNow(*socket)) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
@@ -1654,6 +1701,14 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
 #else
             return Fail(NativeError());
 #endif
+        }
+        if (header.control) {
+            int keptFlags = 0;
+            {
+                std::lock_guard lock(socket->modeMutex);
+                keptFlags = socket->options.keptFlags;
+            }
+            stamps = ArrivalTimestamps(*socket, keptFlags);
         }
     }
     header.flags = flags;
@@ -1680,7 +1735,11 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         if (!WriteGuest(header.name, address, header.nameLength)) return Fail(14);
         if (!WriteGuest(&message->nameLength, &header.nameLength, sizeof(header.nameLength))) return Fail(14);
     }
-    header.controlLength = 0;
+    const std::size_t controlCapacity = header.controlLength;
+    const std::size_t copied = std::min(stamps.size(), controlCapacity);
+    if (copied != 0 && !WriteGuest(header.control, stamps.data(), copied)) return Fail(14);
+    if (copied < stamps.size()) header.flags |= 0x20;
+    header.controlLength = static_cast<std::uint32_t>(copied);
     constexpr auto results = offsetof(GuestMsghdr, controlLength);
     if (!WriteGuest(reinterpret_cast<char*>(message) + results, reinterpret_cast<const char*>(&header) + results, sizeof(header) - results)) return Fail(14);
     return received;
@@ -1847,11 +1906,15 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
 #ifdef _WIN32
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
+        short revents = native[i].revents;
+        if (!pipe && (entry.events & GuestPollPriority) && (revents & NativePollPriority) == 0 && UrgentPending(native[i].fd)) {
+            revents = static_cast<short>(revents | NativePollPriority | POLLRDBAND);
+        }
         for (const auto& flag : RequestFlags)
-            if ((entry.events & flag.guest) && (native[i].revents & flag.native))
+            if ((entry.events & flag.guest) && (revents & flag.native))
                 entry.revents = static_cast<short>(entry.revents | flag.guest);
         for (const auto& flag : StatusFlags)
-            if (native[i].revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
+            if (revents & flag.native) entry.revents = static_cast<short>(entry.revents | flag.guest);
         if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if (pipe && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
@@ -1861,13 +1924,31 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         if (entry.revents) ++ready;
     };
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
+#ifdef __APPLE__
+    bool waitsForUrgent = false;
+    for (std::size_t i = 0; i < socketCount && !waitsForUrgent; ++i) {
+        waitsForUrgent = (descriptors[owners[i]].events & GuestPollPriority) != 0;
+    }
+#else
+    constexpr bool waitsForUrgent = false;
+#endif
 #ifdef _WIN32
     const bool sliced = !pipes.empty() || !kqueues.empty();
 #else
-    const bool sliced = !kqueues.empty();
+    const bool sliced = !kqueues.empty() || waitsForUrgent;
 #endif
+    const auto anyUrgentPending = [&]() -> bool {
+#ifdef __APPLE__
+        for (std::size_t i = 0; i < socketCount; ++i) {
+            const auto& entry = descriptors[owners[i]];
+            if ((entry.events & GuestPollPriority) != 0 && (native[i].revents & NativePollPriority) == 0 && UrgentPending(native[i].fd)) return true;
+        }
+#endif
+        return false;
+    };
     for (;;) {
         int checkedReady = 0;
+        const bool urgent = anyUrgentPending();
 #ifdef _WIN32
         for (const auto index : pipes) {
             auto& entry = descriptors[index];
@@ -1887,7 +1968,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             if (entry.revents) ++checkedReady;
         }
         int slice = 0;
-        if (!ready && !checkedReady) {
+        if (!ready && !checkedReady && !urgent) {
             if (!sliced) slice = timeout;
             else if (timeout < 0) slice = 1;
             else {
@@ -1902,7 +1983,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
 #else
             if (::poll(native.data(), static_cast<nfds_t>(native.size()), slice) < 0) return Fail(NativeError());
 #endif
-        } else if (!ready && !checkedReady) {
+        } else if (!ready && !checkedReady && !urgent) {
             const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
             PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
         }
@@ -1910,7 +1991,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
         for (const auto& request : native)
             if (request.revents) ++socketReady;
         const bool expired = timeout >= 0 && std::chrono::steady_clock::now() >= deadline;
-        if (ready || checkedReady || socketReady || expired || !sliced) {
+        if (ready || checkedReady || urgent || socketReady || expired || !sliced) {
             ready += checkedReady;
 #ifdef _WIN32
             for (std::size_t i = 0; i < native.size(); ++i) collect(i, false);
