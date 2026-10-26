@@ -607,7 +607,8 @@ static bool NativeIsPipe(int descriptor) {
 static bool NativeIsPipe(int descriptor) {
 #ifdef __APPLE__
     struct stat file{};
-    return ::fstat(descriptor, &file) == 0 && S_ISFIFO(file.st_mode);
+    struct statfs kind{};
+    return ::fstat(descriptor, &file) == 0 && S_ISFIFO(file.st_mode) && ::fstatfs(descriptor, &kind) != 0;
 #else
     constexpr long PipeFilesystem = 0x50495045;
     struct stat file{};
@@ -622,10 +623,7 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (::fstat(descriptor, &file) != 0) return SceErrorFromErrno(errno) & 0xffff;
 #ifdef __APPLE__
     if (S_ISSOCK(file.st_mode)) return GUEST_EINVAL;
-    if (S_ISFIFO(file.st_mode)) {
-        struct statfs kind{};
-        if (::fstatfs(descriptor, &kind) != 0) return GUEST_EINVAL;
-    }
+    if (NativeIsPipe(descriptor)) return GUEST_EINVAL;
 #else
     if (S_ISSOCK(file.st_mode) && (::fcntl(descriptor, F_GETFL) & O_PATH) == 0) return GUEST_EINVAL;
     if (NativeIsPipe(descriptor)) return GUEST_EINVAL;
