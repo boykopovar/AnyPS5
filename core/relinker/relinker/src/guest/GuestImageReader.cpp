@@ -38,8 +38,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::uint64_t, std::uint64_t> loads;
     constexpr std::uint32_t sceComment = 0x6fffff00;
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
+    constexpr std::uint32_t note = 4;
     for (const auto& header : image.Headers) {
         if (header.Type == sceComment || header.Type == sceLibVersion) continue;
+        if (header.Type == note && header.MappedAddress == 0 && header.MemorySize == 0) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");

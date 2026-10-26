@@ -37,8 +37,18 @@ static void CheckConsoleClassValues() {
         Require(isprint_nid_postfix(c) == (bits & 0x3e) && isgraph_nid_postfix(c) == (bits & 0x3a) && ispunct_nid_postfix(c) == (bits & 0x08));
     }
 }
+static void CheckSignedCharValues() {
+    for (int c = -128; c <= -2; ++c) {
+        Require(isupper_nid_postfix(c) == 0 && islower_nid_postfix(c) == 0 && isalpha_nid_postfix(c) == 0 && isdigit_nid_postfix(c) == 0);
+        Require(isalnum_nid_postfix(c) == 0 && isspace_nid_postfix(c) == 0 && isblank_nid_postfix(c) == 0 && iscntrl_nid_postfix(c) == 0);
+        Require(isprint_nid_postfix(c) == 0 && isgraph_nid_postfix(c) == 0 && ispunct_nid_postfix(c) == 0 && isxdigit_nid_postfix(c) == 0);
+        Require(toupper_nid_postfix(c) == c && tolower_nid_postfix(c) == c);
+    }
+}
+
 int main() {
     CheckConsoleClassValues();
+    CheckSignedCharValues();
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     for (int category = 0; category <= 6; ++category) {
         const char* result = setlocale_nid_postfix(category, "C");

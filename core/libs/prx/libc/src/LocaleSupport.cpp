@@ -329,18 +329,18 @@ constexpr auto g_lowerTable = MakeCaseTable(false);
 constexpr auto g_upperTable = MakeCaseTable(true);
 
 void ValidateCharacter(int value) {
-    if (value != EOF && (value < 0 || value > UCHAR_MAX)) throw std::invalid_argument("Invalid character value");
+    if (value < SCHAR_MIN || value > UCHAR_MAX) throw std::invalid_argument("Invalid character value");
 }
 
 int ClassifyCharacter(int value, short mask) {
     ValidateCharacter(value);
     if (value == EOF) return 0;
-    return g_classificationTable[static_cast<std::size_t>(value) + 1] & mask;
+    return g_classificationTable[static_cast<std::size_t>(value < 0 ? value + UCHAR_MAX + 1 : value) + 1] & mask;
 }
 
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
-    if (value == EOF) return EOF;
+    if (value < 0) return value;
     const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
     const auto character = static_cast<char>(value);
     return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
@@ -385,6 +385,8 @@ std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid
 std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};

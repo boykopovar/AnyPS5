@@ -3363,6 +3363,15 @@ FrameDumps& Dumps() {
 }
 
 bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
+    if (buffer.dccAddress != 0 && buffer.tilingMode == 0) {
+        static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        const auto before = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
+        state->recorder->SyncThrough(buffer.dccAddress, DisplayBufferKeyBytes(buffer), true);
+        if (const auto waited = profile ? Graphics::Recorder::ThreadWaitedMs() - before : 0.0; waited > 0.0) {
+            ++presentCounters.keyWriterWaits;
+            presentCounters.keyWriterWaitMs += waited;
+        }
+    }
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
     if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
     else Graphics::StorageTexture::FlushDumpSelected("flip");

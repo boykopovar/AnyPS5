@@ -20,6 +20,7 @@ static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
 static constexpr std::uint8_t COMMAND_TYPE_UINT = 4;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT_ARRAY = 0x11;
 static constexpr float MAX_MATRIX_LEVEL = 4.0f;
+static constexpr float MAX_MASTERING_GAIN = 32.0f;
 
 struct Ngs2ReturnCode {
     int code;
@@ -394,9 +395,8 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_GAIN || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN) {
                 const auto& gain = ParamAs<Ngs2MasteringVoiceGainParam>(param);
-                if (!std::isfinite(gain.fbw_level) || !std::isfinite(gain.lfe_level)) APS5_INVALID_ARG_EX;
-                voice.fbwLevel = gain.fbw_level;
-                voice.lfeLevel = gain.lfe_level;
+                voice.fbwLevel = std::clamp(gain.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
+                voice.lfeLevel = std::clamp(gain.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
                 return;
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {

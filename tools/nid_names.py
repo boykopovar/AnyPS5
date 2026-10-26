@@ -225,7 +225,7 @@ def main(argv=None):
 
     db_path = Path(args.db) if args.db else DEFAULT_CACHE
     try:
-        db = load_db(db_path)
+        db = {} if requested_nids and not args.nid else load_db(db_path)
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:

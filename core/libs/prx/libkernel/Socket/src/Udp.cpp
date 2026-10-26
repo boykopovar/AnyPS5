@@ -1206,6 +1206,7 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     try {
         auto socket = std::make_shared<Socket>(native, family, plainType);
         guard.value = Invalid;
+        if (family == 28) socket->options.tcpMaximumSegment = 1220;
         if (nonblocking && SetNonBlocking(*socket)) return -1;
         const int number = Install(std::move(socket));
         if (number >= 0 && (type & GuestCloseOnExec) != 0) {
@@ -1311,6 +1312,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
     try {
         auto accepted = std::make_shared<Socket>(native, listener->family, listener->type);
         guard.value = Invalid;
+        if (listener->family == 28) accepted->options.tcpMaximumSegment = 1220;
         bool inheritNonblocking;
         {
             std::lock_guard modeLock(listener->modeMutex);

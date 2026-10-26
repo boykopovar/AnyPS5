@@ -346,7 +346,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
     }
-    if (sceBase) {
+    if (sceBase || !functions.empty()) {
         const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(functions.begin(), functions.end());
         for (const auto& header : codeHeaders) {
             if (header.Type != 1 || (header.Flags & 1) == 0) continue;

@@ -1720,6 +1720,61 @@ class ImportAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, "lib.prx"):
                 import_audit.pe_exports(path, image[:cut])
 
+    def test_pe_without_an_export_directory_has_no_exports(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            image = bytearray(build_pe([]))
+            struct.pack_into("<H", image, 0x58, magic)
+            struct.pack_into("<I", image, 0x58 + directory - 4, 16)
+            struct.pack_into("<II", image, 0x58 + directory, 0, 0)
+            with self.subTest(magic=magic):
+                self.assertEqual(import_audit.read_exports(Path("empty.prx"), image), set())
+
+    def test_pe_missing_export_directory_does_not_hide_malformed_tables(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for rva, size in ((0, 40), (0x1000, 0), (0x1000, 39), (0xffffff, 40)):
+                image = bytearray(build_pe([]))
+                struct.pack_into("<H", image, 0x58, magic)
+                struct.pack_into("<I", image, 0x58 + directory - 4, 16)
+                struct.pack_into("<II", image, 0x58 + directory, rva, size)
+                with self.subTest(magic=magic, rva=rva, size=size):
+                    with self.assertRaises(import_audit.AuditError):
+                        import_audit.read_exports(Path("malformed.prx"), image)
+
+    def test_audit_accepts_pe_libraries_and_modules_without_export_directories(self):
+        work = self.work
+        image = bytearray(build_pe_with_imports(["KERNEL32.dll"]))
+        struct.pack_into("<II", image, 0x58 + 112, 0, 0)
+        (work.libs / "empty.prx").write_bytes(image)
+        (work.modules / "module.prx.guest.prx").write_bytes(image)
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""), out)
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["references"], 0)
+        self.assertEqual(data["missing_libraries"], {})
+        self.assertEqual(data["missing_host_dependencies"], [])
+        write_registry(registry, [("AAAAAAAAAAA", "empty.prx")])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""), out)
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["imports"][0]["class"], "absent")
+        self.assertEqual(data["imports"][0]["providers"], [])
+        self.assertEqual(data["stops"][0]["nid"], "AAAAAAAAAAA")
+
+    def test_exportless_pe_library_still_reports_missing_host_dependencies(self):
+        work = self.work
+        image = bytearray(build_pe_with_imports(["libSceMissing.prx"]))
+        struct.pack_into("<II", image, 0x58 + 112, 0, 0)
+        (work.libs / "empty.prx").write_bytes(image)
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["missing_host_dependencies"], [
+            {"importer": "empty.prx", "chain": ["empty.prx", "libSceMissing.prx"]},
+        ])
+
     def test_pe_ignores_bytes_after_the_declared_directory_count(self):
         image = bytearray(build_pe(["alpha"]))
         struct.pack_into("<I", image, 0x58 + 108, 0)

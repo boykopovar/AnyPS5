@@ -19,9 +19,8 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
         return;
     }
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
-    recorder->Submit(*packet, queue);
     const auto flips = driver.FlipSubmissions();
-    driver.Submit(packet, queue);
+    recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -41,8 +40,12 @@ void RegisterShader(const Shader* shader) {
 }
 
 void SuspendPoint() {
-    if (auto* const recorder = FrameRecorder::Active()) recorder->Suspend();
-    DriverDetail::Driver::Get().SuspendPoint();
+    auto* const recorder = FrameRecorder::Active();
+    if (recorder == nullptr) {
+        DriverDetail::Driver::Get().SuspendPoint();
+        return;
+    }
+    recorder->Suspend([] { DriverDetail::Driver::Get().SuspendPoint(); });
 }
 
 void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output) {
@@ -146,9 +149,12 @@ extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std
 
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
-    if (recorder != nullptr) recorder->Flip(info);
-    AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
-    if (recorder != nullptr) recorder->FrameBoundary();
+    if (recorder == nullptr) {
+        AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
+        return;
+    }
+    recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
+    recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }

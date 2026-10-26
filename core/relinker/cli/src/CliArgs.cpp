@@ -199,8 +199,6 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.windowsFixedBase && !args.toWindows)
         throw std::runtime_error("--windows-fixed-base requires --windows");
-    if (args.traceImports && args.toMacos)
-        throw std::runtime_error("--trace-imports cannot be used with --macos");
     if (args.traceImports && args.lazyBinding)
         throw std::runtime_error("--trace-imports conflicts with --lazy-binding");
     if (args.linuxFixedBase && (args.toWindows || args.toMacos))
