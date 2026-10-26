@@ -200,8 +200,7 @@ static void ProcessGain(Ngs2Voice& voice, Ngs2VoiceCustomGain& gain, const std::
     if (voice.hasSamples) {
         for (std::uint32_t c = 0; c < voice.channels; c++) {
             const float from = gain.current[c];
-            const float step = (gain.target[c] - from) / static_cast<float>(grain);
-            for (std::uint32_t i = 0; i < grain; i++) channels[c][i] *= from + step * static_cast<float>(i + 1);
+            for (std::uint32_t i = 0; i < grain; i++) channels[c][i] *= from + (gain.target[c] - from) * static_cast<float>(i) / static_cast<float>(grain);
         }
         voice.hasSamples = std::any_of(voice.samples.begin(), voice.samples.end(), [](float sample) { return sample != 0.0f; });
     }

@@ -766,8 +766,8 @@ static void TestCustomGain() {
     Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, gain);
     out = Render(system);
     for (std::uint32_t i = 0; i < Grain; i++) {
-        Require(out[i * 2] == 0.5f * 2.0f * static_cast<float>(i + 1) / Grain);
-        Require(out[i * 2 + 1] == 0.5f * -0.5f * static_cast<float>(i + 1) / Grain);
+        Require(out[i * 2] == 0.5f * 2.0f * static_cast<float>(i) / Grain);
+        Require(out[i * 2 + 1] == 0.5f * -0.5f * static_cast<float>(i) / Grain);
     }
     out = Render(system);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 1.0f && out[i * 2 + 1] == -0.25f);
@@ -775,7 +775,7 @@ static void TestCustomGain() {
     gain.gain[0] = 1.0f;
     Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, gain);
     out = Render(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f * (2.0f - static_cast<float>(i + 1) / Grain));
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f * (2.0f - static_cast<float>(i) / Grain));
 
     auto outside = gain;
     outside.gain[2] = 33.0f;
