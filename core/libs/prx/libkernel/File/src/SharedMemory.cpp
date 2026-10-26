@@ -613,6 +613,9 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     int validationError = 0;
     const auto hostName = NamedHostName(path, validationError);
     if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
+#ifdef __APPLE__
+    NotImplemented_nid_no_patch(__func__);
+#endif
     HostShmLock namespaceLock;
     if (namespaceLock.Error() != 0) {
         errno = namespaceLock.Error();
@@ -1057,6 +1060,9 @@ extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
     int validationError = 0;
     const auto hostName = NamedHostName(path, validationError);
     if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
+#ifdef __APPLE__
+    NotImplemented_nid_no_patch(__func__);
+#endif
     HostShmLock namespaceLock;
     if (namespaceLock.Error() != 0) {
         errno = namespaceLock.Error();
