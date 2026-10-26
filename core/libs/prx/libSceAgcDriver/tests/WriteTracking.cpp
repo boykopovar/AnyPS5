@@ -1506,7 +1506,7 @@ void CheckImportWindow() {
         bytes[0x100] = 0x11;
         bytes[Block + 0x2000] = 0x22;
         return true;
-    }), "the import window import failed");
+    }, true, false), "the import window import failed");
     Require(Watched(base, 3 * Block), "an import window left its range unwatched");
     const std::array<std::uint64_t, 3> generations{synced, synced, synced};
     std::array<std::uint8_t, 3> changed{};

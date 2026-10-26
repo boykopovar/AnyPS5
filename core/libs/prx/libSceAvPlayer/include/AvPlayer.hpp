@@ -127,6 +127,7 @@ public:
     int JumpToTime(std::uint64_t milliseconds);
     int SetLooping(bool enabled);
     int SetTrickSpeed(std::int32_t trickSpeed);
+    int SetAvailableBandwidth();
     int SetAvSyncMode(std::uint32_t mode);
     bool GetVideoData(AvPlayerFrameInfoEx& info);
     bool GetVideoData(AvPlayerFrameInfo& info);

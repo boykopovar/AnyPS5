@@ -22,6 +22,7 @@ void Require(bool value, int line) {
 constexpr int GuestEnoent = 2;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
+constexpr int GuestEnotsup = 45;
 constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 
@@ -88,6 +89,31 @@ void CheckedOpen() {
     Check(fopen_s_nid_postfix(&stream, "plain.txt", "r") == 0 && stream != nullptr && fclose_nid_postfix(stream) == 0);
 }
 
+void CheckedReopen() {
+    FileStream* const sentinel = reinterpret_cast<FileStream*>(1);
+    FileStream* result = sentinel;
+    FileStream* stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    Check(freopen_s_nid_postfix(nullptr, "plain.txt", "r", stream) == GuestEinval);
+    Check(freopen_s_nid_postfix(&result, nullptr, "r", stream) == GuestEnotsup && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", nullptr, stream) == GuestEinval && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", "r", nullptr) == GuestEinval && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", "z", stream) == GuestEinval && result == nullptr);
+    Check(freopen_s_nid_postfix(&result, "reopened.txt", "w", stream) == 0 && result == stream);
+    Check(fclose_nid_postfix(stream) == 0 && std::filesystem::exists("reopened.txt"));
+    stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "loop", "r", stream) == GuestEloop && result == nullptr);
+    stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "missing.txt", "r", stream) == GuestEnoent && result == nullptr);
+}
+
 }
 
 int main() {
@@ -95,6 +121,7 @@ int main() {
     Open();
     Reopen();
     CheckedOpen();
+    CheckedReopen();
     std::error_code error;
     std::filesystem::current_path(std::filesystem::temp_directory_path(), error);
     std::filesystem::remove_all(root, error);

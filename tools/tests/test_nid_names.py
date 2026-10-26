@@ -15,6 +15,60 @@ import nid_names
 
 
 class DatabaseCacheTests(unittest.TestCase):
+    def long_cache_path(self, directory):
+        root = Path(directory)
+        if os.name == "nt":
+            root = Path("\\\\?\\" + str(root.resolve()))
+        limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+        cache = root / ("n" * (limit - len(".csv")) + ".csv")
+        cache.touch()
+        cache.unlink()
+        return cache
+
+    def test_valid_long_cache_filename_can_be_downloaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def complete(url, filename):
+                self.assertEqual(url, nid_names.DB_URL)
+                self.assertEqual(Path(filename).parent, cache.parent)
+                self.assertFalse(cache.exists())
+                Path(filename).write_text("nid1 sceComplete\n", encoding="utf-8")
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete) as download:
+                    self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete"})
+                    download.assert_called_once()
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+                with patch.object(nid_names.urllib.request, "urlretrieve") as download:
+                    self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete"})
+                    download.assert_not_called()
+            finally:
+                cache.unlink(missing_ok=True)
+
+    def test_long_cache_filename_preserves_interruption_cleanup_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def interrupted(url, filename):
+                Path(filename).write_text("nid1 scePartial\n", encoding="utf-8")
+                raise URLError("connection interrupted")
+
+            def complete(url, filename):
+                Path(filename).write_text("nid1 sceComplete\n", encoding="utf-8")
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
+                    with self.assertRaises(URLError):
+                        nid_names.load_db(cache)
+                self.assertFalse(cache.exists())
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete):
+                    self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete"})
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+            finally:
+                cache.unlink(missing_ok=True)
+
     def test_empty_symbol_filters_do_not_open_database(self):
         with tempfile.TemporaryDirectory() as directory:
             for option in ("--name", "--symbol", "--na", "--sym"):

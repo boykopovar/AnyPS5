@@ -103,10 +103,11 @@ RelinkResult RelinkerPipeline::Relink() {
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_DYNAMIC)
             continue;
+        if (hasDynamicSegment)
+            throw RelinkerException("Multiple PT_DYNAMIC segments", ph.Offset);
 
         hasDynamicSegment = true;
         dynTags = elfReader->ReadDynamicTags(ph);
-        break;
     }
 
     if (!hasDynamicSegment)
@@ -120,9 +121,6 @@ RelinkResult RelinkerPipeline::Relink() {
     };
 
     auto getTagValue = [&](const std::int64_t tag) -> std::uint64_t {
-        for (const auto& t : dynTags)
-            if (t.Tag == tag)
-                return t.Value;
         const char* name = "unknown";
         switch (tag) {
         case DT_OS_STRTAB: name = "DT_OS_STRTAB"; break;
@@ -149,6 +147,16 @@ RelinkResult RelinkerPipeline::Relink() {
         case DT_RELAENT: name = "DT_RELAENT"; break;
         case DT_OS_SYMTABSZ: name = "DT_OS_SYMTABSZ"; break;
         }
+        std::optional<std::uint64_t> value;
+        for (const auto& t : dynTags) {
+            if (t.Tag != tag)
+                continue;
+            if (value && *value != t.Value)
+                throw RelinkerException(std::string("Conflicting duplicate ") + name + " tags");
+            value = t.Value;
+        }
+        if (value)
+            return *value;
         std::ostringstream message;
         message << "Required dynamic tag " << name << " (0x" << std::hex << tag << ") not found";
         throw RelinkerException(message.str());
@@ -314,8 +322,8 @@ RelinkResult RelinkerPipeline::Relink() {
         return type == R_X86_64_DTPMOD64 || type == R_X86_64_DTPOFF64 || type == R_X86_64_TPOFF64;
     };
 
-    const bool hasTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
-                                           [](const ProgramHeader& ph) { return ph.Type == PT_TLS; });
+    const bool hasNonEmptyTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
+                                                   [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
 
     const auto definedTlsSymbolValue = [&](const std::uint32_t symIdx, const FileByteOffset pos) -> std::optional<std::uint64_t> {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
@@ -376,8 +384,9 @@ RelinkResult RelinkerPipeline::Relink() {
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
-            const bool function = (raw[symOff + 4] & 15) == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function});
+            const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
+            const bool function = symbolType == STT_FUNC;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
@@ -576,8 +585,8 @@ RelinkResult RelinkerPipeline::Relink() {
                     continue;
                 offset = *value;
             }
-            if (!hasTlsSegment)
-                throw RelinkerException("TLS relocation in an executable without a PT_TLS segment", pos);
+            if (!hasNonEmptyTlsSegment)
+                throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
             const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));
