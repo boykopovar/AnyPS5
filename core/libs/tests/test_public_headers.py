@@ -16,6 +16,7 @@ SPEC = importlib.util.spec_from_file_location("nid_names", ROOT / "tools/nid_nam
 NIDS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NIDS)
 DECLARATION = re.compile(r"(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+WORD = re.compile(r"\w+")
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*([;{])|\busing\s+(\w+)\s*=|[{}]")
 
@@ -125,6 +126,8 @@ def audit():
     declarations = {name: [] for name in exports}
     for source in sorted((ROOT / "core").rglob("*")):
         if source.suffix not in {".cpp", ".h", ".hpp"}:
+            continue
+        if declarations.keys().isdisjoint(WORD.findall(source_text(source))):
             continue
         text = code(source_text(source))
         resolved = source.resolve()
