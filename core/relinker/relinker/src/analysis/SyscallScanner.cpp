@@ -78,21 +78,21 @@ static constexpr std::array<std::uint8_t, 43> SDK_MMAP_EXEC_INLINE{
 
 static constexpr std::array<std::uint8_t, 46> SDK_MOUNT_INLINE{
     0x55, 0x48, 0x89, 0xE5, 0x41, 0x56, 0x53, 0x48, 0x63, 0xD2, 0x31, 0xDB,
-    0xB8, 0x00, 0x00, 0x00, 0x00, 0x49, 0x89, 0xCA, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
+    0xB8, 0x15, 0x00, 0x00, 0x00, 0x49, 0x89, 0xCA, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
     0x0F, 0x05, 0x0F, 0x93, 0xC1, 0x49, 0x89, 0xC6, 0x49, 0xF7, 0xDE, 0x84, 0xC9,
     0x4C, 0x0F, 0x45, 0xF0, 0x4D, 0x85, 0xF6,
 };
 
 static constexpr std::array<std::uint8_t, 48> SDK_NMOUNT_INLINE{
     0x55, 0x48, 0x89, 0xE5, 0x41, 0x56, 0x53, 0x89, 0xF6, 0x48, 0x63, 0xD2, 0x31, 0xDB,
-    0xB8, 0x00, 0x00, 0x00, 0x00, 0x45, 0x31, 0xD2, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
+    0xB8, 0x7A, 0x01, 0x00, 0x00, 0x45, 0x31, 0xD2, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
     0x0F, 0x05, 0x0F, 0x93, 0xC1, 0x49, 0x89, 0xC6, 0x49, 0xF7, 0xDE, 0x84, 0xC9,
     0x4C, 0x0F, 0x45, 0xF0, 0x4D, 0x85, 0xF6,
 };
 
 static constexpr std::array<std::uint8_t, 48> SDK_UNMOUNT_INLINE{
     0x55, 0x48, 0x89, 0xE5, 0x41, 0x56, 0x53, 0x48, 0x63, 0xF6, 0x31, 0xDB,
-    0xB8, 0x00, 0x00, 0x00, 0x00, 0x31, 0xD2, 0x45, 0x31, 0xD2, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
+    0xB8, 0x16, 0x00, 0x00, 0x00, 0x31, 0xD2, 0x45, 0x31, 0xD2, 0x45, 0x31, 0xC0, 0x45, 0x31, 0xC9,
     0x0F, 0x05, 0x0F, 0x93, 0xC1, 0x49, 0x89, 0xC6, 0x49, 0xF7, 0xDE, 0x84, 0xC9,
     0x4C, 0x0F, 0x45, 0xF0, 0x4D, 0x85, 0xF6,
 };
@@ -119,14 +119,10 @@ struct RecentInstructions {
 };
 
 template<std::size_t TSize>
-static bool MatchesSdkInlineStub(const std::vector<std::uint8_t>& code, std::size_t syscallOffset, std::size_t limit, const std::array<std::uint8_t, TSize>& pattern, std::size_t beforeSyscall, const RecentInstructions& recent, FileByteOffset codeOffset, std::size_t maskOffset = TSize, std::size_t maskLength = 0) {
+static bool MatchesSdkInlineStub(const std::vector<std::uint8_t>& code, std::size_t syscallOffset, std::size_t limit, const std::array<std::uint8_t, TSize>& pattern, std::size_t beforeSyscall, const RecentInstructions& recent, FileByteOffset codeOffset) {
     if (syscallOffset < beforeSyscall || syscallOffset > limit) return false;
     const auto start = syscallOffset - beforeSyscall;
-    if (pattern.size() > limit - start) return false;
-    for (std::size_t i = 0; i < pattern.size(); ++i) {
-        if (i >= maskOffset && i < maskOffset + maskLength) continue;
-        if (code[start + i] != pattern[i]) return false;
-    }
+    if (pattern.size() > limit - start || !std::equal(pattern.begin(), pattern.end(), code.begin() + static_cast<std::ptrdiff_t>(start))) return false;
     return recent.Contains(codeOffset + start);
 }
 
@@ -134,9 +130,9 @@ static bool IsSdkMmanSyscallStub(const std::vector<std::uint8_t>& code, std::siz
     return MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MPROTECT_INLINE, 42, recent, codeOffset)
         || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MMAP_INLINE, 17, recent, codeOffset)
         || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MMAP_EXEC_INLINE, 23, recent, codeOffset)
-        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MOUNT_INLINE, 26, recent, codeOffset, 13, 4)
-        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_NMOUNT_INLINE, 28, recent, codeOffset, 15, 4)
-        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_UNMOUNT_INLINE, 28, recent, codeOffset, 13, 4);
+        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MOUNT_INLINE, 26, recent, codeOffset)
+        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_NMOUNT_INLINE, 28, recent, codeOffset)
+        || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_UNMOUNT_INLINE, 28, recent, codeOffset);
 }
 
 static ForbiddenInstruction ClassifyForbiddenInstruction(const std::vector<std::uint8_t>& codeSection, const std::size_t opcodeOffset, const std::size_t limit) {
