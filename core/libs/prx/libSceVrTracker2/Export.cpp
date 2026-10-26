@@ -1,3 +1,6 @@
+#include "prx/libSceVrTracker2/include/Api.hpp"
+#include "prx/libSceHmd2/libSceHmd2.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6,34 +9,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
-struct VrTracker2InitializeParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    std::int32_t threadPriorities[2];
-    std::uint64_t threadAffinityMasks[2];
-    void* workMemory;
-    std::uint32_t workMemorySize;
-    std::uint32_t workMemoryAlignment;
-    std::uint32_t option;
-    std::uint32_t coordinateSystem;
-    std::uint8_t disableOption;
-    std::int8_t optionMode;
-    std::uint8_t reserved[14];
-};
-
-struct VrTracker2MemoryParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    std::uint8_t reserved[24];
-};
-
-struct VrTracker2MemoryRequirement {
-    std::uint32_t size;
-    std::uint32_t memorySize;
-    std::uint32_t memoryAlignment;
-    std::uint8_t reserved[20];
-};
-
 static_assert(sizeof(VrTracker2InitializeParameter) == 72);
 static_assert(offsetof(VrTracker2InitializeParameter, threadAffinityMasks) == 16);
 static_assert(offsetof(VrTracker2InitializeParameter, workMemory) == 32);
@@ -41,54 +16,13 @@ static_assert(offsetof(VrTracker2InitializeParameter, coordinateSystem) == 52);
 static_assert(offsetof(VrTracker2InitializeParameter, reserved) == 58);
 static_assert(sizeof(VrTracker2MemoryParameter) == 32);
 static_assert(sizeof(VrTracker2MemoryRequirement) == 32);
-struct VrTracker2LegacyParameter12 {
-    std::uint32_t size;
-    std::uint8_t opaque[8];
-};
-
-struct VrTracker2LegacyParameter20 {
-    std::uint32_t size;
-    std::uint8_t opaque[16];
-};
-
-struct VrTracker2UnsupportedCoordinateParameter;
 
 static_assert(sizeof(VrTracker2LegacyParameter12) == 12);
 static_assert(sizeof(VrTracker2LegacyParameter20) == 20);
 
-struct VrTracker2CalibrationResult;
-struct VrTracker2TelemetryData;
-struct VrTracker2PoseParameter;
-struct VrTracker2PoseResult;
-
-struct VrTracker2MeshRequirement {
-    std::uint32_t vertexCount;
-    std::uint32_t indexCount;
-    std::uint32_t vertexDataSize;
-    std::uint32_t indexDataSize;
-};
-
-struct VrTracker2Pose {
-    float position[3];
-    std::uint8_t padding[4];
-    float orientation[4];
-};
-
 static_assert(sizeof(VrTracker2MeshRequirement) == 16);
 static_assert(sizeof(VrTracker2Pose) == 32);
 static_assert(offsetof(VrTracker2Pose, orientation) == 16);
-
-struct VrTracker2ResultParameter {
-    std::uint32_t size;
-    std::int32_t deviceHandle;
-    std::uint32_t reserved;
-    std::uint8_t padding[4];
-    std::uint64_t timestamp;
-    std::uint32_t reserved2;
-    std::uint8_t padding2[4];
-    std::uint64_t userTag;
-    std::uint32_t reserved3[2];
-};
 
 struct VrTracker2LegacyResultParameter {
     std::uint32_t size;
@@ -105,20 +39,6 @@ static_assert(offsetof(VrTracker2ResultParameter, timestamp) == 16);
 static_assert(offsetof(VrTracker2ResultParameter, userTag) == 32);
 static_assert(sizeof(VrTracker2LegacyResultParameter) == 32);
 static_assert(offsetof(VrTracker2LegacyResultParameter, userTag) == 24);
-struct VrTracker2Result;
-struct VrTracker2CoordinateLocation;
-
-struct VrTracker2BoundaryGeometry {
-    std::uint32_t size;
-    std::uint32_t pointCount;
-    float points[256][3];
-};
-
-struct VrTracker2OrientedBoundingBox {
-    std::uint32_t size;
-    float transform[16];
-    float extents[3];
-};
 
 static_assert(sizeof(VrTracker2BoundaryGeometry) == 3080);
 static_assert(offsetof(VrTracker2BoundaryGeometry, points) == 8);
@@ -130,7 +50,95 @@ namespace {
 
 constexpr std::int32_t SCE_OK = 0;
 constexpr std::int32_t VR_TRACKER2_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x8A740001u);
+constexpr std::int32_t VR_TRACKER2_ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x8A740002u);
 constexpr std::int32_t VR_TRACKER2_ERROR_INVALID_ARGUMENT = static_cast<std::int32_t>(0x8A740006u);
+
+constexpr std::uint32_t TrackerMode = 0;
+constexpr std::uint32_t SystemTrackingMode = 1000;
+constexpr std::uint32_t SystemClientMode = 1001;
+constexpr std::uint32_t MinimumWorkMemoryAlignment = 0x10000;
+constexpr std::int32_t MinimumThreadPriority = 256;
+constexpr std::int32_t MaximumThreadPriority = 767;
+constexpr std::uint64_t TrackerAffinityLimit = 0x2000;
+constexpr std::uint64_t SystemAffinityMask = 0xEA00;
+constexpr std::uint32_t OptionModeSdkVersion = 0x7000000;
+
+std::atomic<std::uint32_t> state{0};
+
+std::uint32_t WorkMemorySize(std::uint32_t mode) {
+    if (mode == SystemTrackingMode) return 7u << 20;
+    if (mode == SystemClientMode) return 3u << 20;
+    return 32u << 20;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
+    return sdkVersion;
+}
+
+std::int32_t ValidateMode(std::uint32_t mode) {
+    if (mode == SystemTrackingMode || mode == SystemClientMode) NotImplemented_nid_no_patch("sceVrTracker2Initialize: application category of a system mode");
+    return mode == TrackerMode ? SCE_OK : VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+}
+
+bool PriorityAllowed(std::int32_t priority) {
+    return priority >= MinimumThreadPriority && priority <= MaximumThreadPriority;
+}
+
+bool AffinityAllowed(std::uint32_t mode, std::uint64_t mask) {
+    if (mode == TrackerMode) return mask < TrackerAffinityLimit;
+    return (mask & ~SystemAffinityMask) == 0;
+}
+
+bool OptionModeAllowed(std::int8_t optionMode) {
+    if (optionMode == -1 || optionMode == 0) return true;
+    return optionMode == 1 && CompiledSdkVersion() >= OptionModeSdkVersion;
+}
+
+class InitializeSession {
+public:
+    std::int32_t OpenTracking() {
+        return track(sceHmd2InternalTrackingOpen(), trackingOpened);
+    }
+
+    std::int32_t StartTracking() {
+        return track(sceHmd2InternalTrackingStart(), trackingStarted);
+    }
+
+    std::int32_t OpenLedDetector() {
+        return track(sceHmd2InternalLedDetectorOpen(), ledDetectorOpened);
+    }
+
+    std::int32_t StartLedDetector() {
+        return track(sceHmd2InternalLedDetectorStart(), ledDetectorStarted);
+    }
+
+    void Rollback() {
+        if (ledDetectorStarted) sceHmd2InternalLedDetectorStop();
+        if (ledDetectorOpened) sceHmd2InternalLedDetectorClose();
+        if (trackingStarted) sceHmd2InternalTrackingStop();
+        if (trackingOpened) sceHmd2InternalTrackingClose();
+        state.store(0);
+    }
+
+    std::int32_t Abort(std::int32_t result) {
+        Rollback();
+        return result;
+    }
+
+private:
+    static std::int32_t track(std::int32_t result, bool& done) {
+        done = result == SCE_OK;
+        return result;
+    }
+
+    bool trackingOpened = false;
+    bool trackingStarted = false;
+    bool ledDetectorOpened = false;
+    bool ledDetectorStarted = false;
+};
 
 std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
     if (output == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
@@ -140,33 +148,7 @@ std::int32_t ClearThenReportNotInitialized(void* output, std::size_t size) {
 
 }
 
-struct VrTracker2RelativePoseResult {
-    VrTracker2Pose pose;
-    std::uint8_t reserved[32];
-};
-
 static_assert(sizeof(VrTracker2RelativePoseResult) == 64);
-
-struct VrTracker2ScalarResult {
-    std::uint32_t size;
-    float value;
-};
-
-struct VrTracker2TrackingOptions {
-    std::int32_t options[3];
-    std::uint8_t reset;
-    std::uint8_t reserved[3];
-    float vector[3];
-};
-
-struct VrTracker2TrackingOptionsResult {
-    VrTracker2TrackingOptions options;
-    float position[3];
-};
-
-struct VrTracker2DiagnosticResult;
-struct VrTracker2ExtendedResult;
-struct VrTracker2TrackingConfiguration;
 
 static_assert(sizeof(VrTracker2ScalarResult) == 8);
 static_assert(sizeof(VrTracker2TrackingOptions) == 28);
@@ -174,95 +156,21 @@ static_assert(offsetof(VrTracker2TrackingOptions, vector) == 16);
 static_assert(sizeof(VrTracker2TrackingOptionsResult) == 40);
 static_assert(offsetof(VrTracker2TrackingOptionsResult, position) == 28);
 
-struct VrTracker2ModeParameter {
-    std::uint32_t size;
-    std::uint32_t mode;
-    float value;
-};
-
-struct VrTracker2DiagnosticText {
-    char sections[6][512];
-};
-
-struct VrTracker2CompositePoseResult;
-struct VrTracker2CameraImages;
-struct VrTracker2SensorFrame;
-struct VrTracker2TrackingStatus;
-struct VrTracker2BoundaryParameter;
-
 static_assert(sizeof(VrTracker2ModeParameter) == 12);
 static_assert(sizeof(VrTracker2DiagnosticText) == 3072);
-
-struct VrTracker2CameraFrame {
-    std::uint32_t selector;
-    std::uint32_t identifiers[2];
-    std::uint32_t width;
-    std::uint32_t height;
-    std::uint32_t pitch;
-    const void* pixels;
-    std::int32_t bufferIndex;
-};
-
-struct VrTracker2CameraFrameMetadata;
 
 static_assert(offsetof(VrTracker2CameraFrame, pixels) == 24);
 static_assert(offsetof(VrTracker2CameraFrame, bufferIndex) == 32);
 static_assert(sizeof(VrTracker2CameraFrame) == 40);
 
-struct VrTracker2SpatialQueryResult {
-    std::uint32_t size;
-    std::int32_t status;
-    float vectors[2][3];
-    float value;
-};
-
-struct VrTracker2DeviceCalibrationStatus;
-struct VrTracker2DeviceBoundaryParameter;
-struct VrTracker2ResetPoseParameter;
-
 static_assert(sizeof(VrTracker2SpatialQueryResult) == 36);
 static_assert(offsetof(VrTracker2SpatialQueryResult, vectors) == 8);
 static_assert(offsetof(VrTracker2SpatialQueryResult, value) == 32);
-
-struct VrTracker2MapData;
-struct VrTracker2MapStatus;
-
-struct VrTracker2RuntimeStatus;
-struct VrTracker2DiagnosticState;
-struct VrTracker2ExtendedDiagnosticState;
-struct VrTracker2SensorDiagnostics;
-struct VrTracker2DeviceDiagnostics;
-struct VrTracker2TimingDiagnostics;
-struct VrTracker2MapConfiguration;
-struct VrTracker2SensorSummary;
-
-struct VrTracker2CoordinateResultParameter {
-    std::uint32_t coordinateSystem;
-    std::uint32_t reserved;
-    VrTracker2ResultParameter parameter;
-};
-
-struct VrTracker2BoundaryFitResult {
-    std::uint8_t flags[4];
-    float dimensions[4];
-};
-
-struct VrTracker2VectorResult {
-    std::uint32_t size;
-    float value[3];
-};
-
-struct VrTracker2ExtendedTrackingResult;
 
 static_assert(sizeof(VrTracker2CoordinateResultParameter) == 56);
 static_assert(offsetof(VrTracker2CoordinateResultParameter, parameter) == 8);
 static_assert(sizeof(VrTracker2BoundaryFitResult) == 20);
 static_assert(sizeof(VrTracker2VectorResult) == 16);
-
-struct VrTracker2MeshVertex;
-struct VrTracker2TimedPoseResult;
-struct VrTracker2ImagePoseResult;
-struct VrTracker2ImageFrame;
 
 extern "C" {
 
@@ -309,16 +217,12 @@ std::int32_t APS5_VABI sceVrTracker2UnregisterDevice(std::int32_t deviceHandle) 
 std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter* parameter, VrTracker2MemoryRequirement* requirement) {
     if (parameter == nullptr || requirement == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (parameter->size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-    std::uint32_t memorySize = 32u << 20;
-    if (parameter->mode == 1000 || parameter->mode == 1001) {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        std::uint32_t sdkVersion;
-        std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
-        if (sdkVersion < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
-        memorySize = parameter->mode == 1000 ? 7u << 20 : 3u << 20;
-    } else if (parameter->mode != 0) {
+    if (parameter->mode == SystemTrackingMode || parameter->mode == SystemClientMode) {
+        if (CompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    } else if (parameter->mode != TrackerMode) {
         return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     }
+    const std::uint32_t memorySize = WorkMemorySize(parameter->mode);
     for (const auto value : parameter->reserved)
         if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     *requirement = {sizeof(VrTracker2MemoryRequirement), memorySize, 64u << 10, {}};
@@ -326,6 +230,30 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
 }
 
 std::int32_t APS5_VABI sceVrTracker2Initialize(const VrTracker2InitializeParameter* parameter) {
+    if (parameter == nullptr || parameter->size != sizeof(VrTracker2InitializeParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    const std::uint32_t mode = parameter->mode;
+    if (const std::int32_t result = ValidateMode(mode); result != SCE_OK) return result;
+    if (parameter->workMemory == nullptr) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (parameter->workMemorySize < WorkMemorySize(mode)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    if (parameter->workMemoryAlignment < MinimumWorkMemoryAlignment) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto value : parameter->reserved)
+        if (value != 0) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto priority : parameter->threadPriorities)
+        if (!PriorityAllowed(priority)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    for (const auto mask : parameter->threadAffinityMasks)
+        if (!AffinityAllowed(mode, mask)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+    std::uint32_t expected = 0;
+    if (!state.compare_exchange_strong(expected, 1)) return VR_TRACKER2_ERROR_ALREADY_INITIALIZED;
+    InitializeSession session;
+    if (mode == TrackerMode) std::memset(parameter->workMemory, 0, WorkMemorySize(mode));
+    if (mode != SystemClientMode) {
+        if (!OptionModeAllowed(parameter->optionMode)) return session.Abort(VR_TRACKER2_ERROR_INVALID_ARGUMENT);
+        if (const std::int32_t result = session.OpenTracking(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.StartTracking(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.OpenLedDetector(); result != SCE_OK) return session.Abort(result);
+        if (const std::int32_t result = session.StartLedDetector(); result != SCE_OK) return session.Abort(result);
+    }
+    session.Rollback();
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

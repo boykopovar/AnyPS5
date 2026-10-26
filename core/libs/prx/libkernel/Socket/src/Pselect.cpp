@@ -1,11 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
 extern "C" {
-
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout);
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
 
 int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask) {
     constexpr int SetMask = 3;
@@ -25,6 +23,7 @@ int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void*
     if (sigmask != nullptr) {
         const int error = *__error_nid_postfix();
         sigprocmask_nid_postfix(SetMask, previous, nullptr);
+
         *__error_nid_postfix() = error;
     }
     return result;

@@ -1,3 +1,5 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstdio>
@@ -5,11 +7,6 @@
 #include <cstring>
 #include <thread>
 
-extern "C" {
-char* APS5_VABI strerror_nid_postfix(int);
-int APS5_VABI strerror_r_nid_postfix(int, char*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 static void Require(bool value) { if (!value) std::abort(); }
 static const char* const freebsd[97] = {
     "No error: 0", "Operation not permitted", "No such file or directory",

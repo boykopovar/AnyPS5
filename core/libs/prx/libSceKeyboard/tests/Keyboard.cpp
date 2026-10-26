@@ -1,25 +1,22 @@
+#include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libSceKeyboard/include/keyboard_structs.h"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <source_location>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI sceKeyboardInit(void);
-int APS5_VABI sceKeyboardOpen(int, std::int32_t, std::int32_t, const void*);
-int APS5_VABI sceKeyboardClose(std::int32_t);
-int APS5_VABI sceKeyboardRead(std::int32_t, KeyboardData*, std::int32_t);
-int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
-int APS5_VABI sceKeyboardGetConnection(std::int32_t, bool*);
-int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint8_t, std::uint8_t, std::uint16_t, KeyboardCharData*);
-int APS5_VABI sceKeyboardConnectPort(void);
-int APS5_VABI sceKeyboardDisconnectAll(void);
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: keyboard assertion failed\n", location.file_name(), location.line());
+    std::abort();
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Uint8 repeat = 0) {
     SDL_Event event{};
@@ -34,12 +31,61 @@ static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Ui
 static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, std::int32_t arrange = KEYBOARD_ARRANGEMENT_101) {
     KeyboardCharData data{};
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led, modifierKey, keyCode, &data) == KEYBOARD_OK);
-    Require(data.processed == (data.char_code != 0) && data.length == (data.processed ? 1 : 0));
-    return data.char_code;
+    Require(data.processed ? data.char_code != 0 : data.char_code == keyCode);
+    Require(data.length == (data.processed ? 1 : 0));
+    return data.processed ? data.char_code : 0;
 }
 
 static std::uint16_t Jis(std::uint32_t modifierKey, std::uint16_t keyCode, std::uint32_t led = 0) {
     return Char(led, modifierKey, keyCode, KEYBOARD_ARRANGEMENT_106);
+}
+
+static void CheckInvalidKeys(bool opened) {
+    constexpr std::uint16_t invalidKeys[] = {0, 1, 2, 3, 232, 255, 256, 65535};
+    for (const auto key : invalidKeys) {
+        for (const auto handle : {KEYBOARD_HANDLE, 42}) {
+            KeyboardCharData data;
+            std::memset(&data, 0xa5, sizeof(data));
+            unsigned char before[sizeof(data)];
+            std::memcpy(before, &data, sizeof(data));
+            Require(sceKeyboardGetKey2Char(handle, KEYBOARD_ARRANGEMENT_101, 0, 0, key, &data) == KEYBOARD_ERROR_INVALID_ARG);
+            Require(std::memcmp(&data, before, sizeof(data)) == 0);
+            Require(sceKeyboardGetKey2Char(handle, KEYBOARD_ARRANGEMENT_106, KEYBOARD_LED_KANA, 0, key, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+        }
+    }
+    for (const auto key : {std::uint16_t{4}, std::uint16_t{231}}) {
+        KeyboardCharData data{};
+        const auto expected = opened ? KEYBOARD_OK : KEYBOARD_ERROR_INVALID_HANDLE;
+        Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, key, &data) == expected);
+    }
+}
+
+static void CheckUnconvertedKeys() {
+    constexpr std::uint16_t unconvertedKeys[] = {0x29, 0x39, 0x3a, 0x4f, 0x59, 0x88, 0xe0, 0xe7};
+    for (const auto arrange : {KEYBOARD_ARRANGEMENT_101, KEYBOARD_ARRANGEMENT_106}) {
+        for (const auto key : unconvertedKeys) {
+            KeyboardCharData data{};
+            Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, 0, 0, key, &data) == KEYBOARD_OK);
+            Require(!data.processed && data.char_code == key);
+        }
+    }
+}
+
+static void CheckKanaLed() {
+    for (const auto arrange : {KEYBOARD_ARRANGEMENT_101, KEYBOARD_ARRANGEMENT_106}) {
+        for (const auto modifier : {std::uint8_t{0}, std::uint8_t{KEYBOARD_MOD_LEFT_SHIFT}, std::uint8_t{KEYBOARD_MOD_RIGHT_SHIFT}}) {
+            for (const auto led : {std::uint8_t{0}, std::uint8_t{KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK}}) {
+                for (std::uint16_t key = 4; key <= 231; ++key) {
+                    KeyboardCharData withoutKana{};
+                    KeyboardCharData withKana{};
+                    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led, modifier, key, &withoutKana) == KEYBOARD_OK);
+                    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led | KEYBOARD_LED_KANA, modifier, key, &withKana) == KEYBOARD_OK);
+                    Require(withKana.processed == withoutKana.processed);
+                    Require(withKana.length == withoutKana.length && withKana.char_code == withoutKana.char_code);
+                }
+            }
+        }
+    }
 }
 
 int main() {
@@ -50,11 +96,15 @@ int main() {
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
+    CheckInvalidKeys(false);
     Require(sceKeyboardOpen(1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
+    CheckInvalidKeys(true);
+    CheckUnconvertedKeys();
+    CheckKanaLed();
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
     Require(sceKeyboardGetConnection(42, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
@@ -181,7 +231,8 @@ int main() {
 
     bool threwConnect = false;
     try {
-        sceKeyboardConnectPort();
+        sceKeyboardConnectPort(0, 0);
+
     } catch (const std::runtime_error&) {
         threwConnect = true;
     }

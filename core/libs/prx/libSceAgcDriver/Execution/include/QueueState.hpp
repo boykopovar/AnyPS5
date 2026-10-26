@@ -272,7 +272,7 @@ struct QueueState {
     std::uint64_t indexBase = 0;
     std::uint64_t drawIndirectBase = 0;
     std::uint64_t dispatchIndirectBase = 0;
-    std::uint32_t indexBufferSize = 0;
+    std::optional<std::uint32_t> indexBufferSize;
     std::uint32_t indexType = 0;
     std::uint32_t instanceCount = 1;
     std::vector<std::string> markers;

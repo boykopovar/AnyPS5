@@ -1,12 +1,8 @@
+#include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t);
-}
 
 namespace {
 

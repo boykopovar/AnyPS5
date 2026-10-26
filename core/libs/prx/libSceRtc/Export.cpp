@@ -1,3 +1,4 @@
+#include "prx/libSceRtc/include/Rtc.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstddef>

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -31,17 +32,6 @@
 #include <utility>
 #include <vector>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestInterfaceAddress {
-    GuestInterfaceAddress* next;
-    char* name;
-    std::uint32_t flags;
-    void* address;
-    void* netmask;
-    void* destination;
-    void* data;
-};
 static_assert(sizeof(GuestInterfaceAddress) == 56);
 static_assert(offsetof(GuestInterfaceAddress, flags) == 16);
 static_assert(offsetof(GuestInterfaceAddress, address) == 24);
@@ -89,6 +79,22 @@ std::vector<std::uint8_t> GuestAddress(const sockaddr* address) {
     const auto* v6 = reinterpret_cast<const sockaddr_in6*>(address);
     return GuestIpv6(reinterpret_cast<const std::uint8_t*>(&v6->sin6_addr), v6->sin6_scope_id);
 }
+
+#ifndef _WIN32
+std::vector<std::uint8_t> GuestNetmask(const sockaddr* netmask, int family) {
+    sockaddr_storage mask{};
+    const std::size_t size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+#ifdef __APPLE__
+    const std::size_t length = std::min<std::size_t>(netmask->sa_len, size);
+#else
+    const std::size_t length = size;
+#endif
+    if (length > offsetof(sockaddr, sa_data))
+        std::memcpy(reinterpret_cast<char*>(&mask) + offsetof(sockaddr, sa_data), netmask->sa_data, length - offsetof(sockaddr, sa_data));
+    mask.ss_family = static_cast<sa_family_t>(family);
+    return GuestAddress(reinterpret_cast<const sockaddr*>(&mask));
+}
+#endif
 
 std::string CheckedName(const char* name) {
     const std::string checked(name);
@@ -312,7 +318,7 @@ int HostEntries(std::vector<Entry>& entries) {
 #endif
             if (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6) continue;
             if (!item->ifa_netmask) throw std::runtime_error(std::string("getifaddrs: host address without a netmask on ") + item->ifa_name);
-            Entry entry{CheckedName(item->ifa_name), InterfaceFlags(item->ifa_flags), GuestAddress(item->ifa_addr), GuestAddress(item->ifa_netmask), {}};
+            Entry entry{CheckedName(item->ifa_name), InterfaceFlags(item->ifa_flags), GuestAddress(item->ifa_addr), GuestNetmask(item->ifa_netmask, item->ifa_addr->sa_family), {}};
             const int family = item->ifa_addr->sa_family;
             if (item->ifa_flags & IFF_POINTOPOINT) {
                 if (item->ifa_dstaddr && item->ifa_dstaddr->sa_family == family) entry.destination = GuestAddress(item->ifa_dstaddr);

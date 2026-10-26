@@ -1,3 +1,4 @@
+#include "prx/libSceImeDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
@@ -6,21 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceImeDialogInit(const Param*, const ExtendedParam*);
-int APS5_VABI sceImeDialogGetStatus(void);
-int APS5_VABI sceImeDialogGetResult(Result*);
-int APS5_VABI sceImeDialogAbort(void);
-int APS5_VABI sceImeDialogTerm(void);
-int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm*);
-int APS5_VABI sceImeDialogGetPanelSize(const Param*, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param*, const ExtendedParam*, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceImeDialogForceClose(void);
-int APS5_VABI sceImeDialogGetCurrentStarState(std::int64_t);
-int APS5_VABI sceImeDialogInitInternal(const Param*, const ExtendedParam*);
-int APS5_VABI sceImeDialogSetPanelPosition(std::int32_t, std::int32_t);
-}
 
 namespace {
 

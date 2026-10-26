@@ -109,8 +109,10 @@ private:
 // stages and every pipeline state field. A configuration whose stage has no module gets a private
 // pipeline. A miss builds the pipeline outside the store's mutex (a concurrent build of the same
 // key keeps the first inserted) and records its recipe in the pipeline journal. Entries are
-// LRU-bounded (APS5_PIPELINE_STORE_ENTRIES, 1024) and only evicted once no recorded draw holds
-// them. Debug aid: APS5_NO_PIPELINE_CACHE=1 builds one per draw as before.
+// LRU-bounded and only evicted once no recorded draw holds them. The bound starts at 1024 and
+// doubles up to 4096 for a journal replay that does not fit and while pipelines it evicted keep
+// coming back; it never shrinks during a run. APS5_PIPELINE_STORE_ENTRIES fixes it. Debug aid:
+// APS5_NO_PIPELINE_CACHE=1 builds one per draw as before.
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 // `created` reports whether this call built the pipeline (false: served from the store or private).
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr);
@@ -124,6 +126,8 @@ struct PipelineStoreCounters {
     std::uint64_t bound = 0;
 };
 PipelineStoreCounters PipelineStoreTotals();
+// Whether the store may still raise its bound (not fixed by APS5_PIPELINE_STORE_ENTRIES, below 4096).
+bool PipelineStoreCanGrow();
 // The pipeline store's key of a configuration (empty when the configuration gets a private pipeline).
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout);
 struct DescribedSetLayouts {

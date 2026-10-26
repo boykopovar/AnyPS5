@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -20,6 +22,11 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
+#else
+#include <sys/wait.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -50,10 +57,6 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, std::uint64_t info_size);
 
 namespace {
 
@@ -273,40 +276,12 @@ std::int64_t toGuestLimit(rlim_t value) {
 
 }
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestResourceLimit {
-    std::int64_t rlim_cur;
-    std::int64_t rlim_max;
-};
-
 namespace {
 std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
 std::mutex processLimitMutex;
 GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
 }
-
-struct GuestResourceUsage {
-    KernelTimeval ru_utime;
-    KernelTimeval ru_stime;
-    std::int64_t ru_maxrss;
-    std::int64_t ru_ixrss;
-    std::int64_t ru_idrss;
-    std::int64_t ru_isrss;
-    std::int64_t ru_minflt;
-    std::int64_t ru_majflt;
-    std::int64_t ru_nswap;
-    std::int64_t ru_inblock;
-    std::int64_t ru_oublock;
-    std::int64_t ru_msgsnd;
-    std::int64_t ru_msgrcv;
-    std::int64_t ru_nsignals;
-    std::int64_t ru_nvcsw;
-    std::int64_t ru_nivcsw;
-};
-
-extern "C" Pthread APS5_VABI scePthreadSelf();
 
 extern "C" {
 
@@ -454,13 +429,59 @@ int APS5_VABI system_nid_postfix(const char* command) {
 }
 
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
-    (void)pid;
-    (void)status;
-    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
-    return -1;
+    if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+#ifdef _WIN32
+    int encoded = 0;
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded);
+    if (reaped == -2) {
+        *__error_nid_postfix() = errnoNoChild;
+        return -1;
+    }
+    if (reaped == -1) return -1;
+    if (reaped == 0) return 0;
+    if (status != nullptr) *status = encoded;
+    return static_cast<int>(reaped);
+#else
+    unsigned hostOptions = static_cast<unsigned>(options) & 3u;
+    if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
+    int encoded = 0;
+    const int result = ::waitpid(pid, &encoded, static_cast<int>(hostOptions));
+    if (result < 0) {
+        *__error_nid_postfix() = errno;
+        return -1;
+    }
+    if (result == 0) return 0;
+    if (WIFCONTINUED(encoded)) {
+        encoded = 0x13;
+    } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+        const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        int guestSignal = hostSignal;
+        switch (hostSignal) {
+        case 7: guestSignal = 10; break;
+        case 10: guestSignal = 30; break;
+        case 12: guestSignal = 31; break;
+        case 17: guestSignal = 20; break;
+        case 18: guestSignal = 19; break;
+        case 19: guestSignal = 17; break;
+        case 20: guestSignal = 18; break;
+        case 23: guestSignal = 16; break;
+        case 29: guestSignal = 23; break;
+        case 31: guestSignal = 12; break;
+        case 16:
+        case 30:
+            NotImplemented_nid_no_patch("waitpid: a child stopped or died with a signal without a guest equivalent");
+            return -1;
+        default: break;
+        }
+        encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
+    }
+    if (status != nullptr) *status = encoded;
+    return result;
+#endif
 }
-
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
     if (limit == nullptr) {
@@ -482,6 +503,7 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
 
     GuestResourceLimit current{};
     getrlimit_nid_postfix(resource, &current);
+
     if (resource == guestRlimitNofile) {
         if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
             std::lock_guard lock(openFileLimitMutex);
@@ -600,6 +622,7 @@ void APS5_VABI sceKernelSync(void) {
 
 void APS5_VABI sync_nid_postfix(void) {
     sceKernelSync();
+
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
@@ -674,8 +697,12 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    GuestResourceUsage result{};
     if (who == -1) {
-        *usage = {};
+        if (!WriteGuest(usage, &result, sizeof(result))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
 #ifdef _WIN32
@@ -695,47 +722,37 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     };
     const auto userMicros = toMicros(user);
     const auto kernelMicros = toMicros(kernel);
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
-    usage->ru_maxrss = 0;
-    usage->ru_ixrss = 0;
-    usage->ru_idrss = 0;
-    usage->ru_isrss = 0;
-    usage->ru_minflt = 0;
-    usage->ru_majflt = 0;
-    usage->ru_nswap = 0;
-    usage->ru_inblock = 0;
-    usage->ru_oublock = 0;
-    usage->ru_msgsnd = 0;
-    usage->ru_msgrcv = 0;
-    usage->ru_nsignals = 0;
-    usage->ru_nvcsw = 0;
-    usage->ru_nivcsw = 0;
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
-    usage->ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
-    usage->ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
-    usage->ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
-    usage->ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
-    usage->ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
-    usage->ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
-    usage->ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
-    usage->ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
-    usage->ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
-    usage->ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
-    usage->ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
-    usage->ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
-    usage->ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
-    usage->ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
+    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
+    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
+    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
+    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
+    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
+    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
+    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
+    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
+    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
+    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
+    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
+    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
 #endif
+    if (!WriteGuest(usage, &result, sizeof(result))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 }
 
@@ -846,6 +863,7 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
+
     std::int64_t tableSize = limit.rlim_cur;
 #ifndef _WIN32
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));

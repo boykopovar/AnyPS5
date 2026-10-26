@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <cstdio>
@@ -5,10 +6,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
-extern "C" int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void);
-extern "C" int APS5_VABI sceSystemServiceKillApp(int, int, int, int);
-extern "C" int APS5_VABI sceLncUtilKillApp(unsigned);
-extern "C" int APS5_VABI sceLncUtilKillAppWithReason(unsigned, int);
+
 namespace {
 bool cleaned = false;
 bool finished = false;

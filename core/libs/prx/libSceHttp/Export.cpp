@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include <cstdint>
 #include <cstddef>
 #ifdef _WIN32
@@ -24,51 +25,22 @@
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static std::atomic<int> g_nextHandle{1};
-struct HttpConnectionStat;
-struct HttpRequestStat;
 
-using HttpCookieSendCallback = int (APS5_VABI *)(std::int32_t, const char*, const char*, void*);
-using HttpSocketCreationCallback = void (APS5_VABI *)(std::int32_t, std::int32_t, void*);
-using HttpRequestStatusCallback = void (APS5_VABI *)(int, int, void*);
 struct RequestStatusRegistration {
     HttpRequestStatusCallback callback;
     void* argument;
 };
 static std::mutex g_statusMutex;
 static std::map<int, RequestStatusRegistration> g_statusCallbacks;
-struct HttpCookieStats {
-    std::size_t usedBytes;
-    std::uint32_t cookieCount;
-    std::uint32_t reserved;
-    std::size_t peakUsedBytes;
-    std::uint32_t peakCookieCount;
-    std::uint32_t evictedCookieCount;
-};
 
 static_assert(sizeof(HttpCookieStats) == 32);
 static_assert(offsetof(HttpCookieStats, peakUsedBytes) == 16);
-
-struct HttpMemoryPoolStats {
-    std::size_t poolSize;
-    std::size_t peakUsedSize;
-    std::size_t usedSize;
-};
-
-struct HttpRequestHeader {
-    const char* name;
-    const char* value;
-};
 
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
 static_assert(offsetof(HttpMemoryPoolStats, peakUsedSize) == 8);
 static_assert(offsetof(HttpMemoryPoolStats, usedSize) == 16);
 static_assert(sizeof(HttpRequestHeader) == 16);
 static_assert(offsetof(HttpRequestHeader, value) == 8);
-
-struct HttpsCaList {
-    void* certs;
-    int certsNum;
-};
 
 #ifdef _WIN32
 struct HostMutex {
@@ -494,7 +466,6 @@ int APS5_VABI sceHttpSetChunkedTransferEnabled(int id, int enable) {
     (void)enable;
     return 0;
 }
-
 
 int APS5_VABI sceHttpSetInflateGZIPEnabled(int id, int enable) {
     (void)id;
