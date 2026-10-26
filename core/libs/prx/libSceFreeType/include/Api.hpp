@@ -131,4 +131,5 @@ void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const
 void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format);
 int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
 void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
 }
