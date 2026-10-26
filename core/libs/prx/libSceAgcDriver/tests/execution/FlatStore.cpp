@@ -31,7 +31,9 @@ constexpr std::uint32_t MaskedThreads = 16;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t CheckedBytes = 0x2000;
 constexpr std::uint8_t Fill = 0xcd;
-#ifdef __linux__
+#if defined(__linux__) && defined(ANYPS5_ENABLE_ASAN)
+constexpr std::array<std::uintptr_t, 2> GuestWindowAddresses{0x60000000, 0x200000000000};
+#elif defined(__linux__)
 constexpr std::array<std::uintptr_t, 2> GuestWindowAddresses{0x80000000000, 0x200000000000};
 #endif
 

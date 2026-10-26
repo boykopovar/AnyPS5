@@ -1,13 +1,6 @@
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void*, void*);
-int APS5_VABI sceNpUnregisterNpReachabilityStateCallback();
-int APS5_VABI sceNpGetNpReachabilityState(int, uint32_t*);
-int APS5_VABI sceNpCheckCallback();
-int APS5_VABI sceNpCheckNpAvailability(int, const NpOnlineId*);
-}
 
 static constexpr int ErrorArgument = static_cast<int>(0x80550003);
 static constexpr int ErrorAlreadyRegistered = static_cast<int>(0x80550008);
@@ -33,6 +26,14 @@ int main() {
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
     NpOnlineId onlineId{};
     onlineId.data[0] = 'p';
-    Require(sceNpCheckNpAvailability(1, &onlineId) == ErrorUserNotFound);
-    Require(sceNpCheckNpAvailability(1, nullptr) == ErrorArgument);
+    Require(sceNpCheckNpAvailability(1, &onlineId, nullptr) == ErrorUserNotFound);
+    Require(sceNpCheckNpAvailability(1, nullptr, nullptr) == ErrorArgument);
+    std::uint8_t available[3]{0x55, 0x55, 0x55};
+    Require(sceNpCheckNpAvailability(0, &onlineId, &available[1]) == ErrorArgument);
+    Require(available[1] == 0x55);
+    Require(sceNpCheckNpAvailability(1, nullptr, &available[1]) == ErrorArgument);
+    Require(available[1] == 0x55);
+    Require(sceNpCheckNpAvailability(1, &onlineId, &available[1]) == ErrorUserNotFound);
+    Require(available[0] == 0x55 && available[1] == 0 && available[2] == 0x55);
+
 }

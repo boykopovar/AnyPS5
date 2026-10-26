@@ -31,8 +31,7 @@ const IrValue* partialOf(const IrValue& interpolation) {
 
 bool isBarycentric(const IrValue& value) {
     if (value.Opcode() != IrOpcode::GetBuiltin) return false;
-    const auto kind = static_cast<StageInputKind>(value.Argument(0)->Resolve()->ImmediateU32());
-    return kind == StageInputKind::BaryCoordSmooth || kind == StageInputKind::BaryCoordNoPerspective;
+    return IsBarycentricInput(static_cast<StageInputKind>(value.Argument(0)->Resolve()->ImmediateU32()));
 }
 
 bool isBarycentric(const IrValue& value, StageInputKind kind, std::uint32_t component) {

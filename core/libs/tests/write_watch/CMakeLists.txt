@@ -15,7 +15,7 @@ set_target_properties(write_watch_tests PROPERTIES
     CXX_EXTENSIONS OFF
     RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
 
-foreach(mode collect fresh armed register mapped host protection threads)
+foreach(mode collect fresh armed register mapped host empty protection overlaps threads)
     add_test(NAME write_watch_${mode} COMMAND write_watch_tests ${mode})
     set_tests_properties(write_watch_${mode} PROPERTIES TIMEOUT 30)
 endforeach()

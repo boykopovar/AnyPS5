@@ -90,10 +90,12 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
             RecordBdaFaultWords(state, ConstantU32(state, static_cast<std::uint32_t>(hash)), ConstantU32(state, static_cast<std::uint32_t>(hash >> 32u)), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
         });
     }
+    FlushColorTargetMerge(state);
     if (OrderedPixelShader(state)) {
         state.module.AddFunction(spv::OpEndInvocationInterlockEXT);
     }
     EmitKillIfPixelValidMaskInactive(state);
+    if (state.quadPixelUncovered != 0u) EmitKillIfBoolFalse(state, Unary(state, spv::OpLogicalNot, TypeBool(state), state.quadPixelUncovered));
     if (state.stencilReplay) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, state.stencilRefVariable);
@@ -307,6 +309,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::Reference: return Invoke(EmitReference, ctx, inst);
         case IrOpcode::ReferenceU32: return Invoke(EmitReferenceU32, ctx, inst);
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
+        case IrOpcode::WindowLaneGuard: return Invoke(EmitWindowLaneGuard, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
         case IrOpcode::ShaderClock: return Invoke(EmitShaderClock, ctx, inst);
@@ -666,6 +669,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::DataAppend: return Invoke(EmitDataAppend, ctx, inst);
         case IrOpcode::DataConsume: return Invoke(EmitDataConsume, ctx, inst);
         case IrOpcode::DataOrderedCount: return Invoke(EmitDataOrderedCount, ctx, inst);
+        case IrOpcode::DataOrderedSwap: return Invoke(EmitDataOrderedSwap, ctx, inst);
         case IrOpcode::SwizzleU32: return Invoke(EmitSwizzleU32, ctx, inst);
         case IrOpcode::ImageQueryDimensions: return Invoke(EmitImageQueryDimensions, ctx, inst);
         case IrOpcode::ImageQueryLod: return Invoke(EmitImageQueryLod, ctx, inst);
@@ -758,7 +762,9 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             } else if (access != SharedAccess::None) {
                 const bool writes = access != SharedAccess::Read;
                 if (ldsWritten || (writes && ldsRead)) {
-                    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, state.waveLdsScope), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state)));
+                    const auto semantics = ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state));
+                    if (state.waveLdsMemoryBarriers && state.waveLdsScope == spv::ScopeSubgroup) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeSubgroup), semantics);
+                    else state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, state.waveLdsScope), ConstantU32(state, spv::ScopeWorkgroup), semantics);
                     ldsWritten = false;
                     ldsRead = false;
                 }
@@ -808,6 +814,25 @@ bool CommunicatesThroughMemory(IrOpcode opcode) {
     return SharedAccessOf(opcode) != SharedAccess::None || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
 }
 
+bool AccessesMemory(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConst || opcode == IrOpcode::ReadConstBuffer || SharedAccessOf(opcode) != SharedAccess::None || BufferAccessOf(opcode) != BufferAccess::None || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || ImageOpcodeInfoOf(opcode).access != ImageAccess::None;
+}
+
+bool PrecedesEveryMemoryAccess(const IrProgram& program, const IrValue& barrier) {
+    const auto& blocks = program.BlockOrder();
+    const IrBlock* block = blocks.empty() ? nullptr : blocks.front();
+    for (std::size_t steps = 0; block != nullptr && steps < blocks.size(); ++steps) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction == &barrier) return true;
+            if (AccessesMemory(instruction->Opcode())) return false;
+        }
+        if (block->Successors().size() != 1u) return false;
+        block = block->Successors().front();
+        if (block->Predecessors().size() != 1u) return false;
+    }
+    return false;
+}
+
 }
 
 void EmitControlFlow(SpirvModule& module, const IrProgram& program) {
@@ -842,6 +867,7 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
         if (block == nullptr) {
             context.Fail("structured control flow contains a null block");
         }
+        state.bufferLengths.clear();
         const BlockInfo* info = BlockInfoFor(program, block);
         if (info == nullptr) {
             context.Fail("structured control flow block has no terminator metadata");
@@ -864,6 +890,7 @@ void EmitVoid(SpirvValueEmitContext&) {
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     if (state.program.Resources().stage == IrShaderStage::Vertex) {
+        if (PrecedesEveryMemoryAccess(state.program, inst)) return;
         for (const auto* block : state.program.BlockOrder()) {
             for (const auto* instruction : block->Instructions()) {
                 if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented");
@@ -894,6 +921,15 @@ void EmitUnlinkedCall(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint
     if (state.faultBufferVariable == 0) ctx.Fail(inst, "calls an unlinked target without a fault buffer");
     RecordBdaFaultWords(state, low, high, ConstantU32(state, 0u), programCounter, BdaAbi::FaultReason::UnlinkedCall);
     StopBdaInvocationIf(state, ConstantBool(state, true));
+}
+
+void EmitWindowLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t index, std::uint32_t value, std::uint32_t current, std::uint32_t slot, std::uint32_t lane) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks a spilled lane without a fault buffer");
+    const auto boolean = TypeBool(state);
+    const auto ownLane = Binary(state, spv::OpIEqual, boolean, EmitSubgroupLocalInvocationId(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lane, ConstantU32(state, state.program.WaveSize() - 1u)));
+    const auto overwritten = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, index, slot), Binary(state, spv::OpINotEqual, boolean, value, current));
+    EmitIfCondition(state, Binary(state, spv::OpLogicalAnd, boolean, ownLane, overwritten), [&] { RecordBdaFaultWords(state, slot, lane, value, ConstantU32(state, 0u), BdaAbi::FaultReason::WindowLaneSpill); });
 }
 
 void EmitControlNop(SpirvValueEmitContext& context) {

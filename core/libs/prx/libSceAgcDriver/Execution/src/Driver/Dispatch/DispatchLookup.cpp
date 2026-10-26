@@ -123,12 +123,7 @@ void Driver::lookupDispatch(std::uint64_t address, const Submission& submission,
                     for (const auto& [position, value] : liveData) liveWords[position] = value;
                     regions.clear();
                     appendEntryRegions(*variant, regions, &liveWords);
-                    auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(*variant->compiled);
-                    auto& descriptor = patched->bindings[variant->flatBinding].guestDescriptor;
-                    for (std::size_t k = 0; k < variant->dataPositions.size(); ++k) {
-                        if (variant->dataSlots[k] < descriptor.size()) descriptor[variant->dataSlots[k]] = liveWords[variant->dataPositions[k]];
-                    }
-                    compiledResult = std::move(patched);
+                    compiledResult = patchDataWords(*variant, liveWords);
                     ++counters.dataHits;
                     counters.dataWordsRefreshed += liveData.size();
                     ++counters.dataHitsByRank[rank];

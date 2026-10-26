@@ -1,7 +1,9 @@
+#include "prx/libSceAgc/Shader/include/LinkShaders.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/PrimState.hpp"
 #include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -9,10 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <iostream>
-
-extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreatePrimState(ShaderRegister*, ShaderRegister*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister*, const Shader*, const Shader*);
 
 namespace {
 std::array<ShaderRegister, 2> preparedContext;
@@ -194,9 +192,11 @@ int main() {
         Require(preparations == 0 && mappings == 0 && links == 0);
         OptionalGeometryOutputRegister(special, vertex, hull);
         HandBuiltUserVgprRegister();
+        LibcRunShutdown_nid_postfix();
         std::cout << "shader helper preparation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
+        try { LibcRunShutdown_nid_postfix(); } catch (...) {}
         return 1;
     }
 }

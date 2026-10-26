@@ -11,8 +11,12 @@ extern "C" std::stop_token LibcShutdownToken_nid_postfix();
 extern "C" void LibcRequestShutdown_nid_postfix();
 extern "C" void LibcRequestExit_nid_postfix(int code);
 extern "C" [[noreturn]] void LibcAwaitExit_nid_postfix();
+extern "C" void LibcStartExit_nid_postfix();
 extern "C" [[noreturn]] void LibcExit_nid_no_patch(int code);
 extern "C" [[noreturn]] void LibcExitWithoutHandlers_nid_no_patch(int code);
 extern "C" [[noreturn]] void LibcTerminate_nid_no_patch(int code);
+extern "C" void LibcSetEndFlush_nid_no_patch(void (*flush)());
+extern "C" void LibcRunEndFlush_nid_no_patch();
+extern "C" void LibcSetExitDrain_nid_no_patch(void (*drain)());
 
 #endif

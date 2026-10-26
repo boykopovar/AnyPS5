@@ -100,10 +100,6 @@ void EmitSse(std::vector<std::uint8_t>& out, const std::uint8_t prefix, const st
     _emit(out, prefix, dst, src, opcode, static_cast<std::uint8_t>(kModRmRegister | ((dst & 7) << 3) | (src & 7)));
 }
 
-void EmitShiftImm(std::vector<std::uint8_t>& out, const std::uint8_t extension, const std::uint8_t reg, const std::uint8_t imm) {
-    _shiftImm(out, kShiftQwords, extension, reg, imm);
-}
-
 void StubBodyBuilder::Sse(const std::uint8_t prefix, const std::initializer_list<std::uint8_t> opcode, const std::uint8_t dst, const std::uint8_t src) {
     EmitSse(_bytes, prefix, opcode, dst, src);
 }
@@ -210,6 +206,8 @@ void StubBodyBuilder::MoveControlFlow(const std::span<const std::uint8_t> instru
     const auto end = _siteOffset + static_cast<std::int64_t>(instruction.size());
     if (info.FlowKind == ControlFlowKind::IndirectCall)
         throw CodegenException("A register or memory call cannot move into a stub");
+    if (info.TruncatesBranchTarget)
+        throw CodegenException("A relative branch with this prefix cannot move into a stub");
     if (info.FlowKind == ControlFlowKind::Call && info.HasRipRelativeDisp) {
         _pushReturnAddress(end);
         std::vector<std::uint8_t> jump(instruction.begin(), instruction.end());

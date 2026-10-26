@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "RdnaDecoder/RdnaInstruction.hpp"
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -8,6 +9,30 @@
 namespace ShaderRecompiler {
 
 namespace {
+
+bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
+    switch (inst.Opcode()) {
+    case IrOpcode::ImageQueryLod:
+    case IrOpcode::DppMoveU32:
+    case IrOpcode::DppUpdateU32:
+    case IrOpcode::SwizzleU32:
+    case IrOpcode::BpermuteU32:
+    case IrOpcode::PermuteU32:
+    case IrOpcode::Permlane16U32:
+    case IrOpcode::ReadLane:
+    case IrOpcode::ReadFirstLane:
+    case IrOpcode::Ballot:
+    case IrOpcode::WqmU64:
+        return true;
+    case IrOpcode::ImageSampleImplicitLod:
+    case IrOpcode::ImageSampleRaw: {
+        const auto flags = program.Resources().memoryInfo.at(inst.Flags<MemoryFlags>().index).imageSampleFlags;
+        return (flags & (RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLod | RdnaImageSampleFlagLevelZero)) == 0u;
+    }
+    default:
+        return false;
+    }
+}
 
 bool UniformSource(const IrValue& value) {
     switch (value.Opcode()) {
@@ -50,6 +75,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::DataConsume:
     case IrOpcode::LoadVectorWindow:
     case IrOpcode::DataOrderedCount:
+    case IrOpcode::DataOrderedSwap:
         return true;
     case IrOpcode::GetBuiltin: {
         const auto* kind = value.Argument(0)->Resolve();
@@ -319,7 +345,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             if (IsImageAtomic64Opcode(inst->Opcode())) {
                 requirements.imageInt64Atomics = true;
             }
-            if (IsFloat64Opcode(inst->Opcode())) {
+            if (inst->Opcode() == IrOpcode::FPInterpolateF32 || inst->Opcode() == IrOpcode::FPInterpolateF16) {
+                requirements.float64Interpolation = true;
+            } else if (IsFloat64Opcode(inst->Opcode())) {
                 requirements.float64 = true;
             }
             if (addressAccess != AddressAccess::None) {
@@ -348,6 +376,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
                 requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
+                const bool pair = inst->Opcode() == IrOpcode::LoadBufferU32x2 || inst->Opcode() == IrOpcode::StoreBufferU32x2;
+                requirements.coherentBufferPairs = requirements.coherentBufferPairs || (pair && memory.coherent && !memory.gpuDescriptor);
                 if (!memory.planningOnly) {
                     requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }
@@ -377,6 +407,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     requirements.subgroupLocalInvocationId = true;
                 }
             }
+            requirements.neighbourLaneReads = requirements.neighbourLaneReads || ReadsNeighbourLanes(program, *inst);
             switch (inst->Opcode()) {
             case IrOpcode::Ballot:
                 requirements.subgroupBallot = true;

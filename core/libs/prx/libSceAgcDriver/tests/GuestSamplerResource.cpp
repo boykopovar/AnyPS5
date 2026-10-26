@@ -94,6 +94,8 @@ struct SamplerCapture {
     const void* next = nullptr;
     VkSamplerReductionMode reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM;
     VkSamplerCreateFlags flags = 0;
+    bool anisotropyEnable = false;
+    float maxAnisotropy = 0.0f;
 };
 SamplerCapture samplerCapture;
 
@@ -107,6 +109,8 @@ VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCre
     samplerCapture.created = true;
     samplerCapture.next = info->pNext;
     samplerCapture.flags = info->flags;
+    samplerCapture.anisotropyEnable = info->anisotropyEnable == VK_TRUE;
+    samplerCapture.maxAnisotropy = info->maxAnisotropy;
     const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
     if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
     *sampler = fakeHandle<VkSampler>(0x5a);
@@ -174,14 +178,30 @@ void RunSamplerReductionTests(const Fields& base) {
     badFilterMode.filterMode = 3;
     rejectFields(badFilterMode, "unknown reduction filter mode 3");
     Fields anisoReduction = base;
-    anisoReduction.filterMode = 1;
-    anisoReduction.xyMagFilter = 3;
-    anisoReduction.xyMinFilter = 3;
     anisoReduction.maxAnisoRatio = 2;
     anisoReduction.mipFilter = 1;
-    rejectFields(anisoReduction, "min or max reduction with anisotropic filtering");
+    context.samplerAnisotropy = true;
+    context.limits.maxSamplerAnisotropy = 16.0f;
+    for (std::uint32_t mode = 1; mode < modes.size(); ++mode) {
+        for (const std::uint32_t filter : {2u, 3u}) {
+            anisoReduction.filterMode = mode;
+            anisoReduction.xyMagFilter = filter;
+            anisoReduction.xyMinFilter = filter;
+            const auto decoded = DecodeSamplerResource(pack(anisoReduction));
+            Require(decoded.reductionMode == modes.at(mode) && decoded.anisotropyEnable && decoded.maxAnisotropy == 4.0f, "anisotropic min or max sampler decoded incorrectly");
+            const auto created = createSampler(context, decoded);
+            Require(created.reductionMode == modes.at(mode), "an anisotropic min or max sampler did not chain its reduction mode");
+            Require(created.anisotropyEnable && created.maxAnisotropy == 4.0f, "an anisotropic min or max sampler lost its anisotropy");
+            Require(Sampler(context, decoded).RequiresFilterMinmax() == (filter == 3u), "anisotropic sampler min/max format requirement is wrong");
+        }
+    }
+    context.samplerAnisotropy = false;
+    context.limits.maxSamplerAnisotropy = 1.0f;
     anisoReduction.filterMode = 0;
     Require(DecodeSamplerResource(pack(anisoReduction)).anisotropyEnable, "anisotropic weighted-average sampler was rejected");
+    anisoReduction.filterMode = 1;
+    anisoReduction.mipFilter = 2;
+    rejectFields(anisoReduction, "min or max reduction with a linear mip filter");
 
     auto compared = captured;
     compared.compareEnable = true;
@@ -235,6 +255,11 @@ void RunSamplerReductionTests(const Fields& base) {
     maxLinearMip.filterMode = 2;
     maxLinearMip.mipFilter = 2;
     reject([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
+    Fields minAnisoPoint = minPoint;
+    minAnisoPoint.xyMagFilter = 2;
+    minAnisoPoint.xyMinFilter = 2;
+    minAnisoPoint.maxAnisoRatio = 1;
+    reject([&] { pointFiltered(pack(minAnisoPoint)); }, "needs point filtering");
 }
 
 void RunNonSeamlessCubeTests(const Fields& base) {

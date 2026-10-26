@@ -1,6 +1,8 @@
 import argparse
 import json
+import os
 import re
+import stat
 from pathlib import Path
 
 BODY_LIMIT = 125000
@@ -19,12 +21,23 @@ def release_body(notes):
 
 
 def prepare_notes(source, body, full):
+    paths = (source, body, full)
+    for index, first in enumerate(paths):
+        for second in paths[index + 1:]:
+            if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
+                raise ValueError("Release note input and outputs must be distinct files")
     notes = json.loads(source.read_text(encoding="utf-8"))["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
+    for destination in (body, full):
+        if destination.is_dir():
+            raise IsADirectoryError(str(destination))
+        if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+            raise PermissionError(f"Release note destination is read-only: {destination}")
+    body.parent.mkdir(parents=True, exist_ok=True)
     full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_text(notes, encoding="utf-8", newline="")
-    body.write_text(release_body(notes), encoding="utf-8", newline="")
+    full.write_bytes(notes.encode("utf-8"))
+    body.write_bytes(release_body(notes).encode("utf-8"))
 
 
 def main():

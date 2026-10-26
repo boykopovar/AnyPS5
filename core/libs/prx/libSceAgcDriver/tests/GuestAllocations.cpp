@@ -52,7 +52,42 @@ void leaseSnapshotTests() {
         const auto third = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         Require(&third[0] != &first[0] && std::any_of(third.begin(), third.end(), [&](const auto& range) { return range->address == address + 64; }), "a lease taken after a registry change still shares the old snapshot");
     }
-    Require(held.use_count() == 1, "a snapshot outlived its leases");
+    const auto* kept = &GuestAllocations::GuestAllocationsAcquire_nid_postfix()[0];
+    Require(&GuestAllocations::GuestAllocationsAcquire_nid_postfix()[0] == kept, "a lease taken after the others ended, without a registry change, rebuilt the snapshot");
+    Require(held.use_count() == 2, "the kept snapshot does not hold the range once");
+    {
+        GuestAllocations::Mutation mutation;
+    }
+    Require(held.use_count() == 1, "a snapshot outlived a registry change");
+    std::weak_ptr<const GuestAllocations::Range> readable;
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        const auto found = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64; });
+        Require(found != lease.end(), "the snapshot misses a readable range");
+        readable = *found;
+        Require(!GuestAllocations::GuestAllocationsAcquireAll_nid_postfix().empty(), "the snapshot of all ranges is empty");
+    }
+    Require(readable.use_count() == 3, "the kept snapshots do not hold a readable range once each");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data() + 64, 64, false, false, true, [] {});
+    }
+    Require(readable.expired(), "a kept snapshot holds a range that a protection change replaced");
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::none_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64; }), "a lease taken after a range turned unreadable returned the old snapshot");
+        const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+        const auto found = std::find_if(all.begin(), all.end(), [&](const auto& range) { return range->address == address + 64; });
+        Require(found != all.end() && !(*found)->readable && !(*found)->writable, "a lease of all ranges taken after a range turned unreadable returned the old snapshot");
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data() + 64, 64, true, true, true, [] {});
+    }
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64 && range->readable; }), "a lease taken after a range turned readable again returned the old snapshot");
+    }
     GuestAllocations::Mutation mutation;
     mutation.Remove(memory.data());
     mutation.Remove(memory.data() + 64);
@@ -223,6 +258,16 @@ void RunUnmappedGapTests() {
     Require(!GuestMemory::Accessible(reinterpret_cast<const void*>(std::uintptr_t{0x18}), 4), "a near-null address counts as accessible");
     munmap(block, page);
     munmap(block + 2 * page, page);
+    alignas(4096) static std::array<std::byte, 4096> imagePage{};
+    const auto imageAddress = reinterpret_cast<std::uintptr_t>(imagePage.data());
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a main image data page is not writable");
+    Require(mprotect(imagePage.data(), page, PROT_READ) == 0, "cannot protect the main image test page behind the registry");
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a checked main image page was queried again instead of read from the page table");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(imageAddress, page);
+    Require(!GuestMemory::Accessible(imagePage.data(), page, true) && GuestMemory::Accessible(imagePage.data(), page), "an invalidated main image page kept its old access");
+    Require(mprotect(imagePage.data(), page, PROT_READ | PROT_WRITE) == 0, "cannot restore the main image test page");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(imageAddress, page);
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a restored main image page is not writable");
     if (!GuestArena::GuestArenaAvailable_nid_postfix()) return;
     auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * page, page));
     Require(mmap(guest, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot map the arena page test pages");
@@ -253,6 +298,33 @@ void RunUnmappedGapTests() {
         mutation.Unmap(guest + page, page, release);
     }
     Require(!GuestMemory::Accessible(guest, page) && !GuestMemory::Accessible(guest + page, page), "unmapped arena pages are still accessible");
+    Require(mmap(guest, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot reserve the arena test page");
+    Require(!GuestMemory::Accessible(guest, page), "a reserved arena page is accessible");
+    Require(mprotect(guest, page, PROT_READ | PROT_WRITE) == 0, "cannot open the reserved arena test page behind the registry");
+    Require(!GuestMemory::Accessible(guest, page), "a checked inaccessible arena page was queried again instead of read from the page table");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(guest, page, true, true, true);
+    }
+    Require(GuestMemory::Accessible(guest, page, true), "an arena page added through the registry kept its inaccessible state");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(guest, page, [](const void* pointer, std::size_t bytes, const void*, bool) { Require(munmap(const_cast<void*>(pointer), bytes) == 0, "cannot unmap the arena test page"); });
+    }
     GuestArena::GuestArenaRelease_nid_postfix(guest, 2 * page);
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
+    auto* spare = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(page, page));
+    const auto spareAddress = reinterpret_cast<std::uintptr_t>(spare);
+    Require(!GuestMemory::Accessible(spare, page), "a reserved arena page is accessible");
+    GuestArena::GuestArenaCommit_nid_postfix(spare, page, ReadWriteProtection, page);
+    Require(GuestMemory::Accessible(spare, page, true), "an arena page committed outside the registry kept its inaccessible state");
+    GuestArena::GuestArenaReset_nid_postfix(spare, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
+    Require(!GuestMemory::Accessible(spare, page), "a reset arena page is still accessible");
+    GuestArena::GuestArenaSetProtection_nid_postfix(spareAddress, page, ReadWriteProtection);
+    Require(GuestMemory::Accessible(spare, page, true), "an arena page opened outside the registry kept its inaccessible state");
+    GuestArena::GuestArenaReset_nid_postfix(spare, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
+    GuestArena::GuestArenaRelease_nid_postfix(spare, page);
 #endif
 }

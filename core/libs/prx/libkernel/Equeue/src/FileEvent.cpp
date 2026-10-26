@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -165,6 +166,16 @@ struct Snapshot {
 };
 
 bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
+    std::wstring path(MAX_PATH, L'\0');
+    auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
+    if (length >= path.size()) {
+        path.resize(length);
+        length = ::GetFinalPathNameByHandleW(handle, path.data(), length, FILE_NAME_NORMALIZED);
+    }
+    if (length != 0 && length < path.size()) {
+        path.resize(length);
+        snapshot.path = std::move(path);
+    }
     FILE_BASIC_INFO basic{};
     FILE_STANDARD_INFO standard{};
     if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
@@ -178,21 +189,11 @@ bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
     snapshot.creation = basic.CreationTime.QuadPart;
     snapshot.lastWrite = basic.LastWriteTime.QuadPart;
     snapshot.change = basic.ChangeTime.QuadPart;
-    std::wstring path(MAX_PATH, L'\0');
-    auto length = ::GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED);
-    if (length >= path.size()) {
-        path.resize(length);
-        length = ::GetFinalPathNameByHandleW(handle, path.data(), length, FILE_NAME_NORMALIZED);
-    }
-    if (length != 0 && length < path.size()) {
-        path.resize(length);
-        snapshot.path = std::move(path);
-    }
     return true;
 }
 
 bool IsDeleted(const Snapshot& snapshot) {
-    return snapshot.deletePending || snapshot.links == 0;
+    return snapshot.deletePending || snapshot.links == 0 || snapshot.path.find(L"\\$Extend\\$Deleted\\") != std::wstring::npos;
 }
 
 std::vector<std::uint32_t> SnapshotHints(const Snapshot& before, const Snapshot& after, bool directory) {
@@ -212,13 +213,31 @@ std::vector<std::uint32_t> SnapshotHints(const Snapshot& before, const Snapshot&
     } else if (!directory && hints.empty() && after.change != before.change) {
         hints.push_back(NOTE_ATTRIB);
     }
-    if ((after.deletePending && !before.deletePending) || after.links < before.links) {
+    if ((after.deletePending && !before.deletePending) || after.links < before.links || (!IsDeleted(before) && IsDeleted(after))) {
         hints.push_back(NOTE_DELETE);
     }
     if (!after.path.empty() && after.path != before.path && !IsDeleted(after)) {
         hints.push_back(NOTE_RENAME);
     }
     return hints;
+}
+
+std::string hostPathText(const std::wstring& path) {
+    const int size = ::WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
+        return "<unprintable host path>";
+    }
+    std::string text(static_cast<std::size_t>(size), '\0');
+    if (::WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, text.data(), size, nullptr, nullptr) != size) {
+        return "<unprintable host path>";
+    }
+    text.pop_back();
+    return text;
+}
+
+std::string changeNotificationFailure(const char* watcher, const std::wstring& path, DWORD error) {
+    return "EVFILT_VNODE: the " + std::string(watcher) + " watch of \"" + hostPathText(path) +
+        "\" failed, FindFirstChangeNotification error=" + std::to_string(error);
 }
 
 HANDLE WatchParent(const std::wstring& path) {
@@ -230,16 +249,16 @@ HANDLE WatchParent(const std::wstring& path) {
     const HANDLE handle = ::FindFirstChangeNotificationW(parent.c_str(), FALSE, PARENT_CHANGES);
     const DWORD error = handle == INVALID_HANDLE_VALUE ? ::GetLastError() : ERROR_SUCCESS;
     if (handle == INVALID_HANDLE_VALUE && error != ERROR_INVALID_FUNCTION) {
-        throw std::runtime_error("EVFILT_VNODE: FindFirstChangeNotification failed, error=" + std::to_string(error));
+        throw std::runtime_error(changeNotificationFailure("parent", parent, error));
     }
     return handle;
 }
 
-HANDLE WatchContents(const std::wstring& path, DWORD changes) {
+HANDLE WatchContents(const std::wstring& path, DWORD changes, const char* watcher) {
     const HANDLE handle = ::FindFirstChangeNotificationW(path.c_str(), FALSE, changes);
     if (handle == INVALID_HANDLE_VALUE) {
         const DWORD error = ::GetLastError();
-        throw std::runtime_error("EVFILT_VNODE: FindFirstChangeNotification failed, error=" + std::to_string(error));
+        throw std::runtime_error(changeNotificationFailure(watcher, path, error));
     }
     return handle;
 }
@@ -350,10 +369,12 @@ int OpenHostWatch(int descriptor, std::uint32_t notes, HostWatch& host) {
         throw std::runtime_error("EVFILT_VNODE: reading the watched file failed, error=" + std::to_string(error));
     }
     try {
-        host.parent = WatchParent(host.last.path);
+        if (!IsDeleted(host.last)) {
+            host.parent = WatchParent(host.last.path);
+        }
         if (host.directory) {
-            host.entries = WatchContents(host.last.path, FILE_NOTIFY_CHANGE_FILE_NAME);
-            host.subdirectories = WatchContents(host.last.path, FILE_NOTIFY_CHANGE_DIR_NAME);
+            host.entries = WatchContents(host.last.path, FILE_NOTIFY_CHANGE_FILE_NAME, "entries");
+            host.subdirectories = WatchContents(host.last.path, FILE_NOTIFY_CHANGE_DIR_NAME, "subdirectories");
         }
     } catch (...) {
         CloseHostWatch(host);

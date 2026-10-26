@@ -98,8 +98,8 @@ public:
         for (const auto& [addressTag, sizeTag] : {std::pair{25, 27}, std::pair{26, 28}, std::pair{32, 33}}) {
             const auto array = value(addressTag, 0x60000000 + addressTag);
             const auto size = value(sizeTag, 0x60000000 + sizeTag);
-            if (array.has_value() != size.has_value()) throw RelinkerException("Strict filter: incomplete constructor array metadata");
-            if (!array) continue;
+            if (size && !array) throw RelinkerException("Strict filter: incomplete constructor array metadata");
+            if (!size || *size == 0) continue;
             if (*size % 8 != 0) throw RelinkerException("Strict filter: invalid constructor array size", *array);
             for (std::uint64_t offset = 0; offset < *size; offset += 8) {
                 const auto slot = *array + offset;

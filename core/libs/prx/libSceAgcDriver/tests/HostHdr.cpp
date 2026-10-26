@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -125,6 +126,29 @@ void hostState() {
     Expect(!AgcDriver::CurrentHostHdr().available, "a display switched to SDR leaves HDR output available");
 }
 
+void forceSdr() {
+    resetHost();
+#ifdef _WIN32
+    _putenv_s("APS5_FORCE_SDR", "1");
+#else
+    setenv("APS5_FORCE_SDR", "1", 1);
+#endif
+    AgcDriverSetSurfaceHdr10_nid_postfix(true);
+    AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::DisplayHdrFromOutput(true, 800.0f, 0.01f, 400.0f));
+    const auto forced = AgcDriver::CurrentHostHdr();
+    Expect(!forced.available && forced.display.hdr && forced.surfaceHdr10, "forcing SDR does not suppress HDR availability while preserving host capabilities");
+    Expect(AgcDriver::ToneMapPeakNits(forced) == 100.0f, "forcing SDR does not report SDR reference white");
+#ifdef _WIN32
+    _putenv_s("APS5_FORCE_SDR", "");
+#else
+    unsetenv("APS5_FORCE_SDR");
+#endif
+    AgcDriverSetSurfaceHdr10_nid_postfix(true);
+    const auto restored = AgcDriver::CurrentHostHdr();
+    Expect(restored.available && restored.generation != forced.generation, "removing the SDR override does not restore HDR availability");
+    resetHost();
+}
+
 void reportedWhiteLevel() {
     resetHost();
     constexpr std::uint64_t rgbPq = 0x8100070422000000ull;
@@ -158,6 +182,7 @@ int main() {
     whiteLevels();
     hostState();
     reportedWhiteLevel();
+    forceSdr();
     if (failures != 0) return 1;
     std::puts("host HDR tests passed");
     return 0;

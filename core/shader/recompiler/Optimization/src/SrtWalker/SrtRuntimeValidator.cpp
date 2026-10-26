@@ -54,7 +54,7 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         }
     }
     if (!requireUniform) return finish(ValidateArguments(inst, false));
-    if (_activeMask != nullptr && IsRuntimeSelect(op) && inst.ArgumentCount() == 3 && inst.Argument(0)->Resolve() == _activeMask) {
+    if (_activeMask != nullptr && IsRuntimeSelect(op) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
         if (_type == RuntimeValueType::Integer && !Validate(inst.Argument(2), false)) {
             return finish(false);
         }

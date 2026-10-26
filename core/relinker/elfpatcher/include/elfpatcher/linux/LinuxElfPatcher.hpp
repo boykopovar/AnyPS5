@@ -14,6 +14,8 @@
 
 namespace Elfpatcher::Linux {
 
+inline constexpr std::uint64_t DefaultFixedBase = 0x400000;
+
 class LinuxElfPatcher : public IElfPatcher {
 public:
     LinuxElfPatcher(
@@ -21,7 +23,8 @@ public:
         std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
         std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,
         std::shared_ptr<Io::IByteWriter> byteWriter,
-        std::optional<std::uint64_t> fixedBase = std::nullopt
+        std::optional<std::uint64_t> fixedBase = std::nullopt,
+        bool traceImports = false
     );
 
     std::vector<std::uint8_t> Patch(
@@ -41,6 +44,7 @@ private:
     std::shared_ptr<ISectionHeaderTableBuilder> _sectionHeaderTableBuilder;
     std::shared_ptr<Io::IByteWriter> _byteWriter;
     std::optional<std::uint64_t> _fixedBase;
+    bool _traceImports;
 
     void _appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const;
     void _appendTrampoline(std::vector<std::uint8_t>& buf, const Codegen::TrampolineSite& site, std::uint64_t extraBlockOffset, const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const;

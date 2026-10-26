@@ -28,6 +28,13 @@ struct KeyDomain {
     bool operator==(const KeyDomain& other) const = default;
 };
 
+struct PointerHop {
+    std::uint32_t offset = 0;
+    std::uint32_t immediate = 0;
+
+    bool operator==(const PointerHop& other) const = default;
+};
+
 struct TableColumn {
     std::uint32_t heapSource = 0;
     std::uint32_t stride = 0;
@@ -42,11 +49,14 @@ struct TableColumn {
     bool indirect = false;
     std::uint32_t indirectOffset = 0;
     std::uint32_t indirectImmediate = 0;
+    std::vector<PointerHop> pointerHops;
     std::uint32_t foldedAddend = 0;
     std::uint32_t foldedCarry = 0;
+    bool selected = false;
+    std::uint32_t selection = 0;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection;
     }
 };
 
@@ -78,6 +88,7 @@ struct ResourceBlock {
     std::vector<std::uint32_t> successors;
     std::vector<std::uint32_t> sources;
     std::vector<std::uint32_t> images;
+    std::vector<std::uint32_t> flatSlots;
 };
 
 }

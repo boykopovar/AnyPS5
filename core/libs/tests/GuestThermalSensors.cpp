@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -11,9 +12,7 @@
 
 extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
-int APS5_VABI sceKernelGetCpuTemperature(int* outCelsius);
-int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius);
-int APS5_VABI sceKernelGetSocPowerConsumption(void* consumption);
+
 }
 
 static void Require(bool value) {
@@ -73,6 +72,9 @@ int main() {
     int probe = -12345;
     const int result = sceKernelGetSocSensorTemperature(0, &probe);
     Require(result == 0 ? (probe >= 0 && probe <= 130) : (result == SCE_KERNEL_ERROR_EINVAL && probe == -12345));
+    int cpuProbe = -12345;
+    const int cpuResult = sceKernelGetCpuTemperature(&cpuProbe);
+    Require(cpuResult == 0 ? (cpuProbe >= 0 && cpuProbe <= 130) : (cpuResult == SCE_KERNEL_ERROR_EINVAL && cpuProbe == -12345));
 
     Require(sceKernelGetSocPowerConsumption(nullptr) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t consumption[32];

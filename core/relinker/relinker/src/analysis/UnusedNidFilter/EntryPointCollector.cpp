@@ -39,7 +39,7 @@ struct LoadSegment {
 };
 
 bool inText(VirtualAddress va, VirtualAddress textVaddr, std::size_t textSize) {
-    return va >= textVaddr && va < textVaddr + static_cast<VirtualAddress>(textSize);
+    return va >= textVaddr && va - textVaddr < static_cast<VirtualAddress>(textSize);
 }
 
 }
@@ -52,6 +52,9 @@ public:
         std::size_t textSize,
         const IRelativeRelocationIndex& relativeRelocations
     ) const override {
+        if (textSize > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+            throw RelinkerException("Text section range exceeds the address space");
+        }
         if (elfBytes.size() < 64) throw RelinkerException("ELF too small for header");
         if (elfBytes[0] != 0x7f || elfBytes[1] != 'E' ||
             elfBytes[2] != 'L' || elfBytes[3] != 'F') {

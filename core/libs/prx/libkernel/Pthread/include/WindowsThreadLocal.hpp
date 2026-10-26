@@ -8,6 +8,7 @@ template<class T>
 class WindowsThreadLocal {
 public:
     static T& Get() {
+        const DWORD slot = slotIndex();
         if (slot == FLS_OUT_OF_INDEXES) throw std::runtime_error("Cannot allocate native thread state slot");
         if (auto* value = static_cast<T*>(FlsGetValue(slot))) return *value;
         auto value = std::make_unique<T>();
@@ -17,10 +18,13 @@ public:
 
 private:
     static void WINAPI Destroy(void* value) {
-        FlsSetValue(slot, value);
+        FlsSetValue(slotIndex(), value);
         delete static_cast<T*>(value);
-        FlsSetValue(slot, nullptr);
+        FlsSetValue(slotIndex(), nullptr);
     }
-    inline static const DWORD slot = FlsAlloc(Destroy);
+    static DWORD slotIndex() {
+        static const DWORD slot = FlsAlloc(Destroy);
+        return slot;
+    }
 };
 #endif

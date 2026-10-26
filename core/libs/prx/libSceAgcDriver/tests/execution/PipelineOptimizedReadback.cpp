@@ -268,6 +268,9 @@ int main(int argc, char** argv) {
         OptimizationDrain drain{context.device};
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         Run(*device, context, trace, mode == "color32" ? 32u : 64u, masked ? VK_FORMAT_UNDEFINED : (mode == "d16" ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT), optimize);
+        if (optimize) Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 1, "the optimized pipeline was not built on the pipeline library worker");
+        AgcDriver::Graphics::StopPipelineLibraryWorker();
+        Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "stopping the pipeline library left its worker running");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

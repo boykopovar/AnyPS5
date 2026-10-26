@@ -2,8 +2,11 @@
 #define CORE_SHADER_RECOMPILIER_OPTIMIZATION_INCLUDE_OPTIMIZATION_SRTWALKER_HPP
 
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "UserDataUse.hpp"
 
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -13,6 +16,51 @@ namespace ShaderRecompiler {
 using SrtMemoryReader = bool (*)(void* userData, std::uint64_t address, std::uint32_t* value);
 using SrtMemoryProbe = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
 using SrtMemoryBulkReader = bool (*)(void* userData, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
+
+struct SrtWriteStamp {
+    std::uint64_t generation = 0;
+    std::uint64_t layout = 0;
+};
+
+struct SrtStampCell {
+    std::atomic<std::uint64_t> sequence{0};
+    std::atomic<std::uint64_t> generation{0};
+    std::atomic<std::uint64_t> layout{0};
+};
+
+struct SrtGuestWords {
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
+    std::vector<std::uint32_t> words;
+    std::shared_ptr<SrtStampCell> stamp;
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+    bool ordered = false;
+};
+
+inline SrtWriteStamp LoadStamp(const SrtGuestWords& words) {
+    if (words.stamp == nullptr) return {};
+    const auto& cell = *words.stamp;
+    const auto sequence = cell.sequence.load(std::memory_order_acquire);
+    if ((sequence & 1u) != 0u) return {};
+    const SrtWriteStamp stamp{cell.generation.load(std::memory_order_relaxed), cell.layout.load(std::memory_order_relaxed)};
+    std::atomic_thread_fence(std::memory_order_acquire);
+    return cell.sequence.load(std::memory_order_relaxed) == sequence ? stamp : SrtWriteStamp{};
+}
+
+inline void StoreStamp(const SrtGuestWords& words, const SrtWriteStamp& stamp) {
+    if (words.stamp == nullptr || stamp.generation == 0u) return;
+    auto& cell = *words.stamp;
+    auto sequence = cell.sequence.load(std::memory_order_relaxed);
+    if ((sequence & 1u) != 0u || !cell.sequence.compare_exchange_strong(sequence, sequence + 1u, std::memory_order_relaxed)) return;
+    std::atomic_thread_fence(std::memory_order_release);
+    cell.generation.store(stamp.generation, std::memory_order_relaxed);
+    cell.layout.store(stamp.layout, std::memory_order_relaxed);
+    cell.sequence.store(sequence + 2u, std::memory_order_release);
+}
+
+using SrtMemoryStamper = SrtWriteStamp (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
+using SrtMemoryUnchanged = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes, const SrtWriteStamp& stamp);
+using SrtMemorySupplier = bool (*)(void* userData, const std::shared_ptr<const SrtGuestWords>& words);
 
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
@@ -35,6 +83,10 @@ struct SrtRuntime {
     SrtMemoryProbe accessible = nullptr;
     SrtMemoryProbe pendingWrite = nullptr;
     SrtMemoryBulkReader readWords = nullptr;
+    SrtMemoryStamper stampWrites = nullptr;
+    SrtMemoryUnchanged unchangedSince = nullptr;
+    SrtMemorySupplier supplyWords = nullptr;
+    SrtUserDataUse* userDataUse = nullptr;
 };
 
 enum class RuntimeValueType {

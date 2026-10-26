@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
@@ -52,8 +54,12 @@ struct LibraryStore {
     std::condition_variable work;
     std::deque<std::pair<VkDevice, std::function<void()>>> jobs;
     std::map<VkDevice, std::size_t> pending;
-    bool started = false;
+    std::map<VkDevice, std::size_t> activeBuilds;
+    std::thread worker;
+    bool stopping = false;
 };
+
+std::atomic<unsigned> runningWorkers{0};
 
 LibraryStore& Libraries() {
     static auto* store = new LibraryStore();
@@ -63,7 +69,8 @@ LibraryStore& Libraries() {
 void runJobs(LibraryStore& store) {
     std::unique_lock lock(store.mutex);
     for (;;) {
-        store.work.wait(lock, [&] { return !store.jobs.empty(); });
+        store.work.wait(lock, [&] { return !store.jobs.empty() || store.stopping; });
+        if (store.stopping) break;
         auto [device, job] = std::move(store.jobs.front());
         store.jobs.pop_front();
         lock.unlock();
@@ -71,15 +78,18 @@ void runJobs(LibraryStore& store) {
         lock.lock();
         if (--store.pending[device] == 0) store.idle.notify_all();
     }
+    runningWorkers.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
-    if (!store.started) {
-        std::thread(runJobs, std::ref(store)).detach();
-        store.started = true;
+    if (store.stopping) return;
+    if (!store.worker.joinable()) {
+        store.worker = std::thread(runJobs, std::ref(store));
+        runningWorkers.fetch_add(1, std::memory_order_acq_rel);
     }
-    ++store.pending[device];
+    auto& pending = store.pending[device];
     store.jobs.emplace_back(device, std::move(job));
+    ++pending;
     store.work.notify_one();
 }
 
@@ -108,6 +118,16 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     Require(!split || (layout.setLayoutCount == 2u && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~3u) == 0u), "split pipeline library layout requires two descriptor set slots and a valid mask");
     auto& store = Libraries();
     std::unique_lock lock(store.mutex);
+    ++store.activeBuilds[context.device];
+    struct ActiveBuild {
+        LibraryStore& store;
+        VkDevice device;
+        std::unique_lock<std::mutex>& lock;
+        ~ActiveBuild() {
+            if (!lock.owns_lock()) lock.lock();
+            if (--store.activeBuilds[device] == 0) store.idle.notify_all();
+        }
+    } activeBuild{store, context.device, lock};
     auto& device = store.devices[context.device];
     if (device.destroyPipeline == nullptr) {
         device.destroyPipeline = context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline");
@@ -204,13 +224,16 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             break;
         }
         VkPipeline handle = VK_NULL_HANDLE;
-        if (partsOnly) lock.unlock();
+        // Built without the store's mutex: a draw whose parts are resident is not held behind
+        // another thread's build, and builds from several threads (the registration prebuild, the
+        // journal replay) run at once; a part another thread built meanwhile is kept, this one dropped.
+        lock.unlock();
         VkResult created;
         {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             created = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &create, nullptr, &handle);
         }
-        if (partsOnly) lock.lock();
+        lock.lock();
         Check(created, "vkCreateGraphicsPipelines library");
         if (const auto raced = cache.find(key); raced != cache.end()) {
             device.destroyPipeline(context.device, handle, nullptr);
@@ -232,16 +255,32 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     }
     if (partsOnly) return VK_NULL_HANDLE;
     PerformanceTimer timing("Vulkan.GraphicsPipelineLink");
+    std::optional<std::pair<std::vector<VkSampleCountFlagBits>, VkSampleCountFlagBits>> sampleCounts;
+    for (auto* next = static_cast<const VkBaseInStructure*>(rendering.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV) continue;
+        const auto& counts = *reinterpret_cast<const VkAttachmentSampleCountInfoNV*>(next);
+        sampleCounts.emplace(std::vector<VkSampleCountFlagBits>(counts.pColorAttachmentSamples, counts.pColorAttachmentSamples + counts.colorAttachmentCount), counts.depthStencilAttachmentSamples);
+    }
+    const auto attachmentSamples = [](const std::pair<std::vector<VkSampleCountFlagBits>, VkSampleCountFlagBits>& counts) {
+        return VkAttachmentSampleCountInfoNV{VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV, nullptr, static_cast<std::uint32_t>(counts.first.size()), counts.first.empty() ? nullptr : counts.first.data(), counts.second};
+    };
+    auto linkedSamples = sampleCounts ? attachmentSamples(*sampleCounts) : VkAttachmentSampleCountInfoNV{};
     VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
     linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
     linked.pLibraries = libraries.data();
     VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
+    if (sampleCounts) {
+        linkedSamples.pNext = create.pNext;
+        create.pNext = &linkedSamples;
+    }
     create.layout = info.layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    lock.unlock();
     {
         auto pipelineCacheLock = context.LockPipelineCacheForUse();
         Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &create, nullptr, &pipeline), "vkCreateGraphicsPipelines link");
     }
+    lock.lock();
     ++device.counters.linked;
     if (optimize && optimized != nullptr) {
         auto slot = std::make_shared<OptimizedPipeline>();
@@ -252,12 +291,17 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         const auto cache = context.pipelineCache;
         const auto cacheSynchronization = context.pipelineCacheSynchronization;
         const auto libraryLayout = fullLayout;
-        enqueue(store, context.device, [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, &store, devicePointer = &device] {
+        std::function<void()> relink = [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, sampleCounts, attachmentSamples, &store, devicePointer = &device] {
             if (slot->released.load()) return;
+            auto linkedSamples = sampleCounts ? attachmentSamples(*sampleCounts) : VkAttachmentSampleCountInfoNV{};
             VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
             linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
             linked.pLibraries = libraries.data();
             VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
+            if (sampleCounts) {
+                linkedSamples.pNext = create.pNext;
+                create.pNext = &linkedSamples;
+            }
             create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
             create.layout = libraryLayout;
             VkPipeline result = VK_NULL_HANDLE;
@@ -272,7 +316,13 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             }
             std::lock_guard lock(store.mutex);
             ++devicePointer->counters.optimized;
-        });
+        };
+        if (PipelineJournalReplaying()) {
+            slot->relink = std::move(relink);
+            slot->deferred.store(true, std::memory_order_release);
+        } else {
+            enqueue(store, context.device, std::move(relink));
+        }
     }
     return pipeline;
 }
@@ -280,6 +330,15 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
 void OptimizedPipeline::Release() noexcept {
     released.store(true);
     if (const auto pipeline = handle.exchange(VK_NULL_HANDLE)) destroy(device, pipeline, nullptr);
+}
+
+void OptimizedPipeline::Schedule() {
+    if (!deferred.load(std::memory_order_acquire)) return;
+    auto& store = Libraries();
+    std::lock_guard lock(store.mutex);
+    if (!deferred.exchange(false, std::memory_order_acq_rel)) return;
+    if (relink && !released.load()) enqueue(store, device, std::move(relink));
+    relink = nullptr;
 }
 
 void WaitForOptimizedPipelines(VkDevice device) {
@@ -291,7 +350,7 @@ void WaitForOptimizedPipelines(VkDevice device) {
 void ClearPipelineLibraries(VkDevice device) {
     auto& store = Libraries();
     std::unique_lock lock(store.mutex);
-    store.idle.wait(lock, [&] { return store.pending[device] == 0; });
+    store.idle.wait(lock, [&] { return store.pending[device] == 0 && store.activeBuilds[device] == 0; });
     const auto found = store.devices.find(device);
     if (found == store.devices.end()) return;
     auto& libraries = found->second;
@@ -301,6 +360,27 @@ void ClearPipelineLibraries(VkDevice device) {
     for (const auto& [key, handle] : libraries.layouts) libraries.destroyLayout(device, handle, nullptr);
     for (const auto module : libraries.modules) libraries.destroyModule(device, module, nullptr);
     store.devices.erase(found);
+}
+
+void StopPipelineLibraryWorker() {
+    auto& store = Libraries();
+    std::thread worker;
+    {
+        std::lock_guard lock(store.mutex);
+        store.stopping = true;
+        for (const auto& [device, job] : store.jobs) --store.pending[device];
+        store.jobs.clear();
+        worker = std::move(store.worker);
+    }
+    store.idle.notify_all();
+    store.work.notify_all();
+    if (!worker.joinable()) return;
+    if (worker.get_id() == std::this_thread::get_id()) worker.detach();
+    else worker.join();
+}
+
+unsigned PipelineLibraryWorkers() {
+    return runningWorkers.load(std::memory_order_acquire);
 }
 
 PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device) {

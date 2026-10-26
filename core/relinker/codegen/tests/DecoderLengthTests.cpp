@@ -1,4 +1,5 @@
 #include "DecoderLengthCases.hpp"
+#include "DecoderMetadataCases.hpp"
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <cstdint>
@@ -77,10 +78,73 @@ int main() {
             } catch (const Codegen::CodegenException&) {
             }
         }
+        for (const auto& testCase : kDecoderRipRelativeCases) {
+            const std::string name = testCase.Bytes;
+            auto bytes = parse(testCase.Bytes);
+            require(bytes.size() == testCase.Length, "RIP-relative case " + name + " does not hold its own length");
+            bytes.insert(bytes.end(), 15, 0x90);
+            require(decodedLength(decoder, bytes, name) == testCase.Length, "Wrong length for " + name);
+            const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+            require(info.HasRipRelativeDisp, "RIP-relative operand of " + name + " was not reported");
+            require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
+        }
+        for (const auto& testCase : kDecoderBranchCases) {
+            const std::string name = testCase.Bytes;
+            auto bytes = parse(testCase.Bytes);
+            require(bytes.size() == testCase.Length, "Branch case " + name + " does not hold its own length");
+            bytes.insert(bytes.end(), 15, 0x90);
+            const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+            require(info.Length == testCase.Length, "Wrong length for " + name);
+            require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
+            require(info.HasBranchTarget == testCase.HasBranchTarget, "Wrong branch target presence for " + name);
+            require(!testCase.HasBranchTarget || info.BranchDisp == testCase.BranchDisp, "Wrong branch displacement for " + name);
+        }
+        for (const auto& testCase : kDecoderTruncatedBranchCases) {
+            const std::string name = testCase.Bytes;
+            auto bytes = parse(testCase.Bytes);
+            require(bytes.size() == testCase.Length, "Truncated branch case " + name + " does not hold its own length");
+            bytes.insert(bytes.end(), 15, 0x90);
+            const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+            require(info.Length == testCase.Length, "Wrong length for " + name);
+            require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
+            require(info.TruncatesBranchTarget && !info.HasBranchTarget, "Branch target of " + name + " was reported without its 16-bit truncation");
+        }
+        for (const auto& testCase : kDecoderBranchCases) {
+            const auto bytes = parse(testCase.Bytes);
+            require(!decoder.DecodeInstruction(bytes.data(), bytes.size()).TruncatesBranchTarget, "Branch target of " + std::string(testCase.Bytes) + " was reported as truncated");
+        }
         const auto threeDNow = parse("0f0f0d11223344a6");
         const auto threeDNowInfo = decoder.DecodeInstruction(threeDNow.data(), threeDNow.size());
         require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
         require(threeDNowInfo.HasRipRelativeDisp && threeDNowInfo.RipRelativeDispOffset == 3, "3DNow! RIP-relative displacement was not reported");
+        for (const auto& testCase : std::vector<std::pair<const char*, bool>>{
+            {"6590", false},
+            {"654889c8", false},
+            {"658d0511111111", false},
+            {"650f1f0511111111", false},
+            {"65488b0c2578030000", true},
+            {"65a4", true},
+            {"650fa2", false},
+            {"650ff7c1", true},
+            {"65660ff7c1", true},
+            {"65c5f9f7c1", true},
+            {"65c4e179f7c1", true},
+            {"650f01c8", true},
+            {"650f01fa", true},
+            {"650f01fc", true},
+            {"650f01c9", false},
+            {"650f01fd", false},
+            {"65f30faef0", true},
+            {"f20faef0", false},
+            {"660faef0", false},
+            {"f30faee8", false},
+            {"ff10", true},
+            {"ffe0", false},
+        }) {
+            const auto bytes = parse(testCase.first);
+            require(decoder.DecodeInstruction(bytes.data(), bytes.size()).HasMemoryOperand == testCase.second,
+                    "Wrong memory operand presence for " + std::string(testCase.first));
+        }
         std::cout << "Decoder length tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

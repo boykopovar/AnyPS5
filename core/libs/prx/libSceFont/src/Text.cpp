@@ -1,3 +1,4 @@
+#include "prx/libSceFont/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -20,6 +21,7 @@ constexpr std::uint16_t FONT_STRING_MAGIC = 0x0F05;
 constexpr std::uint16_t FONT_WRITING_MAGIC = 0x0F06;
 constexpr std::uint16_t CREATE_STRING_DETAIL_ID = 0x0FD4;
 constexpr std::uint32_t WRITING_FORM_HORIZONTAL = 0x10;
+constexpr std::uint32_t WRITING_FORM_HORIZONTAL_RTL = 0x11;
 constexpr std::uint32_t WRITING_FORM_HORIZONTAL_LTR = 0x12;
 constexpr std::int32_t PARSER_RESULT_ERROR = -1;
 constexpr std::int32_t PARSER_RESULT_TERMINATE = 0;
@@ -143,6 +145,37 @@ FontTextCharacter* TextCharacters(FontStringData* data) {
     return data && data->storage && !data->storage->characters.empty() ? data->storage->characters.data() : nullptr;
 }
 
+bool IsRightToLeftLetter(std::uint32_t code) {
+    if ((code >= 0x0660u && code <= 0x0669u) || (code >= 0x06F0u && code <= 0x06F9u)) return false;
+    return (code >= 0x0590u && code <= 0x08FFu) || (code >= 0xFB1Du && code <= 0xFDFFu) || (code >= 0xFE70u && code <= 0xFEFFu) ||
+           (code >= 0x10800u && code <= 0x10FFFu) || (code >= 0x1E800u && code <= 0x1EFFFu);
+}
+
+bool IsDirectionNeutral(std::uint32_t code) {
+    return code < 0x41u || (code >= 0x5Bu && code <= 0x60u) || (code >= 0x7Bu && code <= 0xBFu) || code == 0xD7u || code == 0xF7u ||
+           (code >= 0x2000u && code <= 0x2BFFu) || (code >= 0x3000u && code <= 0x3004u) || (code >= 0xFF00u && code <= 0xFF20u);
+}
+
+std::uint32_t DefaultStringForm(const std::vector<FontTextCharacter>& characters) {
+    std::uint32_t isolateDepth = 0;
+    for (const FontTextCharacter& character : characters) {
+        const std::uint32_t code = character.characterCode;
+        if (code >= 0x2066u && code <= 0x2068u) {
+            ++isolateDepth;
+            continue;
+        }
+        if (code == 0x2069u) {
+            if (isolateDepth != 0) --isolateDepth;
+            continue;
+        }
+        if (isolateDepth != 0) continue;
+        if (code == 0x200Eu) return WRITING_FORM_HORIZONTAL_LTR;
+        if (code == 0x200Fu || IsRightToLeftLetter(code)) return WRITING_FORM_HORIZONTAL_RTL;
+        if (!IsDirectionNeutral(code)) return WRITING_FORM_HORIZONTAL_LTR;
+    }
+    return WRITING_FORM_HORIZONTAL_LTR;
+}
+
 std::uint32_t LevelOf(const FontTextCharacter* character) {
     return static_cast<std::uint32_t>((character->flags >> 24) & 0xFFu);
 }
@@ -206,6 +239,20 @@ void AccumulateWritingMetrics(FontWritingData& writing) {
     writing.metrics.Extent.right = std::max(previous.Extent.right, right);
     writing.metrics.Extent.top = std::min(previous.Extent.top, top);
     writing.metrics.Extent.bottom = std::max(previous.Extent.bottom, bottom);
+}
+
+constexpr std::size_t TEXT_CODES_CURRENT = 5;
+constexpr std::size_t TEXT_CODES_START = 6;
+constexpr std::size_t TEXT_CODES_TERM = 7;
+
+void StepTextCodes(FontTextCodes* textCodes, const FontTextCharacter* character) {
+    textCodes->text.order = character->textOrder;
+    textCodes->text.code = character->characterCode;
+    textCodes->systemUse[TEXT_CODES_CURRENT] = const_cast<FontTextCharacter*>(character);
+}
+
+const FontTextCharacter* TextCodesCharacter(const FontTextCodes* textCodes, std::size_t slot) {
+    return static_cast<const FontTextCharacter*>(textCodes->systemUse[slot]);
 }
 
 }
@@ -312,6 +359,7 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
         fontMemory->iface->dealloc(fontMemory->mspace_handle, raw);
         return state;
     }
+    if (data->writingForm == WRITING_FORM_HORIZONTAL) data->writingForm = DefaultStringForm(data->storage->characters);
     LinkCharacters(data->storage->characters);
     data->textCount = static_cast<std::uint32_t>(data->storage->characters.size());
     data->renderCount = data->textCount;
@@ -549,6 +597,39 @@ FontTextCharacter* APS5_VABI sceFontCharacterRefersTextNext(const FontTextCharac
         if (current->synthetic == 0 && current->clusterIndex == 0) return current;
     }
     return nullptr;
+}
+
+FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacter* textCharacter, const FontTextCharacter* termCharacter, FontTextCodes* textCodes) {
+    if (!textCodes) return nullptr;
+    if (!textCharacter) throw std::runtime_error("libSceFont: sceFontCharactersRefersTextCodes without a text character");
+    if (textCharacter->clusterIndex != 0 || textCharacter->synthetic != 0) return nullptr;
+    std::memset(textCodes, 0, sizeof(FontTextCodes));
+    StepTextCodes(textCodes, textCharacter);
+    textCodes->systemUse[TEXT_CODES_START] = const_cast<FontTextCharacter*>(textCharacter);
+    textCodes->systemUse[TEXT_CODES_TERM] = const_cast<FontTextCharacter*>(termCharacter);
+    return textCodes;
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes* textCodesStep) {
+    if (!textCodesStep) return nullptr;
+    const FontTextCharacter* current = TextCodesCharacter(textCodesStep, TEXT_CODES_CURRENT);
+    if (!current || current == TextCodesCharacter(textCodesStep, TEXT_CODES_TERM)) return nullptr;
+    const FontTextCharacter* next = current->next;
+    while (next && next->synthetic != 0) next = next->next;
+    if (!next) return nullptr;
+    StepTextCodes(textCodesStep, next);
+    return textCodesStep;
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepBack(FontTextCodes* textCodesStep) {
+    if (!textCodesStep) return nullptr;
+    const FontTextCharacter* current = TextCodesCharacter(textCodesStep, TEXT_CODES_CURRENT);
+    if (!current || current == TextCodesCharacter(textCodesStep, TEXT_CODES_START)) return nullptr;
+    const FontTextCharacter* previous = current->prev;
+    while (previous && previous->synthetic != 0) previous = previous->prev;
+    if (!previous) return nullptr;
+    StepTextCodes(textCodesStep, previous);
+    return textCodesStep;
 }
 
 int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString, const FontTextCharacter* fontCharacter) {

@@ -1,8 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -109,7 +112,6 @@ extern "C" void ForgetUnloadedUnwindImages_nid_no_patch() {
   for (const auto base : unloaded) UnwindImages().erase(base);
 }
 #elif !defined(__APPLE__)
-extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 
 namespace {
 struct ImageSearch {
@@ -140,7 +142,7 @@ bool IsRelinkedImage(std::uint64_t address) {
 void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
   ModuleInfoEx module{};
   module.st_size = sizeof(ModuleInfoEx);
-  if (sceKernelGetModuleInfoFromAddr(address, 2, &module) != 0)
+  if (sceKernelGetModuleInfoFromAddr(address, 1, &module) != 0)
     throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to query guest module information");
   info->eh_frame_hdr_addr = module.eh_frame_hdr_addr;
   info->eh_frame_addr = module.eh_frame_addr;
@@ -149,14 +151,19 @@ void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
 }
 #endif
 
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name);
-int APS5_VABI dlclose_nid_postfix(void* handle);
-}
-
 namespace {
 constexpr int kRtldNow = 2;
+
+std::optional<std::string> SystemLibraryPath(std::string_view path) {
+    const std::string sandbox = std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/lib/";
+    for (const std::string_view prefix : {std::string_view("/system/common/lib/"), std::string_view(sandbox)}) {
+        if (!path.starts_with(prefix)) continue;
+        const auto name = path.substr(prefix.size());
+        if (name.size() <= 5 || !name.ends_with(".sprx") || name.find('/') != std::string_view::npos) return std::nullopt;
+        return "libs/" + std::string(name.substr(0, name.size() - 5)) + ".prx";
+    }
+    return std::nullopt;
+}
 }
 
 extern "C" {
@@ -281,7 +288,8 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
  pendingModuleInitResult = 0;
- void* handle = dlopen_nid_postfix(module_file_name, kRtldNow);
+ const auto systemLibrary = SystemLibraryPath(module_file_name);
+ void* handle = dlopen_nid_postfix(systemLibrary ? systemLibrary->c_str() : module_file_name, kRtldNow);
  const int started = pendingModuleInitResult;
  pendingModuleArgs = {};
  pendingModuleInitResult = 0;
@@ -306,6 +314,17 @@ extern "C" {
 int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* addr) {
     if (phdrInfo == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: phdr_info is null");
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
+
+    const auto* module = reinterpret_cast<const ModuleInfoEx*>(phdrInfo);
+    if (module->st_size == sizeof(ModuleInfoEx)) {
+        for (std::uint32_t i = 0; i < module->segment_count && i < std::size(module->segments); ++i) {
+            const auto& segment = module->segments[i];
+            if ((segment.prot & 4) == 0 || segment.size < sizeof(addr)) continue;
+            if (segment.address <= address && address - segment.address <= segment.size - sizeof(addr)) return 1;
+        }
+        return 0;
+    }
+
     for (std::uint16_t i = 0; i < phdrInfo->dlpi_phnum; ++i) {
         const Elf64_Phdr& header = phdrInfo->dlpi_phdr[i];
         if (header.p_type != PT_LOAD || (header.p_flags & PF_X) == 0) continue;

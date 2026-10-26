@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
@@ -37,6 +38,16 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#ifndef _WIN32
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+#endif
 
 namespace {
 
@@ -447,12 +458,481 @@ void DitheredCoverage(AgcDriver::VulkanDevice& device) {
     AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
 }
 
+void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    const auto expectRange = [](std::string_view message, const char* plane, std::uint64_t address, std::size_t bytes, std::uint32_t samples) {
+        char detail[160];
+        std::snprintf(detail, sizeof(detail), "(%s range 0x%llx+0x%zx, %u samples)", plane, static_cast<unsigned long long>(address), bytes, samples);
+        Require(message.find(detail) != std::string_view::npos, "a resident multisampled DCC refusal did not identify the affected plane, range and sample count");
+    };
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        for (const auto code : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+            for (const auto alphaOnMsb : {false, true}) {
+                for (const auto cmaskMode : {0u, 0xccu, 0xffu}) {
+                    blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+                    auto& source = *blocks.back();
+                    std::memset(source.data, 0, source.bytes);
+                    blocks.push_back(std::make_unique<Block>(BlockBytes));
+                    auto& metadata = *blocks.back();
+                    std::memset(metadata.data, code, BlockBytes);
+                    auto target = DecodeTarget(source, samples);
+                    target.dccAddress = metadata.Address();
+                    target.dccPipeAligned = true;
+                    target.dccAlphaOnMsb = alphaOnMsb;
+                    if (cmaskMode != 0) {
+                        blocks.push_back(std::make_unique<Block>(BlockBytes));
+                        auto& cmask = *blocks.back();
+                        const auto expanded = samples == 2 ? 0xddu : samples == 4 ? 0xeeu : 0xffu;
+                        std::memset(cmask.data, cmaskMode == 0xccu ? cmaskMode : expanded, BlockBytes);
+                        target.cmaskAddress = cmask.Address();
+                        target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
+                        target.cmaskFastClear = true;
+                    }
+                    const bool colorOne = code == 0x80u || code == 0xc0u;
+                    const bool alphaOne = code == 0x40u || code == 0xc0u;
+                    Color initial{};
+                    for (std::uint32_t channel = 0; channel < 4; ++channel) initial[channel] = channel == (alphaOnMsb ? 3u : 0u) ? static_cast<float>(alphaOne) : static_cast<float>(colorOne);
+                    const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+                    if (cmaskMode != 0) device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
+                    Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                    if (cmaskMode != 0) {
+                        auto recolored = target;
+                        recolored.clearWords = {0x3c003c00u, 0x3c003c00u};
+                        device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {recolored}});
+                    }
+                    blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+                    auto& resolved = *blocks.back();
+                    std::memset(resolved.data, 0, resolved.bytes);
+                    AgcDriver::Graphics::ColorMetadataPass pass{};
+                    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                    pass.source = target;
+                    pass.targets = {DecodeTarget(resolved)};
+                    device.ColorMetadataPass(pass);
+                    const auto stored = ReadBack(device, resolved);
+                    for (std::uint32_t y = 0; y < Height; ++y) {
+                        for (std::uint32_t x = 0; x < Width; ++x) {
+                            for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                                const auto expected = x < ScissorWidth ? initial[channel] + (written[channel] - initial[channel]) / static_cast<float>(samples) : initial[channel];
+                                const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u + channel]);
+                                Require(actual == expected, "multisampled DCC clear did not preserve undrawn samples, channels or scissor pixels");
+                            }
+                        }
+                    }
+                    if (code == 0 && !alphaOnMsb && cmaskMode == 0) {
+                        const auto dccBytes = AgcDriver::Graphics::MultisampledDccBytes(target);
+                        Require(dccBytes + 8u <= metadata.bytes, "the DCC fixture has no adjacent-page control");
+                        const std::array<std::byte, 4> adjacent{std::byte{0x7b}, std::byte{0x7b}, std::byte{0x7b}, std::byte{0x7b}};
+                        AgcDriver::GuestMemory::Write(metadata.Address() + dccBytes, adjacent);
+                        device.ColorMetadataPass(pass);
+                        Require(ReadBack(device, resolved) == stored, "an adjacent driver store changed the resident DCC target");
+                        static_cast<volatile std::uint8_t*>(metadata.data)[dccBytes + 4u] = 0x7c;
+                        AgcDriver::GuestMemory::CollectWritesUncached(metadata.Address() + dccBytes, 8u);
+                        device.ColorMetadataPass(pass);
+                        Require(ReadBack(device, resolved) == stored, "an adjacent CPU store changed the resident DCC target");
+                        const std::array<std::byte, 1> same{std::byte{0}};
+                        AgcDriver::GuestMemory::Write(metadata.Address(), same);
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                        }
+                        Require(refused, "a same-value driver DCC store did not invalidate multisampled DCC residency");
+                    }
+                    if (code == 0 && alphaOnMsb && cmaskMode == 0) {
+                        static_cast<volatile std::uint8_t*>(source.data)[0] = 0;
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "color", source.Address(), AgcDriver::Graphics::MultisampledColorBytes(target), samples);
+                        }
+                        Require(refused, "a same-value CPU color store did not invalidate multisampled DCC residency");
+                    }
+                    if (code == 0x40u && alphaOnMsb && cmaskMode == 0) {
+                        static_cast<volatile std::uint8_t*>(metadata.data)[0] = 0x40u;
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "DCC", metadata.Address(), AgcDriver::Graphics::MultisampledDccBytes(target), samples);
+                        }
+                        Require(refused, "a same-value CPU DCC store did not invalidate multisampled DCC residency");
+                    }
+                    if (code == 0x40u && alphaOnMsb && cmaskMode == 0xccu) {
+                        reinterpret_cast<volatile std::uint8_t*>(target.cmaskAddress)[0] = 0xccu;
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "CMASK", target.cmaskAddress, target.cmaskBytes, samples);
+                        }
+                        Require(refused, "a same-value CPU CMASK store did not invalidate multisampled DCC residency");
+                    }
+                    if (code == 0xc0u && alphaOnMsb && cmaskMode == 0) {
+                        AgcDriver::GuestMemory::Unwatch(metadata.Address(), 4096);
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("reuse requires watched guest memory") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "DCC", metadata.Address(), AgcDriver::Graphics::MultisampledDccBytes(target), samples);
+                        }
+                        Require(refused, "an unwatched metadata range remained eligible for multisampled DCC reuse");
+                    }
+                    if (code == 0x80u && alphaOnMsb && cmaskMode == 0) {
+                        {
+                            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                            device.SubmitRecorded(true);
+                            device.WaitIdle();
+                        }
+                        {
+                            GuestAllocations::Mutation mutation;
+                            mutation.Remove(metadata.data);
+                        }
+                        {
+                            GuestAllocations::Mutation mutation;
+                            mutation.Add(metadata.data, metadata.bytes, true, true, true);
+                        }
+                        bool readRefused = false;
+                        try {
+                            AgcDriver::Graphics::RequireNoMultisampleTarget(source.Address(), source.bytes, "a CPU read");
+                        } catch (const std::runtime_error&) {
+                            readRefused = true;
+                        }
+                        Require(readRefused, "releasing DCC metadata removed the unpublished color read guard");
+                        bool reuseRefused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            reuseRefused = std::string_view(error.what()).find("metadata was released") != std::string_view::npos;
+                        }
+                        Require(reuseRefused, "recreated DCC metadata reused a resident color target");
+                    }
+                    programCount = 0;
+                }
+            }
+        }
+    }
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+        auto& source = *blocks.back();
+        std::memset(source.data, 0, source.bytes);
+        blocks.push_back(std::make_unique<Block>(BlockBytes));
+        auto& metadata = *blocks.back();
+        std::memset(metadata.data, 0, BlockBytes);
+        auto first = DecodeTarget(source, samples);
+        first.dccAddress = metadata.Address();
+        first.dccPipeAligned = true;
+        const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+        Draw(device, first, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        const std::vector<std::byte> ones(AgcDriver::Graphics::MultisampledDccBytes(first), std::byte{0xc0});
+        AgcDriver::GuestMemory::Write(metadata.Address(), ones);
+        auto second = first;
+        second.pipeBankXor = 0x4000u;
+        Draw(device, second, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+        auto& resolved = *blocks.back();
+        std::memset(resolved.data, 0, resolved.bytes);
+        AgcDriver::Graphics::ColorMetadataPass pass{};
+        pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+        pass.source = second;
+        pass.targets = {DecodeTarget(resolved)};
+        device.ColorMetadataPass(pass);
+        const auto stored = ReadBack(device, resolved);
+        for (std::uint32_t y = 0; y < Height; ++y) {
+            for (std::uint32_t x = 0; x < Width; ++x) {
+                for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                    const auto expected = x < ScissorWidth ? 1.0f + (written[channel] - 1.0f) / static_cast<float>(samples) : 1.0f;
+                    Require(FromHalf(stored[layout.Offset(x, y) / 2u + channel]) == expected, "a multisampled DCC target recreated with another pipe-bank XOR did not start from its new fast clear");
+                }
+            }
+        }
+        auto third = second;
+        third.dccAlphaOnMsb = true;
+        bool refused = false;
+        try {
+            Draw(device, third, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        } catch (const std::runtime_error& error) {
+            refused = std::string_view(error.what()).find("layout or metadata changed") != std::string_view::npos;
+        }
+        Require(refused, "a resident multisampled DCC target accepted a use with other DCC metadata");
+        programCount = 0;
+    }
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+            blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+            auto& source = *blocks.back();
+            std::memset(source.data, 0, source.bytes);
+            blocks.push_back(std::make_unique<Block>(BlockBytes));
+            auto& metadata = *blocks.back();
+            std::memset(metadata.data, mode == 0 ? 0xff : 0, metadata.bytes);
+            auto target = DecodeTarget(source, samples);
+            target.dccAddress = metadata.Address();
+            target.dccPipeAligned = true;
+            std::string_view expected = "not a supported uniform fast clear";
+            if (mode == 1) {
+                metadata.data[0] = 0x40u;
+                expected = "mixed multisampled DCC metadata";
+            }
+            if (mode == 2 || mode == 3 || mode == 7) {
+                blocks.push_back(std::make_unique<Block>(BlockBytes));
+                auto& cmask = *blocks.back();
+                std::memset(cmask.data, mode == 2 ? 0 : 0xcc, cmask.bytes);
+                if (mode == 3) cmask.data[0] = 0xdd;
+                target.cmaskAddress = cmask.Address();
+                target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
+                target.cmaskFastClear = true;
+                expected = "CMASK compression or register clear";
+            }
+            if (mode == 4) {
+                AgcDriver::GuestMemory::Unwatch(metadata.Address(), 4096);
+                expected = "initial multisampled DCC contents require watched";
+            }
+            if (mode == 5) {
+                target.dccAddress = source.Address();
+                expected = "overlapping multisampled DCC";
+            }
+            if (mode == 6) {
+                target.dccAddress += 256u;
+                expected = "metadata base alignment";
+            }
+            if (mode == 7) {
+                target.dccControl = 0x80u;
+                expected = "color transform, lossy mode";
+            }
+            bool refused = false;
+            try {
+                if (mode == 7) device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
+                else Draw(device, target, false, Float32Export, Program({0.25f, 0.25f, 0.25f, 0.25f}, Float32Export));
+            } catch (const std::runtime_error& error) {
+                refused = std::string_view(error.what()).find(expected) != std::string_view::npos;
+            }
+            Require(refused, "unsupported initial multisampled DCC contents were not refused explicitly");
+            programCount = 0;
+        }
+    }
+}
+
+}
+
+void DccRefillTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+#ifndef _WIN32
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto decided = AgcDriver::Graphics::PrepareImportWatch(context);
+    struct Restore {
+        const AgcDriver::Graphics::Context& context;
+        AgcDriver::Graphics::ImportWatch decided;
+        ~Restore() { AgcDriver::Graphics::SetImportWatch(context, decided); }
+    } restore{context, decided};
+#endif
+    const auto fill = [](const Block& block, std::size_t bytes, std::uint32_t pattern) {
+        for (std::size_t offset = 0; offset + sizeof(pattern) <= bytes; offset += sizeof(pattern)) std::memcpy(block.data + offset, &pattern, sizeof(pattern));
+        AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), bytes, pattern);
+    };
+    const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
+            for (const auto cmasked : {false, true}) {
+                if (mode == 4 && !cmasked) continue;
+#ifdef _WIN32
+                if (mode == 6) continue;
+#else
+                AgcDriver::Graphics::SetImportWatch(context, mode == 5 ? AgcDriver::Graphics::ImportWatch::Watch : mode == 6 ? AgcDriver::Graphics::ImportWatch::Unwatch : decided);
+#endif
+                blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+                auto& source = *blocks.back();
+                std::memset(source.data, 0, source.bytes);
+                blocks.push_back(std::make_unique<Block>(BlockBytes));
+                auto& metadata = *blocks.back();
+                std::memset(metadata.data, 0, BlockBytes);
+                auto target = DecodeTarget(source, samples);
+                target.dccAddress = metadata.Address();
+                target.dccPipeAligned = true;
+                target.dccAlphaOnMsb = true;
+                Block* cmask = nullptr;
+                if (cmasked) {
+                    blocks.push_back(std::make_unique<Block>(BlockBytes));
+                    cmask = blocks.back().get();
+                    std::memset(cmask->data, 0xcc, BlockBytes);
+                    target.cmaskAddress = cmask->Address();
+                    target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(Width, Height);
+                    target.cmaskFastClear = true;
+                    device.ColorMetadataPass({AgcDriver::Graphics::ColorMetadataPass::Mode::FmaskDecompress, {target}});
+                }
+                Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                const auto dccBytes = AgcDriver::Graphics::MultisampledDccBytes(target);
+                std::string_view expected;
+                bool rewatchable = false;
+                if (mode == 0) {
+                    fill(metadata, dccBytes, 0xc0c0c0c0u);
+                    if (cmask != nullptr) fill(*cmask, target.cmaskBytes, 0xccccccccu);
+                } else if (mode == 1) {
+                    fill(metadata, dccBytes, 0xc0c0c0c0u);
+                } else if (mode >= 5) {
+                    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                    const auto record = [&](const Block& block, std::size_t bytes, std::uint32_t value) {
+                        const std::array<std::uint32_t, 4> pattern{value, value, value, value};
+                        Require(device.FillBuffer(block.Address(), bytes, pattern), "the metadata fill was not recorded on the GPU");
+                        AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), bytes, value);
+                    };
+                    record(metadata, dccBytes, 0xc0c0c0c0u);
+                    if (cmask != nullptr) record(*cmask, target.cmaskBytes, 0xccccccccu);
+                    if (!AgcDriver::GuestMemory::Watched(metadata.Address(), dccBytes) || (cmask != nullptr && !AgcDriver::GuestMemory::Watched(cmask->Address(), target.cmaskBytes))) expected = "requires watched guest memory";
+#ifdef _WIN32
+                    rewatchable = !expected.empty();
+#else
+                    Require(mode == 6 || expected.empty(), "a GPU fill of multisampled DCC metadata left it unwatched although host imports stay watched");
+#endif
+                } else if (mode == 2) {
+                    fill(metadata, dccBytes / 2u, 0xc0c0c0c0u);
+                    expected = "writes to a resident multisampled DCC";
+                } else if (mode == 3) {
+                    fill(metadata, dccBytes, 0xffffffffu);
+                    expected = "not a supported uniform fast clear";
+                } else {
+                    fill(*cmask, target.cmaskBytes, 0xccccccccu);
+                    expected = "writes to a resident multisampled DCC";
+                }
+                bool drawn = false;
+                if (!expected.empty()) {
+                    bool refused = false;
+                    try {
+                        Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                        drawn = true;
+                    } catch (const std::runtime_error& error) {
+                        refused = std::string_view(error.what()).find(expected) != std::string_view::npos;
+                    }
+                    Require(refused || (drawn && rewatchable), "a write to resident multisampled DCC metadata that is not a full fast-clear fill was not refused");
+                    if (refused) {
+                        programCount = 0;
+                        continue;
+                    }
+                }
+                if (!drawn) Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+                blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+                auto& resolved = *blocks.back();
+                std::memset(resolved.data, 0, resolved.bytes);
+                AgcDriver::Graphics::ColorMetadataPass pass{};
+                pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                pass.source = target;
+                pass.targets = {DecodeTarget(resolved)};
+                device.ColorMetadataPass(pass);
+                const auto stored = ReadBack(device, resolved);
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                            const auto expectedValue = x < ScissorWidth ? 1.0f + (written[channel] - 1.0f) / static_cast<float>(samples) : 1.0f;
+                            const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u + channel]);
+                            Require(actual == expectedValue, "a full DCC fast-clear fill of a resident multisampled target did not clear it to the new color before the next draw");
+                        }
+                    }
+                }
+                programCount = 0;
+            }
+        }
+    }
+}
+
+void DccImportWindowTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) return;
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+    for (const auto samples : {2u, 4u, 8u}) {
+        if (selectedSamples != 0 && samples != selectedSamples) continue;
+        blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+        auto& source = *blocks.back();
+        std::memset(source.data, 0, source.bytes);
+        blocks.push_back(std::make_unique<Block>(BlockBytes));
+        auto& metadata = *blocks.back();
+        std::memset(metadata.data, 0, BlockBytes);
+        auto target = DecodeTarget(source, samples);
+        target.dccAddress = metadata.Address();
+        target.dccPipeAligned = true;
+        target.dccAlphaOnMsb = true;
+        Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        Require(AgcDriver::GuestMemory::ImportWatched(metadata.Address(), BlockBytes, [&] {
+            auto* first = reinterpret_cast<volatile std::uint8_t*>(metadata.data);
+            *first = *first;
+            return true;
+        }), "the import over resident multisampled DCC metadata failed");
+        Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        Require(AgcDriver::GuestMemory::ImportWatched(metadata.Address(), BlockBytes, [&] {
+            auto* first = reinterpret_cast<volatile std::uint8_t*>(metadata.data);
+            *first = static_cast<std::uint8_t>(*first ^ 0xffu);
+            return true;
+        }), "the second import over resident multisampled DCC metadata failed");
+        bool refused = false;
+        try {
+            Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+        } catch (const std::runtime_error& error) {
+            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+        }
+        Require(refused, "a store of new bytes to resident multisampled DCC metadata within an import window was not refused");
+        programCount = 0;
+    }
 }
 
 int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--dcc-fast-clear") {
+            const auto samples = argc == 2 ? 0u : std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
+            Require(argc == 2 || samples != 0, "unknown DCC test sample count");
+            try {
+                DccFastClearTests(*device, samples);
+                DccRefillTests(*device, samples);
+                DccImportWindowTests(*device, samples);
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("skipped, the device lacks the requested multisample color attachments: %s\n", error.what());
+                return VulkanTestSkipped;
+            }
+            std::cout << "Multisampled DCC fast clear tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--dithered8") {
             try {
                 DitheredCoverage(*device);

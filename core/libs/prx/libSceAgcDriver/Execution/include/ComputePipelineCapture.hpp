@@ -53,6 +53,8 @@ struct ComputePipelineCapture {
     static ComputePipelineCapture Decode(std::span<const std::byte> bytes);
     static ComputePipelineCapture Read(const std::filesystem::path& path);
     std::filesystem::path Write(const std::filesystem::path& directory) const;
+    std::filesystem::path WriteOptional(const std::filesystem::path& directory) const;
+    static bool OptionalEnabled();
     std::string Identity() const;
 };
 

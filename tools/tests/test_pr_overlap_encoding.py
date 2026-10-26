@@ -26,7 +26,7 @@ def simulated_cp1252():
         wrapper = io.TextIOWrapper
 
         def fake_wrapper(buffer, encoding=None, *args, **kwargs):
-            if encoding == "locale":
+            if encoding in (None, "locale"):
                 encoding = "cp1252"
             return wrapper(buffer, encoding=encoding, *args, **kwargs)
 
@@ -42,6 +42,8 @@ def command_output(stdout, stderr="", returncode=0):
             f"sys.exit({returncode})\n")
 
     def run(command, **kwargs):
+        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return RUN(command, **kwargs)
         return RUN([sys.executable, "-c", code], **kwargs)
 
     with simulated_cp1252(), \
@@ -81,11 +83,11 @@ class EncodingTests(unittest.TestCase):
 
     def test_merge_conflict_preserves_unicode_paths(self):
         path = UNICODE + ".txt"
-        with command_output(TREE + "\n" + path + "\n", returncode=1):
+        with command_output(TREE + "\0" + path + "\0", returncode=1):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, {path}))
 
     def test_merge_success(self):
-        with command_output(TREE + "\n"):
+        with command_output(TREE + "\0"):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, set()))
 
     def test_merge_error_preserves_unicode(self):

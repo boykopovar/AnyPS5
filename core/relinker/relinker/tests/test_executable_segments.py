@@ -37,10 +37,13 @@ def fixture(second_code: bytes, with_import: bool = False) -> bytearray:
     return image
 
 
-def run_case(relinker: Path, work: Path, name: str, args, code: bytes, with_import=False):
+def run_case(relinker: Path, work: Path, name: str, args, code: bytes, with_import=False, trailing_data=b""):
     source = work / (name + ".elf")
     output = work / (name + ".exe")
-    source.write_bytes(fixture(code, with_import))
+    image = fixture(code, with_import)
+    end = 0x800 + len(code)
+    image[end:end + len(trailing_data)] = trailing_data
+    source.write_bytes(image)
     result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", *args,
                              str(source), str(output)], capture_output=True,
                             text=True, timeout=20)
@@ -72,6 +75,21 @@ def main():
             assert result.returncode == 2 and not output.exists(), (name, result.stdout, result.stderr)
             assert "Forbidden syscall instruction at code offset 0x1801" in result.stderr, (name, result.stderr)
 
+        for name, instruction in forbidden:
+            result, output = run_case(relinker, work, name + "-at-end", [], b"\x90" + instruction)
+            assert result.returncode == 2 and not output.exists(), (name, result.stdout, result.stderr)
+            assert "Forbidden syscall instruction at code offset 0x1801" in result.stderr, (name, result.stderr)
+
+        for name, instruction in forbidden:
+            result, output = run_case(relinker, work, name + "-outside", [], b"\x90\xc3",
+                                      trailing_data=instruction)
+            assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
+
+            result, output = run_case(relinker, work, name + "-truncated", [], b"\x90" + instruction[:-1],
+                                      trailing_data=instruction[-1:])
+            assert result.returncode == 2 and not output.exists(), (name, result.stdout, result.stderr)
+            assert "Cannot decode instruction" in result.stderr and "offset 0x1801" in result.stderr, (name, result.stderr)
+
         result, output = run_case(relinker, work, "immediate-decoys", [],
                                   b"\x48\xb8\x0f\x05\xcd\x80\x0f\x34\x0f\x07\xc3")
         assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
@@ -100,15 +118,19 @@ def main():
         result, output = run_case(relinker, work, "strict", ["unused-filter=2"], b"\x90\xc3")
         assert result.returncode == 2 and "multiple executable segments" in result.stderr and not output.exists(), result
 
-        for name, memory_size in (("overlap-past-end", 0x10000000000000), ("overlap-next", 0x1300)):
+        image_targets = ([], ["--lazy-binding"], ["--linux-fixed-base", "0x400000"], ["--windows"], ["--macos"])
+        for name, memory_size, targets in (("overlap-past-end", 0x10000000000000, image_targets[3:]),
+                                           ("overlap-next", 0x1300, image_targets)):
             image = fixture(b"\x90\xc3")
             struct.pack_into("<Q", image, 64 + 40, memory_size)
             source = work / (name + ".elf")
-            output = work / (name + ".exe")
             source.write_bytes(image)
-            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
-            assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr and not output.exists(), (name, result)
+            output = work / (name + ".out")
+            for options in targets:
+                result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
+                assert not output.exists(), (name, options)
     print("Executable segment tests passed")
 
 

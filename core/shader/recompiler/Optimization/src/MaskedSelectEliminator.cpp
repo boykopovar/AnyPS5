@@ -1184,15 +1184,21 @@ private:
     bool solving = false;
 };
 
-std::uint32_t removeFullWaveSelects(IrProgram& program) {
+std::uint32_t removeFullWaveSelects(IrProgram& program, const std::vector<Region>& regions, std::vector<IrValue*>& selects) {
     std::uint32_t removed = 0;
+    selects.clear();
     for (auto blockIt = program.BlockOrder().rbegin(); blockIt != program.BlockOrder().rend(); ++blockIt) {
+        const bool single = regionOf(regions, *blockIt) == Region::Once;
         auto& instructions = (*blockIt)->Instructions();
         auto it = instructions.end();
         while (it != instructions.begin()) {
             --it;
             IrValue* inst = *it;
-            if (!isSelect(inst->Opcode()) || inst->ArgumentCount() != 3u || !inst->HasUses() || !alwaysTrue(inst->Argument(0), program.WaveSize())) continue;
+            if (!isSelect(inst->Opcode()) || inst->ArgumentCount() != 3u) continue;
+            if (!inst->HasUses() || !alwaysTrue(inst->Argument(0), program.WaveSize())) {
+                if (single) selects.push_back(inst);
+                continue;
+            }
             inst->ReplaceAllUsesWith(inst->Argument(1));
             inst->Invalidate();
             inst->SetParent(nullptr);
@@ -1203,17 +1209,22 @@ std::uint32_t removeFullWaveSelects(IrProgram& program) {
     return removed;
 }
 
+bool hasUnreadCandidate(const std::vector<IrValue*>& selects, const std::vector<Region>& regions, MaskFamily family, std::uint32_t waveSize) {
+    return std::any_of(selects.begin(), selects.end(), [&](const IrValue* select) { return select->Parent() != nullptr && select->HasUses() && familyOf(regions, select->Argument(0)->Resolve(), waveSize) == family; });
+}
+
 }
 
 MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& program) const {
     MaskedSelectEliminationStats stats;
     const auto regions = blockRegions(program);
     const BlockSet uniform = uniformEntryBlocks(program);
+    std::vector<IrValue*> selects;
     std::uint32_t removed = 1;
     while (removed != 0u) {
-        removed = removeFullWaveSelects(program);
+        removed = removeFullWaveSelects(program, regions, selects);
         for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
-            removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
+            if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
         }
         stats.removedSelects += removed;
         if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);

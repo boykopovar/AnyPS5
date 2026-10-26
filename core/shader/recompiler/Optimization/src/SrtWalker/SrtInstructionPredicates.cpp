@@ -6,16 +6,22 @@
 namespace ShaderRecompiler::Detail {
 
 bool IsRawRead(const IrResourcePlan& program, const IrValue& inst) {
-    const auto op = inst.Opcode();
+    return IsRawRead(program, inst.Opcode(), inst.Flags<MemoryFlags>().index);
+}
+
+bool IsRawRead(const IrResourcePlan& program, IrOpcode op, std::uint32_t index) {
     if (op != IrOpcode::LoadAddressU32 && op != IrOpcode::ReadConstBuffer) {
         return false;
     }
-    const auto index = inst.Flags<MemoryFlags>().index;
     if (index >= program.memoryInfo.size()) {
         return false;
     }
     const auto kind = program.memoryInfo[index].kind;
     return (op == IrOpcode::LoadAddressU32 && kind == ResourceKind::ScalarAddress) || (op == IrOpcode::ReadConstBuffer && kind == ResourceKind::ScalarBuffer);
+}
+
+bool IsMemoryRead(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConst || opcode == IrOpcode::LoadAddressU32 || opcode == IrOpcode::ReadConstBuffer;
 }
 
 bool LoadedFromMemory(const IrValue& handle) {
@@ -29,8 +35,7 @@ bool LoadedFromMemory(const IrValue& handle) {
         value = value->Resolve();
         if (value->HasImmediate() || std::find(visited.begin(), visited.end(), value) != visited.end()) continue;
         visited.push_back(value);
-        const auto opcode = value->Opcode();
-        if (opcode == IrOpcode::ReadConst || opcode == IrOpcode::LoadAddressU32 || opcode == IrOpcode::ReadConstBuffer) return true;
+        if (IsMemoryRead(value->Opcode())) return true;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) pending.push_back(value->Argument(index));
     }
     return false;
@@ -48,6 +53,17 @@ bool IsDescriptorHandle(IrOpcode opcode) {
 
 bool IsRuntimeSelect(IrOpcode opcode) {
     return opcode == IrOpcode::SelectU1 || opcode == IrOpcode::SelectU32 || opcode == IrOpcode::SelectF32;
+}
+
+bool ActiveMaskImplies(const IrValue* mask, const IrValue* condition) {
+    if (mask == nullptr || condition == nullptr) return false;
+    mask = mask->Resolve();
+    condition = condition->Resolve();
+    if (mask == condition) return true;
+    if (mask->Opcode() == IrOpcode::LogicalAnd && mask->ArgumentCount() == 2) {
+        return ActiveMaskImplies(mask->Argument(0), condition) || ActiveMaskImplies(mask->Argument(1), condition);
+    }
+    return false;
 }
 
 bool IsRuntimeUniformOp(IrOpcode opcode) {
@@ -83,6 +99,9 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
         case IrOpcode::BitwiseOr32:
         case IrOpcode::BitwiseXor32:
         case IrOpcode::BitwiseNot32:
+        case IrOpcode::BitCount32:
+        case IrOpcode::FindILsb32:
+        case IrOpcode::FindUMsb32:
         case IrOpcode::SelectU1:
         case IrOpcode::SelectU32:
         case IrOpcode::SelectF32:

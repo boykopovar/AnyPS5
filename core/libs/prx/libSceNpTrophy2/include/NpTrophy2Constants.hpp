@@ -4,6 +4,7 @@
 #include <cstdint>
 
 static constexpr int SCE_NP_TROPHY2_OK = 0;
+static constexpr int SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID = -2141898486;
 static constexpr int SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND = -2141898479;
 
 static constexpr int NP_TROPHY2_CONTEXT_DEFAULT = 1;
@@ -29,7 +30,8 @@ static constexpr std::uint32_t NP_TROPHY2_PROGRESS_PERCENTAGE = 0;
 static constexpr std::int32_t NP_TROPHY2_TROPHY_GRADE_BRONZE = 4;
 
 static constexpr std::int32_t NP_TROPHY2_PROGRESS_TYPE_NONE = 0;
-static constexpr std::uint32_t NP_TROPHY2_PROGRESS_VALUE_NONE = 0;
+static constexpr std::int32_t NP_TROPHY2_PROGRESS_TYPE_VALUE = 1;
+static constexpr std::uint64_t NP_TROPHY2_PROGRESS_VALUE_NONE = 0;
 
 static constexpr std::size_t NP_TROPHY2_ICON_SIZE_NONE = 0;
 

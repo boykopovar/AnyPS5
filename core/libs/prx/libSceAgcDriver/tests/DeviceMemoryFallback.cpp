@@ -53,6 +53,16 @@ void Choose(const char* what, bool budgetExtension, std::uint64_t budget, std::u
     Expect(type == expected, std::string(what) + ": chose memory type " + std::to_string(type) + ", expected " + std::to_string(expected));
 }
 
+void RefusedFallbackTests() {
+    const auto context = mockContext(true);
+    const std::uint32_t both = (1u << HostType) | (1u << DeviceType);
+    const auto refused = context.RefusedDeviceMemoryFallback(both, DeviceType);
+    Expect(refused.has_value() && *refused == HostType, "a device-local type out of device memory did not fall back to the host type");
+    Expect(!context.RefusedDeviceMemoryFallback(both, HostType).has_value(), "a host type out of memory was given a fallback");
+    Expect(!context.RefusedDeviceMemoryFallback(1u << DeviceType, DeviceType).has_value(), "a fallback was chosen outside the allowed type mask");
+    Expect(!context.RefusedDeviceMemoryFallback(both, 7).has_value(), "an unknown memory type was given a fallback");
+}
+
 void BufferPlacementTests() {
     constexpr auto coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     Context context = mockContext(true);
@@ -106,6 +116,7 @@ int main() {
         Choose("usage already over the budget", true, 2952 * MiB, 3633 * MiB, both, HostType);
         Choose("no host type allowed", true, 3000 * MiB, 3000 * MiB, 1u << DeviceType, DeviceType);
         BufferPlacementTests();
+        RefusedFallbackTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

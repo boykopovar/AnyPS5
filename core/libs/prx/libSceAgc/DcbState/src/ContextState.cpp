@@ -9,10 +9,7 @@
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
- (void)buf;
- (void)operation;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return sceAgcDcbContextStateOp_0100(buf, operation);
 }
 
 uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {

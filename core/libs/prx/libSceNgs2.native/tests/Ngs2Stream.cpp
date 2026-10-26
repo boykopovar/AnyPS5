@@ -158,6 +158,24 @@ static void TestSilenceBlock() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestNoBlocksForClearedVoice() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    const auto voice = RackVoice(rack, 0);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {}});
+    const Ngs2WaveformBlock unused{};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, &Unused, 0, 0, &unused});
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, &Unused, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET, 0, &unused});
+    const float level = 1.0f;
+    Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 0, &level});
+    Require(Throws([&] { Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 1, 0, &level}); }));
+    Require(Flags(voice) == 0);
+    const std::vector<std::int16_t> pcm(4, 16384);
+    Require(Throws([&] { AddBlock(voice, pcm.data(), pcm.size() * 2, 4, 0); }));
+    Require(Throws([&] { Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, &Unused, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, 0, &unused}); }));
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestDrainedStreamReportsEmpty() {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 1);
@@ -190,5 +208,6 @@ int main() {
     TestStreamRejections();
     TestSilenceBlock();
     TestDrainedStreamReportsEmpty();
+    TestNoBlocksForClearedVoice();
     return 0;
 }

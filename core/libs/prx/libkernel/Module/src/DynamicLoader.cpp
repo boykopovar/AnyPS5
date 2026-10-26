@@ -1,7 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
+#include <algorithm>
 #include <array>
 #include <condition_variable>
 #include <filesystem>
@@ -10,6 +12,7 @@
 #include <memory>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <string>
 #include <stdexcept>
 #include <system_error>
@@ -22,6 +25,9 @@
 #else
 #include <dlfcn.h>
 #include <link.h>
+#ifdef __linux__
+#include <unistd.h>
+#endif
 #endif
 
 #ifdef _WIN32
@@ -35,10 +41,36 @@ void Error(const char* message) {
     std::snprintf(loaderError.data(), loaderError.size(), "%s", message);
     pendingError = true;
 }
+void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
+    std::error_code status;
+    const auto message = resolved == source && std::filesystem::is_regular_file(source, status)
+        ? "dlopen: " + source.string() + " was not relinked: no " + source.filename().string() + ".guest.prx was found (" + reason +
+            "); relink its directory with the relinker's --module-dir <dir> option"
+        : "dlopen: cannot load " + resolved.string() + " (" + reason + ")";
+    Error(message.c_str());
+    static std::mutex reportedLock;
+    static std::set<std::filesystem::path> reported;
+    std::lock_guard lock(reportedLock);
+    if (reported.insert(resolved).second) std::fprintf(stderr, "[module] %s\n", message.c_str());
+}
+#ifdef _WIN32
+HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
+    const auto mode = GetThreadErrorMode();
+    SetThreadErrorMode(mode | SEM_FAILCRITICALERRORS, nullptr);
+    const auto loaded = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const auto error = GetLastError();
+    SetThreadErrorMode(mode, nullptr);
+    SetLastError(error);
+    return loaded;
+}
+#endif
 struct Module {
     void* native = nullptr;
     bool owned = true;
     bool global = false;
+#ifdef _WIN32
+    std::uintptr_t globalOrder = 0;
+#endif
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
@@ -109,6 +141,56 @@ char* APS5_VABI dlerror_nid_postfix() {
     pendingError = false;
     return loaderError.data();
 }
+#ifdef __linux__
+static void InitializeLinuxGuestModule(void* native) {
+    auto* table = static_cast<std::uint64_t*>(::dlsym(native, "__aps5_guest_lifecycle_nid_no_patch"));
+    if (!table) return;
+    link_map* requested = nullptr;
+    link_map* owner = nullptr;
+    Dl_info info{};
+    if (::dlinfo(native, RTLD_DI_LINKMAP, &requested) != 0 || requested == nullptr ||
+        !::dladdr1(table, &info, reinterpret_cast<void**>(&owner), RTLD_DL_LINKMAP) || owner == nullptr)
+        throw std::runtime_error("dlopen: cannot identify guest lifecycle metadata owner");
+    if (owner != requested) return;
+    if (table[0] != 0x415053354c494658ull) throw std::runtime_error("dlopen: unsupported guest lifecycle metadata");
+    using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
+    using Initializer = void (APS5_VABI *)(int, char**, char**);
+    static std::mutex initializedLock;
+    static std::condition_variable initializedChanged;
+    const auto thread = static_cast<std::uint64_t>(::gettid());
+    std::unique_lock lock(initializedLock);
+    while (table[6] == 1) {
+        if (table[7] == thread) return;
+        initializedChanged.wait(lock);
+    }
+    if (table[6] == 2) return;
+    if (table[6] != 0) throw std::runtime_error("dlopen: deferred guest initialization failed or finalized");
+    table[6] = 1;
+    table[7] = thread;
+    lock.unlock();
+    try {
+        const auto pending = *static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
+        const int result = table[2] == 0 ? 0 : reinterpret_cast<Entry>(table[2])(pending.args, pending.argp, nullptr);
+        for (std::uint64_t index = 0; index < table[4]; ++index) {
+            const auto initializer = *reinterpret_cast<Initializer*>(table[8 + index]);
+            if (initializer) initializer(0, nullptr, nullptr);
+        }
+        __aps5_set_module_init_result_nid_no_patch(result);
+        lock.lock();
+        table[6] = 2;
+        table[7] = 0;
+        lock.unlock();
+        initializedChanged.notify_all();
+    } catch (...) {
+        lock.lock();
+        table[6] = 3;
+        table[7] = 0;
+        lock.unlock();
+        initializedChanged.notify_all();
+        throw;
+    }
+}
+#endif
 #ifdef _WIN32
 static void InitializeDeferredModule(HMODULE native) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
@@ -175,9 +257,15 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             module->owned = false;
         } else {
             if (!*path) { Error("dlopen: empty module path"); return nullptr; }
-            const auto resolved = RelinkedModulePath_nid_no_patch(ResolvePath_nid_no_patch(path));
-            module->native = LoadLibraryExW(resolved.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-            if (module->native) InitializeDeferredModule(static_cast<HMODULE>(module->native));
+            const auto source = ResolvePath_nid_no_patch(path);
+            const auto resolved = RelinkedModulePath_nid_no_patch(source);
+            module->native = LoadWithoutErrorDialog(resolved);
+            if (!module->native) {
+                const auto error = GetLastError();
+                LoadFailure(source, resolved, "Windows loader error " + std::to_string(error));
+                return nullptr;
+            }
+            InitializeDeferredModule(static_cast<HMODULE>(module->native));
         }
         if (!module->native) {
             char message[128];
@@ -185,15 +273,36 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             Error(message); return nullptr;
         }
 #else
-        const auto resolved = path ? RelinkedModulePath_nid_no_patch(ResolvePath_nid_no_patch(path)).string() : std::string{};
+        const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
+        const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
-        if (!module->native) { Error(::dlerror()); return nullptr; }
+        if (!module->native) {
+            if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
+            return nullptr;
+        }
+#ifdef __linux__
+        if (path) InitializeLinuxGuestModule(module->native);
+#endif
 #endif
         std::lock_guard lock(modulesMutex);
         const auto handle = nextHandle++;
-        modules.emplace(handle, std::move(module));
+#ifdef _WIN32
+        module->globalOrder = module->global ? handle : 0;
+        for (const auto& [key, entry] : modules) {
+            if (entry->native == module->native && entry->globalOrder != 0 &&
+                (module->globalOrder == 0 || entry->globalOrder < module->globalOrder)) module->globalOrder = entry->globalOrder;
+        }
+#endif
+        modules.emplace(handle, module);
+#ifdef _WIN32
+        for (const auto& [key, entry] : modules) {
+            if (entry->native != module->native) continue;
+            entry->global = module->globalOrder != 0;
+            entry->globalOrder = module->globalOrder;
+        }
+#endif
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
@@ -205,6 +314,10 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
             std::lock_guard lock(modulesMutex);
             if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
                 for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
+#ifdef _WIN32
+                std::sort(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->globalOrder < right->globalOrder; });
+                search.erase(std::unique(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->native == right->native; }), search.end());
+#endif
             } else {
                 auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
                 if (found == modules.end()) { Error("dlsym: invalid or unsupported module handle"); return nullptr; }
@@ -217,6 +330,8 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
             if (auto* result = DefaultScopeSymbol(name)) return result;
             const auto nid = Nid::ComputeNid(name, "");
             if (auto* result = DefaultScopeSymbol(nid.c_str())) return result;
+            if (auto* result = DefaultScopeSymbol((std::string(name) + "#guest").c_str())) return result;
+            if (auto* result = DefaultScopeSymbol((nid + "#guest").c_str())) return result;
         }
 #endif
         Error("dlsym: symbol not found in supported module scope");
@@ -226,26 +341,24 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
 int APS5_VABI dlclose_nid_postfix(void* handle) {
     const auto key = reinterpret_cast<std::uintptr_t>(handle);
     std::shared_ptr<Module> module;
-#ifdef _WIN32
     bool lastReference = true;
-#endif
     {
         std::lock_guard lock(modulesMutex);
         auto found = modules.find(key);
         if (found == modules.end()) { Error("dlclose: invalid module handle"); return -1; }
         module = found->second;
-#ifdef _WIN32
         for (const auto& [other, entry] : modules) {
             if (other != key && entry->native == module->native) lastReference = false;
         }
-#endif
     }
-#ifdef _WIN32
     if (module->owned && module->native && lastReference) {
         GuestAllocations::Mutation mutation;
+#ifdef _WIN32
         mutation.UnregisterImage(module->native);
-    }
+#else
+        mutation.UnregisterImage(reinterpret_cast<const void*>(static_cast<link_map*>(module->native)->l_addr));
 #endif
+    }
     {
         std::lock_guard lock(modulesMutex);
         auto found = modules.find(key);

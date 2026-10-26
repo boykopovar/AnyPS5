@@ -1,3 +1,5 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -8,16 +10,6 @@
 #include <cstdlib>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutClose(int);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam*, std::uint32_t);
-int APS5_VABI sceAudioOutGetPortState(int, AudioOutPortState*);
-int APS5_VABI sceAudioOutGetLastOutputTime(int, std::uint64_t*);
-std::uint64_t APS5_VABI sceKernelGetProcessTime();
-}
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -156,6 +148,48 @@ void TestErrors() {
     Require(destination == untouched, "a rejected call must not write the destination");
 }
 
+void TestIndependentPortOutputDuringWait(bool batch) {
+    const std::vector<std::int16_t> longBlock(frequency, 256);
+    const std::vector<std::int16_t> shortBlock(frames, 256);
+    const int waiting = sceAudioOutOpen(user, portTypeVibration, 0, frequency, frequency, formatS16Mono);
+    const int independent = Open(portTypeVibration);
+    Require(waiting > 0, "waiting port must open");
+    Require(sceAudioOutOutput(waiting, longBlock.data()) == static_cast<int>(frequency), "initial output failed");
+    std::atomic<bool> started = false;
+    std::thread output([&] {
+        started = true;
+        AudioOutOutputParam param{waiting, longBlock.data()};
+        const int result = batch ? sceAudioOutOutputs(&param, 1) : sceAudioOutOutput(waiting, longBlock.data());
+        Require(result == static_cast<int>(frequency), "paced output failed");
+    });
+    while (!started) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto before = std::chrono::steady_clock::now();
+    Require(sceAudioOutOutput(independent, shortBlock.data()) == static_cast<int>(frames), "independent output failed");
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+    output.join();
+    Require(sceAudioOutClose(waiting) == 0 && sceAudioOutClose(independent) == 0, "ports must close");
+    std::fprintf(stderr, "Independent port output waited %lld ms\n", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
+    Require(elapsed < std::chrono::milliseconds(100), "pacing one audio port must not block output on another port");
+}
+
+void TestOverlappingOutputBatches() {
+    const std::vector<std::int16_t> block(frames, 256);
+    const int first = Open(portTypeVibration);
+    const int second = Open(portTypeVibration);
+    AudioOutOutputParam duplicate[2] = {{first, block.data()}, {first, block.data()}};
+    Require(sceAudioOutOutputs(duplicate, 2) == static_cast<int>(frames), "duplicate handles in a batch must not deadlock");
+    const auto output = [&](bool reverse) {
+        AudioOutOutputParam params[2] = {{reverse ? second : first, block.data()}, {reverse ? first : second, block.data()}};
+        for (int i = 0; i < 12; ++i) Require(sceAudioOutOutputs(params, 2) == static_cast<int>(frames), "overlapping output batch failed");
+    };
+    std::thread forward(output, false);
+    std::thread reverse(output, true);
+    forward.join();
+    reverse.join();
+    Require(sceAudioOutClose(first) == 0 && sceAudioOutClose(second) == 0, "batch ports must close");
+}
+
 void TestQueriesDuringOutput(bool batch, bool drain) {
     const std::vector<std::int16_t> block(frequency, 256);
     const int handle = sceAudioOutOpen(user, portTypeVibration, 0, frequency, frequency, formatS16Mono);
@@ -189,6 +223,7 @@ int main() {
     setenv("SDL_AUDIODRIVER", "dummy", 1);
 #endif
     sceKernelGetProcessTime();
+
     TestOutput(portTypeMain);
     TestOutput(portTypeVibration);
     TestPortsAreIndependent();
@@ -196,6 +231,9 @@ int main() {
     TestReopenedPort();
     TestErrors();
     TestPortWithoutDeviceKeepsRealTime();
+    TestIndependentPortOutputDuringWait(false);
+    TestIndependentPortOutputDuringWait(true);
+    TestOverlappingOutputBatches();
     TestQueriesDuringOutput(false, false);
     TestQueriesDuringOutput(false, true);
     TestQueriesDuringOutput(true, false);

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <climits>
@@ -7,20 +10,6 @@
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
-int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp);
-int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
-int APS5_VABI sceKernelClockGetres(KernelClockid clockId, KernelTimespec* tp);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz);
-std::int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
-int APS5_VABI sceKernelConvertLocaltimeToUtc(std::int64_t, std::int64_t, std::int64_t*, KernelTimesec*, std::int32_t*);
-int APS5_VABI sceKernelConvertUtcToLocaltime(std::int64_t, std::int64_t*, KernelTimesec*, std::int32_t*);
-}
 
 static constexpr int SCE_OK = 0;
 
@@ -70,6 +59,7 @@ static void UnsupportedResolutionStillThrows() {
     bool rejected = false;
     try {
         clock_getres_nid_postfix(3, &resolution);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -77,6 +67,22 @@ static void UnsupportedResolutionStillThrows() {
     constexpr int fault = static_cast<int>(0x8002000eu);
     Require(sceKernelClockGetres(GUEST_CLOCK_REALTIME, nullptr) == fault);
     Require(sceKernelClockGetres(3, nullptr) == fault);
+}
+
+static void OmittedTimeIsFaultAfterClockValidation() {
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
+    }
+    bool rejected = false;
+    try {
+        clock_gettime_nid_postfix(3, nullptr);
+
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
 }
 
 static KernelTimespec Read(int clockId) {
@@ -229,6 +235,7 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
 static bool SettimeThrows(const KernelTimespec& time, const char* requested) {
     try {
         clock_settime_nid_postfix(GUEST_CLOCK_REALTIME, &time);
+
     } catch (const std::runtime_error& error) {
         return std::strstr(error.what(), requested) != nullptr;
     }
@@ -297,6 +304,7 @@ static void CalendarConversionsFollowTheHostZone() {
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
     UnsupportedResolutionStillThrows();
+    OmittedTimeIsFaultAfterClockValidation();
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();

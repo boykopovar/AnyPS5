@@ -53,9 +53,8 @@ int main() {
         resources.controlFlow.emplace_back();
         resources.controlFlow.back().condition = pinned[9];
         resources.uniformFill.values[0] = pinned[10];
-        auto external = std::make_unique<IrValue>(IrOpcode::Identity, IrType::U32, value.Id());
-        external->AddArgument(pinned[11]);
-        resources.valueStorage.push_back(std::move(external));
+        resources.valueStorage.Reserve(1);
+        resources.valueStorage.Create(IrOpcode::Identity, IrType::U32, value.Id())->AddArgument(pinned[11]);
         const auto removed = program.ReclaimUnusedValues();
         if (removed != 3u) throw std::runtime_error("detached identity and cyclic garbage were not reclaimed");
         if (value.Id() != id || value.ImmediateU32() != 42u || value.Uses().size() != 1u) throw std::runtime_error("a live instruction lost its value or retained an unused backlink");

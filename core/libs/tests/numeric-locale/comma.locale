@@ -1,0 +1,5 @@
+LC_NUMERIC
+decimal_point "<U002C>"
+thousands_sep ""
+grouping -1
+END LC_NUMERIC

@@ -1,11 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
-
-extern "C" {
-int APS5_VABI atoi_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 int main() {
     struct Case {
@@ -35,10 +31,10 @@ int main() {
         {" \t+4294967297tail", 1, SavedError},
         {"9223372036854775807", -1, SavedError},
         {"-9223372036854775808", 0, SavedError},
-        {"9223372036854775808", -1, 34},
-        {"-9223372036854775809", 0, 34},
+        {"9223372036854775808", 0, SavedError},
+        {"-9223372036854775809", -1, SavedError},
         {"999999999999999999999999999999999999", -1, 34},
-        {"-999999999999999999999999999999999999", 0, 34},
+        {"-999999999999999999999999999999999999", -1, 34},
     };
     bool correct = true;
     for (const auto& test : cases) {

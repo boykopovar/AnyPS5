@@ -26,7 +26,7 @@ jobs:
           state=$RUNNER_TEMP/area-state.json
           [ -s "$state" ] || echo '{}' > "$state"
           config=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/labeler.yml" --jq .sha)
-          gh pr list -R "$GITHUB_REPOSITORY" --base "${{ github.event.repository.default_branch }}" -L 200 --json number,headRefOid \
+          gh pr list -R "$GITHUB_REPOSITORY" --base "${{ github.event.repository.default_branch }}" -L 1000 --json number,headRefOid \
             --jq "map({key: (.number | tostring), value: (.headRefOid + \"-$config\")}) | from_entries" > "$RUNNER_TEMP/area-open.json"
           jq -r --slurpfile old "$state" 'to_entries[] | select($old[0][.key] != .value) | .key' "$RUNNER_TEMP/area-open.json" | head -n 40 > "$RUNNER_TEMP/area-todo"
           jq -c --slurpfile open "$RUNNER_TEMP/area-open.json" --rawfile todo "$RUNNER_TEMP/area-todo" \

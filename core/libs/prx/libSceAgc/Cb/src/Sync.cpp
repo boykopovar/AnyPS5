@@ -58,4 +58,13 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t act
     return packet;
 }
 
+std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t operation, std::uint32_t modifier, std::uint32_t value) {
+    (void)operation;
+    (void)modifier;
+    (void)value;
+    const auto guestAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address));
+    const auto maskedAddress = guestAddress & ~0xfULL;
+    return Agc::Command::Emit(buf, 0x39u, {static_cast<std::uint32_t>(maskedAddress), static_cast<std::uint32_t>(maskedAddress >> 32u), 0x80100000u}, __func__);
+}
+
 }

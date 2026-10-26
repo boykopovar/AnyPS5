@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Event.hpp"
 #include <algorithm>
 #include <chrono>
 #include <mutex>

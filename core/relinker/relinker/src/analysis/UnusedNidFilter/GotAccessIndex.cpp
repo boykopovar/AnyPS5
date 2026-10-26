@@ -2,6 +2,7 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <unordered_set>
 #include <cstring>
+#include <limits>
 
 namespace Relinker::UnusedNidFilter {
 
@@ -23,11 +24,14 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
     const std::vector<std::uint8_t>& text,
     VirtualAddress textVaddr
 ) {
+    if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+        throw RelinkerException("Text section range exceeds the address space");
+    }
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> accessed;
 
     for (VirtualAddress va : cfg.ReachableVaddrs()) {
-        if (va < textVaddr || va >= textVaddr + static_cast<VirtualAddress>(text.size()))
+        if (va < textVaddr || va - textVaddr >= text.size())
             continue;
         std::size_t bufOff = static_cast<std::size_t>(va - textVaddr);
         std::size_t available = text.size() - bufOff;
@@ -39,9 +43,12 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
         std::int32_t disp = 0;
         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-        VirtualAddress target = static_cast<VirtualAddress>(
-            static_cast<std::int64_t>(nextVaddr) + disp
-        );
+        if (!info.AddressSize32) {
+            if (disp < 0 && nextVaddr < static_cast<VirtualAddress>(-static_cast<std::int64_t>(disp))) continue;
+            if (disp > 0 && std::numeric_limits<VirtualAddress>::max() - nextVaddr < static_cast<VirtualAddress>(disp)) continue;
+        }
+        VirtualAddress target = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         accessed.insert(target);
     }
 

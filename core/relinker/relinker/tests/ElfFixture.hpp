@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -117,12 +118,17 @@ public:
         const auto phOffset = Read<std::uint64_t>(elf, 32);
         const auto phSize = Read<std::uint16_t>(elf, 54);
         const auto phCount = Read<std::uint16_t>(elf, 56);
+        const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+        linkBase = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t last = 0;
         for (std::uint16_t index = 0; index < phCount; ++index) {
             const auto header = phOffset + index * phSize;
             if (Read<std::uint32_t>(elf, header) != 1) continue;
-            size = std::max<std::size_t>(size, Read<std::uint64_t>(elf, header + 16) + Read<std::uint64_t>(elf, header + 40));
+            linkBase = std::min(linkBase, Read<std::uint64_t>(elf, header + 16) / page * page);
+            last = std::max(last, Read<std::uint64_t>(elf, header + 16) + Read<std::uint64_t>(elf, header + 40));
         }
-        if (size == 0) throw std::runtime_error("ELF has no PT_LOAD segment");
+        if (last == 0) throw std::runtime_error("ELF has no PT_LOAD segment");
+        size = static_cast<std::size_t>(last - linkBase);
         base = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (base == MAP_FAILED) throw std::runtime_error("Cannot map executable memory for the ELF image");
         for (std::uint16_t index = 0; index < phCount; ++index) {
@@ -131,15 +137,14 @@ public:
             const auto offset = Read<std::uint64_t>(elf, header + 8);
             const auto fileSize = Read<std::uint64_t>(elf, header + 32);
             if (offset > elf.size() || fileSize > elf.size() - offset) throw std::runtime_error("PT_LOAD exceeds the ELF file");
-            std::memcpy(static_cast<std::uint8_t*>(base) + Read<std::uint64_t>(elf, header + 16), elf.data() + offset, fileSize);
+            std::memcpy(static_cast<std::uint8_t*>(base) + (Read<std::uint64_t>(elf, header + 16) - linkBase), elf.data() + offset, fileSize);
         }
         if (mprotect(base, size, PROT_NONE) != 0) throw std::runtime_error("Cannot protect the ELF image");
-        const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
         for (std::uint16_t index = 0; index < phCount; ++index) {
             const auto header = phOffset + index * phSize;
             if (Read<std::uint32_t>(elf, header) != 1) continue;
             const auto flags = Read<std::uint32_t>(elf, header + 4);
-            const auto vaddr = Read<std::uint64_t>(elf, header + 16);
+            const auto vaddr = Read<std::uint64_t>(elf, header + 16) - linkBase;
             const auto start = vaddr / page * page;
             const auto end = (vaddr + Read<std::uint64_t>(elf, header + 40) + page - 1) / page * page;
             const int protection = ((flags & 4) != 0 ? PROT_READ : 0) | ((flags & 2) != 0 ? PROT_WRITE : 0) | ((flags & 1) != 0 ? PROT_EXEC : 0);
@@ -163,6 +168,7 @@ public:
 private:
     void* base = nullptr;
     std::size_t size = 0;
+    std::uint64_t linkBase = 0;
 };
 
 } // namespace RelinkerTests

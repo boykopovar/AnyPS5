@@ -31,6 +31,7 @@ WindowsDependencyStubBuilder::WindowsDependencyStubBuilder(PeSection& data) {
         {"limit", "FAIL: dependency diagnostics capacity exceeded\n"},
         {"io", "FAIL: dependency diagnostics Windows API failed\n"},
         {"missingModule", "FAIL: dependency module not found: "},
+        {"notImage", "FAIL: dependency module is not a Windows PE image: "},
         {"moduleImporter", "\nImporter: "},
         {"importer", "FAIL: unresolved dependency import\nImporter: "},
         {"provider", "\nProvider: "},
@@ -212,6 +213,7 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
 
     a.Begin("register");
     a.Mov(Si, Cx);
+    a.Mov(R12, Dx);
     a.Global(Bx, "nodes");
     a.Global(Di, "count");
     a.Mark("registerSearch");
@@ -248,7 +250,34 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Value(R8, 0x20);
     a.Api("LoadLibraryExW");
     a.Test(Ax);
-    a.Jump("io", 0x84);
+    a.Jump("registerLoaded", 0x85);
+    a.Api("GetLastError");
+    a.Data(Cx, "missingModule");
+    a.CompareValue(Ax, 2);
+    a.Jump("registerFailed", 0x84);
+    a.CompareValue(Ax, 3);
+    a.Jump("registerFailed", 0x84);
+    a.Data(Cx, "notImage");
+    a.CompareValue(Ax, 193);
+    a.Jump("io", 0x85);
+    a.Mark("registerFailed");
+    a.Call("write");
+    a.Address(Cx, Bx, 64);
+    a.Call("write");
+    a.Text("moduleImporter");
+    a.Global(Cx, "executable");
+    a.Test(R12);
+    a.Jump("registerImporter", 0x84);
+    a.Address(Cx, R12, 64);
+    a.Mark("registerImporter");
+    a.Call("write");
+    a.Text("chain");
+    a.Store(Bx, 40, R12);
+    a.Mov(Cx, Bx);
+    a.Call("chain");
+    a.Text("newline");
+    a.Jump("terminate");
+    a.Mark("registerLoaded");
     a.Mask(Ax, 0xfffffffcu);
     a.Mark("registerMapped");
     a.Store(Bx, 0, Ax);
@@ -312,6 +341,7 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
         a.Jump("resolvePath", 0x84);
         a.Mark(std::string("resolveNext") + directory);
     }
+    a.Mark("resolveMissing");
     a.Text("missingModule");
     a.Mov(Cx, Bx);
     a.Call("write");
@@ -332,7 +362,11 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Value(R8, 0x800);
     a.Api("LoadLibraryExA");
     a.Test(Ax);
-    a.Jump("io", 0x84);
+    a.Jump("resolveLoaded", 0x85);
+    a.Api("GetLastError");
+    a.CompareValue(Ax, 126);
+    a.Jump("resolveMissing", 0x84);
+    a.Jump("io");
     a.Mark("resolveLoaded");
     a.Mov(Cx, Ax);
     a.Data(Dx, "wide");
@@ -346,6 +380,7 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Call("narrow");
     a.Mark("resolvePath");
     a.Data(Cx, "scratch");
+    a.Mov(Dx, Si);
     a.Call("register");
     a.End();
 
@@ -694,6 +729,7 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Jump("io", 0x84);
     a.Save("nodes", Ax);
     a.Mov(Cx, Bx);
+    a.Value(Dx, 0);
     a.Call("register");
     a.Save("root", Ax);
     a.Mov(Cx, Ax);

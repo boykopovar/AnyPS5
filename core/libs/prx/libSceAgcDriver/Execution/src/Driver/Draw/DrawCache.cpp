@@ -2,6 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include <algorithm>
 #include <bit>
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -21,6 +24,21 @@ bool DrawRecipeRecord::Expired() const {
 bool Driver::drawEntries() {
     static const bool entries = std::getenv("APS5_NO_DRAW_SRT_ENTRIES") == nullptr && !stampValidate();
     return entries;
+}
+
+bool Driver::drawDataHits() {
+    static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr;
+    return hits;
+}
+
+bool Driver::drawStageDataHits() {
+    static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !stampValidate();
+    return hits;
+}
+
+bool Driver::verifyDrawDataHits() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    return verify;
 }
 
 bool Driver::verifyDrawEntries() {
@@ -80,21 +98,54 @@ bool DrawKeySightings::SeenBefore(std::uint64_t key) {
     return false;
 }
 
-bool Driver::admitDrawKey(std::uint64_t key) {
+bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
     if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
-    return drawKeySightings->SeenBefore(key);
+    bool seen = drawKeySightings->SeenBefore(key);
+    const auto& pending = drawRelocationPending;
+    if (pending.key == key && pending.identity != 0) {
+        if (pending.alias != 0) {
+            const auto trial = drawRelocationTrials.find(pending.identity);
+            if (drawKeySightings->SeenBefore(pending.alias ^ 0x9e3779b97f4a7c15ull) && trial != drawRelocationTrials.end()) {
+                auto& state = trial->second;
+                if (state.productive || state.hits != 0 || state.admissions < DrawRelocationTrial::ProbationAdmissions) {
+                    if (!state.productive && state.hits == 0) ++state.admissions;
+                    seen = true;
+                }
+            }
+        } else if (!drawRelocations.contains(pending.identity)) {
+            if (drawKeySightings->SeenBefore(pending.identity ^ 0xc2b2ae3d27d4eb4full)) seen = true;
+        }
+    }
+    if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
+    if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    return drawShapeSightings->SeenBefore(shape);
 }
 
-void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode) {
+void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {
     std::lock_guard cacheLock(drawCacheMutex);
     auto& counters = drawEntryCounters;
-    ++counters.inserts;
+    if (replaceShape && shape != 0) {
+        ++counters.shapeUpdates;
+        if (const auto shapeOf = drawShapes.find(shape); shapeOf != drawShapes.end() && shapeOf->second != key) {
+            if (const auto previous = drawCache.find(shapeOf->second); previous != drawCache.end()) {
+                for (const auto& variants : previous->second->stages) {
+                    for (const auto& variant : variants) accountDrawVariant(*variant, false);
+                }
+                drawOrder.erase(previous->second->order);
+                drawCache.erase(previous);
+            }
+            drawShapes.erase(shapeOf);
+        }
+    } else {
+        ++counters.inserts;
+    }
     const auto found = drawCache.find(key);
     auto replacement = std::make_shared<DrawEntry>();
     replacement->stages.resize(fresh.size());
     replacement->decode = std::move(decode);
+    replacement->shape = shape;
     if (found != drawCache.end()) {
         if (found->second->stages.size() == fresh.size()) replacement->stages = found->second->stages;
         if (found->second->decode != nullptr) replacement->decode = found->second->decode;
@@ -103,7 +154,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     for (std::size_t i = 0; i < fresh.size(); ++i) {
         if (fresh[i] == nullptr) continue;
         auto& variants = replacement->stages[i];
-        const auto present = std::find_if(variants.begin(), variants.end(), [&](const std::shared_ptr<DispatchVariant>& kept) { return kept->pushOffset == fresh[i]->pushOffset && kept->runs == fresh[i]->runs && kept->words == fresh[i]->words; });
+        const auto present = std::find_if(variants.begin(), variants.end(), [&](const std::shared_ptr<DispatchVariant>& kept) { return kept->pushOffset == fresh[i]->pushOffset && kept->meshIndexDescriptor == fresh[i]->meshIndexDescriptor && kept->runs == fresh[i]->runs && SameCapturedWords(kept->words, kept->shared, fresh[i]->words, fresh[i]->shared); });
         if (present != variants.end()) {
             ++counters.present;
             fresh[i] = *present;
@@ -119,6 +170,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         }
     }
     replacement->touched = drawCacheHits;
+    if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
@@ -133,9 +185,12 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
         }
+        if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
+        if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
         drawOrder.erase(last->second->order);
         drawCache.erase(last);
         ++drawCacheEvictions;
+        ++counters.evictions;
     }
 }
 
@@ -145,6 +200,7 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
     for (const auto& variants : found->second->stages) {
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
+    if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
 }

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -30,16 +31,27 @@ struct MockDevice {
     std::map<VkFence, bool> signaled;
     std::uint64_t submits = 0;
     std::uint64_t fenceWaits = 0;
+    std::uint64_t allocatedCommands = 0;
+    std::uint64_t freedCommands = 0;
+    VkResult endResult = VK_SUCCESS;
+    VkResult submitResult = VK_SUCCESS;
+    bool lostSubmissionPending = false;
+    std::uint64_t idleWaits = 0;
+    VkResult idleResult = VK_ERROR_DEVICE_LOST;
 };
 
 MockDevice mock;
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
     *commands = reinterpret_cast<VkCommandBuffer>(mock.next++);
+    ++mock.allocatedCommands;
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
+VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t count, const VkCommandBuffer*) {
+    Expect(!mock.lostSubmissionPending, "command buffers were freed before the lost submission finished");
+    mock.freedCommands += count;
+}
 
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* fence) {
     *fence = reinterpret_cast<VkFence>(mock.next++);
@@ -48,6 +60,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo
 }
 
 VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAllocationCallbacks*) {
+    Expect(!mock.lostSubmissionPending, "a fence was destroyed before the lost submission finished");
     mock.signaled.erase(fence);
 }
 
@@ -62,6 +75,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t count, 
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockResetFences(VkDevice, std::uint32_t count, const VkFence* fences) {
+    Expect(!mock.lostSubmissionPending, "a fence was reset before the lost submission finished");
     for (std::uint32_t i = 0; i < count; ++i) mock.signaled.at(fences[i]) = false;
     return VK_SUCCESS;
 }
@@ -71,12 +85,19 @@ VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer, const VkC
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockEndCommandBuffer(VkCommandBuffer) {
-    return VK_SUCCESS;
+    return mock.endResult;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
     ++mock.submits;
-    return VK_SUCCESS;
+    if (mock.submitResult == VK_ERROR_DEVICE_LOST) mock.lostSubmissionPending = true;
+    return mock.submitResult;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockDeviceWaitIdle(VkDevice) {
+    ++mock.idleWaits;
+    mock.lostSubmissionPending = false;
+    return mock.idleResult;
 }
 
 VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, const void*) {}
@@ -101,6 +122,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkBeginCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockBeginCommandBuffer)},
         {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockEndCommandBuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(mockQueueSubmit)},
+        {"vkDeviceWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(mockDeviceWaitIdle)},
         {"vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdUpdateBuffer)},
         {"vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPipelineBarrier)},
         {"vkCmdBeginQuery", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBeginQuery)},
@@ -216,6 +238,68 @@ void SharedOwnerCountsOncePerBatch() {
     recorder.Sync();
 }
 
+void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleResult = VK_ERROR_DEVICE_LOST) {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    alignas(8) std::array<std::byte, 128> memory{};
+    const auto address = reinterpret_cast<std::uint64_t>(memory.data());
+    bool completed = false;
+    bool earlierCompleted = false;
+    bool earlierWrittenBack = false;
+    {
+        Recorder recorder(mockContext());
+        recorder.Activate();
+        recorder.Keep(std::make_shared<int>(0), 17);
+        recorder.NoteLabel(address, std::span<const std::byte>(memory).first(4), 1, 0);
+        recorder.OnComplete([&] { earlierWrittenBack = true; });
+        Expect(recorder.AfterRecordedWork([&] { earlierCompleted = true; }), "the earlier batch did not accept its completion");
+        recorder.Submit();
+        auto kept = std::shared_ptr<int>(new int(1), [](int* object) {
+            Expect(!mock.lostSubmissionPending, "kept resources were destroyed before the lost submission finished");
+            delete object;
+        });
+        std::weak_ptr<int> released = kept;
+        recorder.Keep(std::move(kept), Budget);
+        recorder.NoteLabel(address + 8, std::span<const std::byte>(memory).first(4), 2, 0);
+        recorder.NoteLabel(address + 16, std::span<const std::byte>(memory).first(Recorder::LabelTableBytes + 4), 3, 0);
+        recorder.AfterCompletions(address + 96, std::span<const std::byte>(memory).first(4), 4, 0, false);
+        recorder.OnComplete([&] { completed = true; });
+        Expect(recorder.AfterRecordedWork([&] { completed = true; }), "the failed batch did not accept its completion");
+        mock.endResult = endResult;
+        mock.submitResult = submitResult;
+        mock.idleResult = idleResult;
+        bool failed = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception& error) {
+            const auto operation = endResult != VK_SUCCESS ? "vkEndCommandBuffer recorder" : "vkQueueSubmit recorder";
+            failed = std::string_view(error.what()).find(operation) != std::string_view::npos;
+        }
+        Expect(failed, "submission did not report its Vulkan failure");
+        Expect(released.expired() && !completed, "a failed batch retained objects or ran its completions");
+        Expect(!recorder.Recording() && recorder.Submissions() == 1 && recorder.InFlightBatches() == 1 && recorder.InFlightKeptBytes() == 17,
+            "the failed batch changed the earlier in-flight submission");
+        Expect(recorder.PendingLabels() == 1 && recorder.PendingLabelIn(address, 4), "a failed batch retained labels or removed the earlier batch's label");
+        Expect(!recorder.PendingLabelIn(address + 8, 4) && !recorder.PendingLabelIn(address + 16, Recorder::LabelTableBytes + 4),
+            "a failed batch retained a narrow or wide label");
+        Expect(!recorder.CompletionLabelIn(address + 96, 4) && Recorder::PendingCompletionLabels() == 1 && Recorder::PendingWriteBackCompletions() == 1,
+            "a failed batch retained pending completions or removed earlier ones");
+        Expect(!Recorder::PendingLabelSince().has_value(), "a failed batch left its label flush deadline pending");
+        Expect(Recorder::SnapshotWriteOverlaps(address, 4) && !Recorder::SnapshotWriteOverlaps(address + 8, 100),
+            "a failed batch left stale writes in the pending snapshot or removed an earlier write");
+        Expect(mock.fenceWaits == 0, "a failed submission waited for an unsignaled fence");
+        Expect(mock.idleWaits == (submitResult == VK_ERROR_DEVICE_LOST ? 1u : 0u), "a failed submission did not settle device loss before releasing its resources");
+        mock.lostSubmissionPending = false;
+        mock.endResult = mock.submitResult = VK_SUCCESS;
+        recorder.Sync();
+        Expect(recorder.Idle() && !completed && earlierCompleted && earlierWrittenBack,
+            "sync ran the failed batch's completions or lost the earlier batch's completions");
+        Expect(Recorder::PendingCompletionLabels() == 0 && Recorder::PendingWriteBackCompletions() == 0,
+            "sync left stale completion counts after submission failure");
+    }
+    Expect(mock.signaled.empty() && mock.allocatedCommands == mock.freedCommands, "a failed submission leaked its fence or command buffer");
+}
+
 }
 
 int main() {
@@ -225,6 +309,12 @@ int main() {
         SyncedWithinTwiceTheBudget();
         CountFollowsEveryPath();
         SharedOwnerCountsOncePerBatch();
+        FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
+        FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
+        FailedSubmission(VK_SUCCESS, VK_ERROR_OUT_OF_HOST_MEMORY);
+        FailedSubmission(VK_SUCCESS, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        FailedSubmission(VK_SUCCESS, VK_ERROR_DEVICE_LOST);
+        FailedSubmission(VK_SUCCESS, VK_ERROR_DEVICE_LOST, VK_SUCCESS);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

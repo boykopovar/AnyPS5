@@ -15,7 +15,7 @@ RIP_SITE = bytes.fromhex("0f 38 cc 15") + struct.pack("<i", RIP_DISPLACEMENT)
 CASES = (("plain", PLAIN_SITE), ("stub", SITE), ("rip", RIP_SITE))
 
 
-def guest_fixture(site):
+def guest_fixture(site, symbolic=False):
     image = bytearray(0xA00)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
@@ -25,7 +25,10 @@ def guest_fixture(site):
     struct.pack_into("<IIQQQQQQ", image, 120,
                      1, 6, 0x600, 0x2000, 0x2000, 0x400, 0x400, 0x100)
     tags = [(5, 0x2200), (10, 1), (6, 0x2220), (11, 24),
-            (4, 0x2240), (7, 0x2300), (8, 0), (9, 24), (0, 0)]
+            (4, 0x2240), (7, 0x2300), (8, 0), (9, 24)]
+    if symbolic:
+        tags.append((30, 2))
+    tags.append((0, 0))
     struct.pack_into("<IIQQQQQQ", image, 176,
                      2, 6, 0x600, 0x2000, 0x2000, len(tags) * 16, len(tags) * 16, 8)
     image[0x400:0x500] = b"\x90" * 0x100

@@ -85,7 +85,6 @@ const std::array<Check, 4> PackedChecks{{
 struct Mode {
     const char* name;
     std::optional<ShaderRecompiler::ShaderFloatMode> floatMode;
-    bool packed = true;
 };
 
 const std::array<Mode, 7> Modes{{
@@ -94,8 +93,8 @@ const std::array<Mode, 7> Modes{{
     {"dx10", ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}},
     {"ieee", ShaderRecompiler::ShaderFloatMode{0xc0u, false, true, false}},
     {"none", ShaderRecompiler::ShaderFloatMode{0xc0u, false, false, false}},
-    {"f16 denormals flushed, dx10 ieee", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}, false},
-    {"f16 input denormals flushed", ShaderRecompiler::ShaderFloatMode{0xb0u, false, false, false}, false},
+    {"f16 denormals flushed, dx10 ieee", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}},
+    {"f16 input denormals flushed", ShaderRecompiler::ShaderFloatMode{0xb0u, false, false, false}},
 }};
 
 std::uint64_t Seed = 0x2545f4914f6cdd1dull;
@@ -214,14 +213,7 @@ struct Model {
                 bits[index] = (registers[source.reg] >> (selectHigh ? 16u : 0u)) & 0xffffu;
                 if (high != 0u ? source.negateHi : source.negate) bits[index] ^= 0x8000u;
             }
-            std::uint32_t lane = Numeric(check.kind == Kind::Max, Read(bits[0]), Read(bits[1])).bits;
-            lane = IsNan(bits[0]) ? bits[1] : lane;
-            lane = IsNan(bits[1]) ? bits[0] : lane;
-            if (ieee) {
-                lane = IsSnan(bits[1]) ? Quiet(bits[1]) : lane;
-                lane = IsSnan(bits[0]) ? Quiet(bits[0]) : lane;
-            }
-            result |= Clamp(check.clamp, lane) << (16u * high);
+            result |= Clamp(check.clamp, Pair(check.kind == Kind::Max, Read(bits[0]), Read(bits[1])).bits) << (16u * high);
         }
         return result;
     }
@@ -267,8 +259,7 @@ int main() {
             const bool flushInputs = mode.floatMode.has_value() && (mode.floatMode->floatMode & 0x40u) == 0u;
             const Model model{mode.floatMode.has_value() && mode.floatMode->ieeeMode, !mode.floatMode.has_value() || mode.floatMode->dx10Clamp, flushInputs};
             const auto scalar = compile(ScalarCode, mode);
-            std::optional<ShaderRecompiler::RecompileResult> packed;
-            if (mode.packed) packed = compile(PackedCode, mode);
+            const auto packed = compile(PackedCode, mode);
             for (std::uint32_t batch = 0; batch < Batches; ++batch) {
                 for (std::uint32_t tid = 0; tid < Threads; ++tid) {
                     std::uint32_t* row = &Input[tid * Inputs];
@@ -293,7 +284,7 @@ int main() {
                     }
                 };
                 run(scalar, ScalarCode, ScalarChecks, false);
-                if (packed) run(*packed, PackedCode, PackedChecks, true);
+                run(packed, PackedCode, PackedChecks, true);
             }
         }
         std::printf("f16 min/max tests passed (%llu results)\n", static_cast<unsigned long long>(compared));

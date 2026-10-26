@@ -1,0 +1,30 @@
+foreach(variable TOOL CAPTURE)
+    if(NOT DEFINED ${variable})
+        message(FATAL_ERROR "${variable} is not set")
+    endif()
+endforeach()
+
+execute_process(COMMAND "${TOOL}" --prepare "${CAPTURE}/invalid.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "0" OR NOT output MATCHES "prepared: [0-9]+ SPIR-V words")
+    message(FATAL_ERROR "preparation of the synthetic request failed: ${code}\n${output}${errors}")
+endif()
+
+execute_process(COMMAND "${TOOL}" --materialize "${CAPTURE}/inactive.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "0" OR NOT output MATCHES "materialized: [0-9]+ SPIR-V words")
+    message(FATAL_ERROR "inactive image replay failed: ${code}\n${output}${errors}")
+endif()
+
+execute_process(COMMAND "${TOOL}" --materialize "${CAPTURE}/invalid.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "1" OR NOT output MATCHES "capture failed: runtime image descriptor is invalid")
+    message(FATAL_ERROR "active invalid image replay did not fail at capture: ${code}\n${output}${errors}")
+endif()
+
+execute_process(COMMAND "${TOOL}" --materialize "${CAPTURE}/invalid.req" "${CAPTURE}/inactive.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "1" OR NOT output MATCHES "capture failed: runtime image descriptor is invalid" OR NOT output MATCHES "materialized: [0-9]+ SPIR-V words")
+    message(FATAL_ERROR "replay did not continue after a failed request: ${code}\n${output}${errors}")
+endif()
+
+execute_process(COMMAND "${TOOL}" --maintenance8 --materialize "${CAPTURE}/inactive.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "0" OR NOT output MATCHES "materialized: [0-9]+ SPIR-V words")
+    message(FATAL_ERROR "prepared replay with maintenance8 failed: ${code}\n${output}${errors}")
+endif()

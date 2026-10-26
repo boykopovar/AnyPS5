@@ -21,7 +21,7 @@ void Require(bool condition, const std::string& message) {
 }
 
 alignas(256) std::array<std::uint32_t, 12> ReaderCode{0xf4040100u, 0xfa000000u, 0xf4080201u, 0xfa000000u, 0xbf8cc07fu, 0xf4000182u, 0xfa000000u, 0xbf8cc07fu, 0x7e000206u, 0xe0700000u, 0x80020000u, 0xbf810000u};
-alignas(256) std::array<std::uint32_t, 13> NewReaderCode{0xbf800000u, 0xf4040100u, 0xfa000000u, 0xf4080201u, 0xfa000000u, 0xbf8cc07fu, 0xf4000182u, 0xfa000000u, 0xbf8cc07fu, 0x7e000206u, 0xe0700000u, 0x80020000u, 0xbf810000u};
+alignas(256) std::array<std::uint32_t, 14> NewReaderCode{0xf4040100u, 0xfa000000u, 0xf4080201u, 0xfa000000u, 0xbf8cc07fu, 0xf4000182u, 0xfa000000u, 0xbf8cc07fu, 0x7e000206u, 0xe0700000u, 0x80020000u, 0xe0700004u, 0x80020000u, 0xbf810000u};
 
 struct Slot {
     alignas(256) std::array<std::uint32_t, 4> value{};
@@ -104,7 +104,7 @@ int main() {
             Require(Slots[1].done == 0, "the dispatch finished while another thread held the GPU mutex");
         }
         WaitDone(Slots[1], "the dispatch of the new program did not finish");
-        Require(Slots[1].output[0] == 0x5678u, "the dispatch of the new program stored " + std::to_string(Slots[1].output[0]));
+        Require(Slots[1].output[0] == 0x5678u && Slots[1].output[1] == 0x5678u, "the dispatch of the new program stored " + std::to_string(Slots[1].output[0]) + " and " + std::to_string(Slots[1].output[1]));
         const auto after = VulkanDevice::ComputePipelineCounts();
         Require(after.underGpuMutex == before.underGpuMutex, "a compute pipeline was created under the GPU mutex");
         std::cout << "compute pipeline outside GPU mutex test passed\n";

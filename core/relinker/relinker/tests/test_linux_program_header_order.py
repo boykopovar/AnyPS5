@@ -8,6 +8,9 @@ import subprocess
 import sys
 import tempfile
 
+from signal_run import run_without_core_dump
+from test_guest_intel_trampolines import main_fixture
+from test_guest_module_directories import module_with_symbol
 from test_linux_load_alignment import fixture as single_load_fixture
 
 PT_LOAD = 1
@@ -15,19 +18,22 @@ PT_DYNAMIC = 2
 PT_INTERP = 3
 PT_PHDR = 6
 PT_OS_PROCPARAM = 0x61000001
+PT_GNU_STACK = 0x6474E551
 PT_SCE_VERSION = 0x6FFFFF01
 PAGE = 0x1000
+DEFAULT_BASE = 0x400000
 
 TEXT = (PT_LOAD, 5, 0x4000, 0x0000, 0x1000, 0x1000, 0x1000)
 RODATA = (PT_LOAD, 4, 0x5000, 0x1000, 0x0800, 0x0800, 0x1000)
 DATA = (PT_LOAD, 6, 0x6000, 0x2000, 0x1000, 0x1800, 0x1000)
+TAIL = (PT_LOAD, 6, 0x8400, 0x2400, 0x0C00, 0x1C00, 0x1000)
 PROCPARAM = (PT_OS_PROCPARAM, 4, 0x5400, 0x1400, 0x0040, 0x0040, 0x10)
 DYNAMIC_OFFSET = 0x6400
 TAGS = [(5, 0x2600), (10, 1), (6, 0x2620), (11, 24), (7, 0x2700), (8, 0), (9, 24), (0, 0)]
 
 
-def multi_load_fixture(segments):
-    image = bytearray(0x8000)
+def multi_load_fixture(segments, size=0x8000):
+    image = bytearray(size)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     headers = [*segments, (PT_DYNAMIC, 6, DYNAMIC_OFFSET, 0x2400, len(TAGS) * 16, len(TAGS) * 16, 8)]
     headers += [(PT_SCE_VERSION, 0, 0, 0, 0, 0, 1)] * 4
@@ -74,7 +80,7 @@ def run_expecting_trap(name, output):
     if not (sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")):
         return
     output.chmod(0o755)
-    executed = subprocess.run([str(output)], capture_output=True, timeout=20)
+    executed = run_without_core_dump([str(output)], capture_output=True, timeout=20)
     assert executed.returncode == -signal.SIGTRAP, (name, executed.returncode, executed.stderr)
 
 
@@ -97,16 +103,51 @@ def main():
 
         ordered = convert("ordered-loads", multi_load_fixture([TEXT, RODATA, PROCPARAM, DATA]))
         headers = check_order("ordered-loads", ordered.read_bytes())
-        assert (PT_OS_PROCPARAM, PROCPARAM[3]) in [(h[0], h[3]) for h in headers], headers
-        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [TEXT[3], RODATA[3], DATA[3]], headers
+        assert (PT_OS_PROCPARAM, DEFAULT_BASE + PROCPARAM[3]) in [(h[0], h[3]) for h in headers], headers
+        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [DEFAULT_BASE + h[3] for h in (TEXT, RODATA, DATA)], headers
         run_expecting_trap("ordered-loads", ordered)
 
         unordered = convert("unordered-loads", multi_load_fixture([DATA, PROCPARAM, TEXT, RODATA]))
         headers = check_order("unordered-loads", unordered.read_bytes())
-        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [TEXT[3], RODATA[3], DATA[3]], headers
-        assert kinds_between_loads(headers) == [PT_OS_PROCPARAM], headers
+        assert [h[3] for h in headers if h[0] == PT_LOAD][:3] == [DEFAULT_BASE + h[3] for h in (TEXT, RODATA, DATA)], headers
+        assert kinds_between_loads(headers) == [PT_OS_PROCPARAM, PT_GNU_STACK], headers
         run_expecting_trap("unordered-loads", unordered)
+
+        tailed = convert("unaligned-tail", multi_load_fixture([TEXT, RODATA, PROCPARAM, TAIL], 0x9400))
+        headers = check_order("unaligned-tail", tailed.read_bytes())
+        check_extra_block_page("unaligned-tail", headers)
+        run_expecting_trap("unaligned-tail", tailed)
+
+        guest = work / "guest"
+        (guest / "sce_module").mkdir(parents=True)
+        module = module_with_symbol(True)
+        module[64:176] = module[120:176] + module[64:120]
+        assert [h[3] for h in program_headers(module) if h[0] == PT_LOAD] == [0x2000, 0x1000]
+        (guest / "sce_module" / "provider.prx").write_bytes(module)
+        (guest / "input.elf").write_bytes(main_fixture())
+        result = subprocess.run([str(relinker), str(guest / "input.elf"), str(guest / "output.elf")],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, ("guest-module", result.stdout, result.stderr)
+        outputs = list(guest.rglob("provider.prx.guest.prx"))
+        assert len(outputs) == 1, outputs
+        addresses = [h[3] for h in program_headers(outputs[0].read_bytes()) if h[0] == PT_LOAD]
+        assert addresses[:2] == [0x1000, 0x2000] and addresses == sorted(addresses), [hex(a) for a in addresses]
     print("Linux program header order test passed")
+
+
+def check_extra_block_page(name, headers):
+    page = 0x1000
+    loads = [header for header in headers if header[0] == PT_LOAD]
+    block = max(loads, key=lambda header: header[2])
+    header_block = min(loads, key=lambda header: header[2])
+    assert header_block[2] == 0 and header_block is not block, (name, header_block)
+    assert block[2] % page == block[3] % page and block[3] % page != 0, (name, block)
+    assert block[6] > block[5] and (block[3] + block[6]) % page == 0, (name, block)
+    for header in loads:
+        if header is block or header is header_block:
+            continue
+        assert (header[3] + header[5] - 1) // page < block[3] // page, (name, header, block)
+    assert header_block[3] >= block[3] + block[6], (name, header_block, block)
 
 
 def kinds_between_loads(headers):

@@ -1,4 +1,5 @@
 #include "LoadExec.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <algorithm>
@@ -20,6 +21,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 extern char** environ;
+#elif defined(__APPLE__)
+#include <crt_externs.h>
+#include <fcntl.h>
+#include <mach-o/loader.h>
+#include <spawn.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -124,6 +131,7 @@ Handle Duplicate(HANDLE source, DWORD access) {
         throw std::system_error(GetLastError(), std::system_category(), "LoadExec: creating the converted executable");
     Handle child(process.hProcess, CloseHandle), thread(process.hThread, CloseHandle);
     try {
+        LibcStartExit_nid_postfix();
         LibcRunShutdown_nid_postfix();
         std::fflush(nullptr);
         if (ResumeThread(thread.get()) == static_cast<DWORD>(-1))
@@ -151,8 +159,11 @@ Handle Duplicate(HANDLE source, DWORD access) {
     std::vector<char*> pointers;
     for (const auto& argument : arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
     pointers.push_back(nullptr);
+    LibcStartExit_nid_postfix();
     LibcRunShutdown_nid_postfix();
     std::fflush(nullptr);
+    if (const int host = HostStandardError_nid_no_patch(); host >= 0 && dup2(host, 2) != 2)
+        throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
     std::filesystem::current_path(target.parent_path());
     if ((descriptor > 3 && close_range(3, static_cast<unsigned>(descriptor - 1), 0) != 0) ||
         close_range(static_cast<unsigned>(std::max(3, descriptor + 1)), ~0u, 0) != 0)
@@ -160,12 +171,42 @@ Handle Duplicate(HANDLE source, DWORD access) {
     fexecve(descriptor, pointers.data(), environ);
     throw std::system_error(errno, std::generic_category(), "LoadExec: replacing the executable");
 }
+#elif defined(__APPLE__)
+[[noreturn]] void Replace(const std::filesystem::path& target, const std::vector<std::string>& arguments) {
+    const int descriptor = open(target.c_str(), O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) throw std::system_error(errno, std::generic_category(), "LoadExec: opening the converted executable");
+    mach_header_64 header{};
+    const auto read = pread(descriptor, &header, sizeof(header), 0);
+    ::close(descriptor);
+    if (read != static_cast<ssize_t>(sizeof(header)) || header.magic != MH_MAGIC_64 || header.cputype != CPU_TYPE_X86_64 || header.filetype != MH_EXECUTE || access(target.c_str(), X_OK) != 0)
+        throw std::runtime_error("LoadExec: target is not an executable x86-64 Mach-O");
+    std::vector<char*> pointers;
+    for (const auto& argument : arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
+    pointers.push_back(nullptr);
+    posix_spawnattr_t attributes;
+    posix_spawn_file_actions_t actions;
+    if (posix_spawnattr_init(&attributes) != 0 || posix_spawn_file_actions_init(&actions) != 0 ||
+        posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT) != 0)
+        throw std::runtime_error("LoadExec: preparing the replacement");
+    LibcStartExit_nid_postfix();
+    LibcRunShutdown_nid_postfix();
+    std::fflush(nullptr);
+    if (const int host = HostStandardError_nid_no_patch(); host >= 0 && dup2(host, 2) != 2)
+        throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
+    for (const int standard : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) {
+        if (fcntl(standard, F_GETFD) != -1 && posix_spawn_file_actions_addinherit_np(&actions, standard) != 0)
+            throw std::runtime_error("LoadExec: keeping the standard streams");
+    }
+    std::filesystem::current_path(target.parent_path());
+    const int error = posix_spawn(nullptr, target.c_str(), &actions, &attributes, pointers.data(), *_NSGetEnviron());
+    throw std::system_error(error, std::generic_category(), "LoadExec: replacing the executable");
+}
 #endif
 
 }
 
 extern "C" bool LoadConvertedExecutable_nid_no_patch(const std::filesystem::path& target, const char* const* arguments) {
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     if (!arguments || !arguments[0]) return false;
     std::vector<std::string> copied;
     for (std::size_t index = 0; arguments[index]; ++index) copied.emplace_back(arguments[index]);

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <stop_token>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,7 @@
 bool AudioOut2TraceEnabled();
 // Seconds since the first AudioOut2 call, for the trace.
 double AudioOut2TraceSeconds();
+bool AudioOut2IsInitialized_nid_no_patch();
 
 #define AUDIOOUT2_TRACE(...) \
     do { \
@@ -91,7 +93,7 @@ struct AudioOut2Context {
     std::deque<float> output;
     bool priming = true;
     bool advancedMode = false;
-    std::condition_variable grainReady;
+    std::condition_variable_any grainReady;
     std::deque<AudioOut2Grain> advancedGrains;
     std::deque<AudioOut2Grain> pendingGrains;
     std::deque<std::chrono::steady_clock::time_point> pendingSince;

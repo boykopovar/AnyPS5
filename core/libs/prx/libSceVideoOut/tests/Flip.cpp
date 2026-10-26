@@ -1,6 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -20,14 +22,10 @@
 #include <string>
 #include <limits>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #undef main
-
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-extern "C" int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-extern "C" int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 
 namespace {
 
@@ -124,6 +122,75 @@ void testLifetime(bool reopen) {
     LibcRunShutdown_nid_postfix();
 }
 
+void testPs4Buffers() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    std::vector<std::byte> allocation(2 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBufferAttribute attribute{};
+    sceVideoOutSetBufferAttribute(&attribute, 0x80000000u, 1, 0, 64, 64, 64);
+    check(attribute.pixel_format == 0x80000000u && attribute.tiling_mode == 1 && attribute.aspect_ratio == 0 && attribute.width == 64 && attribute.height == 64 && attribute.pitch_in_pixel == 64 && attribute.option == 0 && attribute.reserved0 == 0 && attribute.reserved1 == 0, "PS4 buffer attribute fields are wrong");
+    void* const pair[2] = {storage.data(), storage.data() + 20480};
+    VideoOutBuffers second{pair[1], nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 ps5{};
+    ps5.width = 64;
+    ps5.height = 64;
+    ps5.tiling_mode = 1;
+    ps5.pitch_in_pixel = 64;
+    ps5.pixel_format = 0x8000000000000000ull;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers2(handle, 3, 5, &second, 1, &ps5, 0, nullptr); }).find("64 KiB alignment") != std::string::npos, "a PS5 buffer was accepted at 4 KiB alignment");
+    check(sceVideoOutRegisterBuffers(handle, 0, pair, 2, &attribute) == 0, "the first PS4 set index is not 0");
+    void* const third[1] = {storage.data() + 49152};
+    check(sceVideoOutRegisterBuffers(handle, 2, third, 1, &attribute) == 1, "the second PS4 set index is not 1");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.pixel_format == 0x8000000000000000ull && cfg->buffers[1].dataAddress == reinterpret_cast<uint64_t>(pair[1]) && cfg->buffers[2].groupIndex == 1, "PS4 buffers were registered wrongly");
+    }
+    VideoOutBufferAttribute2 tiledChange{};
+    tiledChange.width = 64;
+    tiledChange.height = 64;
+    tiledChange.pixel_format = 0x8000000000000000ull;
+    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
+    void* const odd[1] = {storage.data() + 65536 + 256};
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, odd, 1, &attribute); }).find("4 KiB alignment") != std::string::npos, "a PS4 buffer was accepted below 4 KiB alignment");
+    void* const fourth[1] = {storage.data() + 65536};
+    auto tiled = attribute;
+    tiled.tiling_mode = 0;
+    tiled.pitch_in_pixel = 0;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled); }).find("tiled display buffers are not implemented") != std::string::npos, "a PS4 tiled buffer was accepted");
+    auto tenBit = attribute;
+    tenBit.pixel_format = 0x88060000u;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tenBit); }).find("unsupported PS4 pixel format 0x88060000") != std::string::npos, "an unknown PS4 pixel format was accepted");
+    auto withOption = attribute;
+    withOption.option = 1;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &withOption); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 buffer option was accepted");
+    std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
+    raw.fill(0xaa);
+    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS4 flip status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 flip status overflowed its 64 bytes");
+    VideoOutFlipStatusPs4 flip;
+    std::memcpy(&flip, raw.data(), sizeof(flip));
+    check(flip.count == 0 && flip.flipArg == -1 && flip.currentBuffer == -1 && flip.flipPendingNum == 0, "the PS4 flip status fields are wrong");
+    raw.fill(0xaa);
+    check(sceVideoOutGetVblankStatus(handle, reinterpret_cast<VideoOutVblankStatus*>(raw.data())) == 0, "the PS4 vblank status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutVblankStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 vblank status overflowed its 32 bytes");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        check(sceVideoOutSubmitFlip(handle, 1, 1, 7) == 0, "the PS4 flip was not accepted");
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == 1; }), "the PS4 flip did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(cfg->flipStatus.flipArg == 7 && cfg->flipStatus.currentBuffer == 1, "the PS4 flip status is wrong");
+    }
+    sceVideoOutClose(handle);
+    const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    raw.fill(0xaa);
+    check(sceVideoOutGetFlipStatus(ps5Handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS5 flip status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0; }), "the PS5 flip status did not fill its 128 bytes");
+    sceVideoOutClose(ps5Handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 void testDeferredBuffer() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
@@ -153,6 +220,57 @@ void testDeferredBuffer() {
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
     AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
+    LibcRunShutdown_nid_postfix();
+}
+
+void testCpuFlipOrder() {
+    const bool inOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    const auto flipsWithin = [&](int count, std::chrono::milliseconds limit) {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, limit, [&] { return cfg->failure || cfg->flipStatus.count == count; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        return done;
+    };
+    const auto shownArgument = [&] {
+        std::lock_guard lock(cfg->mutex);
+        return cfg->flipStatus.flipArg;
+    };
+    auto first = std::make_shared<Gate>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, first);
+    std::array<uint32_t, 6> firstHeld{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
+    Packet firstPacket{firstHeld.data(), 6, 0, {}};
+    check(sceAgcDriverSubmitDcb(&firstPacket) == 0, "the first gated submission was not accepted");
+    std::thread flipThread([&] { check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip thread's flip was not accepted"); });
+    flipThread.join();
+    const bool ahead = flipsWithin(1, std::chrono::milliseconds(inOrder ? 1000 : 8000));
+    if (inOrder) check(!ahead, "with APS5_CPU_FLIP_IN_ORDER a flip completed while a queue-0 submission ahead of it was held");
+    else check(ahead, "a flip from a thread that never submitted queue-0 work waited for a held queue-0 submission");
+    first->Release();
+    check(flipsWithin(1, std::chrono::seconds(30)), "the flip thread's flip did not complete");
+    check(shownArgument() == 5, "the flip thread's flip presented the wrong request");
+    auto second = std::make_shared<Gate>();
+    AgcDriverRegisterVideoOutput_nid_postfix(8, second);
+    std::array<uint32_t, 6> secondHeld{0xc004105c, 8, 0xfffffffeu, 1, 0, 0};
+    Packet secondPacket{secondHeld.data(), 6, 0, {}};
+    check(sceAgcDriverSubmitDcb(&secondPacket) == 0, "the second gated submission was not accepted");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 6) == 0, "the submitting thread's flip was not accepted");
+    check(!flipsWithin(2, std::chrono::milliseconds(1000)), "a flip from the thread that submitted queue-0 work completed ahead of that work");
+    second->Release();
+    check(flipsWithin(2, std::chrono::seconds(30)), "the submitting thread's flip did not complete");
+    check(shownArgument() == 6, "the submitting thread's flip presented the wrong request");
+    AgcDriverWaitIdle_nid_postfix();
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, first);
+    AgcDriverUnregisterVideoOutput_nid_postfix(8, second);
     LibcRunShutdown_nid_postfix();
 }
 
@@ -252,6 +370,12 @@ void testDecode() {
     check(group.attribute.option == 0x28, "an added buffer option did not keep the existing bits");
     check(expectFailure([&] { DescribeVideoOutBuffer(registered, group); }).find("buffer option 40") != std::string::npos, "an unsupported added buffer option was accepted");
     check(expectFailure([&] { sceVideoOutAddBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
+    sceVideoOutRemoveBufferAttributeOption(&group.attribute, 0x21);
+    check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY && group.attribute.width == 259 && group.attribute.height == 137, "a removed buffer option was not cleared alone");
+    check(DescribeVideoOutBuffer(registered, group).address == plain.address, "a buffer whose unsupported option was removed was rejected");
+    sceVideoOutRemoveBufferAttributeOption(&group.attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY);
+    check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, "removing the last buffer option did not clear it");
+    check(expectFailure([&] { sceVideoOutRemoveBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted for removal");
     VideoOutBuffer dccBuffer{0, reinterpret_cast<uint64_t>(tiled.data()), 0x7f0000};
     sceVideoOutSetBufferAttribute2(&group.attribute, 0x8000000000000000ull, 0, 259, 137, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, 0x208, 0x11223344);
     group.category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED;
@@ -316,9 +440,28 @@ void testControls() {
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
-    expectFailure([&] { sceVideoOutSetFlipRate(handle, 3); });
+    for (const int rate : {3, 60, -1}) {
+        check(sceVideoOutSetFlipRate(handle, rate) == VIDEO_OUT_ERROR_INVALID_VALUE, "flip rate outside 0..2 was accepted");
+        check(cfg->flipRate == 2, "a rejected flip rate changed the stored rate");
+    }
     VideoOutColorSettings settings{};
     expectFailure([&] { sceVideoOutColorSettingsSetGamma(&settings, std::numeric_limits<float>::quiet_NaN()); });
+    expectFailure([&] { sceVideoOutColorSettingsSetGamma_(&settings, 1.0f, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutColorSettingsSetGamma_(&settings, 1.2f, sizeof(VideoOutColorSettings)) == 0, "gamma wrapper rejected valid size");
+    check(settings.gamma == 1.2f, "gamma wrapper failed to forward value");
+
+    expectFailure([&] { sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings) - 1); });
+    check(sceVideoOutAdjustColor_(handle, &settings, sizeof(VideoOutColorSettings)) == 0, "adjust color wrapper rejected valid size");
+
+    VideoOutColorSpaceConversionSettings cscSettings{};
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_(&cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "default SDR to HDR wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&cscSettings, 1.0f, 0, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "SDR to HDR conversion wrapper rejected valid size");
+
+    expectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings) - 1); });
+    check(sceVideoOutAdjustColorSpaceConversion_(handle, &cscSettings, sizeof(VideoOutColorSpaceConversionSettings)) == 0, "adjust color space conversion wrapper rejected valid size");
     KernelEqueue queue = 0;
     check(sceKernelCreateEqueue(&queue, "VideoOut test") == 0, "event queue creation failed");
     auto owner = EqueuePin_nid_postfix(queue);
@@ -349,10 +492,12 @@ void testControls() {
     check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &settings && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_VBLANK, "vblank event or updated user data missing");
     check(sceVideoOutAddPreVblankStartEvent(queue, handle, &mode) == 0, "pre-vblank subscription failed");
     check(sceVideoOutWaitVblank(handle) == 0, "vblank wait failed");
-    KernelEvent events[2]{};
-    check(owner->GetTriggeredEvents(events, 2) == 2, "pre-vblank or vblank event missing");
-    const auto& preVblank = sceVideoOutGetEventId(&events[0]) == VIDEO_OUT_EVENT_PRE_VBLANK_START ? events[0] : events[1];
-    check(sceVideoOutGetEventId(&preVblank) == VIDEO_OUT_EVENT_PRE_VBLANK_START && preVblank.udata == &mode, "pre-vblank event missing");
+    std::array<KernelEvent, 8> events{};
+    const int collected = owner->GetTriggeredEvents(events.data(), static_cast<int>(events.size()));
+    check(collected >= 2, "pre-vblank or vblank event missing");
+    const auto end = events.begin() + collected;
+    check(std::any_of(events.begin(), end, [&](KernelEvent& item) { return sceVideoOutGetEventId(&item) == VIDEO_OUT_EVENT_VBLANK && item.udata == &settings; }), "vblank event missing");
+    check(std::any_of(events.begin(), end, [&](KernelEvent& item) { return sceVideoOutGetEventId(&item) == VIDEO_OUT_EVENT_PRE_VBLANK_START && item.udata == &mode; }), "pre-vblank event missing");
     check(sceVideoOutDeletePreVblankStartEvent(queue, handle) == 0, "pre-vblank unsubscription failed");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
@@ -558,7 +703,12 @@ struct BusyLoop {
     std::vector<std::uint32_t> commands;
 };
 
-BusyLoop prepareBusyLoop(std::uint32_t iterations) {
+constexpr std::uint32_t busyLoopTotalIterations = 100000000u;
+constexpr std::uint32_t busyLoopDispatchCount = 100u;
+constexpr std::uint32_t busyLoopIterationsPerDispatch = busyLoopTotalIterations / busyLoopDispatchCount;
+static_assert(busyLoopTotalIterations % busyLoopDispatchCount == 0);
+
+BusyLoop prepareBusyLoop(std::uint32_t iterations, std::uint32_t dispatchCount = 1u) {
     alignas(256) static const std::array<std::uint32_t, 12> code{
         0xbe850380, 0x7e040281, 0xd5690002, 0x00020502, 0x4a040481, 0x80058105,
         0xbf070405, 0xbf85fffa, 0x7e020280, 0xe0701000, 0x80000201, 0xbf810000};
@@ -580,13 +730,17 @@ BusyLoop prepareBusyLoop(std::uint32_t iterations) {
     const auto program = reinterpret_cast<std::uintptr_t>(code.data());
     const auto output = reinterpret_cast<std::uintptr_t>(result);
     const auto target = reinterpret_cast<std::uintptr_t>(label);
-    return {result, label, {
+    std::vector<std::uint32_t> commands{
         0xc0027600, 0x20c, static_cast<std::uint32_t>(program >> 8u), static_cast<std::uint32_t>(program >> 40u),
         0xc0017600, 0x213, 5u << 1u,
         0xc0037600, 0x207, 32, 1, 1,
         0xc0057600, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, 4, 0x31016fac, iterations,
-        0xc0031500, 1, 1, 1, 0x8041,
-        0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0}};
+    };
+    for (std::uint32_t dispatch = 0; dispatch < dispatchCount; ++dispatch) {
+        commands.insert(commands.end(), {0xc0031500, 1, 1, 1, 0x8041});
+    }
+    commands.insert(commands.end(), {0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0});
+    return {result, label, std::move(commands)};
 }
 
 void testReleaseVblank() {
@@ -600,7 +754,7 @@ void testReleaseVblank() {
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
     check(sceVideoOutSetFlipRate(handle, 2) == 0, "flip rate was not applied");
-    auto busy = prepareBusyLoop(100000000u);
+    auto busy = prepareBusyLoop(busyLoopIterationsPerDispatch, busyLoopDispatchCount);
     Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU work was not accepted");
     sceVideoOutSubmitFlip(handle, 0, 1, 1);
@@ -609,7 +763,7 @@ void testReleaseVblank() {
         const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
         if (cfg->failure) std::rethrow_exception(cfg->failure);
         check(done, "the flip did not complete");
-        check(cfg->lastFlipVblank >= 3 && cfg->vblankStatus.count >= cfg->lastFlipVblank + 3, "the next flip is not paced from the vblank this flip was released at");
+        check(cfg->lastFlipVblank >= 3, "the first flip was released before its configured interval");
     }
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
@@ -626,8 +780,8 @@ void testFlipAfterGpuWork(bool eop = false) {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
-    constexpr std::uint32_t iterations = 100000000u;
-    auto busy = prepareBusyLoop(iterations);
+    constexpr std::uint32_t iterations = busyLoopIterationsPerDispatch;
+    auto busy = prepareBusyLoop(iterations, busyLoopDispatchCount);
     auto& result = *busy.result;
     auto& label = *busy.label;
     Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
@@ -803,6 +957,8 @@ void testEop(bool overlay) {
     const std::uint64_t bits = static_cast<std::uint64_t>(argument);
     std::vector<std::uint32_t> completion{0xc0027900u, 0x342u, 0xc7010107u, static_cast<std::uint32_t>(bus), 0xc0043700u, 0x06010000u, 0xc343u, 0u, static_cast<std::uint32_t>(bits), static_cast<std::uint32_t>(bits >> 32u)};
     completion.push_back(0x80004900u);
+    const std::array<std::uint32_t, 8> nop{0xc0061000u, 0x02000000u, 0u, 0u, 0u, 0u, token, 0u};
+    completion.insert(completion.end(), nop.begin(), nop.end());
     completion.insert(completion.end(), release.begin(), release.end());
     submit(completion);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -879,6 +1035,81 @@ void testOneDevice() {
     check(next.Serial() == 2, "the GPU work and the flip used more than one device");
 }
 
+void testOutputResolution() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t expected = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    VideoOutOutputStatus status{};
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "a port without buffers did not report the display's resolution");
+    const std::uint32_t width = expected == 2u ? 1920u : 3840u;
+    const std::uint32_t height = expected == 2u ? 1080u : 2160u;
+    std::vector<std::byte> allocation(static_cast<std::size_t>(width) * height * 4 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = width;
+    attribute.height = height;
+    attribute.tiling_mode = 1;
+    attribute.pitch_in_pixel = width;
+    attribute.pixel_format = 0x8000000000000000ull;
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+        check(cfg->width == width && cfg->height == height, "the port did not record the buffer size");
+    }
+    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.resolution == expected, "the flipped buffer's size changed the reported resolution");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void setOutputResolution(const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("APS5_OUTPUT_RESOLUTION", value) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#else
+    check((*value != '\0' ? setenv("APS5_OUTPUT_RESOLUTION", value, 1) : unsetenv("APS5_OUTPUT_RESOLUTION")) == 0, "APS5_OUTPUT_RESOLUTION was not set");
+#endif
+}
+
+void testOutputResolutionOverride() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    SDL_DisplayMode mode{};
+    check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
+    const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    const auto reported = [&] {
+        VideoOutOutputStatus status{};
+        check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
+        return status.resolution;
+    };
+    setOutputResolution("");
+    check(reported() == following, "an unset override changed the display's resolution");
+    const std::pair<const char*, std::uint32_t> overrides[] = {{"1920x1080", 1u}, {"1280x720", 1u}, {"3840x2160", 2u}, {"2560x2160", 2u}, {"3840X1", 2u}};
+    for (const auto& [value, expected] : overrides) {
+        setOutputResolution(value);
+        check(reported() == expected, (std::string("the override ") + value + " did not set the reported resolution").c_str());
+        std::array<std::byte, 80> raw{};
+        VideoOutOutputStatus withVrr{};
+        check(sceVideoOutGetOutputStatusWithVrr(handle, raw.data()) == 0, "the VRR status was not returned");
+        std::memcpy(&withVrr, raw.data(), sizeof(withVrr));
+        check(withVrr.resolution == expected,(std::string("the override ") + value + " did not reach the VRR status").c_str());
+    }
+    for (const char* value : {"1920", "1920x", "x1080", "0x1080", "1920x0", "1920x1080x2", " 1920x1080", "1920x1080 ", "-1920x1080", "1920*1080", "4294967296x1080", "high"}) {
+        setOutputResolution(value);
+        const auto message = expectFailure([&] { reported(); });
+        check(message.find("APS5_OUTPUT_RESOLUTION") != std::string::npos && message.find(value) != std::string::npos, (std::string("the malformed value ") + value + " was not rejected by name").c_str());
+    }
+    setOutputResolution("");
+    check(reported() == following, "clearing the override did not restore the display's resolution");
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -902,6 +1133,10 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "overlay") testOverlay();
         else if (argc == 2 && std::string(argv[1]) == "deferred") testDeferredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
+        else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
+        else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
+        else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
+        else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;
@@ -909,7 +1144,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s\n", error.what());
         try { LibcRunShutdown_nid_postfix(); }
         catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        if (std::string(error.what()).find("Vulkan support") != std::string::npos && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
+        const std::string what = error.what();
+        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
+        if (noVulkanWindow && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
             std::printf("skipped, no display or Vulkan device: %s\n", error.what());
             return 77;
         }

@@ -97,9 +97,9 @@ void BuildBands() {
     }
 }
 
-AgcDriver::Graphics::ColorTarget VolumeTarget(std::byte* volume) {
+AgcDriver::Graphics::ColorTarget VolumeTarget(std::byte* volume, ColorTileMode tileMode = ColorTileMode::RenderTarget) {
     AgcDriver::Graphics::ColorTarget color{reinterpret_cast<std::uintptr_t>(volume), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, 0, 0xe4u};
-    color.tileMode = ColorTileMode::RenderTarget;
+    color.tileMode = tileMode;
     color.depth = Slices;
     color.depthSlice = FirstSlice;
     color.layers = Layers;
@@ -239,19 +239,23 @@ std::uint64_t BlockOffset(const AgcDriver::Graphics::TextureSwizzleEquation& equ
 }
 
 void Check(const std::byte* volume, const AgcDriver::Graphics::ColorTarget& color, const std::string& what, const std::array<std::uint8_t, Layers>& bands) {
+    using namespace AgcDriver::Graphics;
     const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::SurfaceForTarget(color));
-    Require(!geometry.thick, "a 64 KiB render-target volume is not stored as thin slices");
-    const auto block = AgcDriver::Graphics::ThinBlockLayout(AgcDriver::Graphics::TextureTileMode::kR64KBX, 4);
-    Require(Width <= block[1] && Height <= block[2], "the volume slices span several tile blocks");
-    const auto* equation = AgcDriver::Graphics::FindTextureSwizzleEquation(static_cast<std::uint32_t>(ColorTileMode::RenderTarget), 4);
-    Require(equation != nullptr, "missing the 64 KiB R_X swizzle equation");
+    Require(geometry.thick == (color.tileMode == ColorTileMode::S4KBX), "unexpected volume addressing family");
+    const auto tileMode = ColorTextureTileMode(color.tileMode);
+    const auto thin = ThinBlockLayout(tileMode, 4);
+    const auto block = geometry.thick ? ThickBlockExtent(tileMode, 4) : std::array<std::uint32_t, 3>{thin[1], thin[2], 1u};
+    const auto& mip = geometry.mips.at(0);
+    const auto* equation = FindTextureSwizzleEquation((geometry.thick ? 0x100u : 0u) | static_cast<std::uint32_t>(color.tileMode), 4);
+    Require(equation != nullptr, "missing the volume's swizzle equation");
     for (std::uint32_t slice = 0; slice < Slices; ++slice) {
         const auto* base = volume + geometry.GuestLayerOffset(slice);
         for (std::uint32_t y = 0; y < Height; ++y) {
             for (std::uint32_t x = 0; x < Width; ++x) {
                 const bool drawn = slice >= FirstSlice && x / BandWidth == slice - FirstSlice;
                 const auto expected = drawn ? bands[slice - FirstSlice] : Kept;
-                const auto* texel = base + BlockOffset(*equation, x, y, slice);
+                const auto offset = (static_cast<std::uint64_t>(y / block[1]) * mip.blocksPerRow + x / block[0]) * thin[0] + BlockOffset(*equation, x, y, slice);
+                const auto* texel = base + offset;
                 for (std::uint32_t channel = 0; channel < 4; ++channel) {
                     const auto actual = std::to_integer<std::uint8_t>(texel[channel]);
                     Require(actual == expected || (drawn && expected == 128 && actual == 127), what + ": slice " + std::to_string(slice) + " texel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected) + (drawn ? " (the band of layer " + std::to_string(slice - FirstSlice) + ")" : slice < FirstSlice ? " (outside the color view)" : " (another layer's band)"));
@@ -283,6 +287,10 @@ int main(int argc, char** argv) {
         const auto fieldColor = VolumeTarget(fieldVolume.Data());
         Run(*device, fieldColor, false, LayerFieldPixelCode, true);
         Check(fieldVolume.Data(), fieldColor, "a pixel shader reading the render target index of its packed ancillary word", LayerFieldBands);
+        const GuestVolume thickVolume((VolumeTarget(nullptr, ColorTileMode::S4KBX).bytes + 65535u) & ~std::size_t{65535u});
+        const auto thickColor = VolumeTarget(thickVolume.Data(), ColorTileMode::S4KBX);
+        Run(*device, thickColor, false, PixelCode, false);
+        Check(thickVolume.Data(), thickColor, "thick SW_4KB_S_X vertex draw and writeback", WhiteBands);
         if (vertexOnly) std::puts("layered volume vertex draw tests passed");
         else if (target.mesh.has_value()) Run(*device, color, true, PixelCode, false);
         else std::puts("mesh case skipped, the device has no VK_EXT_mesh_shader");

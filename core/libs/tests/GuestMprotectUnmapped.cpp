@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
@@ -5,16 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-int APS5_VABI sceKernelMtypeprotect(const void*, std::size_t, int, int);
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -55,6 +47,12 @@ unsigned char* Map(std::size_t pages) {
 int main() {
     unsigned char* memory = Map(3);
     Require(munmap_nid_postfix(memory + Page, Page) == 0, "munmap of the middle page failed");
+
+    Require(Protect(memory, 0, ProtectRead) == 0, "a zero-length protection of a mapped page must succeed");
+    Require(ProtectionAt(memory) == ProtectReadWrite, "a zero-length protection must not change the page");
+    Require(Protect(memory + Page, 0, ProtectRead) == 0 && Protect(nullptr, 0, ProtectRead) == 0, "a zero-length protection of unmapped memory must succeed");
+    Require(sceKernelMtypeprotect(memory, 0, 0, ProtectRead) == 0 && ProtectionAt(memory) == ProtectReadWrite, "a zero-length sceKernelMtypeprotect must succeed without changing the page");
+    Require(mprotect_nid_postfix(memory + Page, 0, ProtectRead) == 0, "a zero-length mprotect of unmapped memory must succeed");
 
     Require(Protect(memory, Page * 3, ProtectRead) == 0, "a range with a gap in the middle must succeed for its mapped parts");
     Require(ProtectionAt(memory) == ProtectRead && ProtectionAt(memory + Page * 2) == ProtectRead, "the mapped parts on both sides of the gap must be protected");

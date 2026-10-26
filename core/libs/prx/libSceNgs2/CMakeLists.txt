@@ -1,5 +1,6 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../libSceNgs2.native/Ngs2Library.cmake)
 add_sce_ngs2_library(libSceNgs2)
+target_sources(libSceNgs2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(ngs2_core_render_tests ${CMAKE_CURRENT_SOURCE_DIR}/../libSceNgs2.native/tests/Ngs2Render.cpp)
@@ -11,4 +12,5 @@ if(BUILD_TESTING)
         set_tests_properties(ngs2_core_render PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNgs2>")
     endif()
+    add_sce_ngs2_test(libSceNgs2 ngs2_core_pcm Ngs2Pcm.cpp)
 endif()

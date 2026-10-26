@@ -82,6 +82,14 @@ int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
     return available;
 }
 
+int ResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (x >= 1920 || y >= 1080) return MOUSE_ERROR_INVALID_ARG;
+    return MOUSE_OK;
+}
+
 void Publish(const MouseInputEvent& event) {
     std::lock_guard lock(mouseMutex);
     if (event.connectionChange) {
