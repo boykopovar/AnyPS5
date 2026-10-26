@@ -81,6 +81,8 @@ private:
     SDL_hid_device* haptics = nullptr;
     std::atomic<bool> hapticsRunning{false};
     std::thread hapticsThread;
+    bool hapticsRumbled = false;
+    std::atomic<std::chrono::steady_clock::rep> hapticsReconfigureAt{0};
 };
 
 #endif
