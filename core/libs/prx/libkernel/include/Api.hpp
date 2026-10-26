@@ -685,6 +685,7 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid);
 void APS5_VABI sceKernelSync(void);
 void APS5_VABI sync_nid_postfix(void);
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
+int APS5_VABI tcgetsid_nid_postfix(int descriptor);
 int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
 int APS5_VABI sysarch(int operation, void* parameters);
 int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage);
