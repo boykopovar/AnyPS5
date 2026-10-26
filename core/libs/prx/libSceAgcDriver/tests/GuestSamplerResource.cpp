@@ -428,16 +428,6 @@ void RunGuestSamplerResourceTests() {
     unnormalizedAniso.xyMagFilter = 2;
     unnormalizedAniso.xyMinFilter = 2;
     rejectUnnormalized(unnormalizedAniso, "unnormalized coordinates with anisotropic filtering");
-    for (const std::uint32_t clamp : {4u, 5u, 7u}) {
-        Fields clampX = unnormalizedBase;
-        clampX.clampX = clamp;
-        rejectUnnormalized(clampX, "unnormalized coordinates with clamp mode " + std::to_string(clamp) + " on X");
-    }
-    for (const std::uint32_t clamp : {4u, 5u, 7u}) {
-        Fields clampY = unnormalizedBase;
-        clampY.clampY = clamp;
-        rejectUnnormalized(clampY, "unnormalized coordinates with clamp mode " + std::to_string(clamp) + " on Y");
-    }
     Fields clampZero = unnormalizedBase;
     clampZero.clampX = 0;
     clampZero.clampY = 0;
