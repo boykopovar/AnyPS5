@@ -5,7 +5,8 @@ against a defined STT_TLS symbol is folded the same way, and one against an impo
 STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically against their block,
 AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
 rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
-ld.so does not apply."""
+ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
+PC32 and 32."""
 
 from pathlib import Path
 import struct
@@ -106,6 +107,25 @@ def macho_bytes_at(data, address, size):
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-exec-tls-") as directory:
+        for section in (1, 0xff00, 0xfff1, 0xfff2, 0xffff):
+            for binding in (0, 1):
+                for kind in (DTPMOD64, DTPOFF64, TPOFF64):
+                    for flags, target in TARGETS.items():
+                        data = image([(0x1000, kind, TLS_SYMBOL, 0)])
+                        struct.pack_into("<BBH", data, 0x4900 + TLS_SYMBOL * 24 + 4, binding << 4 | 6, 0, section)
+                        name = f"tls-section-{target}-{section}-{binding}-{kind}"
+                        result, output = relink(relinker, directory, name, data, *flags)
+                        if section == 1 and kind == DTPMOD64 and target in ("windows", "macos"):
+                            assert result.returncode == 2 and "DTPMOD64 relocation is not supported" in result.stderr, (
+                                name, result.returncode, result.stderr)
+                            assert not output.exists(), name
+                        elif section == 1:
+                            assert result.returncode == 0 and output.exists(), (name, result.stderr)
+                        else:
+                            assert result.returncode == 2 and "Unsupported executable TLS symbol section" in result.stderr, (
+                                name, result.returncode, result.stderr)
+                            assert not output.exists(), name
+
         local = [(0x1000, TPOFF64, NULL, 4), (0x1008, DTPOFF64, NULL, 8), (0x1010, TPOFF64, TLS_SYMBOL, 2)]
         result, output = relink(relinker, directory, "linux", image(local + [(0x1018, DTPMOD64, NULL, 0),
                                                                               (0x1020, TPOFF64, IMPORTED, 0)]))
@@ -118,6 +138,18 @@ def main():
                        (DEFAULT_BASE + 0x1020, TPOFF64, "ImportedTls", 6, 0)], relocations
         assert any(struct.unpack_from("<I", elf, 64 + index * 56)[0] == PT_TLS
                    for index in range(struct.unpack_from("<H", elf, 0x38)[0])), "PT_TLS must be kept"
+
+        for value, size in ((TLS_MEMSZ - 4, 4), (TLS_MEMSZ, 0), (TLS_MEMSZ + 1, 0), (TLS_MEMSZ - 1, 2), (0xffffffffffffffff, 1)):
+            for flags, target in TARGETS.items():
+                data = image([(0x1000, TPOFF64, TLS_SYMBOL, 0)])
+                struct.pack_into("<QQ", data, 0x4900 + TLS_SYMBOL * 24 + 8, value, size)
+                result, output = relink(relinker, directory, f"tls-bounds-{target}-{value}-{size}", data, *flags)
+                if value <= TLS_MEMSZ and size <= TLS_MEMSZ - value:
+                    assert result.returncode == 0 and output.exists(), (target, value, size, result.stderr)
+                else:
+                    assert result.returncode == 2 and "TLS symbol exceeds TLS segment" in result.stderr, (
+                        target, value, size, result.returncode, result.stderr)
+                    assert not output.exists()
 
         result, output = relink(relinker, directory, "windows", image(local), "--windows")
         assert result.returncode == 0, (result.stdout, result.stderr)
@@ -149,6 +181,10 @@ def main():
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),
             ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
+            ("windows-pc32", [(0x1000, 2, NULL, 0)], True, ("--windows",), "Relocation type 2 is not supported for this target"),
+            ("windows-32", [(0x1000, 10, NULL, 0)], True, ("--windows",), "Relocation type 10 is not supported for this target"),
+            ("macos-pc32", [(0x1000, 2, NULL, 0)], True, ("--macos",), "Relocation type 2 is not supported for this target"),
+            ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "Relocation type 10 is not supported for this target"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
         ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x}")

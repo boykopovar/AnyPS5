@@ -541,11 +541,15 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
 }
 }
 
-extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination) {
-    constexpr std::size_t maximum = 1024;
+extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination) {
     if (source == nullptr) return 14;
     const auto address = reinterpret_cast<std::uintptr_t>(source);
-    std::array<char, maximum> bytes{};
+    std::vector<char> bytes;
+    try {
+        bytes.resize(maximum);
+    } catch (const std::bad_alloc&) {
+        return 12;
+    }
     std::size_t offset = 0;
     while (offset < bytes.size()) {
         if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return 14;
@@ -564,6 +568,10 @@ extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& desti
         offset += count;
     }
     return 63;
+}
+
+extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination) {
+    return CopyGuestString_nid_no_patch(source, 1024, destination);
 }
 
 #ifndef _WIN32
@@ -853,9 +861,15 @@ extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::file
     const auto relinked = RelinkedModuleName(path);
     std::error_code error;
     if (std::filesystem::is_regular_file(relinked, error)) return relinked;
+    const auto parent = relinked.parent_path().empty() ? std::filesystem::path(".") : relinked.parent_path();
     NameMatch names[] = {{relinked.filename().string()}, {path.filename().string(), std::nullopt, false, true}};
-    MatchNames(relinked.parent_path().empty() ? "." : relinked.parent_path(), names);
+    MatchNames(parent, names);
     if (names[0].ambiguous || names[0].path) return MatchedModuleOrPath(path, relinked, names[0]);
+    for (const char* directory : {"prx", "sce_module", "sce_modules"}) {
+        NameMatch nested[] = {{relinked.filename().string()}};
+        MatchNames(parent / directory, nested);
+        if (nested[0].ambiguous || nested[0].path) return MatchedModuleOrPath(path, relinked, nested[0]);
+    }
     return names[1].path ? *names[1].path : path;
 }
 
@@ -982,6 +996,17 @@ extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
 }
 #endif
 
+namespace {
+
+std::atomic<std::uint64_t> notImplementedCalls{0};
+
+}
+
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+    notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
     throw std::runtime_error(std::string(funcName) + " not implemented");
+}
+
+extern "C" std::uint64_t NotImplementedCalls_nid_no_patch() {
+    return notImplementedCalls.load(std::memory_order_relaxed);
 }

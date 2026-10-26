@@ -66,10 +66,10 @@ int APS5_VABI sceHttpCacheSystemSendStatistics();
 int APS5_VABI sceHttpCacheSystemShutdown();
 int APS5_VABI sceHttpCacheSystemTerm();
 int APS5_VABI sceHttpCacheTerm(std::int32_t cacheId);
-int APS5_VABI sceHttpCacheClearAllUserTags();
+int APS5_VABI sceHttpCacheClearAllUserTags(std::int32_t cacheId, const std::int32_t* userIds, std::size_t count);
 int APS5_VABI sceHttpCacheClearCacheInfo();
 int APS5_VABI sceHttpCacheDebugSetUrl();
-int APS5_VABI sceHttpCacheRegisterCacheInfoUrl();
+int APS5_VABI sceHttpCacheRegisterCacheInfoUrl(const void* info);
 int APS5_VABI sceHttpCacheRemoveTag();
 
 }

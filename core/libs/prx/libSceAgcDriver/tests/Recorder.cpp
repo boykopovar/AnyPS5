@@ -25,9 +25,11 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ResidentPresent.hpp"
 #include "ImageTableAbi.hpp"
@@ -66,6 +68,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -3025,15 +3028,33 @@ void requireImportServesGuest(const Context& context, Recorder& recorder, const 
     const auto bytes = static_cast<std::size_t>(end - begin);
     Require(begin >= import.base && end <= import.base + import.bytes, what + " is not inside its import");
     const auto collected = CollectWritesUncached(begin, bytes);
-    Require(collected != 0 && Watched(begin, bytes), what + " left the write watch");
-    Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    const bool watched = Watched(begin, bytes);
+    Require(!watched || collected != 0, what + " is watched but cannot collect writes");
+    if (watched) {
+        Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    } else {
+        Require(collected == 0, what + " collects writes without being watched");
+        const auto generation = WriteGeneration();
+        Require(UntrackedHint(begin, bytes) == 0 && !UnchangedSince(begin, bytes, generation), what + " provides an unchanged or untracked-hint proof without a write watch");
+        std::vector<void*> compared(bytes / page);
+        auto count = compared.size();
+        GuestArena::GuestArenaComparedPages_nid_no_patch(begin, bytes, compared.data(), &count);
+        Require(count == compared.size(), what + " left the write watch without compared shared pages");
+        for (std::size_t index = 0; index < count; ++index) {
+            Require(compared[index] == reinterpret_cast<void*>(begin + index * page), what + " has an unexpected compared shared page");
+            MEMORY_BASIC_INFORMATION memory{};
+            Require(VirtualQuery(compared[index], &memory, sizeof(memory)) == sizeof(memory) && memory.State == MEM_COMMIT, what + " has an inaccessible compared shared page");
+            const auto protection = memory.Protect & 0xff;
+            Require(protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE, what + " has a compared shared page that is not writable");
+        }
+    }
     auto* first = reinterpret_cast<std::byte*>(begin);
     auto* last = reinterpret_cast<std::byte*>(end - page);
     for (std::size_t index = 0; index < probe; ++index) {
         first[index] = static_cast<std::byte>((index * 7u + salt) & 0xffu);
         last[index] = static_cast<std::byte>((index * 13u + salt * 5u + 1u) & 0xffu);
     }
-    Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
+    if (watched) Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
     Buffer readback(context, 2 * probe, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     const auto commands = recorder.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3163,7 +3184,7 @@ int reimportBench(const Device& device) {
         const auto* tail = HostImportFor(context, begin, static_cast<std::size_t>(end - begin));
         Require(tail != nullptr && tail->base == begin && tail->base + tail->bytes == end, "the re-import bench lost the import of its kept side");
         requireImportServesGuest(context, recorder, *tail, begin, end, ++salt, std::string("the kept side after the ") + pattern.name + " cuts");
-        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; CPU stores into it are collected and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
+        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; write tracking sees its CPU stores and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
         cleanup();
         gpu.unlock();
         return again;
@@ -3284,7 +3305,7 @@ int hostImportCutTests(const Device& device) {
         }
         cleanup();
         gpu.unlock();
-        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write watch see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
+        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write tracking see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
     };
     const auto remapWhileTrimmed = [&] {
         const std::string name = "an unmap and a new mapping of the retained side while the old import is retired";
@@ -3315,7 +3336,7 @@ int hostImportCutTests(const Device& device) {
         Require(remapped->memoryBase == begin && remapped->pinnedBytes == end - begin, "after " + name + " the pages mapped again are served from the import that pinned the old ones");
         cleanup();
         gpu.unlock();
-        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and the write watch see the guest's bytes\n";
+        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and write tracking see the guest's bytes\n";
     };
     gpu.unlock();
     try {
@@ -9609,6 +9630,29 @@ void minLodTests(const Device& device, Recorder& recorder) {
     expectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
 }
 
+void failedCheckReportTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    Require(Recorder::Active() == &recorder, "the failed check test needs the active recorder");
+    TextureDetiler detiler(context);
+    GuestTextureResource resource{};
+    resource.baseAddress = 0x100000;
+    resource.width = 64;
+    resource.height = 64;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kLinear;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const std::vector<std::byte> snapshot(static_cast<std::size_t>(DescribeSurface(resource).guestBytes), std::byte{0x40});
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    Texture texture(context, detiler, resource, identity, snapshot);
+    Require(recorder.Recording(), "a texture upload was not recorded into the open batch");
+    Require(false, "a failed check stopped the test with a texture upload in its open batch");
+}
+
 void singleCubeTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
@@ -11058,6 +11102,97 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+class LibraryCreateFlags {
+public:
+    explicit LibraryCreateFlags(const Context& context) : resolver(context.deviceProc), device(context.device) {
+        create = function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+        active = this;
+    }
+    ~LibraryCreateFlags() { active = nullptr; }
+    LibraryCreateFlags(const LibraryCreateFlags&) = delete;
+    LibraryCreateFlags& operator=(const LibraryCreateFlags&) = delete;
+    PFN_vkGetDeviceProcAddr Resolver() const { return resolve; }
+    std::uint32_t Libraries() const { return libraries.load(); }
+    std::uint32_t Retaining() const { return retaining.load(); }
+
+private:
+    template<typename TFunction>
+    TFunction function(const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+        const auto result = active->create(device, cache, count, infos, callbacks, pipelines);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (pipelines[index] == VK_NULL_HANDLE || (infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) == 0) continue;
+            active->libraries.fetch_add(1);
+            if ((infos[index].flags & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0) active->retaining.fetch_add(1);
+        }
+        return result;
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(createPipelines);
+        return active->resolver(device, name);
+    }
+    PFN_vkGetDeviceProcAddr resolver;
+    VkDevice device;
+    PFN_vkCreateGraphicsPipelines create = nullptr;
+    std::atomic<std::uint32_t> libraries{0};
+    std::atomic<std::uint32_t> retaining{0};
+    static inline LibraryCreateFlags* active = nullptr;
+};
+
+void pipelineLibraryLtoInfoTests(const Device& device) {
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    LibraryCreateFlags created(context);
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    if (!context.graphicsPipelineLibrary) {
+        std::cout << "graphics pipeline libraries unavailable or disabled: no library retains link-time optimization info\n";
+        return;
+    }
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 41;
+    fragment.variantId = 42;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    ShaderResources resources(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    VertexInputLayout input;
+    auto fast = context;
+    fast.deviceProc = created.Resolver();
+    fast.pipelineLinkTimeOptimization = false;
+    auto optimizing = fast;
+    optimizing.pipelineLinkTimeOptimization = true;
+    const bool lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
+    const auto fastPipeline = CachedPipeline(fast, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+    const auto fastLibraries = created.Libraries();
+    Require(fastLibraries != 0, "the pipeline was not linked from libraries created through the traced device");
+    Require(created.Retaining() == 0, std::to_string(created.Retaining()) + " of the " + std::to_string(fastLibraries) + " libraries made for a context without optimized links were created to retain link-time optimization info");
+    WaitForOptimizedPipelines(context.device);
+    Require(!fastPipeline->Optimized(), "a pipeline of a context without optimized links was optimized in the background");
+    const auto optimizedPipeline = CachedPipeline(optimizing, state, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    Require(optimizedPipeline != fastPipeline, "the two attachment layouts shared one cached pipeline");
+    const auto libraries = created.Libraries() - fastLibraries;
+    if (lto) {
+        Require(libraries == fastLibraries, "a link that will be optimized made " + std::to_string(libraries) + " libraries, expected " + std::to_string(fastLibraries) + ": it reused libraries made without link-time optimization info");
+        Require(created.Retaining() == libraries, std::to_string(created.Retaining()) + " of the " + std::to_string(libraries) + " libraries of a link that will be optimized were created to retain link-time optimization info");
+    } else {
+        Require(libraries == 0 && created.Retaining() == 0, "with APS5_NO_PIPELINE_LTO set, forcing pipelineLinkTimeOptimization changed the libraries or their create flags");
+    }
+    WaitForOptimizedPipelines(context.device);
+    Require(optimizedPipeline->Optimized() == lto, lto ? "the pipeline linked from libraries that retain link-time optimization info was not optimized in the background" : "a pipeline was optimized with APS5_NO_PIPELINE_LTO set");
+    std::cout << "Pipeline library link-time optimization info tests passed: " << fastLibraries << " libraries without the info, " << created.Retaining() << " with it\n";
+}
+
 void pipelineLibraryTests(const Device& device) {
     std::lock_guard gpu(GpuMutex());
     const auto& context = device.GetContext();
@@ -11325,7 +11460,23 @@ void Run(Context context) {
 #endif
 
 int main(int argc, char** argv) {
-    try {
+    _ZSt13set_terminatePFvvE_nid_postfix([] {
+        std::fflush(nullptr);
+        std::cout.flush();
+        if (const auto failure = std::current_exception()) {
+            try {
+                std::rethrow_exception(failure);
+            } catch (const std::exception& error) {
+                std::cerr << error.what() << '\n';
+            } catch (...) {
+                std::cerr << "terminated by an exception that is not a std::exception\n";
+            }
+        } else {
+            std::cerr << "terminated without an active exception\n";
+        }
+        LibcTerminate_nid_no_patch(1);
+    });
+    {
         if (argc == 2 && std::string_view(argv[1]) == "--collect-mapping-history-only") {
             if (!collectMappingHistoryTests()) return 77;
             std::cout << "collect mapping history tests passed\n";
@@ -11438,6 +11589,10 @@ int main(int argc, char** argv) {
             }
             return sparseRunImportTests(device, true) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-lto-info-only") {
+            pipelineLibraryLtoInfoTests(device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);
             return 0;
@@ -11506,6 +11661,10 @@ int main(int argc, char** argv) {
             }
             tiledResolveTests(device, recorder);
             std::cout << "CB resolves into tiled targets tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--failed-check-only") {
+            failedCheckReportTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
@@ -11845,8 +12004,5 @@ int main(int argc, char** argv) {
         recorder.Activate();
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
 }

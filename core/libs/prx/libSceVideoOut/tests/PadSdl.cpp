@@ -29,6 +29,18 @@ int main() {
 
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
 
+    const int hostJoysticks = SDL_NumJoysticks();
+    if (hostJoysticks < 0) {
+        std::fprintf(stderr, "pad_sdl: SDL_NumJoysticks failed: %s\n", SDL_GetError());
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+        return 1;
+    }
+    if (hostJoysticks > 0) {
+        std::fprintf(stderr, "pad_sdl: skipped, SDL sees %d host joysticks, which take the pad slots this test checks\n", hostJoysticks);
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+        return 77;
+    }
+
     SDL_VirtualJoystickDesc desc{};
     desc.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
     desc.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;

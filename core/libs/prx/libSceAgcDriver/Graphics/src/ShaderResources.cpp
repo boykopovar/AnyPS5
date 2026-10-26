@@ -66,7 +66,7 @@ VkComponentSwizzle ComponentSwizzleFor(std::uint8_t dstSel) {
 }
 
 VkComponentMapping ViewComponents(const GuestTextureResource& resource) {
-    if (IsConvertedTextureFormat(resource.format) && !IsRepackedTextureFormat(resource.format)) return {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    if (IsConvertedTextureFormat(resource.format) && !IsRepackedTextureFormat(resource.format) && resource.format != static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     const auto channel = [&](std::uint8_t dstSel) { return TextureComponentChannel(resource.format, ComponentSwizzleFor(dstSel)); };
     return {channel(resource.dstSelX), channel(resource.dstSelY), channel(resource.dstSelZ), channel(resource.dstSelW)};
 }
@@ -803,7 +803,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         keys = scanKeys();
         if (*keys == source->FilledKeys()) {
             std::array<std::byte, 16> probe{};
-            if (!FillDccClear(ResolveTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
+            if (!FillDccClear(DccClearTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
                 char text[256];
                 std::snprintf(text, sizeof(text), "AGC graphics: sampled texture 0x%llx (%ux%u format %u, dcc 0x%llx) reads %s DCC keys filled over its pending image, a clear value the format has no encoding for", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<unsigned long long>(resource.dccAddress), DccKeysName(*keys));
                 throw std::runtime_error(text);
@@ -1189,9 +1189,9 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
-    RequireNoMultisampleTarget(viewed.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a storage image access");
-    if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     const auto viewedBytes = guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes;
+    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
+    if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     if (viewedBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -2084,9 +2084,10 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
                         const auto& push = shader.program->pushConstants;
-                        if (!push.empty()) {
+                        const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
+                        if (pushDataBytes != 0u) {
                             const auto position = shader.program->memoryOffsetDword * 4u + element;
-                            Require(position < push.size(), "guest buffer offset lies outside the shader's push constants");
+                            Require(position < pushDataBytes, "guest buffer offset lies outside the shader's push constants");
                             allocations[index].pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
                         } else {
                             allocations[index].dataByte = shader.program->memoryOffsetDword * 4u + element;
@@ -5025,7 +5026,7 @@ ShaderResources::TableStage& ShaderResources::tableStage(const CompiledShader& s
     table.stage = shader.stage;
     table.program = shader.program;
     table.poison = shader.program->imageTablePoison;
-    table.messages.assign(table.poison.size(), std::string{});
+    table.messages.assign(table.poison.size(), nullptr);
     return table;
 }
 
@@ -5036,7 +5037,8 @@ std::uint32_t ShaderResources::rejectTableElement(TableStage& table, std::span<c
     poison.resource = ShaderRecompiler::NoTable;
     poison.reason = static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected);
     table.poison.push_back(poison);
-    table.messages.push_back(message);
+    const bool repeated = !table.messages.empty() && table.messages.back() != nullptr && *table.messages.back() == message;
+    table.messages.push_back(repeated ? table.messages.back() : std::make_shared<const std::string>(message));
     faultChecks = true;
     return ShaderRecompiler::ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
 }
@@ -5331,7 +5333,7 @@ void ShaderResources::finishImageTables() {
             poison.resource = index;
             poison.reason = static_cast<std::uint32_t>(Abi::PoisonReason::HeapWritten);
             table.poison.push_back(poison);
-            table.messages.push_back("the table at 0x" + HexText(base) + " is written by its own dispatch");
+            table.messages.push_back(std::make_shared<const std::string>("the table at 0x" + HexText(base) + " is written by its own dispatch"));
             map[header + Abi::TableFault] = Abi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
             faultChecks = true;
         }

@@ -401,7 +401,7 @@ private:
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
+        std::vector<std::shared_ptr<const std::string>> messages;
         std::uint32_t elementBase = 0;
         std::uint32_t set = 0;
         std::size_t firstSampler = 0;

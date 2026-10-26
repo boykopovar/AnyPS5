@@ -667,6 +667,19 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
             const auto activeSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
             requireFault(activeSampler, "sampler table entry with an opaque black border", pair);
         }
+        auto secondOpaqueBlack = opaqueBlack;
+        secondOpaqueBlack[1] = (3u * 256u) << 12u;
+        SetRecord(0, opaqueBlack, image);
+        SetRecord(1, secondOpaqueBlack, image);
+        for (const std::uint32_t record : {0u, 1u}) {
+            Keys[0] = record;
+            Keys[1] = record;
+            requireFault(RunDirectCode(device, TableCode, PointClamp, image), "sampler table entry with an opaque black border", name + " rejected S# " + std::to_string(record) + " of two with the same reason");
+        }
+        SetRecord(0, PointClamp, image);
+        SetRecord(1, opaqueBlack, image);
+        Keys[0] = 1;
+        Keys[1] = 0;
     }
     const auto cut = Run(device, TableCutCode, 1, Lanes, 64);
     Require(Holds(cut.samplerTable, opaqueBlack), "image table border: the EXEC-clear opaque-black S# was not included in the snapshot");

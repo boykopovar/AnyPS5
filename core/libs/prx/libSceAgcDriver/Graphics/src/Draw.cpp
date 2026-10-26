@@ -2253,7 +2253,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
     const auto commands = start.commands;
-    if (!continued) recorder->PrepareSampleSlot();
+    if (!continued) {
+        recorder->PrepareSampleSlot();
+        PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+    }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
     // continued draw lies inside its pass's range).
@@ -2566,7 +2569,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
         static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
-        const bool linearResident = residentLinear && color.tileMode == ColorTileMode::Linear && ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr;
+        const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
         if ((binding.gpuTiling || ((color.tileMode != ColorTileMode::Linear || linearResident) && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then

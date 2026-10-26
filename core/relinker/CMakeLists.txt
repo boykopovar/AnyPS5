@@ -109,6 +109,16 @@ if(BUILD_TESTING)
     target_link_libraries(relinker_conversion_tests PRIVATE relinker_core)
     add_test(NAME relinker_conversion COMMAND relinker_conversion_tests)
     set_tests_properties(relinker_conversion PROPERTIES TIMEOUT 20)
+
+    add_test_executable(native_path_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/NativePathTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
+    target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    add_test(NAME native_path COMMAND native_path_tests)
+    set_tests_properties(native_path PROPERTIES TIMEOUT 20)
+
     add_test_executable(relinker_game_patch_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GamePatchTests.cpp)
     target_link_libraries(relinker_game_patch_tests PRIVATE relinker_core)
     add_test(NAME relinker_game_patch COMMAND relinker_game_patch_tests)
@@ -305,11 +315,11 @@ if(BUILD_TESTING)
     add_test_executable(red_zone_framer_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerTests.cpp)
     target_link_libraries(red_zone_framer_tests PRIVATE relinker_core)
     add_test(NAME red_zone_framer COMMAND red_zone_framer_tests)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32) AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         add_test_executable(red_zone_framer_execution_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RedZoneFramerExecutionTests.cpp)
         target_link_libraries(red_zone_framer_execution_tests PRIVATE relinker_core)
         add_test(NAME red_zone_framer_execution COMMAND red_zone_framer_execution_tests)
-        set_tests_properties(red_zone_framer_execution PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+        set_tests_properties(red_zone_framer_execution PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     endif()
 
     add_test_executable(cli_args_tests
@@ -353,6 +363,18 @@ if(BUILD_TESTING)
     target_include_directories(file_identity_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include)
     add_test(NAME file_identity COMMAND file_identity_tests)
     set_tests_properties(file_identity PROPERTIES TIMEOUT 20)
+
+    add_test_executable(file_reader_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/FileReaderTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+    )
+    target_include_directories(file_reader_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+    )
+    add_test(NAME file_reader_prefix COMMAND file_reader_tests)
+    set_tests_properties(file_reader_prefix PROPERTIES TIMEOUT 20)
 
     add_test_executable(param_json_utf8_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tests/ParamJsonParser.cpp
@@ -528,6 +550,9 @@ if(BUILD_TESTING)
         add_test(NAME overlapping_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_overlapping_relocations.py $<TARGET_FILE:relinker>)
         set_tests_properties(overlapping_relocations PROPERTIES TIMEOUT 30)
+        add_test(NAME duplicate_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_duplicate_relocations.py $<TARGET_FILE:relinker>)
+        set_tests_properties(duplicate_relocations PROPERTIES TIMEOUT 30)
         add_test(NAME guest_own_tls_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_own_tls_relocations.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_own_tls_relocations PROPERTIES TIMEOUT 30)
@@ -548,7 +573,7 @@ if(BUILD_TESTING)
         foreach(opcode IN ITEMS add or adc sbb and sub xor cmp)
             list(APPEND tlsCoverageGroups alu_${opcode})
         endforeach()
-        list(APPEND tlsCoverageGroups gs_traps gs_traps_implicit)
+        list(APPEND tlsCoverageGroups gs_traps gs_traps_implicit gs_non_memory)
         foreach(group IN LISTS tlsCoverageGroups)
             add_test(NAME tls_function_coverage_${group} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_function_coverage.py $<TARGET_FILE:relinker> ${group})
@@ -564,6 +589,8 @@ if(BUILD_TESTING)
         set_tests_properties(macos_tls_alu PROPERTIES TIMEOUT 60)
         add_test(NAME linux_load_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_load_alignment.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_load_bounds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_load_bounds.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_eh_frame_header COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_eh_frame_header.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_dynamic_strings COMMAND ${Python3_EXECUTABLE}
@@ -600,12 +627,17 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_trace_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_trace_imports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_trace_imports.py $<TARGET_FILE:relinker>)
+        add_test(NAME macos_trace_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_trace_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_address_space COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_address_space.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_thread_pointer COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_tls_thread_pointer.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_bss COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_bss.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_lazy_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_lazy_imports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_lazy_imports PROPERTIES TIMEOUT 30)
         add_test(NAME windows_sparse_load COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_sparse_load.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_icon COMMAND ${Python3_EXECUTABLE}
@@ -627,6 +659,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_dir.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_directories COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_directories.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_trailing_note COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_trailing_note.py $<TARGET_FILE:relinker>)
         add_test(NAME relinker_executables COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
@@ -644,6 +678,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_stack.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbol_names COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbol_names.py $<TARGET_FILE:relinker>)
+        add_test(NAME import_symbol_types COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_import_symbol_types.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_registry COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME needed_libraries COMMAND ${Python3_EXECUTABLE}
@@ -758,6 +794,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_weak_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME input_magic COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_magic.py $<TARGET_FILE:relinker>)
+        add_asan_test_options(input_magic max_allocation_size_mb=512)
         add_test(NAME input_preservation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_preservation.py $<TARGET_FILE:relinker>)
         add_test(NAME output_collisions COMMAND ${Python3_EXECUTABLE}
@@ -920,12 +957,6 @@ if(BUILD_TESTING)
         )
         add_test(NAME reloc_table_bounds COMMAND reloc_table_bounds_tests $<TARGET_FILE:relinker>)
     endif()
-
-    set(relinkerTestTemp ${CMAKE_CURRENT_BINARY_DIR}/test-temp)
-    file(MAKE_DIRECTORY ${relinkerTestTemp})
-    get_property(relinkerTests DIRECTORY PROPERTY TESTS)
-    set_property(TEST ${relinkerTests} APPEND PROPERTY ENVIRONMENT_MODIFICATION
-        "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp}")
 endif()
 
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
@@ -935,4 +966,12 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+endif()
+
+if(BUILD_TESTING)
+    set(relinkerTestTemp ${CMAKE_CURRENT_BINARY_DIR}/test-temp)
+    file(MAKE_DIRECTORY ${relinkerTestTemp})
+    get_property(relinkerTests DIRECTORY PROPERTY TESTS)
+    set_property(TEST ${relinkerTests} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp};PYTHONUTF8=set:1")
 endif()

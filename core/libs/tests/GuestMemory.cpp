@@ -1569,7 +1569,7 @@ static void CheckAliasRefusesPagesThatAreNotSharedViews() {
 }
 #endif
 
-#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN)
+#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
 static std::size_t LockedKilobytes() {
     std::ifstream status("/proc/self/status");
     std::string line;
@@ -1593,7 +1593,7 @@ static void CheckMlock() {
     Require(sceKernelMapFlexibleMemory(&mapped, length, 3, 0) == 0);
     auto* bytes = static_cast<unsigned char*>(mapped);
     Require(sceKernelMlock_nid_postfix(mapped, 0) == 0);
-#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN)
+#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     const auto lockedBefore = LockedKilobytes();
 #endif
     Require(sceKernelMlock_nid_postfix(bytes + 1, length - page) == 0);
@@ -1604,7 +1604,7 @@ static void CheckMlock() {
     Require(GetProcessWorkingSetSizeEx(GetCurrentProcess(), &minimum, &maximum, &limits) && minimum >= length && maximum > minimum);
     Require(VirtualUnlock(mapped, length));
     Require(!VirtualUnlock(mapped, length) && GetLastError() == ERROR_NOT_LOCKED);
-#elif defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN)
+#elif defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     Require(LockedKilobytes() - lockedBefore == length / 1024);
 #endif
     Require(sceKernelMlock_nid_postfix(mapped, length) == 0);
@@ -1613,12 +1613,12 @@ static void CheckMlock() {
     Require(sceKernelMlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == invalid);
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     Require(sceKernelMlock_nid_postfix(reserved, page) == outOfMemory);
 #endif
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     Require(sceKernelMlock_nid_postfix(mapped, page) == outOfMemory);
 #endif
 }
