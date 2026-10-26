@@ -437,6 +437,15 @@ void SharedCodeHeaders() {
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
     AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    const auto snapshots = [&] {
+        const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+        Require(registry != nullptr, "shared-code headers published no shader registry");
+        auto pair = std::pair{AgcDriver::DriverDetail::RegisteredHeader(*registry, &vertex.shader), AgcDriver::DriverDetail::RegisteredHeader(*registry, &mesh.shader)};
+        Require(pair.first != nullptr && pair.second != nullptr && pair.first != pair.second, "the shared-code headers were not registered apart");
+        return pair;
+    };
+    const auto [vertexSnapshot, meshSnapshot] = snapshots();
+    Require(vertexSnapshot->registeredState != meshSnapshot->registeredState, "a header with other registers shared another header's registered state");
     Shader copy = vertex.shader;
     copy.user_data = nullptr;
     AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive);
@@ -461,6 +470,8 @@ void SharedCodeHeaders() {
     mesh.shader.cx_registers = mesh.context.data();
     mesh.shader.num_cx_registers = mesh.context.size();
     AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    const auto [sameVertex, sameMesh] = snapshots();
+    Require(sameVertex->registeredState == sameMesh->registeredState && sameMesh->registeredState->context.at(0x2d5) == 0x2000u, "two headers with the same code and registers decoded their registered state twice");
     AgcDriverResolveShaderAbi_nid_postfix(&mesh.shader, {}, primitive);
     AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "same-type registered header draw failed");
@@ -1282,6 +1293,63 @@ void AbiDeferredRectanglePairs() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
 }
 
+void CommittedAbis() {
+    static AbiHeader front;
+    static AbiHeader pixel;
+    DescribeFront(front);
+    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
+    for (auto* header : {&front, &pixel}) AgcDriverRegisterShader_nid_postfix(&header->shader);
+    const std::array<const Shader*, 2> stages{&front.shader, &pixel.shader};
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    const std::array<ShaderRegister, 1> interpolant{{{0x191, 0x20}}};
+    const auto resolve = [&] {
+        AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, {}, primitive);
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 0);
+        scope.Commit();
+    };
+    const auto resolveOther = [&] {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {});
+        scope.Commit();
+    };
+    resolve();
+    const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    Require(registry != nullptr, "committed ABI resolution published no shader registry");
+    const auto pixelSnapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, &pixel.shader);
+    Require(pixelSnapshot != nullptr, "committed ABI resolution published no pixel snapshot");
+    const auto committedAbis = [&] {
+        std::lock_guard lock(pixelSnapshot->prepared->mutex);
+        return pixelSnapshot->prepared->registeredAbis.size();
+    };
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    const auto abisBefore = committedAbis();
+    bool unblocked = false;
+    bool excluded = false;
+    std::uint64_t repeatedBuilds = 0;
+    std::future<void> repeated;
+    std::future<void> other;
+    {
+        AgcDriver::DriverDetail::ShaderSnapshot unrelated{};
+        AgcDriver::DriverDetail::ShaderPreparationTransaction open;
+        static_cast<void>(open.Read(unrelated));
+        repeated = std::async(std::launch::async, resolve);
+        unblocked = repeated.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+        repeatedBuilds = ShaderRecompiler::FrontEndBuilds() - before;
+        other = std::async(std::launch::async, resolveOther);
+        const auto started = std::chrono::steady_clock::now();
+        while (ShaderRecompiler::FrontEndBuilds() == before + repeatedBuilds && std::chrono::steady_clock::now() - started < std::chrono::seconds(10)) std::this_thread::yield();
+        excluded = other.wait_for(std::chrono::milliseconds(500)) == std::future_status::timeout && committedAbis() == abisBefore;
+        open.Commit();
+    }
+    repeated.get();
+    other.get();
+    Require(unblocked && repeatedBuilds == 0, "resolving ABIs the shaders already had waited for another thread's shader preparation, or prepared them again");
+    Require(excluded, "a new ABI was published beside a shader preparation that had read prepared state");
+}
+
 void RelocatedHeaders() {
     alignas(256) static const std::array<std::uint32_t, 11> code{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
     struct Header {
@@ -1345,13 +1413,81 @@ void RelocatedHeaders() {
     ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&otherContext.shader, {}, primitive); }, "replaced shader header");
 }
 
+void DispatchAheadPrewarm() {
+    alignas(256) std::array<std::uint32_t, 1> pendingCode{0xbf810000u};
+    alignas(256) std::array<std::uint32_t, 65> lazyCode{};
+    lazyCode[0] = 0xbf810000u;
+    lazyCode[64] = 0xbf810000u;
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    } pendingHeader, lazyHeader;
+    const auto fillHeader = [](Header& header, const void* code, std::size_t codeBytes) {
+        const auto address = reinterpret_cast<std::uintptr_t>(code);
+        header.shader.file_header = 0x34333231u;
+        header.shader.version = 0x18;
+        header.shader.header_size = sizeof(Header);
+        header.shader.shader_size = static_cast<std::uint32_t>(codeBytes);
+        header.shader.code = const_cast<void*>(code);
+        header.shader.sh_registers = header.registers.data();
+        header.shader.num_sh_registers = header.registers.size();
+        header.shader.specials = &header.specials;
+        header.specials.dispatch_modifier = 0x8000;
+        header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 2}}};
+    };
+    fillHeader(pendingHeader, pendingCode.data(), sizeof(pendingCode));
+    fillHeader(lazyHeader, lazyCode.data(), sizeof(lazyCode));
+    AgcDriverRegisterShader_nid_postfix(&pendingHeader.shader);
+    AgcDriverRegisterShader_nid_postfix(&lazyHeader.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    Require(registry != nullptr, "dispatch ahead prewarm test published no shader registry");
+    const auto pendingSnapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, &pendingHeader.shader);
+    const auto lazySnapshot = AgcDriver::DriverDetail::RegisteredHeader(*registry, &lazyHeader.shader);
+    Require(pendingSnapshot != nullptr && lazySnapshot != nullptr, "dispatch ahead prewarm test published no snapshots");
+    {
+        std::lock_guard lock(pendingSnapshot->prepared->mutex);
+        pendingSnapshot->prepared->entries.clear();
+        pendingSnapshot->prepared->demanded.store(false, std::memory_order_release);
+        pendingSnapshot->prepared->pending = true;
+    }
+    {
+        std::lock_guard lock(lazySnapshot->prepared->mutex);
+        lazySnapshot->prepared->entries.clear();
+        lazySnapshot->prepared->pending = false;
+    }
+    alignas(256) static const std::array<std::uint32_t, 1> invalidCode{0xbf9f0000u};
+    const auto invalidAddress = reinterpret_cast<std::uintptr_t>(invalidCode.data());
+    const auto lazyOffsetAddress = reinterpret_cast<std::uintptr_t>(lazyCode.data() + 64);
+    alignas(16) const std::array<std::uint32_t, 6> indirectPairs{0x20cu, static_cast<std::uint32_t>(lazyOffsetAddress >> 8u), 0x20du, static_cast<std::uint32_t>(lazyOffsetAddress >> 40u), 0x240u, 7u};
+    const auto pairsAddress = reinterpret_cast<std::uintptr_t>(indirectPairs.data());
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : pendingHeader.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0017600u, 0x20cu, static_cast<std::uint32_t>(invalidAddress >> 8u), 0xc0017600u, 0x20du, static_cast<std::uint32_t>(invalidAddress >> 40u), 0xc0031500u, 1, 1, 1, 0x8041u, 0xffff1000u});
+    commands.insert(commands.end(), {0xc0017600u, 0x20cu, pendingHeader.registers[0].value, 0xc0017600u, 0x20du, pendingHeader.registers[1].value, 0xc0031500u, 1, 1, 1, 0x8041u});
+    commands.insert(commands.end(), {0xc0036300u, static_cast<std::uint32_t>(pairsAddress), static_cast<std::uint32_t>(pairsAddress >> 32u), 0x80000000u, 3u});
+    commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "dispatch ahead prewarm submit failed");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "s_code_end");
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    AgcDriver::DriverDetail::AwaitLibraryPrebuilds();
+    Require(pendingSnapshot->prepared->demanded.load(std::memory_order_acquire), "dispatch ahead did not prioritize the pending shader");
+    {
+        std::lock_guard lock(lazySnapshot->prepared->mutex);
+        Require(lazySnapshot->prepared->entries.size() == 1 && lazySnapshot->prepared->entries.front().codeOffset == 64 && lazySnapshot->prepared->entries.front().handle != nullptr, "dispatch ahead did not prewarm the lazy shader for its dispatched offset");
+    }
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "s_code_end");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
         const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
-        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
+        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             if (abiMode == "--abi-deferred-compute") AbiDeferredCompute();
@@ -1379,6 +1515,12 @@ int main(int argc, char** argv) {
             AgcDriverShutdown_nid_postfix();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--dispatch-ahead-prewarm") {
+            if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
+            DispatchAheadPrewarm();
+            std::cout << "dispatch ahead prewarm tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--deferred") {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             DeferredRegistration();
@@ -1403,6 +1545,7 @@ int main(int argc, char** argv) {
         device.reset();
         SharedCodeHeaders();
         RelocatedHeaders();
+        CommittedAbis();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";

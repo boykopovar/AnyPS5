@@ -453,6 +453,10 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
     if (access.mem.imageDimension == RdnaImageDimension::Dim3D && dimension == RdnaImageDimension::Dim2D) {
         result[2] = ConstantU32(state, 1);
     }
+    const auto requested = access.mem.imageDimension;
+    if ((requested == RdnaImageDimension::Dim1D || requested == RdnaImageDimension::Dim2D || requested == RdnaImageDimension::Dim2DMsaa) && dimension != RdnaImageDimension::Dim3D) {
+        result[2] = ConstantU32(state, 0);
+    }
     if (info.multisampled == 0u) {
         result[3] = state.module.AllocateId();
         state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), result[3], image);
@@ -2041,7 +2045,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     state.tableAccess = {};
     if (tables) {
         EmitLabel(state, invalid);
-        if (returnsValue) incoming.insert(incoming.end(), {ConstantU32CompositeZero(state, 4u), invalid});
+        if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
         state.module.AddFunction(spv::OpBranch, merge);
     } else if (exits) {
         EmitLabel(state, invalid);
@@ -2058,7 +2062,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, guardSkip);
         state.module.AddFunction(spv::OpBranch, guardMerge);
         EmitLabel(state, guardMerge);
-        if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ConstantU32CompositeZero(state, 4u), guardSkip);
+        if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ZeroResult(ctx, inst), guardSkip);
     }
     if (returnsValue) ctx.definitions.emplace(&inst, guardedId);
 }

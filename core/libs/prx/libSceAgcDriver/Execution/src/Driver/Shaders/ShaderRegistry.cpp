@@ -222,6 +222,24 @@ bool CommittedAbi(const ShaderSnapshot& snapshot, std::span<const std::uint64_t>
     return std::ranges::any_of(snapshot.prepared->registeredAbis, [&](const auto& abi) { return std::ranges::equal(abi, key); });
 }
 
+std::optional<std::vector<std::weak_ptr<const ShaderSnapshot>>> CommittedGraphicsAbi(const ShaderSnapshot& owner, std::span<const std::uint64_t> key, const std::shared_ptr<const ShaderRegistry>& registry) {
+    std::unique_lock lock(owner.prepared->mutex);
+    AwaitRegisteredPreparation(*owner.prepared, lock);
+    const auto& abis = owner.prepared->graphicsAbis;
+    const auto found = std::ranges::find_if(abis, [&](const auto& abi) { return std::ranges::equal(abi.key, key) && abi.registry.lock() == registry; });
+    if (found == abis.end()) return std::nullopt;
+    return found->stages;
+}
+
+bool CommittedLink(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint32_t primitiveType) {
+    if (primitiveType == 7 || primitiveType == 17) return false;
+    std::unique_lock lock(front.prepared->mutex);
+    AwaitRegisteredPreparation(*front.prepared, lock);
+    const auto& fragments = front.prepared->fragments;
+    if (front.prepared->rectangleRequested || std::ranges::any_of(fragments, [](const auto& entry) { return entry.expired(); })) return false;
+    return fragment == nullptr || std::ranges::any_of(fragments, [&](const auto& entry) { return entry.lock() == fragment; });
+}
+
 }
 
 bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
@@ -561,6 +579,10 @@ const PreparedShaderState& ShaderPreparationTransaction::Read(const ShaderSnapsh
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     return changes.emplace(snapshot.prepared.get(), State::Change{snapshot.prepared, *snapshot.prepared, false, snapshot.prepared->entries.size(), snapshot.prepared->registeredAbis.size()}).first->second.prepared;
+}
+
+bool ShaderPreparationTransaction::Tracks(const ShaderSnapshot& snapshot) const {
+    return root->changes.contains(snapshot.prepared.get());
 }
 
 void ShaderPreparationTransaction::Hold() {
@@ -1680,7 +1702,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         try {
             entries = PrepareRegistered(*plan);
         } catch (const std::exception& error) {
-            APS5_LOG_ERR("Shader 0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+            APS5_LOG_ERR("Shader 0x%llx snapshot=0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(snapshot.get())), error.what());
             failure = std::current_exception();
         } catch (...) {
             failure = std::current_exception();
@@ -1876,14 +1898,23 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, GraphicsAbiKeyStorage>();
     BuildRegisteredAbiKey(state, *localDevice, key);
     const auto primitiveType = state.userConfig.find(0x242u);
-    for (const auto& abi : transaction.Read(*owner).graphicsAbis) {
-        if (abi.key != key || abi.registry.lock() != registry) continue;
-        for (const auto& stage : abi.stages) {
+    const auto resolveStages = [&](const std::vector<std::weak_ptr<const ShaderSnapshot>>& stages) {
+        for (const auto& stage : stages) {
             const auto snapshot = stage.lock();
             require(snapshot != nullptr, "prepared graphics ABI lost a registered stage");
             if (snapshot->type != 1) ResolvePreparedGraphics(*snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target(), true);
         }
         transaction.Commit();
+    };
+    if (!transaction.Tracks(*owner)) {
+        if (const auto committed = CommittedGraphicsAbi(*owner, key, registry)) {
+            resolveStages(*committed);
+            return;
+        }
+    }
+    for (const auto& abi : transaction.Read(*owner).graphicsAbis) {
+        if (abi.key != key || abi.registry.lock() != registry) continue;
+        resolveStages(abi.stages);
         return;
     }
     DrawDecode decoded{};
@@ -2043,6 +2074,10 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         }
     };
     const bool committedAbi = CommittedAbi(*snapshot, key);
+    if (committedAbi && !transaction.Tracks(*snapshot)) {
+        transaction.Commit();
+        return;
+    }
     auto entries = committedAbi ? std::vector<PreparedShaders::Entry>{} : prepare();
     const auto& registeredAbis = transaction.Read(*snapshot).registeredAbis;
     if (std::ranges::find(registeredAbis, key) != registeredAbis.end()) {
@@ -2074,6 +2109,37 @@ static const Shader NullPixelShader = [] {
 
 std::uint64_t NullPixelProgramAddress() {
     return reinterpret_cast<std::uintptr_t>(NullPixelCode);
+}
+
+alignas(256) static const std::uint32_t DepthCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+alignas(256) static const std::uint32_t DepthCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+static const Shader DepthCopyMultisamplePixelShader = [] {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = DepthCopyMultisamplePixelCode;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(DepthCopyMultisamplePixelCode);
+    shader.type = 1;
+    return shader;
+}();
+static const Shader DepthCopySinglePixelShader = [] {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = DepthCopySinglePixelCode;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(DepthCopySinglePixelCode);
+    shader.type = 1;
+    return shader;
+}();
+
+std::uint64_t DepthCopyPixelProgramAddress(bool multisampled) {
+    return reinterpret_cast<std::uintptr_t>(multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode);
+}
+
+std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
+    return multisampled ? 9u : 8u;
 }
 
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
@@ -2127,6 +2193,10 @@ void ResolvePreparedGraphics(const ShaderSnapshot& front, const std::shared_ptr<
             transaction.Commit();
             return;
         }
+    }
+    if (!transaction.Tracks(front) && CommittedLink(front, fragment, primitiveType)) {
+        transaction.Commit();
+        return;
     }
     std::vector<std::shared_ptr<const ShaderSnapshot>> fragments;
     {
@@ -2212,6 +2282,25 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
     return null;
 }
 
+ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled) {
+    const auto& shader = multisampled ? DepthCopyMultisamplePixelShader : DepthCopySinglePixelShader;
+    const auto* code = multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode;
+    ShaderSnapshot copy{DepthCopyPixelProgramAddress(multisampled), reinterpret_cast<std::uintptr_t>(&shader), shader.type, {}, {}};
+    copy.code.assign(code, code + 64);
+    copy.header.resize(sizeof(Shader));
+    std::memcpy(copy.header.data(), &shader, sizeof(Shader));
+    auto state = DecodeRegisteredState(copy);
+    state.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(copy.codeAddress >> 8u));
+    state.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(copy.codeAddress >> 40u));
+    state.shader.insert_or_assign(0x00bu, DepthCopyPixelUserWords(multisampled) << 1u);
+    state.context.insert_or_assign(0x1b3u, 0x8002u);
+    state.context.insert_or_assign(0x1b4u, 0x8002u);
+    state.context.insert_or_assign(0x1c5u, 1u);
+    copy.registeredState = std::make_shared<const RegisteredShaderState>(std::move(state));
+    copy.prepared->deferred = true;
+    return copy;
+}
+
 std::shared_ptr<const ShaderRegistry> Driver::RegisteredShaders() {
     std::lock_guard lock(mutex);
     return shaders;
@@ -2265,6 +2354,18 @@ void Driver::RegisterShader(const Shader* shader) {
         localDevice = device;
     }
     snapshot.registeredState = std::make_shared<const RegisteredShaderState>(DecodeRegisteredState(snapshot));
+    {
+        std::lock_guard lock(mutex);
+        if (shaders != nullptr) {
+            if (const auto found = shaders->find(snapshot.codeAddress); found != shaders->end()) {
+                for (const auto& current : found->second) {
+                    if (current->registeredState == nullptr || current->type != snapshot.type || current->code != snapshot.code || *current->registeredState != *snapshot.registeredState) continue;
+                    snapshot.registeredState = current->registeredState;
+                    break;
+                }
+            }
+        }
+    }
     QueueState registered{};
     registered.shader = snapshot.registeredState->shader;
     registered.context = snapshot.registeredState->context;
@@ -2307,6 +2408,9 @@ void Driver::RegisterShader(const Shader* shader) {
     PublishRegisteredShader(shaders, published);
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
         PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice)));
+    }
+    for (const bool multisampled : {false, true}) {
+        if (shaders->find(DepthCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareDepthCopyPixelProgram(multisampled)));
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));

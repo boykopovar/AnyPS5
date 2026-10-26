@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -5,8 +6,6 @@
 #include <cstring>
 #include <limits>
 #include <string>
-
-extern "C" const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t);
 
 static constexpr std::uint64_t ExpectedHashes[] {
     0x8b05d07b5566befULL, 0, 0x708834e4234778b5ULL, 0xefb3526cbf8b4d8fULL,

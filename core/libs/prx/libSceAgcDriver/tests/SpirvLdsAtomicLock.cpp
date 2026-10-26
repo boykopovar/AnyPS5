@@ -77,10 +77,18 @@ Usage Scan(std::span<const std::uint32_t> words) {
     std::uint32_t laneZeroBody = 0u;
     std::uint32_t lockPointer = 0u;
     std::map<std::uint32_t, std::uint32_t> constants;
+    std::uint32_t faultFunction = 0u;
+    bool inFaultFunction = false;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> spv::WordCountShift;
         const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
         Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if (op == spv::OpName && count >= 3u && std::string_view(reinterpret_cast<const char*>(words.data() + cursor + 2u)) == "record_bda_fault") faultFunction = words[cursor + 1u];
+        if (op == spv::OpFunction && count >= 3u) inFaultFunction = words[cursor + 2u] == faultFunction;
+        if (inFaultFunction) {
+            cursor += count;
+            continue;
+        }
         if (op == spv::OpDecorate && count >= 4u && words[cursor + 2u] == spv::DecorationBuiltIn && words[cursor + 3u] == spv::BuiltInLocalInvocationIndex) {
             localIndexVariable = words[cursor + 1u];
         }

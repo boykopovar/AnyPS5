@@ -113,6 +113,10 @@ void EmitPixelFunctionLdsBase(SpirvEmitterState& state) {
     state.ldsBufferBase = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, within, ConstantU32(state, FunctionLdsDwordLimit)), ConstantU32(state, 3u));
 }
 
+std::uint32_t LdsMemoryBarrierScope(const SpirvEmitterState& state) {
+    return state.deviceScopeLdsMemoryBarriers ? spv::ScopeDevice : spv::ScopeWorkgroup;
+}
+
 void EmitLdsBufferBase(SpirvEmitterState& state) {
     EmitPixelFunctionLdsBase(state);
     if (!LdsInDeviceMemory(state)) {

@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path
 
-CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_))")
+CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
 ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
 
 

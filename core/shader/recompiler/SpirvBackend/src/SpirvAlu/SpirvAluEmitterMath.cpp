@@ -983,14 +983,6 @@ std::uint32_t EmitFPMedTri32(SpirvEmitterState& state, std::uint32_t arg0, std::
     return value(Select(state, u32, anyNan, min3, median));
 }
 
-std::uint32_t EmitFPRecip32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return Binary(state, spv::OpFDiv, TypeF32(state), ConstantF32(state, 0x3f800000u), arg0);
-}
-
-std::uint32_t EmitFPRecipIFlag32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return Binary(state, spv::OpFDiv, TypeF32(state), ConstantF32(state, 0x3f800000u), arg0);
-}
-
 std::uint32_t EmitFPRecipSqrt32(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitExt(state, TypeF32(state), GLSLstd450InverseSqrt, {arg0});
 }

@@ -6,7 +6,7 @@ body:
         One thread per title, for every platform: search this category for the title ID first. If a thread exists, reply there, also when your OS or GPU differs from the one it reports.
         Name the discussion `Game name (title ID)`, for example `DOOM Shareware (PPSA99666)`, without the platform.
         Bug reports and implementation work belong in issues and pull requests; link them here as the blocker.
-        Per-game progress is also tracked on the [blocker map](https://alxcbtw.github.io/anyps5-roadmap/), built from public GitHub data. Only share material you have the right to distribute.
+        Only share material you have the right to distribute.
   - type: checkboxes
     id: searched
     attributes:

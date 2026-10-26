@@ -1,17 +1,10 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode);
-int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::uint32_t mode, std::uint32_t target, std::uint64_t option);
-int APS5_VABI sceAudioOutSysClose(int handle);
-int APS5_VABI sceAudioOutExOpen(int userId, std::uint32_t mode);
-int APS5_VABI sceAudioOutOutput(int handle, const void* ptr);
-}
 
 static constexpr int SYSTEM_USER = 0xFF;
 

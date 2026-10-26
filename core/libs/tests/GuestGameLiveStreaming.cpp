@@ -1,3 +1,4 @@
+#include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -7,26 +8,7 @@
 #include <stdexcept>
 #include <span>
 
-struct GameLiveStreamingStatus2 {
-    std::int32_t userId;
-    bool isOnAir;
-    std::uint8_t align[3];
-    std::uint32_t spectatorCounts;
-    std::uint32_t textMessageCounts;
-    std::uint32_t commandMessageCounts;
-    std::uint32_t broadcastVideoResolution;
-    std::uint8_t reserved[48];
-};
 static_assert(sizeof(GameLiveStreamingStatus2) == 72);
-
-extern "C" {
-int APS5_VABI sceGameLiveStreamingInitialize(std::size_t heap_size);
-int APS5_VABI sceGameLiveStreamingTerminate(void);
-int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* status);
-struct GameLiveStreamingProgramInfo;
-int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo*);
-int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(bool isEnableLiveStreaming);
-}
 
 namespace {
 
@@ -37,6 +19,7 @@ constexpr std::int32_t kInvalidUserId = -1;
 bool EnableThrowsNotInitialized(bool isEnableLiveStreaming) {
     try {
         sceGameLiveStreamingEnableLiveStreaming(isEnableLiveStreaming);
+
     } catch (const std::logic_error&) {
         return true;
     }

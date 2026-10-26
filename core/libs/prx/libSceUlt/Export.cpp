@@ -1,3 +1,6 @@
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceUlt/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -10,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -18,13 +22,7 @@
 #include "SceUltTypes.hpp"
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 
-extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-extern "C" void APS5_VABI scePthreadExit(void* retval);
-extern "C" void APS5_VABI scePthreadYield();
-
 namespace {
-
 
 std::mutex gMutex;
 std::unordered_map<void*, std::shared_ptr<UltMutexState>> gMutexes;
@@ -35,7 +33,6 @@ std::unordered_map<void*, std::shared_ptr<UltQueueDataPoolState>> gQueueDataPool
 std::unordered_map<void*, std::shared_ptr<UltQueueState>> gQueues;
 std::unordered_map<void*, UltRuntimeState> gRuntimes;
 std::unordered_map<void*, std::shared_ptr<UltUlthreadState>> gUlthreads;
-
 
 int validateCommonOptParam(const void* optParam) {
     if (optParam == nullptr) return ULT_OK;
@@ -818,7 +815,8 @@ int APS5_VABI sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthread
         std::memset(ulthread, 0, 512);
         gUlthreads[ulthread] = state;
     }
-    const int result = scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), name != nullptr ? name : "");
+    const std::string threadName = name != nullptr ? std::string(name).substr(0, 31) : std::string();
+    const int result = scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), threadName.c_str());
     if (result != 0) {
         std::lock_guard<std::mutex> lock(gMutex);
         gUlthreads.erase(ulthread);
@@ -885,6 +883,7 @@ int APS5_VABI sceUltUlthreadYield() {
         return ULT_ERROR_STATE;
     }
     scePthreadYield();
+
     return ULT_OK;
 }
 
@@ -894,6 +893,7 @@ int APS5_VABI sceUltUlthreadExit(std::int32_t status) {
     }
     gCurrentUlthread->_exited.store(true, std::memory_order_release);
     scePthreadExit(reinterpret_cast<void*>(static_cast<std::intptr_t>(status)));
+
     return ULT_OK;
 }
 
@@ -1095,6 +1095,5 @@ int APS5_VABI sceUltUlthreadFactoryInitialize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 
 }

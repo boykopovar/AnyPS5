@@ -67,7 +67,7 @@ constexpr std::array<std::array<float, 4>, 3> OtherHalfTriangle{{
     {1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 16>, 8> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 16>, 16> Programs{};
 alignas(256) std::array<std::byte, 256 * 1024> DepthMemory{};
 std::size_t programCount = 0;
 
@@ -164,12 +164,12 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t info) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t info, std::uint32_t attrib = 0) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
     cx[0x31c] = info;
-    cx[0x31d] = 0;
+    cx[0x31d] = attrib;
     cx[0x323] = 0;
     cx[0x324] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
@@ -374,6 +374,51 @@ std::string ExpectTruncated(AgcDriver::VulkanDevice& device) {
     return {};
 }
 
+std::string ExpectOneFragment(AgcDriver::VulkanDevice& device) {
+    if ((AgcDriver::VulkanDeviceTestAccess::Context(device).limits.framebufferDepthSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) return "the device has no four-sample depth targets (framebufferDepthSampleCounts)";
+    constexpr std::size_t bytes = std::size_t{Width} * Height * 16u;
+    AgcDriver::Graphics::DepthTarget depth{reinterpret_cast<std::uintptr_t>(DepthMemory.data()), 0u, {Width, Height}, VK_FORMAT_D32_SFLOAT, 0.0f, 0};
+    depth.samples = 4;
+    std::array<std::uint32_t, 16> written{};
+    std::uint32_t untouched = 0;
+    for (const auto* triangle : {&HalfTriangle, &OtherHalfTriangle}) {
+        Block block(bytes);
+        std::fill(block.data, block.data + bytes, std::uint8_t{0xff});
+        const auto color = DecodeTarget(block, Rgba32FloatInfo, 0x2000u);
+        Require(color.samples == 1u, "a 4-sample color target with one fragment did not decode as one stored sample");
+        try {
+            Draw(device, color, ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage), Program(0u), *triangle, 4u, &depth);
+        } catch (const std::exception& error) {
+            if (std::string_view(error.what()).find("truncated coverage reduction") == std::string_view::npos) throw;
+            return "the device lacks VK_AMD_mixed_attachment_samples and VK_NV_framebuffer_mixed_samples with truncated coverage reduction";
+        }
+        const auto stored = ReadBack(device, block.Address(), bytes);
+        for (std::uint32_t y = 0; y < Height; ++y) {
+            for (std::uint32_t x = 0; x < Width; ++x) {
+                const auto* texel = stored.data() + (static_cast<std::size_t>(y) * Width + x) * 16u;
+                if (std::all_of(texel, texel + 16, [](std::uint8_t byte) { return byte == 0xffu; })) {
+                    ++untouched;
+                    continue;
+                }
+                std::array<float, 4> value{};
+                std::memcpy(value.data(), texel, sizeof(value));
+                const auto mask = static_cast<std::uint32_t>(value[0]);
+                Require(value[0] == static_cast<float>(mask) && mask >= 1u && mask <= 15u && value[1] == 0.0f && value[2] == 0.0f && value[3] == 1.0f, "one-fragment coverage: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") holds (" + std::to_string(value[0]) + ", " + std::to_string(value[1]) + ", " + std::to_string(value[2]) + ", " + std::to_string(value[3]) + ")");
+                ++written[mask];
+            }
+        }
+    }
+    std::uint32_t withoutSampleZero = 0;
+    std::uint32_t partial = 0;
+    for (std::uint32_t mask = 1; mask < 16u; ++mask) {
+        if ((mask & 1u) == 0) withoutSampleZero += written[mask];
+        else if (mask != 15u) partial += written[mask];
+    }
+    Require(withoutSampleZero == 0, "one-fragment coverage: " + std::to_string(withoutSampleZero) + " pixels whose coverage lacks sample 0 were written into the one fragment");
+    Require(written[15] != 0 && partial != 0 && untouched != 0, "one-fragment coverage: two half-covering triangles wrote " + std::to_string(written[15]) + " fully covered and " + std::to_string(partial) + " partly covered pixels and left " + std::to_string(untouched) + " untouched");
+    return {};
+}
+
 }
 
 int main() {
@@ -387,6 +432,7 @@ int main() {
         Expect(*device, PixelInputBit(PixelInput::Ancillary) | PixelInputBit(PixelInput::SampleCoverage), 1u, "SAMPLE_COVERAGE after ANCILLARY");
         if (!ExpectMerged(*device)) std::puts("merged coverage not tested: the device lacks VK_NV_framebuffer_mixed_samples with merged coverage reduction");
         if (const auto skipped = ExpectTruncated(*device); !skipped.empty()) std::printf("truncated coverage not tested: %s\n", skipped.c_str());
+        if (const auto skipped = ExpectOneFragment(*device); !skipped.empty()) std::printf("one-fragment coverage not tested: %s\n", skipped.c_str());
         std::puts("pixel sample coverage tests passed");
         return 0;
     } catch (const std::exception& error) {

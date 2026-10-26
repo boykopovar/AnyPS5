@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -19,30 +22,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int* APS5_VABI __error_nid_postfix();
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-std::int64_t APS5_VABI _read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI _write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-int APS5_VABI sceKernelStat(const char*, FileStat*);
-int APS5_VABI sceKernelUnlink(const char*);
-int APS5_VABI sceKernelTruncate_nid_postfix(const char*, std::int64_t);
-int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const void*);
-int APS5_VABI sceKernelMkdir(const char*, std::uint16_t);
-int APS5_VABI sceKernelRmdir(const char*);
-int APS5_VABI sceKernelRename(const char*, const char*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -145,6 +124,7 @@ int main() {
     bool limitDiagnosticPreserved = false;
     try {
         write_nid_postfix(descriptor, payload, static_cast<std::int64_t>(std::numeric_limits<unsigned int>::max()) + 1);
+
     } catch (const std::runtime_error& error) {
         limitDiagnosticPreserved = std::string(error.what()).find("nbytes exceeds platform limit") != std::string::npos;
     }

@@ -57,6 +57,7 @@ struct GuestImage {
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
+    std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {

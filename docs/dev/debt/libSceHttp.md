@@ -29,6 +29,7 @@
 - [sceHttpDbgShowConnectionStat](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the native diagnostic consumes no arguments; it prints library state. The throwing implementation remains unchanged.
 - [sceHttpDbgShowRequestStat](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the native diagnostic consumes no arguments; it prints library state. The throwing implementation remains unchanged.
 - [sceHttpDbgShowMemoryPoolStat](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - the native diagnostic consumes no arguments; it prints library state. The throwing implementation remains unchanged.
+- [sceHttpGetMemoryPoolStats](../../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - not measured on a console. The library takes nothing from the pool given to `sceHttpInit`, so it reports that size with peak and current use 0, where a console already holds bytes for a live context (0x1640 for Http2, see libSceNet). No live context returns `BEFORE_INIT` (0x80431001) and an unknown or terminated id `INVALID_ID` (0x80431100), as in `sceHttpCookieFlush`, with the output untouched; both codes are unmeasured. A null output throws, as its error code is unknown. Only the 24 bytes of the declared layout are written; [SharpProspero's struct](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Net/Http.cs#L398-L413) adds a 32-bit reserved field after them
 
 ### Functional
 

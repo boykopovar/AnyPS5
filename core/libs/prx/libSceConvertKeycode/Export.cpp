@@ -1,3 +1,5 @@
+#include "prx/libSceConvertKeycode/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,12 +11,6 @@
 #include "prx/libSceConvertKeycode/ImeKeyboardType.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceUserServiceGetKeyboardType(int32_t userId, int32_t* type);
-int APS5_VABI sceUserServiceGetJapaneseInputType(int32_t userId, int32_t* type);
-int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int32_t userId, int32_t* type);
-}
 
 namespace {
 constexpr int kErrInvalidAddress = static_cast<int>(0x80BC0031u);
@@ -2305,7 +2301,6 @@ constexpr std::array<char16_t, 19> KoreanInitial = {
 constexpr std::array<char16_t, 27> KoreanFinal = {
     12593, 12594, 12595, 12596, 12597, 12598, 12599, 12601, 12602, 12603, 12604, 12605, 12606, 12607, 12608, 12609, 12610, 12612, 12613, 12614, 12615, 12616, 12618, 12619, 12620, 12621, 12622
 };
-
 
 std::size_t CharacterLayout(std::uint32_t type, std::uint32_t state) {
     constexpr std::array<std::uint8_t, 39> layouts = {18, 7, 0, 1, 14, 8, 29, 17, 9, 25, 24, 23, 10, 11, 16, 26, 27, 12, 1, 19, 28, 3, 3, 1, 1, 1, 1, 1, 1, 1, 14, 32, 14, 34, 35, 36, 37, 1, 1};
