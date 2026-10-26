@@ -111,6 +111,21 @@ class SelectTests(unittest.TestCase):
     def test_missing_graph_runs_everything(self):
         self.assertIsNone(self.select("alpha/alpha.h", graph=self.build / "missing.json")[1])
 
+    def test_malformed_graph_is_reported_without_stale_selection(self):
+        self.select("alpha/alpha.h")
+        self.assertTrue((self.build / "select.tests").exists())
+        graph = self.build / "invalid.json"
+        graph.write_text("{}", encoding="utf-8")
+        changed = self.build / "changed invalid.txt"
+        changed.write_text("alpha/alpha.h\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(TOOL), "select", str(self.build), str(graph), str(changed)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("invalid test graph", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse((self.build / "select.tests").exists())
+        self.assertFalse((self.build / "select.ninja").exists())
+
     def test_test_missing_from_the_graph_runs(self):
         graph = json.loads(self.graph.read_text(encoding="utf-8"))
         del graph["tests"]["beta"]
@@ -330,6 +345,29 @@ class NonAsciiDirectoryTests(unittest.TestCase):
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
         return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)
+
+    def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
+        graphs = (
+            {},
+            [],
+            {"tests": [], "closures": {}},
+            {"tests": {}, "closures": []},
+            {"tests": {"unit": {}}, "closures": {}},
+            {"tests": {}, "closures": {"unit": "src/unit.cpp"}},
+            {"tests": {"unit": {"target": None, "registered": [], "arguments": [],
+                                "sets": [], "requires": [], "depends": [3]}}, "closures": {}},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "graph.json"
+            changed = Path(directory) / "changed.txt"
+            changed.write_text("src/unit.cpp\n", encoding="utf-8")
+            for document in graphs:
+                with self.subTest(document=document):
+                    graph.write_text(json.dumps(document), encoding="utf-8")
+                    result = self.run_tool("explain", graph, changed)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("invalid test graph", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
 
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:

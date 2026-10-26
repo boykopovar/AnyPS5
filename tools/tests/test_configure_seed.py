@@ -238,6 +238,60 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_architecture_dependent_sizes_leave_compile_guards_to_cmake(self):
+        entries = {
+            "ARCH_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(architecture_type)"),
+            "SECOND_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(other_type)"),
+            "HAVE_ARCH_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "CUSTOM_RESULT": ("TRUE", "Result of TRY_COMPILE"),
+            "UNRELATED_COMPILE": ("FALSE", "Result of TRY_COMPILE"),
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "HAVE_HEADER": ("1", "Have include stdio.h"),
+            "SIMPLE_TEST": ("1", "Test SIMPLE_TEST"),
+            "RUN_RESULT": ("0", "Result of TRY_RUN"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            expected = {name: entry for name, entry in entries.items()
+                        if name in {"CONSTANT_SIZE", "MISSING_SIZE", "HAVE_HEADER", "SIMPLE_TEST", "RUN_RESULT"}}
+            self.assertEqual(configure_seed.checks(cache), expected)
+
+    def test_compile_guards_are_retained_without_architecture_dependent_sizes(self):
+        entries = {
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "HAVE_CONSTANT_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "CUSTOM_RESULT": ("FALSE", "Result of TRY_COMPILE"),
+            "ZERO_TEST": ("0", "Test ZERO_TEST"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), entries)
+
+    def test_filters_cannot_seed_architecture_dependent_compile_guards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache, seed = Path(directory) / "CMakeCache.txt", Path(directory) / "seed.cmake"
+            cache.write_text("//CHECK_TYPE_SIZE: sizeof(architecture_type)\nARCH_SIZE:INTERNAL=0\n"
+                             "//Result of TRY_COMPILE\nHAVE_ARCH_SIZE:INTERNAL=TRUE\n"
+                             "//Result of TRY_COMPILE\nCUSTOM_RESULT:INTERNAL=TRUE\n"
+                             "//Have include stdio.h\nHAVE_HEADER:INTERNAL=1\n", encoding="utf-8")
+            for options in ((), ("--include", "*RESULT"), ("--include", "HAVE_*"),
+                            ("--include", "ARCH_SIZE"), ("--exclude", "ARCH_SIZE")):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, str(TOOL), str(cache), str(seed), *options],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    text = seed.read_text(encoding="utf-8")
+                    self.assertNotIn("ARCH_SIZE", text)
+                    self.assertNotIn("CUSTOM_RESULT", text)
+                    if not options or options in (("--include", "HAVE_*"), ("--exclude", "ARCH_SIZE")):
+                        self.assertIn("HAVE_HEADER", text)
+
     def test_checks_reads_cache_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
