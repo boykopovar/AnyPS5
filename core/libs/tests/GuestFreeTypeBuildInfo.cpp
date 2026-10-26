@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 
 #include FT_MODULE_H
@@ -9,13 +10,6 @@
 #include <source_location>
 
 using FreeType::GuestLibrary;
-
-extern "C" {
-int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary**);
-int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary*);
-void APS5_VABI FT_Library_Version_nid_postfix(GuestLibrary*, std::int32_t*, std::int32_t*, std::int32_t*);
-std::int32_t APS5_VABI FT_Get_TrueType_Engine_Type_nid_postfix(GuestLibrary*);
-}
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {

@@ -6,6 +6,7 @@
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
@@ -272,7 +273,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         symbols = table(6, 0x61000039, symbolCount * 24);
         for (std::uint64_t index = 0; index < symbolCount; ++index) {
             const auto offset = symbols + index * 24;
-            if ((bytes[offset + 4] & 15) == 2 && Io::ReadU16(bytes, offset + 6) != 0) {
+            const auto section = Io::ReadU16(bytes, offset + 6);
+            if ((bytes[offset + 4] & 15) == 2 && section != 0 && section != Elfpatcher::SHN_ABS) {
                 const auto address = Io::ReadU64(bytes, offset + 8);
                 addRoot(address);
                 addFunction(address, Io::ReadU64(bytes, offset + 16), true);
@@ -344,7 +346,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
     }
-    if (sceBase) {
+    if (sceBase || !functions.empty()) {
         const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(functions.begin(), functions.end());
         for (const auto& header : codeHeaders) {
             if (header.Type != 1 || (header.Flags & 1) == 0) continue;

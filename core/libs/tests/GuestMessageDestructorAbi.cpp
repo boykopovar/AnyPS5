@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <cstdio>
 #include <cstring>
@@ -10,10 +11,10 @@ using GuestDestroy = void (APS5_VABI *)(void*);
 using HostDestroy = void (*)(void*);
 using GuestThrowFunction = void (APS5_VABI *)(std::uintptr_t);
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
-struct Object { const void* vtable; const char* message; };
+
 struct Table { std::ptrdiff_t offset; const TypeRecord* type; GuestDestroy destroy; GuestDestroy deleteObject; GuestWhat what; };
 struct Message { std::size_t length; std::size_t capacity; std::atomic<std::ptrdiff_t> references; };
-static_assert(sizeof(Object) == 16);
+static_assert(sizeof(LibcException::ExceptionObject) == 16);
 
 extern "C" {
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
@@ -22,22 +23,12 @@ extern const unsigned char _ZTISt12out_of_range_nid_postfix[];
 extern const unsigned char _ZTISt11regex_error_nid_postfix[];
 extern const unsigned char _ZTISt13runtime_error_nid_postfix[];
 extern const unsigned char _ZTISt11logic_error_nid_postfix[];
-void APS5_VABI _ZNSt12out_of_rangeC1EPKc_nid_postfix(Object*, const char*);
-void APS5_VABI _ZNSt12out_of_rangeC1ERKS__nid_postfix(Object*, const Object*);
-void APS5_VABI _ZNSt12out_of_rangeD1Ev_nid_postfix(Object*);
-void APS5_VABI _ZNSt11logic_errorC1EPKc_nid_postfix(Object*, const char*);
-void APS5_VABI _ZNSt11logic_errorD1Ev_nid_postfix(Object*);
-[[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char*);
-[[noreturn]] void APS5_VABI _ZSt15_Xruntime_errorPKc_nid_postfix(const char*);
-[[noreturn]] void APS5_VABI _ZNKSt11logic_error8_DoraiseEv_nid_postfix(const Object*);
-[[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type);
+
 int APS5_VABI GuestOuter();
 void APS5_VABI GuestCleanup();
 void APS5_VABI GuestStdCapture();
 void APS5_VABI ProbeDestroy(GuestDestroy, void*, void*);
 const char* APS5_VABI ProbeWhat(GuestWhat, const void*, const void*);
-void APS5_VABI _ZNSt8bad_castC1Ev_nid_postfix(Object*);
-void APS5_VABI _ZNSt9bad_allocC1Ev_nid_postfix(Object*);
 
 TypeRecord FixtureBaseType{_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix + 16, "11FixtureBase", nullptr};
 TypeRecord FixtureErrorType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "12FixtureError", &FixtureBaseType};
@@ -56,7 +47,7 @@ unsigned FixtureWhatChecked = 0;
     std::fprintf(stderr, "guest exception failure %u\n", code);
     ExitProcess(code);
 }
-const char* APS5_VABI FixtureWhat(const void* object) { return static_cast<const Object*>(object)->message; }
+const char* APS5_VABI FixtureWhat(const void* object) { return static_cast<const LibcException::ExceptionObject*>(object)->message; }
 void APS5_VABI FixtureDestroy(void* object) {
     if (object != FixtureLastObject) FixtureFail(11);
     ++FixtureDestroyed;
@@ -68,7 +59,7 @@ void APS5_VABI FixtureCheckWhat(const char* message) {
 }
 }
 
-static Object decoy{}, retained{};
+static LibcException::ExceptionObject decoy{}, retained{};
 static GuestDestroy registeredDestructor;
 static void* expectedObject;
 static void* poison;
@@ -129,18 +120,20 @@ static int TestVtable(const char* mode) {
     const bool plain = std::strstr(mode, "plain") != nullptr;
     const bool deleting = std::strstr(mode, "delete") != nullptr;
     const bool destroying = deleting || std::strstr(mode, "destroy") != nullptr;
-    auto* actual = static_cast<Object*>(std::malloc(sizeof(Object)));
-    auto* other = static_cast<Object*>(std::malloc(sizeof(Object)));
+    auto* actual = static_cast<LibcException::ExceptionObject*>(std::malloc(sizeof(LibcException::ExceptionObject)));
+    auto* other = static_cast<LibcException::ExceptionObject*>(std::malloc(sizeof(LibcException::ExceptionObject)));
     if (!actual || !other) FixtureFail(57);
     actual->message = other->message = nullptr;
     if (plain) {
         _ZNSt9bad_allocC1Ev_nid_postfix(actual);
         _ZNSt8bad_castC1Ev_nid_postfix(other);
+
     } else {
         _ZNSt12out_of_rangeC1EPKc_nid_postfix(actual, "actual virtual message");
         _ZNSt12out_of_rangeC1EPKc_nid_postfix(other, "unrelated virtual message");
+
     }
-    const Object originalOther = *other;
+    const LibcException::ExceptionObject originalOther = *other;
     watchedObject = actual;
     watchedMessage = plain ? nullptr : reinterpret_cast<Message*>(const_cast<char*>(actual->message)) - 1;
     foreignObject = other;
@@ -168,20 +161,21 @@ static int TestVtable(const char* mode) {
     if (!plain) {
         if (!deleting) _ZNSt12out_of_rangeD1Ev_nid_postfix(actual);
         _ZNSt12out_of_rangeD1Ev_nid_postfix(other);
+
     }
     if (!deleting) std::free(actual);
     std::free(other);
     return 0;
 }
 
-static Message* MessageHeader(const Object& object) {
+static Message* MessageHeader(const LibcException::ExceptionObject& object) {
     return reinterpret_cast<Message*>(const_cast<char*>(object.message)) - 1;
 }
 
 extern "C" void APS5_VABI ObserveDestroy(void* pointer) {
     if (pointer != expectedObject || ++callbacks != 1) FixtureFail(40);
     ProbeDestroy(registeredDestructor, pointer, poison);
-    if (static_cast<Object*>(pointer)->message != nullptr ||
+    if (static_cast<LibcException::ExceptionObject*>(pointer)->message != nullptr ||
         !decoy.message || std::strcmp(decoy.message, "unrelated message") ||
         (keepMessage && MessageHeader(retained)->references.load() != 0)) FixtureFail(41);
 }
@@ -191,12 +185,13 @@ extern "C" void APS5_VABI FixtureInspect(void* pointer) {
     if (header->_pad != 0 || !header->destructor) FixtureFail(42);
     expectedObject = pointer;
     GuestWhat what;
-    std::memcpy(&what, static_cast<const unsigned char*>(static_cast<Object*>(pointer)->vtable) +
+    std::memcpy(&what, static_cast<const unsigned char*>(static_cast<LibcException::ExceptionObject*>(pointer)->vtable) +
         2 * sizeof(void*), sizeof(what));
     const char* message = ProbeWhat(what, pointer, poison);
     if (!message || std::strcmp(message, expectedMessage)) FixtureFail(62);
     if (keepMessage) {
-        _ZNSt12out_of_rangeC1ERKS__nid_postfix(&retained, static_cast<Object*>(pointer));
+        _ZNSt12out_of_rangeC1ERKS__nid_postfix(&retained, static_cast<LibcException::ExceptionObject*>(pointer));
+
         if (MessageHeader(retained)->references.load() != 1) FixtureFail(43);
     }
     registeredDestructor = reinterpret_cast<GuestDestroy>(header->destructor);
@@ -255,7 +250,7 @@ int main(int argc, char** argv) {
     regularRelease = std::strcmp(argv[1], "release") == 0;
     keepMessage = std::strstr(argv[1], "unshared") == nullptr;
     FixtureArgument = reinterpret_cast<std::uintptr_t>(FixtureMessage);
-    Object raised{};
+    LibcException::ExceptionObject raised{};
     if (regex) {
         expectedMessage = "regular expression error";
         FixtureStdOutType = _ZTISt11regex_error_nid_postfix;
@@ -267,12 +262,14 @@ int main(int argc, char** argv) {
         FixtureThrow = reinterpret_cast<GuestThrowFunction>(_ZSt15_Xruntime_errorPKc_nid_postfix);
     } else if (doraise) {
         _ZNSt11logic_errorC1EPKc_nid_postfix(&raised, FixtureMessage);
+
         expectedMessage = FixtureMessage;
         FixtureStdOutType = _ZTISt11logic_error_nid_postfix;
         FixtureThrow = reinterpret_cast<GuestThrowFunction>(_ZNKSt11logic_error8_DoraiseEv_nid_postfix);
         FixtureArgument = reinterpret_cast<std::uintptr_t>(&raised);
     }
     _ZNSt12out_of_rangeC1EPKc_nid_postfix(&decoy, "unrelated message");
+
     poison = std::strstr(argv[1], "zero") ? nullptr : &decoy;
     GuestStdCapture();
     const char* expected = regex ? "regular expression error" : FixtureMessage;
@@ -282,6 +279,7 @@ int main(int argc, char** argv) {
         !decoy.message || std::strcmp(decoy.message, "unrelated message")) return 44;
     _ZNSt12out_of_rangeD1Ev_nid_postfix(&retained);
     _ZNSt12out_of_rangeD1Ev_nid_postfix(&decoy);
+
     if (doraise) _ZNSt11logic_errorD1Ev_nid_postfix(&raised);
     if (retained.message || decoy.message || (doraise && raised.message)) return 45;
     std::puts("guest message callback, retained ownership and release: PASS");

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,16 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stackSize, uint64_t context);
-int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void);
-int64_t APS5_VABI sceCoredumpWriteUserData(const void* data, size_t size);
-void APS5_VABI sceCoredumpDebugTextOut(const char* str, int len);
-int APS5_VABI sceCoredumpAttachUserFile(uint32_t userValue, const char* path);
-int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(uint32_t userValue, const void* mem, std::int32_t size, const char* name);
-int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type);
-}
 
 namespace {
 alignas(16) std::array<std::byte, 0x40> process{};
@@ -93,6 +84,7 @@ int main() {
     RequireWritesRefused(region);
     RequireAttachesRefused(region);
     sceCoredumpDebugTextOut(text, static_cast<int>(sizeof(text) - 1));
+
     Require(!handlerRan);
 
     Require(sceCoredumpWriteUserData(nullptr, region.size()) == InvalidArgument);

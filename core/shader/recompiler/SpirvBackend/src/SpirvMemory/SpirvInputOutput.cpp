@@ -156,7 +156,7 @@ namespace ShaderRecompiler
     }
 
     bool OrderedPixelShader(const SpirvEmitterState& state) {
-        return state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->psOrderedPixelShader;
+        return state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && (state.inputInfo.pixel->psOrderedPixelShader || state.inputInfo.pixel->mergeMask != 0u);
     }
 
     const SpirvInputBinding* SpirvInputBindingForParameter(const SpirvEmitterState& state, std::uint32_t location) {

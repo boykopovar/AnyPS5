@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdlib>
@@ -17,17 +18,7 @@
 #include <stdexcept>
 #include <source_location>
 #include <thread>
-extern "C" {
-int APS5_VABI sceKernelDlsym(std::int32_t, const char*, void**);
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-char* APS5_VABI dlerror_nid_postfix();
-int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
-int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
-int APS5_VABI sceKernelLoadStartModule(const char*, std::size_t, const void*, unsigned, const void*, int*);
-int APS5_VABI sceKernelStopUnloadModule(int, std::size_t, const void*, unsigned, const void*, int*);
-}
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "guest_dynamic_loader: failed at %s:%u\n", location.file_name(), location.line());
@@ -115,6 +106,7 @@ static bool CheckGlobalVisibility(const char* path, bool globalFirst) {
             std::fprintf(stderr, "RTLD_GLOBAL lost after closing its handle: global_first=%d scope=%s; surviving handle returns %d\n",
                 globalFirst, scope == nullptr ? "NULL" : "-2", add(20, 22));
             dlerror_nid_postfix();
+
             visible = false;
         }
     }
@@ -146,6 +138,7 @@ int main(int argc, char** argv) {
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
+
     void* executable = dlopen_nid_postfix(nullptr, 2);
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
 #ifdef _WIN32
@@ -218,6 +211,54 @@ int main(int argc, char** argv) {
     std::error_code notEmpty;
     if (createdLibs) std::filesystem::remove("libs", notEmpty);
 
+    const std::filesystem::path nestedRoot = "anyps5-relinked-prx-dir-for-test";
+    const std::filesystem::path nestedGuest = nestedRoot / "Engine.Render.prx";
+    const std::filesystem::path nestedRelinked = nestedRoot / "prx" / "Engine.Render.prx.guest.prx";
+    std::filesystem::create_directories(nestedRelinked.parent_path());
+    {
+        std::ofstream elf(nestedGuest, std::ios::binary);
+        elf.write("\x7f" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], nestedRelinked, std::filesystem::copy_options::overwrite_existing);
+    void* nested = dlopen_nid_postfix(nestedGuest.string().c_str(), 2);
+    Require(nested != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(nested, "GuestModuleAdd"));
+    Require(add && add(20, 22) == 42);
+    Require(dlclose_nid_postfix(nested) == 0);
+    std::filesystem::remove_all(nestedRoot);
+
+    const std::filesystem::path layeredRoot = "anyps5-relinked-prx-layers-for-test";
+    const std::filesystem::path layeredGuest = layeredRoot / "Engine.Layers.prx";
+    std::filesystem::create_directories(layeredRoot / "prx");
+    {
+        std::ofstream elf(layeredGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+        std::ofstream broken(layeredRoot / "prx" / "Engine.Layers.prx.guest.prx", std::ios::binary);
+        broken << "not a module";
+    }
+    std::filesystem::copy_file(argv[1], layeredRoot / "ENGINE.LAYERS.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* layered = dlopen_nid_postfix(layeredGuest.string().c_str(), 2);
+    Require(layered != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(layered, "GuestModuleAdd"));
+    Require(add && add(19, 23) == 42);
+    Require(dlclose_nid_postfix(layered) == 0);
+    std::filesystem::remove_all(layeredRoot);
+
+    const std::filesystem::path foldedRoot = "anyps5-relinked-prx-folded-for-test";
+    const std::filesystem::path foldedGuest = foldedRoot / "Engine.Folded.prx";
+    std::filesystem::create_directories(foldedRoot / "prx");
+    {
+        std::ofstream elf(foldedGuest, std::ios::binary);
+        elf.write("" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], foldedRoot / "prx" / "ENGINE.FOLDED.PRX.GUEST.PRX", std::filesystem::copy_options::overwrite_existing);
+    void* folded = dlopen_nid_postfix(foldedGuest.string().c_str(), 2);
+    Require(folded != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(folded, "GuestModuleAdd"));
+    Require(add && add(10, 32) == 42);
+    Require(dlclose_nid_postfix(folded) == 0);
+    std::filesystem::remove_all(foldedRoot);
+
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
     Require(add && _sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
@@ -229,9 +270,11 @@ int main(int argc, char** argv) {
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
-    Require(ThrowsRuntimeError([] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
     int local = 0;
-    Require(ThrowsRuntimeError([&] { _sceKernelRtldThreadAtexitIncrement_nid_postfix(&local); }));
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(nullptr) == -1);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(&local) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(nullptr) == 0);
 #ifndef _WIN32
     Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
     Require(dlsym_nid_postfix(nullptr, "dlopen") == nullptr);

@@ -26,7 +26,12 @@ std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>
     while (cur < end) {
         std::uint8_t b = text[cur];
         if (b >= RexMin && b <= RexMax) {
-            if (b & RexWBit) hasRexW = true;
+            hasRexW = (b & RexWBit) != 0;
+            ++cur;
+            continue;
+        }
+        if (b == PrefixRepne || b == PrefixSegDs) {
+            hasRexW = false;
             ++cur;
             continue;
         }

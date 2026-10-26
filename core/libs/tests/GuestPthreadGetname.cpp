@@ -1,17 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-extern "C" {
-Pthread APS5_VABI pthread_self_nid_postfix(void);
-int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name);
-int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadGetname(Pthread thread, char* name);
-}
 
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EFAULT = 14;

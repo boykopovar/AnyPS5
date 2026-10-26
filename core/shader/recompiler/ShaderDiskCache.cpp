@@ -95,7 +95,7 @@ static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: updat
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
-static_assert(sizeof(ImageResource) == 92, "ImageResource changed: update the info encoder");
+static_assert(sizeof(ImageResource) == 96, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
@@ -141,7 +141,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 41, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 43, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -172,6 +172,49 @@ struct FileHeader {
 std::size_t PayloadOffset(std::size_t keyBytes) {
     constexpr std::size_t alignment = 8;
     return (sizeof(FileHeader) + keyBytes + alignment - 1) / alignment * alignment;
+}
+
+class SharedPlanTable {
+public:
+    std::shared_ptr<const IrResourcePlan> Get(std::span<const std::byte> payload, std::uint64_t shaderHash) {
+        const Key key{HashBytes(payload), HashBytes(payload, 0x5eed0003ull), payload.size(), shaderHash};
+        {
+            std::lock_guard lock(mutex);
+            if (const auto found = plans.find(key); found != plans.end()) {
+                if (auto plan = found->second.lock()) return plan;
+            }
+        }
+        IrResourcePlan decoded;
+        if (!DecodePlan(payload, decoded)) return nullptr;
+        decoded.shaderHash = shaderHash;
+        auto plan = std::make_shared<const IrResourcePlan>(std::move(decoded));
+        std::lock_guard lock(mutex);
+        auto& slot = plans[key];
+        if (auto existing = slot.lock()) return existing;
+        slot = plan;
+        if (++inserts % 1024u == 0u) std::erase_if(plans, [](const auto& entry) { return entry.second.expired(); });
+        return plan;
+    }
+
+private:
+    struct Key {
+        std::uint64_t low;
+        std::uint64_t high;
+        std::uint64_t bytes;
+        std::uint64_t shaderHash;
+        bool operator==(const Key&) const = default;
+    };
+    struct KeyHash {
+        std::size_t operator()(const Key& key) const { return static_cast<std::size_t>(key.low ^ (key.high * 0x9e3779b97f4a7c15ull) ^ (key.shaderHash * 0xff51afd7ed558ccdull)); }
+    };
+    std::mutex mutex;
+    std::unordered_map<Key, std::weak_ptr<const IrResourcePlan>, KeyHash> plans;
+    std::uint64_t inserts = 0;
+};
+
+SharedPlanTable& sharedPlans() {
+    static SharedPlanTable table;
+    return table;
 }
 
 class MappedFile {
@@ -470,6 +513,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.runtimeAbiVersion);
     writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
     writer.Value(result.bdaAbiVersion);
+    writer.Value(result.windowLaneGuards);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
@@ -495,6 +539,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.instanceOffsetConflict);
     writer.Value(result.hostSubgroupSize);
     writer.Value(result.fullSubgroups);
+    writer.Value(result.functionLdsBuffer);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
     writer.List(result.fragmentParameters, [](Writer& out, const FragmentParameter& parameter) {
         out.Value(parameter.location);
@@ -523,6 +568,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     }
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
+    writer.Value(result.bdaWrites);
     writer.Value(result.stencilReferenceDword);
 }
 
@@ -530,6 +576,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.runtimeAbiVersion);
     result.spirv = reader.Spirv();
     reader.Value(result.bdaAbiVersion);
+    reader.Value(result.windowLaneGuards);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
@@ -555,6 +602,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.instanceOffsetConflict);
     reader.Value(result.hostSubgroupSize);
     reader.Value(result.fullSubgroups);
+    reader.Value(result.functionLdsBuffer);
     reader.Values(result.parameterExports);
     reader.List(result.fragmentParameters, 10, [](Reader& in, FragmentParameter& parameter) {
         in.Value(parameter.location);
@@ -587,6 +635,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     }
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
+    reader.Value(result.bdaWrites);
     reader.Value(result.stencilReferenceDword);
     result.variantId = 0;
 }
@@ -750,6 +799,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.volumeArraySampleCompatible);
         out.Value(image.flatLineCompatible);
         out.Value(image.flatVolumeLineCompatible);
+        out.Value(image.dimensionQueryOnly);
         out.Value(image.foldTexelOffsetsOnly);
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
@@ -759,6 +809,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.emulatedCompare);
         out.Value(image.table);
         out.Value(image.tableOperation);
+        out.Value(image.targetMerge);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -856,6 +907,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.volumeArraySampleCompatible);
         in.Value(image.flatLineCompatible);
         in.Value(image.flatVolumeLineCompatible);
+        in.Value(image.dimensionQueryOnly);
         in.Value(image.foldTexelOffsetsOnly);
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
@@ -865,6 +917,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.emulatedCompare);
         in.Value(image.table);
         in.Value(image.tableOperation);
+        in.Value(image.targetMerge);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
@@ -1408,6 +1461,18 @@ public:
         return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void>) { return DecodePlanEntry(file, key, plan); }, planHits, planMisses, planLoadFailures);
     }
 
+    std::shared_ptr<const IrResourcePlan> LoadSharedPlan(std::span<const std::byte> key, std::uint64_t shaderHash) {
+        std::shared_ptr<const IrResourcePlan> plan;
+        load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void>) {
+            std::span<const std::byte> payload;
+            const auto status = unwrapEntry(file, key, payload);
+            if (status != LoadStatus::Loaded) return status;
+            plan = sharedPlans().Get(payload, shaderHash);
+            return plan != nullptr ? LoadStatus::Loaded : LoadStatus::Rejected;
+        }, planHits, planMisses, planLoadFailures);
+        return plan;
+    }
+
     void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> variant) {
         enqueue({std::move(key), std::move(variant), nullptr});
     }
@@ -1915,6 +1980,11 @@ void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> va
 bool LoadPlan(std::span<const std::byte> key, IrResourcePlan& plan) {
     auto& instance = store();
     return instance.Enabled() && instance.LoadPlan(key, plan);
+}
+
+std::shared_ptr<const IrResourcePlan> LoadSharedPlan(std::span<const std::byte> key, std::uint64_t shaderHash) {
+    auto& instance = store();
+    return instance.Enabled() ? instance.LoadSharedPlan(key, shaderHash) : nullptr;
 }
 
 void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan) {

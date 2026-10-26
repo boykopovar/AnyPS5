@@ -112,6 +112,21 @@ bool IsFmaskTextureFormat(IrBufferFormat format) {
     return format >= IrBufferFormat::Fmask8_S2_F1 && format <= IrBufferFormat::Fmask64_S16_F8;
 }
 
+std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format) {
+    switch (format) {
+        case IrBufferFormat::Fmask8_S2_F1: return FmaskLayout{2u, 1u, 1u, 8u};
+        case IrBufferFormat::Fmask8_S4_F1: return FmaskLayout{4u, 1u, 1u, 8u};
+        case IrBufferFormat::Fmask8_S8_F1: return FmaskLayout{8u, 1u, 1u, 8u};
+        case IrBufferFormat::Fmask8_S2_F2: return FmaskLayout{2u, 2u, 1u, 8u};
+        case IrBufferFormat::Fmask8_S4_F2: return FmaskLayout{4u, 2u, 2u, 8u};
+        case IrBufferFormat::Fmask8_S4_F4: return FmaskLayout{4u, 4u, 2u, 8u};
+        case IrBufferFormat::Fmask16_S8_F2: return FmaskLayout{8u, 2u, 2u, 16u};
+        case IrBufferFormat::Fmask32_S8_F4: return FmaskLayout{8u, 4u, 4u, 32u};
+        case IrBufferFormat::Fmask32_S8_F8: return FmaskLayout{8u, 8u, 4u, 32u};
+        default: return std::nullopt;
+    }
+}
+
 IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
     const FormatInfo* info = FindFormatInfo(format);
     if (info == nullptr || !info->sampled) {
