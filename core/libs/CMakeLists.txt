@@ -207,6 +207,8 @@ endforeach()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+include(prx/libSceFreeType/PostScriptPrivate.cmake)
+
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
@@ -224,8 +226,6 @@ if(APS5_ENABLE_TRACY)
     )
     list(APPEND PATCHED_OUTPUTS ${TRACY_CLIENT_COPIED})
 endif()
-
-include(prx/libSceFreeType/PostScriptPrivate.cmake)
 
 if(TARGET mimalloc)
     add_executable(pe_import_first ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirstMain.cpp ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirst.cpp)
