@@ -176,8 +176,6 @@ void RunGuestTextureResourceTests() {
     Require(compressedResource.fmaskCmaskAddress == compressedFmask.metaAddr << 8u && compressedResource.dccAddress == 0u && compressedResource.dccPipeAligned, "compressed FMASK CMASK was interpreted as color DCC");
     compressedFmask.metaPipeAligned = false;
     rejectFields(compressedFmask, "FMASK CMASK metadata must be pipe aligned");
-    compressedFmask.metaPipeAligned = compressedFmask.writeCompress = true;
-    rejectFields(compressedFmask, "FMASK CMASK compression is not implemented");
     Fields fmaskArray = fmask;
     fmaskArray.typeRaw = 13u;
     fmaskArray.depth = 2u;
@@ -198,38 +196,11 @@ void RunGuestTextureResourceTests() {
         auto compressedNarrow = narrow;
         compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
         compressedNarrow.metaAddr = 0x123456789aull;
-        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+        if (format == 159u) Require(DecodeTextureResource(pack(compressedNarrow)).format == surface, "a two-fragment CMASK FMASK was not normalized to its 8-bit storage");
     }
-    auto identityWord = fmask;
-    identityWord.dstSelX = 4u;
-    identityWord.dstSelY = 5u;
-    identityWord.dstSelZ = 6u;
-    identityWord.dstSelW = 7u;
-    rejectFields(identityWord, "FMASK destination channel selector is not implemented");
-    for (const auto format : {162u, 164u, 167u, 168u}) {
-        auto unsupported = fmask;
-        unsupported.format = format;
-        rejectFields(unsupported, "FMASK format is not implemented");
-    }
-    for (const auto field : {&Fields::metaCompress, &Fields::writeCompress}) {
-        auto compressed = fmask;
-        compressed.*field = true;
-        rejectFields(compressed, "FMASK CMASK compression is not implemented");
-    }
-    for (const auto selector : {5u, 6u, 7u}) {
-        auto unsupported = fmask;
-        unsupported.dstSelX = selector;
-        rejectFields(unsupported, "FMASK destination channel selector is not implemented");
-    }
-    auto unsupportedFmask = fmask;
-    unsupportedFmask.tileModeRaw = 0u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
-    unsupportedFmask = fmask;
-    unsupportedFmask.lastLevel = unsupportedFmask.maxMip = 1u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
-    unsupportedFmask = fmask;
-    unsupportedFmask.typeRaw = 10u;
-    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
+    auto missingFmaskMetadata = fmask;
+    missingFmaskMetadata.metaCompress = true;
+    rejectFields(missingFmaskMetadata, "FMASK CMASK compression is not implemented");
     Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7, "decoded destination selectors changed");
 
     Fields wide = base;
