@@ -118,18 +118,24 @@ std::vector<std::uint32_t> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler
 struct Spirv {
     std::uint32_t selects = 0;
     std::uint32_t floatConverts = 0;
+    std::uint32_t widenings = 0;
 };
 
 Spirv Scan(std::span<const std::uint32_t> words) {
     Spirv scan;
+    std::vector<std::uint32_t> f32Types;
+    std::vector<std::uint32_t> widenings;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto opcode = words[cursor] & 0xffffu;
         Require(count != 0 && cursor + count <= words.size(), "f16 conversion probe: malformed SPIR-V");
         if (opcode == spv::OpSelect) ++scan.selects;
         if (opcode == spv::OpFConvert) ++scan.floatConverts;
+        if (opcode == spv::OpTypeFloat && count >= 3u && words[cursor + 2u] == 32u) f32Types.push_back(words[cursor + 1u]);
+        if (opcode == spv::OpFConvert && count >= 4u && std::ranges::find(f32Types, words[cursor + 1u]) != f32Types.end()) widenings.push_back(words[cursor + 2u]);
         cursor += count;
     }
+    scan.widenings = static_cast<std::uint32_t>(widenings.size());
     return scan;
 }
 
@@ -175,6 +181,8 @@ void VerifySpirv() {
     const auto narrowNative = scan(NarrowCode, true);
     Require(narrowEmulated.floatConverts == 1u && narrowNative.floatConverts == 1u, "f16 conversion probe: v_cvt_f16_f32 does not use one OpFConvert");
     Require(narrowNative.selects + 1u == narrowEmulated.selects, "f16 conversion probe: v_cvt_f16_f32 with float16NarrowNans has " + std::to_string(narrowNative.selects) + " selects, without " + std::to_string(narrowEmulated.selects) + ", expected one fewer");
+    const auto towardZero = scan(NarrowTowardZeroCode, true);
+    Require(towardZero.widenings == 0u, "f16 conversion probe: v_cvt_pkrtz_f16_f32 with float16NarrowNans widens " + std::to_string(towardZero.widenings) + " f16 values to f32 with OpFConvert, which drivers fold with the narrowing");
 }
 
 struct Tally {
