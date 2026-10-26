@@ -157,7 +157,7 @@ int main() {
     for (int user_id : absent_users) {
         Require(sceUserServiceGetGamePresets(user_id, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(presets.difficulty == 0x5a);
-        Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
     std::int32_t accessibilityValue = 0;
@@ -216,7 +216,7 @@ int main() {
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(presets.difficulty == 0x5a);
-    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     UserServiceSetUserConnected_nid_postfix(1, true);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
@@ -267,5 +267,5 @@ int main() {
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(presets.difficulty == 0x5a);
-    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 }

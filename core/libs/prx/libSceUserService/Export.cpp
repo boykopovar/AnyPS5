@@ -190,11 +190,11 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
 }
 
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
- if (!IsUserLoggedIn(user_id)) {
-  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
- }
  if (presets == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  presets->difficulty = 0;
  presets->priority = 0;
