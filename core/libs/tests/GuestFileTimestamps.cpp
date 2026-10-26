@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdio>
@@ -9,23 +11,6 @@
 #include <windows.h>
 #include <io.h>
 #endif
-
-extern "C" {
-int APS5_VABI utimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI lutimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
-int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
-int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI stat_nid_postfix(const char*, FileStat*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI sceKernelFstat(int, FileStat*);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-std::int64_t APS5_VABI _fstat_nid_postfix(int, FileStat*);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -60,7 +45,6 @@ static void CheckTimes(const std::string& path, int fd, const KernelTimeval* exp
         "native modification time preserves microseconds");
 #endif
 }
-
 
 #ifdef _WIN32
 static std::uint64_t Ticks(const FILETIME& time) {
@@ -242,7 +226,14 @@ int main() {
     Require(utimes_nid_postfix(path.c_str(), second) == 0, "utimes target to second");
     std::error_code symlinkError;
     const auto linkPath = (root / "link.txt").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(linkPath).c_str(), std::filesystem::path(path).c_str(),
+            SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        symlinkError = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink(path, linkPath, symlinkError);
+#endif
     if (!symlinkError) {
         Require(lutimes_nid_postfix(linkPath.c_str(), first) == 0, "lutimes modifies symlink");
         FileStat targetStatus{};

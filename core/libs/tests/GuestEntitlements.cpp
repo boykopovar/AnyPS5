@@ -1,3 +1,4 @@
+#include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
@@ -10,11 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(std::uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessAddcontEntitlementInfo*);
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(std::uint32_t, NpEntitlementAccessAddcontEntitlementInfo*, std::uint32_t, std::uint32_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -31,11 +27,22 @@ int main(int argc, char** argv) {
     const auto directory = root / std::filesystem::path(u8"dlc-a\u00e7\u00e3o-\u65e5\u672c");
     const auto file = directory / "anyps5-entitlements.ini";
     if (argc == 2 && std::string_view(argv[1]) == "missing") {
-        SetEntitlements(file);
+        std::uint32_t skuFlag = 0;
+    Require(sceNpEntitlementAccessGetSkuFlag(nullptr) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetSkuFlag(&skuFlag) == 0 && skuFlag == 3);
+    std::uint32_t pftFlag = 1;
+    Require(sceNpEntitlementAccessGetPftFlag(nullptr) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessGetPftFlag(&pftFlag) == 0 && pftFlag == 0);
+    std::uint32_t trialFlag = 1;
+    Require(sceNpEntitlementAccessGetGameTrialsFlag(nullptr) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessGetGameTrialsFlag(&trialFlag) == 0 && trialFlag == 0);
+    Require(sceNpEntitlementAccessGenerateTransactionId(nullptr) == static_cast<int>(0x80558003));
+    SetEntitlements(file);
         std::uint32_t hits = 0;
         bool rejected = false;
         try {
             sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, nullptr, 0, &hits);
+
         } catch (const std::runtime_error& error) {
             rejected = std::string_view(error.what()).starts_with("NpEntitlementAccess: cannot read ");
         }

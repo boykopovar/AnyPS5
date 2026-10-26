@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <atomic>
@@ -8,15 +9,6 @@
 #include <source_location>
 #include <string_view>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** result);
-int APS5_VABI scePthreadCancel(Pthread thread);
-int APS5_VABI scePthreadSetcancelstate(int state, int* oldState);
-void APS5_VABI scePthreadTestcancel();
-unsigned int APS5_VABI sleep_nid_postfix(unsigned int seconds);
-}
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -46,6 +38,7 @@ static void* APS5_VABI Sleeper(void*) {
     if (disabled) {
         Require(scePthreadSetcancelstate(0, nullptr) == 0);
         scePthreadTestcancel();
+
         Require(false);
     }
     return nullptr;

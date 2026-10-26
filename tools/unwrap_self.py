@@ -30,7 +30,9 @@ usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 """
 
 import argparse
+import io
 import math
+import secrets
 import struct
 import sys
 from collections import Counter
@@ -216,7 +218,7 @@ def place_segments(data, headers, records):
     for header in headers:
         if header["type"] == PT_LOAD and header["size"] == 0:
             continue
-        if header["source"] > len(data) or header["size"] > len(data) - header["source"]:
+        if header["source"] < 0 or header["source"] > len(data) or header["size"] > len(data) - header["source"]:
             raise Refused("segment %d does not fit the file" % header["index"])
 
 
@@ -235,8 +237,8 @@ def check_decrypted(data, headers):
 
 
 def unwrap(path, output, verbose=False):
-    source, destination = Path(path), Path(output)
-    if source.resolve() == destination.resolve() or (destination.exists() and source.samefile(destination)):
+    source, destination = Path(path), Path(output).resolve()
+    if source.resolve() == destination or (destination.exists() and source.samefile(destination)):
         raise Refused("output aliases the input container")
     data = bytes(source.read_bytes())
     if len(data) < FIRST_REGION:
@@ -326,17 +328,24 @@ def unwrap(path, output, verbose=False):
             print("  [%2d] %-18s vaddr=%#011x filesz=%#010x offset=%#010x%s"
                   % (item["index"], name, item["vaddr"], item["size"], item["new"], moved))
 
-    destination = Path(output)
-    if destination.parent != Path(""):
-        destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(result)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = destination.parent / (".unwrap-self-" + secrets.token_hex(16))
+    temporary = io.open(temporary_path, "xb")
+    try:
+        with temporary:
+            temporary.write(result)
+        if sys.platform != "win32" and destination.exists():
+            temporary_path.chmod(destination.stat().st_mode)
+        temporary_path.replace(destination)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     return len(result)
 
 
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="unwrap a decrypted SELF or fSELF container into a clean ELF")
     parser.add_argument("input", help="SELF container to read")
     parser.add_argument("output", help="ELF executable to write")

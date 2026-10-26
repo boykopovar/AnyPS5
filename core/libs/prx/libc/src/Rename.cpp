@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/General.hpp"
@@ -41,6 +42,16 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
     return error;
 }
 
+#ifdef _WIN32
+static bool BelowSymbolicLinkLoop(const std::filesystem::path& directory) {
+    const auto handle = CreateFileW(directory.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_CANT_RESOLVE_FILENAME;
+    CloseHandle(handle);
+    return false;
+}
+#endif
+
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
     constexpr int GuestEnotdir = 20;
@@ -71,6 +82,9 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         sameFile = fs::equivalent(source, destination, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
+#ifdef __APPLE__
+        if (error == std::errc::not_supported) error.clear();
+#endif
         if (error) return FilesystemError(error);
         if (!sameFile && sourceIsDirectory && !destinationIsDirectory) return GuestEnotdir;
         if (!sameFile && !sourceIsDirectory && destinationIsDirectory) return GuestEisdir;
@@ -103,10 +117,17 @@ static int SourceLookupError_nid_no_patch(const std::filesystem::path& source) {
 }
 
 extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
-    if (!from) { errno = 14; return -1; }
-    if (!*from) { errno = 2; return -1; }
+    std::string fromCopy;
+    if (const int error = CopyGuestPath_nid_no_patch(from, fromCopy)) { errno = error; return -1; }
+    from = fromCopy.c_str();
+    if (fromCopy.empty()) { errno = 2; return -1; }
     if (const int dot = RenameDotError_nid_no_patch(from)) { errno = dot; return -1; }
-    const int destinationError = !to ? 14 : !*to ? 2 : RenameDotError_nid_no_patch(to);
+    std::string toCopy;
+    int destinationError = CopyGuestPath_nid_no_patch(to, toCopy);
+    if (destinationError == 0) {
+        to = toCopy.c_str();
+        destinationError = toCopy.empty() ? 2 : RenameDotError_nid_no_patch(to);
+    }
     try {
         const auto source = ResolvePath_nid_no_patch(from);
         if (destinationError) {
@@ -120,6 +141,13 @@ extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
             std::error_code status;
             if (HasNonDirectoryPrefix_nid_no_patch(source) || (std::filesystem::exists(source, status) && HasNonDirectoryPrefix_nid_no_patch(destination))) error = 20;
         }
+#ifdef _WIN32
+        constexpr int GuestEloop = 62;
+        if (error == 2 || error == 20) {
+            if (BelowSymbolicLinkLoop(source.parent_path())) error = GuestEloop;
+            else if (SourceLookupError_nid_no_patch(source) == 0 && BelowSymbolicLinkLoop(destination.parent_path())) error = GuestEloop;
+        }
+#endif
         if (error) { errno = error; return -1; }
         RecordWrittenPath_nid_no_patch(source);
         RecordWrittenPath_nid_no_patch(destination);

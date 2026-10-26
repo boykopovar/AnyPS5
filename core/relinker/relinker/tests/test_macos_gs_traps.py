@@ -26,6 +26,8 @@ FORMS = {
 
 NON_MEMORY_FORMS = {
     "gs-nop": bytes.fromhex("65 90"),
+    "gs-nop-memory": bytes.fromhex("65 0f 1f 05 11 11 11 11"),
+    "gs-lea": bytes.fromhex("65 8d 05 11 11 11 11"),
     "gs-register-move": bytes.fromhex("65 48 89 c8"),
     "gs-cpuid": bytes.fromhex("65 0f a2"),
     "gs-mwait": bytes.fromhex("65 0f 01 c9"),
@@ -54,6 +56,15 @@ def check_trapped(name, code, instruction):
         raise SystemExit(f"{name}: the GS access was left in the code")
 
 
+def check_refused(relinker, directory, name, body, message):
+    source = Path(directory) / f"{name}.elf"
+    source.write_bytes(bytes(make_image("register", "unwind", body=body)))
+    result = subprocess.run([str(relinker), "--macos", "--skip-sce-module", str(source), str(Path(directory) / name)],
+                            capture_output=True, text=True, timeout=60)
+    if result.returncode == 0 or message not in result.stdout + result.stderr:
+        raise SystemExit(f"{name}: expected the relinker to refuse with {message!r}: {result.stdout}{result.stderr}")
+
+
 def check_untouched(name, code, instruction):
     if instruction + b"\xc3" not in code:
         raise SystemExit(f"{name}: a non-memory GS instruction was replaced")
@@ -72,6 +83,8 @@ def main():
         image = make_image("register", "unwind", body=instruction + b"\xc3")
         struct.pack_into("<I", image, 176, 0)
         check_trapped("gs-without-pt-tls", convert(relinker, directory, "gs-without-pt-tls", image), instruction)
+        check_refused(relinker, directory, "branch-into-gs", bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3"),
+                      "Branch enters a guest GS instruction")
     print("macOS GS trap checks passed")
 
 

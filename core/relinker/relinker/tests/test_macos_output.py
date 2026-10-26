@@ -114,8 +114,26 @@ def check_structure(name, data):
     return macho
 
 
+def check_main_entry_mxcsr(macho, data):
+    stub = data[macho.entryoff:]
+    setup = bytes.fromhex("4883ec100fae1c24c7442404c09f00000fae542404")
+    call = stub.find(bytes.fromhex("ff15"))
+    check(call >= len(setup), "entry stub does not initialize guest MXCSR before its start call")
+    check(stub[call - len(setup):call] == setup, "entry stub does not save host MXCSR and load guest MXCSR 0x9fc0")
+    entry = stub.find(bytes.fromhex("488d3d"))
+    entry_target = IMAGE_BASE + macho.entryoff + entry + 7 + struct.unpack_from("<i", stub, entry + 3)[0]
+    check(any(segment["initprot"] & PROT_EXEC and segment["vmaddr"] <= entry_target < segment["vmaddr"] + segment["vmsize"] for segment in macho.segments),
+          "entry stub does not point at executable guest code")
+    start_target = IMAGE_BASE + macho.entryoff + call + 6 + struct.unpack_from("<i", stub, call + 2)[0]
+    meta_segment = macho.segment("__APS5DATA")
+    check(meta_segment["vmaddr"] <= start_target < meta_segment["vmaddr"] + meta_segment["vmsize"], "entry stub start call does not point at its bound start slot")
+    restore = bytes.fromhex("0fae14244883c4100f0b")
+    check(stub[call + 6:call + 6 + len(restore)] == restore, "entry stub does not restore host MXCSR after the guest start call")
+
+
 def check_imports(data):
     macho = check_structure("import", data)
+    check_main_entry_mxcsr(macho, data)
     check("@rpath/libc.prx" in macho.dylibs, f"import: libc.prx is not a dependency: {macho.dylibs}")
     linkedit = macho.segment("__LINKEDIT")
     binds = data[linkedit["fileoff"]:linkedit["fileoff"] + linkedit["filesize"]]

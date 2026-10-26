@@ -1,11 +1,7 @@
+#include "prx/ulobjmgr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI _sceUlobjmgrRegisterObject(std::uint64_t object, std::int32_t kind, std::uint32_t* id);
-int APS5_VABI _sceUlobjmgrUnregisterObject(std::uint32_t id);
-}
 
 namespace {
 

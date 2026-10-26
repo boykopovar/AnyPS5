@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
 
@@ -20,10 +21,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-namespace FreeType {
-struct GuestLibrary;
-}
 
 using namespace FreeType;
 

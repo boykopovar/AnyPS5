@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "execution/FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
@@ -38,6 +39,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -49,6 +52,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -56,7 +65,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
             queues(context.physical, &count, nullptr);
             std::vector<VkQueueFamilyProperties> families(count);
@@ -559,6 +568,64 @@ void residentPresentTests(const Context& context) {
     blitLetterboxMatchesClear(context);
 }
 
+PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
+PFN_vkAllocateMemory realAllocateMemory = nullptr;
+const VkPhysicalDeviceMemoryProperties* refusingMemory = nullptr;
+std::uint32_t refusedAllocations = 0;
+std::uint32_t lastAllocatedType = UINT32_MAX;
+
+VKAPI_ATTR VkResult VKAPI_CALL refuseDeviceLocalAllocation(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* callbacks, VkDeviceMemory* memory) {
+    const auto heap = refusingMemory->memoryTypes[info->memoryTypeIndex].heapIndex;
+    if ((refusingMemory->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) {
+        ++refusedAllocations;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    lastAllocatedType = info->memoryTypeIndex;
+    return realAllocateMemory(device, info, callbacks, memory);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL refusingDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&refuseDeviceLocalAllocation);
+    return realDeviceProc(device, name);
+}
+
+void sourceImageOutsideDeviceMemoryTests(const Context& base) {
+    VkImageCreateInfo probeInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    probeInfo.imageType = VK_IMAGE_TYPE_2D;
+    probeInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+    probeInfo.extent = {64u, 64u, 1u};
+    probeInfo.mipLevels = 1;
+    probeInfo.arrayLayers = 1;
+    probeInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    probeInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    probeInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkImage probe = VK_NULL_HANDLE;
+    Check(base.Function<PFN_vkCreateImage>("vkCreateImage")(base.device, &probeInfo, nullptr, &probe), "vkCreateImage probe");
+    VkMemoryRequirements requirements{};
+    base.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(base.device, probe, &requirements);
+    base.Function<PFN_vkDestroyImage>("vkDestroyImage")(base.device, probe, nullptr);
+    if (!base.HostMemoryType(requirements.memoryTypeBits)) {
+        std::printf("presentation source in host memory: skipped, the device offers no host memory type for the image\n");
+        return;
+    }
+    auto context = base;
+    context.bufferPool.reset();
+    realDeviceProc = base.deviceProc;
+    realAllocateMemory = base.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    refusingMemory = &context.memory;
+    refusedAllocations = 0;
+    lastAllocatedType = UINT32_MAX;
+    context.deviceProc = refusingDeviceProc;
+    {
+        PresentationScaler scaler(context, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
+        scaler.EnsureSourceImage(64u, 64u);
+        Require(refusedAllocations != 0, "the presentation source never asked for device-local memory");
+        Require(lastAllocatedType != UINT32_MAX && (context.memory.memoryHeaps[context.memory.memoryTypes[lastAllocatedType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0, "the presentation source was not placed in host memory when device-local memory was refused");
+        Require(scaler.SourceWidth() == 64u && scaler.SourceHeight() == 64u, "the presentation source in host memory lost its extent");
+    }
+    context.bufferPool.reset();
+}
+
 }
 
 int main() {
@@ -573,6 +640,7 @@ int main() {
             return VulkanTestSkipped;
         }
         residentPresentTests(device->GetContext());
+        sourceImageOutsideDeviceMemoryTests(device->GetContext());
         std::cout << "resident present format, presentation pass and letterbox tests passed\n";
         return 0;
     } catch (const std::exception& error) {

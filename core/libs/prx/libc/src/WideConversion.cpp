@@ -1,3 +1,5 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include <cerrno>
@@ -18,8 +20,6 @@ extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
     return SonySetConstraintHandlerS(handler);
 }
 
-extern "C" std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
-
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
     std::size_t count = 0;
     for (;; ++source) {
@@ -37,8 +37,6 @@ extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const s
 extern "C" int APS5_VABI wcscpy_s_nid_postfix(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
     return SonyWcscpyS(dest, size, src);
 }
-
-extern "C" int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t capacity);
 
 namespace {
 

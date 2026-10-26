@@ -7,6 +7,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -75,6 +76,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -86,6 +89,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -93,7 +102,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -214,6 +223,65 @@ private:
     std::uint8_t* block = nullptr;
 };
 
+class SparseLayers {
+public:
+    SparseLayers() {
+#ifdef _WIN32
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(GuestArena::GuestArenaHighestFree_nid_no_patch(BlockBytes, 65536), BlockBytes, 65536));
+#else
+        constexpr std::uintptr_t alignment = 65536;
+        void* raw = mmap(nullptr, BlockBytes + alignment, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(raw != MAP_FAILED, "cannot reserve sparse depth layers");
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
+        if (aligned != begin) munmap(raw, aligned - begin);
+        if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+        memory = reinterpret_cast<std::uint8_t*>(aligned);
+#endif
+        Require(memory != nullptr, "cannot reserve sparse depth layers");
+    }
+
+    ~SparseLayers() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, BlockBytes);
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address(), BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, BlockBytes);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, BlockBytes);
+        munmap(memory, BlockBytes);
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address(), BlockBytes);
+#endif
+    }
+
+    void Commit(std::size_t offset, std::size_t bytes) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(memory + offset, bytes, PAGE_READWRITE, 65536);
+#else
+        Require(mmap(memory + offset, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot commit sparse depth layer pages");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory + offset, bytes);
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address() + offset, bytes);
+    }
+
+    void DecommitGuestLayer() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory + LayerBytes, LayerBytes);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory + LayerBytes, LayerBytes);
+        Require(mmap(memory + LayerBytes, LayerBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot decommit sparse depth layer pages");
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address() + LayerBytes, LayerBytes);
+    }
+
+    std::uint8_t* Data() const { return memory; }
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
+    SparseLayers(const SparseLayers&) = delete;
+    SparseLayers& operator=(const SparseLayers&) = delete;
+
+private:
+    std::uint8_t* memory = nullptr;
+};
+
 std::atomic<std::uint64_t> watchedBegin{0};
 std::atomic<std::uint64_t> watchedEnd{0};
 std::atomic<std::uint32_t> watchedReads{0};
@@ -297,6 +365,59 @@ void Run(const Context& context, const WatchedBlock& block) {
         throw;
     }
     AgcDriver::GuestMemory::SetFlushHook(nullptr);
+}
+
+void SparseGuestLayers(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    SparseLayers block;
+    block.Commit(0, LayerBytes);
+    FillLayer(block.Data(), 1.0f);
+    const auto address = block.Address();
+    DepthSurfaceView(context, DepthTarget{address, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto resource = ArrayOver(address);
+    watchedBegin = address + LayerBytes;
+    watchedEnd = address + BlockBytes;
+    AgcDriver::GuestMemory::SetFlushHook(&CountReads);
+    const auto sample = [&](const char* when, bool changed) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        watchedReads = 0;
+        Require(DepthSurfaceTexture(context, words, resource, components) != nullptr, "sparse depth layers were not sampled");
+        Require((watchedReads.load() != 0) == changed, std::string("sparse depth layer read mismatch ") + when);
+    };
+    try {
+        sample("at first use", true);
+        sample("with the guest layer still uncommitted", false);
+        block.Commit(LayerBytes, 65536);
+        const float value = 0.25f;
+        std::memcpy(block.Data() + LayerBytes, &value, sizeof(value));
+        sample("after committing part of the guest layer", true);
+        block.Data()[LayerBytes + 64] = 1;
+        sample("after a CPU write to the committed part", true);
+        AgcDriver::GuestMemory::MarkWritten(address + LayerBytes + 128, 4);
+        sample("after a driver store to the committed part", true);
+        block.DecommitGuestLayer();
+        sample("after decommitting the guest layer", true);
+        sample("with the guest layer still decommitted", false);
+        block.Commit(LayerBytes, 65536);
+        sample("after committing the same pages again", true);
+        block.DecommitGuestLayer();
+        block.Commit(LayerBytes, 65536);
+        sample("after replacing a mapping with the same committed range", true);
+        block.DecommitGuestLayer();
+        block.Commit(LayerBytes, LayerBytes);
+        FillLayer(block.Data() + LayerBytes, 0.5f);
+        sample("after fully committing the guest layer", true);
+        sample("with the fully committed layer unchanged", false);
+        block.DecommitGuestLayer();
+        sample("after decommitting a fully committed guest layer", true);
+        sample("with the fully committed layer now empty", false);
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        ClearDepthSurfaces(context.device);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
 }
 
 void RecordedUploads(const Context& context, const WatchedBlock& block) {
@@ -409,6 +530,7 @@ int main() {
             RecordedUploads(context, block);
             RunCubeGather(context, block);
             RunCubeTiledSlice(context, block);
+            SparseGuestLayers(context);
         }
         device.reset();
         std::puts("depth plane guest layer tests passed");

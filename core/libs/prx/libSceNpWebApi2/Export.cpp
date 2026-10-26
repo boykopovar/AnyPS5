@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -15,18 +16,7 @@ static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT = static_cast<int>(0x8
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE = static_cast<int>(0x8055340D);
 static std::atomic<int> g_nextHandle{1};
 
-struct NpWebApi2PushContextId {
-    char value[37];
-};
-
 static_assert(sizeof(NpWebApi2PushContextId) == 37);
-
-struct NpWebApi2MemoryPoolStats {
-    size_t pool_size;
-    size_t max_inuse_size;
-    size_t current_inuse_size;
-    int32_t reserved;
-};
 
 static_assert(sizeof(NpWebApi2MemoryPoolStats) == 32);
 
