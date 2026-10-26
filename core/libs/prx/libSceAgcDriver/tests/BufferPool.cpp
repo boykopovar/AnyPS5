@@ -51,6 +51,7 @@ struct MockDevice {
     std::map<VkDeviceMemory, VkDeviceSize> memoryBytes;
     std::map<VkDeviceMemory, std::uint32_t> memoryTypes;
     std::map<VkBuffer, std::pair<VkDeviceMemory, VkDeviceSize>> bound;
+    std::map<VkBuffer, std::uint32_t> bufferTypeBits;
     std::set<VkBuffer> liveBuffers;
     std::deque<VkResult> results;
     std::uint32_t memoryTypeBits = 3;
@@ -76,6 +77,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
     *requirements = {mock.sizes.at(buffer), 256, mock.memoryTypeBits};
+    mock.bufferTypeBits[buffer] = mock.memoryTypeBits;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -103,6 +105,11 @@ VKAPI_ATTR VkResult VKAPI_CALL mockBindBufferMemory(VkDevice, VkBuffer buffer, V
     ++mock.binds;
     if (mock.bindResult != VK_SUCCESS) return mock.bindResult;
     if (offset + mock.sizes.at(buffer) > mock.memoryBytes.at(memory)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    const auto permitted = mock.bufferTypeBits.contains(buffer) ? mock.bufferTypeBits.at(buffer) : mock.memoryTypeBits;
+    if (((permitted >> mock.memoryTypes.at(memory)) & 1u) == 0) {
+        Expect(false, "a buffer was bound to memory type " + std::to_string(mock.memoryTypes.at(memory)) + ", which its memoryTypeBits " + std::to_string(permitted) + " exclude");
+        return VK_ERROR_UNKNOWN;
+    }
     mock.bound[buffer] = {memory, offset};
     return VK_SUCCESS;
 }
@@ -291,6 +298,35 @@ void MappedDevicePlacement() {
     mock.memoryTypeBits = 7;
     Expect(placed(9 * MiB, false) == 2, "a mapped device-local buffer without the memory budget extension was not placed in its device-local type");
     Expect(mock.results.empty() && mock.liveBytes == 0 && mock.liveBuffers.empty(), "mapped buffer placement left a refusal unused or leaked memory");
+}
+
+void FallbackSlabTypes() {
+    constexpr auto mapped = HostVisible | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    mock = MockDevice{};
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 200 * MiB;
+    {
+        auto context = budgetContext();
+        context.memory.memoryTypeCount = 3;
+        context.memory.memoryTypes[2] = {mapped, 0};
+        mock.memoryTypeBits = 7;
+        mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        Buffer fallback(context, 4096, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mapped);
+        Expect(mock.memoryTypes.at(MemoryOf(fallback.Handle())) == 1, "a mapped slab buffer refused device memory was not placed in the host type");
+        const auto attempts = mock.attempts;
+        Buffer shared(context, 4096, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mapped);
+        Expect(MemoryOf(shared.Handle()) == MemoryOf(fallback.Handle()), "a mapped slab buffer allowing the host type did not take the free slot of the host slab before any device-local block existed");
+        Expect(mock.attempts == attempts, "a mapped slab buffer allowing the host type allocated memory although the host slab had a free slot");
+        Expect(shared.Properties() == HostVisible, "a mapped slab buffer placed in the host slab does not report host properties");
+        mock.memoryTypeBits = 5;
+        Buffer device(context, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mapped);
+        Expect(mock.memoryTypes.at(MemoryOf(device.Handle())) == 2, "a mapped slab buffer whose memory types exclude the host type took the host slab of an earlier fallback");
+        Expect(device.Properties() == mapped, "a mapped slab buffer placed in its device-local type does not report device-local properties");
+        mock.memoryTypeBits = 7;
+        Buffer host(context, 4096, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mapped);
+        Expect(mock.memoryTypes.at(MemoryOf(host.Handle())) == 2, "a mapped slab buffer did not take the free slot of its device-local slab");
+    }
+    Expect(mock.results.empty() && mock.liveBytes == 0 && mock.liveBuffers.empty(), "fallback slab placement left a refusal unused or leaked memory");
 }
 
 void AttachmentReclaim() {
@@ -1239,6 +1275,7 @@ int main(int argc, char** argv) {
         HostPlacement();
         RefusedDevicePlacement();
         MappedDevicePlacement();
+        FallbackSlabTypes();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

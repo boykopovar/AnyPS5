@@ -251,6 +251,10 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
         std::lock_guard lock(slabMutex);
         auto& slab = slabs[key];
         if (!slab.available.empty()) return takeFrom(*slab.available.back(), slab);
+        if (hostType.has_value() && *hostType != memoryType) {
+            auto& host = slabs[SlabKey(*hostType, capacity, addressable)];
+            if (!host.available.empty()) return takeFrom(*host.available.back(), host);
+        }
     }
     const auto blockBytes = SlabBlockBytes(capacity);
     const auto release = [this](SlabBlock* block) noexcept {
@@ -259,13 +263,13 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
     };
     std::unique_ptr<SlabBlock, decltype(release)> block(new SlabBlock, release);
     block->slotBytes = capacity;
-    block->slab = key;
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
     if (addressable) allocation.pNext = &flags;
     allocation.allocationSize = blockBytes;
     allocation.memoryTypeIndex = memoryType;
     block->memory = AllocateMemory(allocation, "vkAllocateMemory buffer slab", hostType, &block->memoryType);
+    block->slab = block->memoryType == memoryType ? key : SlabKey(block->memoryType, capacity, addressable);
     if ((context.memory.memoryTypes[block->memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
         void* mapping = nullptr;
         const auto mapped = mapMemory(device, block->memory, 0, VK_WHOLE_SIZE, 0, &mapping);
@@ -276,7 +280,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
     block->free.reserve(slots);
     for (std::uint32_t index = slots; index-- != 0;) block->free.push_back(index);
     std::lock_guard lock(slabMutex);
-    auto& slab = slabs[key];
+    auto& slab = slabs[block->slab];
     if (slab.blocks == slab.available.capacity()) slab.available.reserve(std::max<std::size_t>(1, slab.available.capacity() * 2));
     auto& inserted = *block;
     const auto owner = slabBlocks.try_emplace(inserted.memory).first;
