@@ -355,6 +355,18 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
     return &ir.BitCastF32(*bits);
 }
 
+IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result) {
+    const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
+    IrValue* nan = &ir.Constant(0xffc00000u);
+    for (auto source = sources.end(); source != sources.begin();) {
+        --source;
+        IrValue& sourceBits = ir.BitCastU32(**source);
+        nan = &ir.Select(isNan(sourceBits), quietNan32(IrU32(sourceBits)).Value(), *nan);
+    }
+    IrValue& bits = ir.BitCastU32(*result);
+    return &ir.BitCastF32(ir.Select(isNan(bits), *nan, bits));
+}
+
 IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     IrValue& lhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*lhs), ir.Constant(0x7fffffffu));
     IrValue& rhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*rhs), ir.Constant(0x7fffffffu));
