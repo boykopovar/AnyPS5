@@ -5,6 +5,7 @@ function(add_sce_ngs2_library target)
             ${ngs2Dir}/src/Custom.cpp
             ${ngs2Dir}/src/Geom.cpp
             ${ngs2Dir}/src/Pan.cpp
+            ${ngs2Dir}/src/Pcm.cpp
             ${ngs2Dir}/src/Rack.cpp
             ${ngs2Dir}/src/Render.cpp
             ${ngs2Dir}/src/Reverb.cpp
@@ -22,4 +23,16 @@ function(add_sce_ngs2_library target)
             VISIBILITY_INLINES_HIDDEN ON
     )
     configure_windows_unwind(${target})
+endfunction()
+
+function(add_sce_ngs2_test library name source)
+    add_test_executable(${name}_tests ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/${source})
+    target_include_directories(${name}_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
+    target_link_libraries(${name}_tests PRIVATE ${library} atrac9 libkernel libc)
+    configure_windows_unwind(${name}_tests)
+    add_test(NAME ${name} COMMAND ${name}_tests)
+    if(WIN32)
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:${library}>")
+    endif()
 endfunction()

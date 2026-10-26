@@ -30,6 +30,7 @@ usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 """
 
 import argparse
+import io
 import math
 import secrets
 import struct
@@ -185,6 +186,12 @@ def place_segments(data, headers, records):
         if header["type"] == PT_LOAD:
             continue
         if header["index"] in placed:
+            host = load_for(header["vaddr"], header["size"])
+            if host is not None:
+                offset = header["vaddr"] - host["vaddr"]
+                if (host["size"] and offset <= host["size"] and header["size"] <= host["size"] - offset
+                        and header["source"] == host["source"] + offset):
+                    header["host"] = host
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
@@ -217,7 +224,7 @@ def place_segments(data, headers, records):
     for header in headers:
         if header["type"] == PT_LOAD and header["size"] == 0:
             continue
-        if header["source"] > len(data) or header["size"] > len(data) - header["source"]:
+        if header["source"] < 0 or header["source"] > len(data) or header["size"] > len(data) - header["source"]:
             raise Refused("segment %d does not fit the file" % header["index"])
 
 
@@ -329,7 +336,7 @@ def unwrap(path, output, verbose=False):
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = destination.parent / (".unwrap-self-" + secrets.token_hex(16))
-    temporary = temporary_path.open("xb")
+    temporary = io.open(temporary_path, "xb")
     try:
         with temporary:
             temporary.write(result)

@@ -11,7 +11,7 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 
 KNOWN_UNRUN = set()
-SCRIPT = re.compile(r"(?:[\w.-]+/)*test_\w+\.py")
+SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 
 
 def built(build):
@@ -78,7 +78,9 @@ def commands(content):
                 raise ValueError(f"invalid CTest argument at position {position}")
             argument = token.group(0)
             if argument.startswith('"'):
-                argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
+                argument = re.sub(r"\\(\r?\n|.)",
+                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]),
+                                  argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
                 argument = argument[width:-width].removeprefix("\n")

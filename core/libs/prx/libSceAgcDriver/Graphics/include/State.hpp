@@ -45,6 +45,7 @@ struct ColorTarget {
     ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::None;
     // DCC metadata of a compressed target (CB_COLOR_INFO DCC_ENABLE), or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
+    std::uint64_t chainDccAddress = 0;
     bool dccAlphaOnMsb = false;
     bool dccPipeAligned = false;
     std::uint64_t cmaskAddress = 0;
@@ -180,6 +181,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);

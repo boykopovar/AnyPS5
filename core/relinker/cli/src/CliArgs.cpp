@@ -22,7 +22,7 @@ namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
-    "--to-intel", "--to-rosetta", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
+    "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
@@ -199,8 +199,6 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.windowsFixedBase && !args.toWindows)
         throw std::runtime_error("--windows-fixed-base requires --windows");
-    if (args.traceImports && args.toMacos)
-        throw std::runtime_error("--trace-imports cannot be used with --macos");
     if (args.traceImports && args.lazyBinding)
         throw std::runtime_error("--trace-imports conflicts with --lazy-binding");
     if (args.linuxFixedBase && (args.toWindows || args.toMacos))

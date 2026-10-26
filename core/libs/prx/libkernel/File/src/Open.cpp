@@ -6,6 +6,7 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -201,17 +202,33 @@ static int SceIoErrorFromErrno(int error) {
 }
 
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
+    if (AppArchiveHasDirectory_nid_no_patch(native)) {
+        std::error_code error;
+        const auto status = std::filesystem::status(native, error);
+        const bool hostDirectory = !error && std::filesystem::is_directory(status);
+        if (hostDirectory || AppArchiveOnly_nid_no_patch(native)) {
+            if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
+                (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
+            const int fd = File::OpenDirectoryDescriptor(native);
+            if (fd < 0) return SceErrorFromErrno(errno);
+            File::RememberDescriptor(fd, flags);
+            return fd;
+        }
+    }
     if (const auto archived = File::OpenArchivedFile(native, flags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
         File::RememberDescriptor(*archived, flags);
         return *archived;
     }
-    File::RefuseMergedDirectory(native);
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
+    }
+    if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return SceErrorFromErrno(EEXIST);
     }
 #endif
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
@@ -262,7 +279,10 @@ extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (File::InvalidOpenFlags(flags)) return SCE_KERNEL_ERROR_EINVAL;
-    if (path != nullptr && *path == '\0') return SCE_KERNEL_ERROR_ENOENT;
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
+    path = copy.c_str();
+    if (copy.empty()) return SCE_KERNEL_ERROR_ENOENT;
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
     if (path != nullptr && File::IsRandomDevicePath(path)) {
         if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
@@ -305,9 +325,9 @@ int APS5_VABI sceKernelClose(int d) {
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
 #ifdef _WIN32
-    File::ForgetDirectoryDescriptor(d);
     File::ForgetFileLock(d);
 #endif
+    File::ForgetDirectoryDescriptor(d);
     if (NativeClose(d) != 0) {
         if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
@@ -316,6 +336,7 @@ int APS5_VABI sceKernelClose(int d) {
 }
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
+    if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (IsKqueueDescriptor(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
@@ -336,6 +357,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
+    if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (IsKqueueDescriptor(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
@@ -346,6 +368,7 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
         const char empty = 0;
         return sceKernelWrite(d, &empty, 0);
     }
+    const File::WriteSync sync(d);
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     auto n = NativeWrite(d, buf, nbytes);
     if (n < 0) return SceIoErrorFromErrno(errno);
@@ -370,12 +393,10 @@ std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
     if (const auto archived = File::SeekArchivedFile(d, offset, whence)) return *archived < 0 ? SceIoErrorFromErrno(-*archived) : *archived;
-#ifdef _WIN32
     if (const auto directory = File::SeekDirectoryDescriptor(d, offset, whence)) {
         if (*directory < 0) return SceIoErrorFromErrno(errno);
         return *directory;
     }
-#endif
     std::int64_t result = NativeLseek(d, offset, whence);
     if (result < 0) {
         const int error = errno;
@@ -413,13 +434,17 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     }
     if (directory && !std::filesystem::is_directory(status)) return SceErrorFromErrno(GuestEnotdir);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (!File::TryFillFileStat(metadataPath, sb)) return SceStatErrorFromErrno(errno);
+    FileStat result{};
+    if (!File::TryFillFileStat(metadataPath, &result)) return SceStatErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);
     return 0;
 }
 
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
-    if (path == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (*path == '\0') return SceErrorFromErrno(2);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(2);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
     return StatNative(native, std::string_view(path).back() == '/', sb);
@@ -437,8 +462,10 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
 }
 
 int APS5_VABI sceKernelUnlink(const char* path) {
-    if (path == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (*path == '\0') return SceErrorFromErrno(2);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    path = copy.c_str();
+    if (copy.empty()) return SceErrorFromErrno(2);
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);

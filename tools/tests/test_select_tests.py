@@ -302,6 +302,31 @@ class FixtureBuildTests(unittest.TestCase):
             self.assertIn(name, output)
 
 
+@unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
+class NonAsciiDirectoryTests(unittest.TestCase):
+    def test_header_under_a_non_ascii_directory_is_an_input_of_its_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "ação"
+            if os.name == "nt":
+                try:
+                    str(root).encode("mbcs", "strict")
+                except UnicodeEncodeError:
+                    self.skipTest("the ANSI code page cannot represent the fixture directory")
+            source, build, graph = root / "source", root / "build", root / "graph.json"
+            for name, content in PROJECT.items():
+                (source / name).parent.mkdir(parents=True, exist_ok=True)
+                (source / name).write_text(content, encoding="utf-8")
+            compiler = shutil.which("gcc") or shutil.which("cc")
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
+            SelectTests.tool("dump", build, graph)
+            reasons = {}
+            select_tests.select(json.loads(graph.read_text(encoding="utf-8")), ["alpha/alpha.h"], reasons)
+        self.assertIn("input: alpha/alpha.h", reasons["alpha"])
+        self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
+
+
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
         return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)

@@ -62,6 +62,7 @@ static int GuestFstat(int fd, bool* withoutVnode = nullptr) {
 
 constexpr int GuestEnoent = 2;
 constexpr int GuestEperm = 1;
+constexpr int GuestEsrch = 3;
 constexpr int GuestEio = 5;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;
@@ -160,6 +161,12 @@ std::int64_t PathConfigurationValue(int name, const char* function) {
         throw std::runtime_error(std::string(function) + ": name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
     default: return Fail(GuestEinval);
     }
+}
+
+int CopyPath(const char*& path, std::string& copy) {
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return error;
+    path = copy.c_str();
+    return copy.empty() ? GuestEnoent : 0;
 }
 
 int GuestError(const std::error_code& error) {
@@ -331,6 +338,37 @@ std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
 
+int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
+    if (id == nullptr) return GuestEinval;
+    return sceKernelGetOpenPsId(id);
+}
+
+int APS5_VABI sceKernelIsCEX(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsDevKit(void) {
+    return 0;
+}
+
+int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
+    if (info == nullptr) return static_cast<int>(Fail(GuestEperm));
+    if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));
+    *info = {};
+    info->capabilities[0] = 0x2000000000000000;
+    return 0;
+}
+
+int APS5_VABI setlogin_nid_postfix(const char* name) {
+    constexpr std::size_t MaxLoginName = 33;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, MaxLoginName, copy);
+    if (copied == GuestEnametoolong) return static_cast<int>(Fail(GuestEinval));
+    if (copied != 0) return static_cast<int>(Fail(copied));
+    if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
+    return 0;
+}
+
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
 }
@@ -345,14 +383,18 @@ int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t 
     return sceKernelGetModuleList(handles, count, actual);
 }
 
+KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
+    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+}
+
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
     return static_cast<int>(_fstat_nid_postfix(d, sb));
 }
 
 std::int64_t APS5_VABI readlink_nid_postfix(const char* path, char* buffer, std::size_t size) {
     if (size > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) return Fail(GuestEinval);
-    if (path == nullptr) return Fail(GuestEfault);
-    if (*path == '\0') return Fail(GuestEnoent);
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return Fail(error);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
     return ReadNativeLink(native, buffer, size);
@@ -360,8 +402,8 @@ std::int64_t APS5_VABI readlink_nid_postfix(const char* path, char* buffer, std:
 
 std::int64_t APS5_VABI readlinkat_nid_postfix(int fd, const char* path, char* buffer, std::size_t size) {
     if (size > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) return Fail(GuestEinval);
-    if (path == nullptr) return Fail(GuestEfault);
-    if (*path == '\0') return Fail(GuestEnoent);
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return Fail(error);
     if (fd == GuestAtFdcwd || *path == '/') return readlink_nid_postfix(path, buffer, size);
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
@@ -371,8 +413,8 @@ std::int64_t APS5_VABI readlinkat_nid_postfix(int fd, const char* path, char* bu
 }
 
 std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
-    if (path == nullptr) return Fail(GuestEfault);
-    if (*path == '\0') return Fail(GuestEnoent);
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return Fail(error);
     if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return Fail(GuestEnametoolong);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
@@ -431,22 +473,21 @@ static int FollowLinkPath(const std::filesystem::path& source, std::filesystem::
 }
 #endif
 
-int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
-    if (existing == nullptr || created == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*existing == '\0' || *created == '\0') return static_cast<int>(Fail(GuestEnoent));
-    std::filesystem::path source, destination;
-    if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
-    if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
+static int LinkSourceError(const std::filesystem::path& source) {
     std::error_code error;
     const auto status = std::filesystem::status(source, error);
     if (!std::filesystem::exists(status)) {
 #ifdef _WIN32
         std::filesystem::path target;
-        if (const int followError = FollowLinkPath(source, target)) return static_cast<int>(Fail(followError));
+        if (const int followError = FollowLinkPath(source, target)) return followError;
 #endif
-        return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
+        return HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent;
     }
-    if (std::filesystem::is_directory(status)) return static_cast<int>(Fail(GuestEperm));
+    return std::filesystem::is_directory(status) ? GuestEperm : 0;
+}
+
+static int LinkNative(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    std::error_code error;
     if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return static_cast<int>(Fail(GuestEexist));
     if (!std::filesystem::is_directory(destination.parent_path(), error)) return static_cast<int>(Fail(HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent));
 #ifdef _WIN32
@@ -463,15 +504,38 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     return 0;
 }
 
+int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
+    std::string existingCopy, createdCopy;
+    if (const int error = CopyPath(existing, existingCopy)) return static_cast<int>(Fail(error));
+    std::filesystem::path source, destination;
+    if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
+    if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
+    if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
+    if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
+    return LinkNative(source, destination);
+}
+
+static int ResolveAtPath(int fd, const char* path, std::filesystem::path& native) {
+    if (fd == GuestAtFdcwd || *path == '/') return ResolvePathError_nid_no_patch(path, native);
+    if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return GuestEnametoolong;
+    int error = 0;
+    const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
+    if (base == nullptr) return error;
+    native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+    return 0;
+}
+
 int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char* path2, int flag) {
     if (flag & ~GuestAtSymlinkFollow) return static_cast<int>(Fail(GuestEinval));
-    if (path1 == nullptr || path2 == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if ((fd1 != GuestAtFdcwd && *path1 != '/') || (fd2 != GuestAtFdcwd && *path2 != '/'))
-        NotImplemented_nid_no_patch("linkat: a relative path with a directory descriptor");
-    std::filesystem::path source;
-    if (flag == 0 && *path1 != '\0' && ResolvePathError_nid_no_patch(path1, source) == 0 && IsSymbolicLink(source))
-        NotImplemented_nid_no_patch("linkat: a hard link to a symbolic link itself");
-    return link_nid_postfix(path1, path2);
+    std::string copy1, copy2;
+    if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
+    std::filesystem::path source, destination;
+    if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
+    if (flag == 0 && IsSymbolicLink(source)) NotImplemented_nid_no_patch("linkat: a hard link to a symbolic link itself");
+    if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
+    if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
+    if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
+    return LinkNative(source, destination);
 }
 
 int APS5_VABI fchdir_nid_postfix(int fd) {
@@ -487,9 +551,15 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     return 0;
 }
 
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
+
+int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return SetTimeOfDay_nid_no_patch(tv, tz);
+}
+
 int APS5_VABI chroot_nid_postfix(const char* path) {
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return static_cast<int>(Fail(error));
@@ -505,9 +575,9 @@ int APS5_VABI chroot_nid_postfix(const char* path) {
 }
 
 int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
-    if (target == nullptr || created == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (std::strlen(target) >= GuestPathMax) return static_cast<int>(Fail(GuestEnametoolong));
-    if (*target == '\0' || *created == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string targetCopy, createdCopy;
+    if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
+    if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
     const std::filesystem::path contents(target);
     if (contents.has_root_name() || contents.has_root_directory()) {
         NotImplemented_nid_no_patch("symlink: absolute targets");
@@ -566,8 +636,8 @@ int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
 #endif
     }
     if (File::InvalidOpenFlags(flags)) return static_cast<int>(Fail(GuestEinval));
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     if (fd == GuestAtFdcwd || *path == '/') return open_nid_postfix(path, flags, mode);
     const int result = OpenInDirectory_nid_no_patch(fd, path, flags, static_cast<std::uint16_t>(mode));
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
@@ -594,8 +664,8 @@ int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
 
 
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     if (fd == GuestAtFdcwd || *path == '/') return mkdir_nid_postfix(path, mode);
     if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
@@ -631,8 +701,8 @@ int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) 
 
 int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag) {
     if (flag != 0 && flag != GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     std::filesystem::path native;
     if (fd == GuestAtFdcwd || *path == '/') {
         if (const int error = ResolvePathError_nid_no_patch(path, native)) return static_cast<int>(Fail(error));
@@ -670,9 +740,13 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
 }
 
 int APS5_VABI lchmod_nid_postfix(const char* path, std::uint16_t mode) {
+    std::string copy;
+    if (path != nullptr) {
+        if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
+    }
 #ifndef __APPLE__
     std::filesystem::path native;
-    if (path != nullptr && *path != '\0' && ResolvePathError_nid_no_patch(path, native) == 0) {
+    if (path != nullptr && ResolvePathError_nid_no_patch(path, native) == 0) {
 #ifdef _WIN32
         const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
         const bool symbolic = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
@@ -687,15 +761,13 @@ int APS5_VABI lchmod_nid_postfix(const char* path, std::uint16_t mode) {
 }
 
 int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
-    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
-    if (uid != 0 && uid != Unchanged) NotImplemented_nid_no_patch("fchown: an owner other than the guest user");
-    if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch("fchown: a group other than the guest group");
 #ifdef _WIN32
     if (GuestFstat(fd) != 0) return static_cast<int>(Fail(GuestEbadf));
 #else
     struct stat status{};
     if (::fstat(fd, &status) != 0) return static_cast<int>(Fail(GuestEbadf));
 #endif
+    RequireGuestOwner("fchown", uid, gid);
     return 0;
 }
 
@@ -733,8 +805,8 @@ int APS5_VABI fchownat_nid_postfix(int fd, const char* path, std::uint32_t uid, 
 
 int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int flag) {
     if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     if (fd == GuestAtFdcwd || *path == '/') return flag ? lstat_nid_postfix(path, sb) : stat_nid_postfix(path, sb);
     const int result = StatInDirectory_nid_no_patch(fd, path, sb, flag == 0);
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
@@ -743,8 +815,8 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
 
 int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (flag & ~GuestAtRemovedir) return static_cast<int>(Fail(GuestEinval));
-    if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*path == '\0') return static_cast<int>(Fail(GuestEnoent));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     if (fd == GuestAtFdcwd || *path == '/') return (flag & GuestAtRemovedir) ? rmdir_nid_postfix(path) : unlink_nid_postfix(path);
     if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
@@ -820,14 +892,13 @@ int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr* attr, KernelCloc
 }
 
 int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const char* to) {
-    if (from == nullptr || to == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (*from == '\0' || *to == '\0') return static_cast<int>(Fail(GuestEnoent));
-    if ((oldfd == GuestAtFdcwd || *from == '/') && (newfd == GuestAtFdcwd || *to == '/'))
+    std::string fromCopy, toCopy;
+    if (const int error = CopyPath(from, fromCopy)) return static_cast<int>(Fail(error));
+    if ((oldfd == GuestAtFdcwd || *from == '/') && newfd == GuestAtFdcwd)
         return RenameGuestPath_nid_no_patch(from, to);
-    if (std::strlen(from) >= GuestPathMax || HasLongComponent(from) ||
-        std::strlen(to) >= GuestPathMax || HasLongComponent(to))
+    if (std::strlen(from) >= GuestPathMax || HasLongComponent(from))
         return static_cast<int>(Fail(GuestEnametoolong));
-    if (IsDotOrDotDot(from) || IsDotOrDotDot(to)) return static_cast<int>(Fail(GuestEinval));
+    if (IsDotOrDotDot(from)) return static_cast<int>(Fail(GuestEinval));
 
     std::filesystem::path source;
     if (oldfd == GuestAtFdcwd || *from == '/') {
@@ -839,6 +910,20 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
         source = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
                  std::filesystem::path(reinterpret_cast<const char8_t*>(from));
     }
+    const std::string_view fromView(from);
+    const bool oldTrailingSlash = !fromView.empty() && fromView.back() == '/';
+    while (!source.has_filename() && source.has_relative_path()) source = source.parent_path();
+    std::error_code statusError;
+    const auto sourceStatus = std::filesystem::symlink_status(source, statusError);
+    if (statusError && statusError != std::errc::no_such_file_or_directory)
+        return static_cast<int>(Fail(FilesystemError(statusError)));
+    if (sourceStatus.type() == std::filesystem::file_type::not_found)
+        return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
+    if (oldTrailingSlash && !std::filesystem::is_directory(sourceStatus)) return static_cast<int>(Fail(GuestEnotdir));
+
+    if (const int error = CopyPath(to, toCopy)) return static_cast<int>(Fail(error));
+    if (std::strlen(to) >= GuestPathMax || HasLongComponent(to)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (IsDotOrDotDot(to)) return static_cast<int>(Fail(GuestEinval));
 
     std::filesystem::path destination;
     if (newfd == GuestAtFdcwd || *to == '/') {
@@ -851,21 +936,11 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
                       std::filesystem::path(reinterpret_cast<const char8_t*>(to));
     }
 
-    const std::string_view fromView(from);
     const std::string_view toView(to);
-    const bool oldTrailingSlash = !fromView.empty() && fromView.back() == '/';
     const bool newTrailingSlash = !toView.empty() && toView.back() == '/';
 
-    while (!source.has_filename() && source.has_relative_path()) source = source.parent_path();
     while (!destination.has_filename() && destination.has_relative_path()) destination = destination.parent_path();
 
-    std::error_code statusError;
-    const auto sourceStatus = std::filesystem::symlink_status(source, statusError);
-    if (oldTrailingSlash) {
-        if (sourceStatus.type() == std::filesystem::file_type::not_found)
-            return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
-        if (!std::filesystem::is_directory(sourceStatus)) return static_cast<int>(Fail(GuestEnotdir));
-    }
     if (newTrailingSlash && sourceStatus.type() != std::filesystem::file_type::not_found &&
         !std::filesystem::is_directory(sourceStatus))
         return static_cast<int>(Fail(GuestEnotdir));

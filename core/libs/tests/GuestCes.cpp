@@ -232,6 +232,58 @@ static std::uint32_t Fnv(std::uint32_t hash, std::uint32_t word) {
     return hash;
 }
 
+constexpr std::uint32_t MeasuredEucJpEncoder = 0x3AF3CD39;
+constexpr std::uint32_t MeasuredSjisEncoder = 0x2FB8906B;
+
+static std::uint32_t EncoderSweep(void* context) {
+    std::uint32_t hash = 2166136261u;
+    for (std::uint32_t value = 0; value <= 0xFFFF; ++value) {
+        const std::uint16_t source[1] = {static_cast<std::uint16_t>(value)};
+        std::uint8_t output[4] = {0xBB, 0xBB, 0xBB, 0xBB};
+        std::uint32_t used = 0xAAAAAAAA;
+        std::uint32_t produced = 0xCCCCCCCC;
+        const int result = sceCesUcs2StrToMbcsStr(context, source, 1, &used, output, sizeof(output), &produced);
+        std::uint32_t bytes = 0;
+        std::memcpy(&bytes, output, sizeof(bytes));
+        hash = Fnv(Fnv(Fnv(Fnv(hash, static_cast<std::uint32_t>(result)), produced), bytes), used);
+    }
+    return hash;
+}
+
+constexpr std::uint32_t MeasuredSjisDecoder = 0xCA99178C;
+
+static std::uint32_t SjisDecoderSweep(void* sjis) {
+    std::uint32_t hash = 2166136261u;
+    for (std::uint32_t lead = 0; lead < 256; ++lead) {
+        for (std::uint32_t trail = 0; trail < 256; ++trail) {
+            const std::uint8_t source[2] = {static_cast<std::uint8_t>(lead), static_cast<std::uint8_t>(trail)};
+            std::uint16_t output[3] = {0xBBBB, 0xBBBB, 0xBBBB};
+            std::uint32_t used = 0xAAAAAAAA;
+            std::uint32_t produced = 0xCCCCCCCC;
+            const int result = sceCesMbcsStrToUcs2Str(sjis, source, 2, &used, output, 3, &produced);
+            hash = Fnv(Fnv(Fnv(Fnv(Fnv(hash, static_cast<std::uint32_t>(result)), used), produced), static_cast<std::uint32_t>(output[0]) | static_cast<std::uint32_t>(output[1]) << 16), output[2]);
+        }
+    }
+    return hash;
+}
+
+static void RequireMeasuredEncoders(void* eucJp, void* sjis) {
+    Require(SjisDecoderSweep(sjis) == MeasuredSjisDecoder);
+    Require(EncoderSweep(eucJp) == MeasuredEucJpEncoder);
+    Require(EncoderSweep(sjis) == MeasuredSjisEncoder);
+    const std::uint16_t aliases[] = {0x00A2, 0x00A3, 0x00AC, 0x2014, 0x2016, 0x203E, 0x2212, 0x301C, 0xFEFF, 0x0080, 0};
+    std::uint8_t output[32] = {};
+    std::uint32_t used = 0;
+    std::uint32_t produced = 0;
+    Require(sceCesUcs2StrToMbcsStr(eucJp, aliases, 0, &used, output, sizeof(output), &produced) == 0 && used == 10 && produced == 17);
+    Require(std::memcmp(output, "\xA1\xF1\xA1\xF2\xA2\xCC\xA1\xBD\xA1\xC2\xA1\xB1\xA1\xDD\xA1\xC1\x80", 18) == 0);
+    Require(sceCesUcs2StrToMbcsStr(sjis, aliases, 0, &used, output, sizeof(output), &produced) == static_cast<int>(0x805C0024) && used == 9 && produced == 16);
+    Require(std::memcmp(output, "\x81\x91\x81\x92\x81\xCA\x81\x5C\x81\x61\x81\x50\x81\x7C\x81\x60", 17) == 0);
+    const std::uint16_t shift[] = {u'A', 0x000E, 0};
+    Require(sceCesUcs2StrToMbcsStr(sjis, shift, 0, &used, output, sizeof(output), &produced) == 0 && produced == 2);
+    Require(sceCesUcs2StrToMbcsStr(eucJp, shift, 0, &used, output, sizeof(output), &produced) == static_cast<int>(0x805C0020) && used == 1 && produced == 1);
+}
+
 static void RequireMeasuredEucJp(void* eucJp) {
     constexpr int invalidProfile = static_cast<int>(0x805C0004);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
@@ -631,7 +683,7 @@ int main() {
     Require(sceCesMbcsStrToUcs2Str(eucContext, reinterpret_cast<const std::uint8_t*>("\xA4\x41"), 2, &used, wide, 16, &produced) == invalidEncode);
     Require(sceCesMbcsStrToUcs2Str(eucContext, reinterpret_cast<const std::uint8_t*>("\xA4"), 1, &used, wide, 16, &produced) == srcBufferEnd);
     const std::uint16_t yen[] = {0x00A5, 0};
-    Require(sceCesUcs2StrToMbcsStr(eucContext, yen, 2, &used, mbcs, sizeof(mbcs), &produced) == unassignedCode);
+    Require(sceCesUcs2StrToMbcsStr(eucContext, yen, 2, &used, mbcs, sizeof(mbcs), &produced) == 0 && used == 1 && produced == 2 && std::memcmp(mbcs, "\xA1\xEF", 3) == 0);
     std::uint32_t assigned = 0;
     for (std::uint32_t lead = 0xA1; lead <= 0xFE; ++lead) {
         for (std::uint32_t trail = 0xA1; trail <= 0xFE; ++trail) {
@@ -709,7 +761,8 @@ int main() {
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\x85\x40"), 2, &used, sjisWide, 16, &produced) == unassignedCode);
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\x80"), 1, &used, sjisWide, 16, &produced) == invalidEncode);
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\xA0"), 1, &used, sjisWide, 16, &produced) == invalidEncode);
-    Require(sceCesUcs2StrToMbcsStr(sjisContext, yen, 2, &used, mbcs, sizeof(mbcs), &produced) == unassignedCode);
+    Require(sceCesUcs2StrToMbcsStr(sjisContext, yen, 2, &used, mbcs, sizeof(mbcs), &produced) == 0 && used == 1 && produced == 2 && std::memcmp(mbcs, "\x81\x8F", 3) == 0);
+    RequireMeasuredEncoders(eucContext, sjisContext);
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\xFB\xFC"), 2, &used, sjisWide, 16, &produced) == 0 && used == 2 && produced == 1 && sjisWide[0] == 0x9AD9);
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\xFA\x40"), 2, &used, sjisWide, 16, &produced) == 0 && used == 2 && produced == 1 && sjisWide[0] == 0x2170);
     Require(sceCesMbcsStrToUcs2Str(sjisContext, reinterpret_cast<const std::uint8_t*>("\xFC\x4B"), 2, &used, sjisWide, 16, &produced) == 0 && used == 2 && produced == 1 && sjisWide[0] == 0x9ED1);

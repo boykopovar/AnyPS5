@@ -117,6 +117,34 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(output.exists())
 
+    def test_segment_stale_offset_before_the_recorded_shift_is_refused(self):
+        segments = default_segments() + [(SCE_COMMENT, 4, 0x100, 0, 0x20, 1)]
+        container = build_container(segments, default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_huge_stale_offset_is_refused_instead_of_exhausting_memory(self):
+        segments = default_segments()
+        segments[2] = (PT_DYNAMIC, 6, 0x49000000001580, 0x1040, 0x10, 8)
+        segments.append((SCE_COMMENT, 4, 0x1600, 0, 0x4000000000000000, 1))
+        container = build_container(segments, default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
     def test_write_failure_preserves_output_and_removes_temporary_files(self):
         directory = Path(self.directory)
         source = directory / "input.self"
@@ -455,6 +483,30 @@ class UnwrapTest(unittest.TestCase):
                     host, embedded = headers[1:]
                     self.assertEqual(embedded[2] - host[2], embedded[3] - host[3])
                     self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x90:0x90 + size])
+
+    def test_recorded_embedded_segments_keep_their_overlapping_load_host(self):
+        payload = b"overlapping load payload\0" * 16
+        for kind in (PT_DYNAMIC, PT_TLS):
+            for delta, size in ((0, 0x10), (0x10, 0x10), (0x40, 0x20), (0xF0, 0x10)):
+                for relocated in (False, True):
+                    with self.subTest(kind=kind, delta=delta, size=size, relocated=relocated):
+                        source = 0x800 if relocated else 0x1000
+                        segments = [(PT_LOAD, 5, 0x1000, 0x1000, 0x100, PAGE),
+                                    (PT_LOAD, 6, 0x1080, 0x3080, 0x100, PAGE),
+                                    (kind, 4, 0x1080 + delta, 0x3080 + delta, size, 8)]
+                        records = [(0x800, source, 0x100), (0x100800, source + 0x80, 0x100)] if relocated else []
+                        records.append((0x200800, source + 0x80 + delta, size))
+                        container = build_container(segments, records, {source: payload})
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        host, embedded = headers[1:]
+                        self.assertEqual(embedded[2] - host[2], delta)
+                        for header, start in zip(headers[:2], (0, 0x80)):
+                            self.assertEqual(header[2] % header[7], header[3] % header[7])
+                            self.assertEqual(data[header[2]:header[2] + header[5]], payload[start:start + 0x100])
+                        self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x80 + delta:0x80 + delta + size])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
 
     def test_segments_after_the_recorded_comment_are_read_from_the_container(self):
         segments = default_segments() + [(SCE_COMMENT, 4, 0x15A0, 0x0, 0x20, 0x10), (PT_NOTE, 4, 0x15C0, 0x0, 0x18, 4),
@@ -1039,6 +1091,65 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class JobManagerModuleRefusalTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.build = self.root / "build"
+        self.helper = self.build / "tests" / "job_manager_reference.prx"
+        self.helper.parent.mkdir(parents=True)
+        self.helper.write_bytes(b"reference helper")
+        self.relinker = self.root / "relinker.exe"
+        self.relinker.touch()
+        self.toolchain = self.root / "toolchain"
+        self.toolchain.mkdir()
+        self.module = self.root / "module.self"
+
+    def invoke(self, output):
+        import run_job_manager_reference
+        arguments = ["run_job_manager_reference.py", "--module", str(self.module),
+                     "--build", str(self.build), "--relinker", str(self.relinker),
+                     "--toolchain", str(self.toolchain), "--output", str(output)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", arguments), mock.patch.object(sys, "platform", "win32"), \
+                mock.patch.object(run_job_manager_reference.subprocess, "run") as process, \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = run_job_manager_reference.main()
+        return code, stdout.getvalue(), stderr.getvalue(), process
+
+    def test_module_refusals_stop_reference_setup_with_a_diagnostic(self):
+        malformed_elf = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+        malformed_elf[ELF_HEADER_OFFSET + 4] = 1
+        cases = ((b"short", "file is smaller than the SELF header area"),
+                 (bytes(FIRST_REGION), "not a SELF container (magic 0x0)"),
+                 (bytes(malformed_elf), "inner ELF is not 64-bit little-endian"))
+        for index, (data, diagnostic) in enumerate(cases):
+            with self.subTest(diagnostic=diagnostic):
+                self.module.write_bytes(data)
+                output = self.build / ".." / f"artifacts-{index}"
+                code, stdout, stderr, process = self.invoke(output)
+                self.assertEqual(code, 2)
+                self.assertEqual(stderr, diagnostic + "\n")
+                self.assertEqual(stdout, f"Artifacts: {output.resolve()}\n")
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(self.module.read_bytes(), data)
+                self.assertEqual((output / "libs" / "jobref.prx").read_bytes(), b"reference helper")
+                self.assertFalse((output / "sce_module" / "libSceJobManager.prx").exists())
+                self.assertFalse((output / "relink.log").exists())
+                self.assertFalse((output / "results.json").exists())
+                process.assert_called_once()
+                self.assertEqual(process.call_args.args[0][0], str(self.build.resolve() / "core/libs/nid_patcher.exe"))
+
+    def test_missing_reference_helper_keeps_existing_error_handling(self):
+        self.helper.unlink()
+        self.module.write_bytes(b"short")
+        code, stdout, stderr, process = self.invoke(self.root / "artifacts")
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "Build the job_manager_reference target first\n")
+        process.assert_not_called()
 
 
 if __name__ == "__main__":

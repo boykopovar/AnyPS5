@@ -86,6 +86,47 @@ class CiGateTests(unittest.TestCase):
     def test_paths_of_another_trigger_do_not_count(self):
         self.assertUngated(workflow("  push:\n    paths:\n      - 'core/**'\n  pull_request:\n    branches: [main]\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
 
+    def test_flow_mapping_paths_passes(self):
+        self.assertGated(workflow("  pull_request: {paths: ['core/**']}\n", "  tests:\n    runs-on: ubuntu-latest\n"))
+
+    def test_flow_mapping_paths_ignore_passes(self):
+        self.assertGated(workflow("  pull_request: {paths-ignore: ['docs/**']}\n", "  tests:\n    runs-on: ubuntu-latest\n"))
+
+    def test_flow_mapping_without_paths_fails(self):
+        self.assertUngated(workflow("  pull_request: {branches: [main]}\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
+
+    def test_flow_mapping_quoted_values_do_not_count(self):
+        for filters in (
+            "{branches-ignore: ['paths:unused']}",
+            '{branches-ignore: ["paths-ignore:unused"]}',
+            "{branches-ignore: ['it''s, paths:unused']}",
+            r'{branches-ignore: ["escaped\", paths:unused"]}',
+            "{branches-ignore: ['}, paths: [core/**], {']}",
+        ):
+            with self.subTest(filters=filters):
+                self.assertUngated(workflow(f"  pull_request: {filters}\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
+                self.assertUngated(f"name: Test\non: {{pull_request: {filters}}}\njobs:\n  tests:\n    runs-on: ubuntu-latest\n", "tests")
+
+    def test_flow_mapping_nested_paths_do_not_count(self):
+        self.assertUngated(workflow("  pull_request: {branches: [{paths: ['core/**']}]}\n", "  tests:\n    runs-on: ubuntu-latest\n"), "tests")
+        self.assertUngated("name: Test\non: {push: {paths: ['core/**']}, pull_request: {branches: [{paths-ignore: ['docs/**']}]}}\njobs:\n  tests:\n    runs-on: ubuntu-latest\n", "tests")
+
+    def test_flow_mapping_quoted_keys_and_delimiters_pass(self):
+        for filters in (
+            "{branches: ['release,}'], paths: ['core/**']}",
+            "{'paths': ['core/**']}",
+            '{"paths-ignore": ["docs/**"]}',
+        ):
+            with self.subTest(filters=filters):
+                self.assertGated(workflow(f"  pull_request: {filters}\n", "  tests:\n    runs-on: ubuntu-latest\n"))
+                self.assertGated(f"name: Test\non: {{'pull_request': {filters}, push: {{branches: [main]}}}}\njobs:\n  tests:\n    runs-on: ubuntu-latest\n")
+
+    def test_top_level_flow_mapping_paths_passes(self):
+        self.assertGated(f"name: Test\n\non: {{pull_request: {{paths: ['core/**']}}}}\njobs:\n{GATE}  tests:\n    runs-on: ubuntu-latest\n")
+
+    def test_top_level_flow_paths_of_another_trigger_do_not_count(self):
+        self.assertUngated("name: Test\n\non: {push: {paths: ['core/**']}, pull_request: {branches: [main]}}\njobs:\n" + GATE + "  tests:\n    runs-on: ubuntu-latest\n", "tests")
+
     def test_inline_trigger_list_fails(self):
         self.assertUngated("name: Test\non: [push, pull_request]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n", "tests")
 

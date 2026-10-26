@@ -86,6 +86,34 @@ static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
 }
 
+template<typename TBody>
+static std::string CaptureStdout(TBody body) {
+    std::fflush(stdout);
+    std::FILE* capture = std::tmpfile();
+    Require(capture != nullptr);
+#ifdef _WIN32
+    const int saved = _dup(_fileno(stdout));
+    Require(saved >= 0 && _dup2(_fileno(capture), _fileno(stdout)) == 0);
+#else
+    const int saved = dup(fileno(stdout));
+    Require(saved >= 0 && dup2(fileno(capture), fileno(stdout)) >= 0);
+#endif
+    body();
+    std::fflush(stdout);
+#ifdef _WIN32
+    Require(_dup2(saved, _fileno(stdout)) == 0);
+    _close(saved);
+#else
+    Require(dup2(saved, fileno(stdout)) >= 0);
+    close(saved);
+#endif
+    std::string text;
+    std::rewind(capture);
+    for (int character = std::fgetc(capture); character != EOF; character = std::fgetc(capture)) text.push_back(static_cast<char>(character));
+    std::fclose(capture);
+    return text;
+}
+
 static void CheckSocketHostErrors() {
     Require(Failed(sceNetSocket(nullptr, 2, 1, 17), 43));
 }
@@ -475,6 +503,40 @@ static void CheckEmptyEpoll() {
         waiter.get();
         if (abort) Require(sceNetEpollDestroy(waiting_epoll) == 0);
     }
+}
+
+static void CheckRejectedArguments() {
+    Require(Failed(sceNetEpollCreate(nullptr, 0), 22));
+    for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetEpollCreate("rejected-epoll", flags), 22));
+
+    std::array<std::uint8_t, 6> untouched{};
+    untouched.fill(0xA5);
+    NetEtherAddr mac{};
+    std::memcpy(mac.data, untouched.data(), untouched.size());
+    for (const int flags : {1, 0x10000, -1}) {
+        Require(Failed(sceNetGetMacAddress(&mac, flags), 22));
+        Require(std::memcmp(mac.data, untouched.data(), untouched.size()) == 0);
+    }
+    Require(Failed(sceNetGetMacAddress(nullptr, 1), 22));
+
+    for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetResolverCreate("rejected-resolver", 0, flags), 22));
+
+    std::array<std::uint8_t, 4> ipv4{};
+    const int resolver = sceNetResolverCreate("rejected-ntoa", 0, 0);
+    Require(resolver >= 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 1, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, -1, 0), 22));
+    for (const int flags : {2, 0x20000, 0x10003, static_cast<int>(0x80000000u), -1})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, flags), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0), 4));
+    Require(sceNetResolverDestroy(resolver) == 0);
+
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 0, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, -1, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, 2), 22));
+    for (const int flags : {0, 1, 0x10000, 0x10001})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, flags), 9));
 }
 
 static void CheckDontWait() {
@@ -1041,14 +1103,17 @@ static void CheckSystemTime() {
 }
 
 static void CheckUsleep() {
-    Require(sceNetUsleep(0) == 0);
+    Require(CaptureStdout([] { Require(sceNetUsleep(0) == 0); }).empty());
     const auto start = std::chrono::steady_clock::now();
     Require(sceNetUsleep(2000) == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::microseconds(2000));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(-1), 22));
-    *sceNetErrnoLoc() = 0;
-    Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    const std::string printed = CaptureStdout([] {
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(-1), 22));
+        *sceNetErrnoLoc() = 0;
+        Require(Failed(sceNetUsleep(INT32_MIN), 22));
+    });
+    Require(printed == "[LIBNET] usleep -1\n[LIBNET] usleep -2147483648\n");
 }
 
 static void CheckEpollIdent() {
@@ -1075,6 +1140,39 @@ static void CheckEpollIdent() {
     Require(ready.data.u64 == 0x1122334455667788);
     Require(sceNetEpollDestroy(epoll) == 0);
     Require(sceNetSocketClose(sender) == 0 && sceNetSocketClose(receiver) == 0);
+}
+
+static void CheckEpollClosedStream() {
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    const int listener = sceNetSocket("closed-stream-listener", 2, 1, 6);
+    Require(listener >= 0);
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    const int client = sceNetSocket("closed-stream-client", 2, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, address.data(), address.size()) == 0);
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int epoll = sceNetEpollCreate("epoll-closed-stream", 0);
+    Require(epoll >= 0);
+    NetEpollEvent registration{};
+    registration.events = 1;
+    registration.ident = static_cast<std::uint64_t>(accepted);
+    Require(sceNetEpollControl(epoll, 1, accepted, &registration) == 0);
+    Require(sceNetSocketClose(client) == 0);
+    NetEpollEvent ready{};
+    Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1 && ready.events == 1);
+    char byte = 0;
+    Require(sceNetRecv(accepted, &byte, 1, 0) == 0);
+    registration.events = 3;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == 3);
+    Require(sceNetShutdown(accepted, 1) == 0);
+    registration.events = 1;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (1 | 16));
+    Require(sceNetEpollDestroy(epoll) == 0);
+    Require(sceNetSocketClose(accepted) == 0 && sceNetSocketClose(listener) == 0);
 }
 
 static void CheckTcpNoDelay() {
@@ -1127,6 +1225,13 @@ static bool HostIpv6LoopbackUnavailable() {
     close(hostSocket);
     return sent < 0 && (error == EADDRNOTAVAIL || error == ENETUNREACH || error == EHOSTUNREACH);
 #endif
+}
+
+static void CheckRejectedAddressText(const char* text) {
+    std::array<std::uint8_t, 16> address;
+    address.fill(0xa5);
+    Require(sceNetInetPton(28, text, address.data()) == 0);
+    Require(address[0] == 0xa5 && address[15] == 0xa5);
 }
 
 static void CheckLinkLocalAllNodesIpv6() {
@@ -1793,10 +1898,16 @@ int main() {
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();
+    CheckRejectedArguments();
     CheckDontWait();
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
+    CheckAddressText(28, "::ffff:0.0.0.1");
+    CheckAddressText(28, "::ffff:0:102:304");
+    CheckAddressText(28, "fe80::5efe:102:304");
+    CheckRejectedAddressText("::01.2.3.4");
+    CheckRejectedAddressText("::ffff:01.2.3.4");
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckInetPtonWhitespace();
     CheckInetPtonExParts();
@@ -1804,6 +1915,7 @@ int main() {
     CheckUsleep();
     CheckSystemTime();
     CheckEpollIdent();
+    CheckEpollClosedStream();
     CheckTcpNoDelay();
     CheckLinkLocalAllNodesIpv6();
     CheckUnboundSocketName();
@@ -2252,13 +2364,11 @@ int main() {
             Require(std::strcmp(text, reinterpret_cast<const char*>(info.opaque)) == 0);
         }
         for (const int flags : {0x1, -1}) {
-            bool threw = false;
-            try { sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(dns.data()), flags); } catch (const std::runtime_error&) { threw = true; }
-            Require(threw);
+            const auto before = dns;
+            Require(Failed(sceNetGetDnsInfo(reinterpret_cast<NetDnsInfo*>(dns.data()), flags), 22));
+            Require(dns == before);
         }
-        bool threw = false;
-        try { sceNetGetDnsInfo(nullptr, 0); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw);
+        Require(Failed(sceNetGetDnsInfo(nullptr, 0), 22));
     }
     NetCtlIfStat first{};
     first.device = 7;

@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -172,10 +173,25 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 spec = spec.substr(0, spec.find('.')) + ".1";
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
-            if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
-            else {
+            const char narrow = static_cast<char>(conversion);
+            const bool hexadecimal = narrow == 'a' || narrow == 'A';
+            if (length == "L") {
+                const long double value = args.Next<long double>();
+                if (!hexadecimal && std::isfinite(value)) {
+                    const std::string text = LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + "L" + narrow, value);
+                }
+            } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                AppendNumber(out, spec + static_cast<char>(conversion), args.Next<double>());
+                const double value = args.Next<double>();
+                if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + narrow, value);
+                }
             }
         } else if (conversion == u'p' && length.empty()) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
@@ -321,6 +337,7 @@ int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const
 }
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
+    if (!__stdoutp_nid_postfix->IsOpen()) { errno = 9; return -1; }
     APS5_VA_BEGIN(format);
     int result = -1;
     try {
@@ -360,8 +377,42 @@ int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
     return vfwprintf_nid_postfix(__stdoutp_nid_postfix, format, args);
 }
 
+int APS5_VABI vfwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
+    if (stream == nullptr || format == nullptr || args == nullptr) return -1;
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    int result = -1;
+    try {
+        const std::u16string text = FormatWide(format, args, true);
+        const std::string bytes = ToUtf8(text);
+        if (text.size() <= static_cast<std::size_t>(INT_MAX) &&
+            std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
+    } catch (const std::invalid_argument&) {
+    }
+    stream->SyncStatus();
+    return result;
+}
+
+int APS5_VABI vwprintf_s_nid_postfix(const char16_t* format, VaList* args) {
+    return vfwprintf_s_nid_postfix(__stdoutp_nid_postfix, format, args);
+}
+
+int APS5_VABI fwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfwprintf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI wprintf_s_nid_postfix(const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfwprintf_s_nid_postfix(__stdoutp_nid_postfix, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
 int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
     try {
         const std::string bytes = ToUtf8(std::u16string(1, value));
         auto* native = GetNativeStream(stream);
@@ -376,6 +427,7 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
 
 int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
     if (str == nullptr || stream == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
     try {
         const std::u16string text(str);
         const std::string bytes = ToUtf8(text);

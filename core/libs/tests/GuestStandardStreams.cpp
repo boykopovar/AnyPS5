@@ -539,6 +539,16 @@ static void CheckClosedStreamWrites() {
     Require(fseeko_nid_postfix(&stream, 0, SEEK_SET) == -1 && *__error_nid_postfix() == 9);
     Require(ftello_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
     Require(fileno_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(fputwc_nid_postfix(u't', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(putwc_nid_postfix(u't', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(fputws_nid_postfix(u"text", &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix('t', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x100, &stream) == -1 && *__error_nid_postfix() == 9);
     Require(ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
     Require(fclose_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
 }
@@ -549,6 +559,10 @@ static int CheckClosedStandardOutput() {
     Require(puts_nid_postfix("text") == -1 && *__error_nid_postfix() == 9);
     Require(PrintStandard("%d", 1) == -1 && *__error_nid_postfix() == 9);
     Require(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(wprintf_nid_postfix(u"%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(putwchar_nid_postfix(u't') == -1 && *__error_nid_postfix() == 9);
     Require(std::fputs("host output\n", stdout) >= 0 && std::fflush(stdout) == 0 && !std::ferror(stdout));
     Require(freopen_nid_postfix("missing-closed-stream-dir/err.log", "a", __stderrp_nid_postfix) == nullptr);
     Require(std::fputs("host error\n", stderr) >= 0 && std::fflush(stderr) == 0 && !std::ferror(stderr));

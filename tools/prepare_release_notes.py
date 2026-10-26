@@ -3,6 +3,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 BODY_LIMIT = 125000
@@ -26,7 +27,7 @@ def prepare_notes(source, body, full):
         for second in paths[index + 1:]:
             if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
-    notes = json.loads(source.read_text(encoding="utf-8"))["body"]
+    notes = json.loads(source.read_text(encoding="utf-8-sig"))["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
     for destination in (body, full):
@@ -40,13 +41,21 @@ def prepare_notes(source, body, full):
     body.write_bytes(release_body(notes).encode("utf-8"))
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Prepare size-safe GitHub release notes")
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--body", type=Path, required=True)
     parser.add_argument("--full", type=Path, required=True)
-    args = parser.parse_args()
-    prepare_notes(args.input, args.body, args.full)
+    args = parser.parse_args(argv)
+    try:
+        prepare_notes(args.input, args.body, args.full)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    return 0
 
 
 if __name__ == "__main__":

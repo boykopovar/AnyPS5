@@ -163,20 +163,20 @@ void FrameRecorder::UnregisterVideoOutput(std::uint32_t handle) {
     record(std::move(call), true);
 }
 
-void FrameRecorder::Submit(const Packet& packet, std::uint32_t queue) {
+void FrameRecorder::Submit(const Packet& packet, std::uint32_t queue, const std::function<void()>& accept) {
     auto call = make(FrameCallKind::Submit);
     call.queue = queue;
     call.address = pointer(packet.addr);
     call.size = packet.dw_num;
     call.flags = packet.flags;
-    record(std::move(call), false);
+    record(std::move(call), false, {}, accept);
 }
 
-void FrameRecorder::Flip(const FlipInfo& info) {
+void FrameRecorder::Flip(const FlipInfo& info, const std::function<void()>& accept) {
     auto call = make(FrameCallKind::Flip);
     call.cpuFlip = true;
     call.values = {info.handle, flipValue(info.index), info.mode, flipValue(info.argument)};
-    record(std::move(call), false);
+    record(std::move(call), false, {}, accept);
 }
 
 void FrameRecorder::ReserveEopFlip(const FlipInfo& info, std::uint32_t token) {
@@ -198,8 +198,8 @@ void FrameRecorder::ReserveEopFlip(const FlipInfo& info, std::uint32_t token) {
     ++recordedCalls;
 }
 
-void FrameRecorder::Suspend() {
-    record(make(FrameCallKind::Suspend), false);
+void FrameRecorder::Suspend(const std::function<void()>& accept) {
+    record(make(FrameCallKind::Suspend), false, {}, accept);
 }
 
 void FrameRecorder::PresentBuffer(const DisplayBuffer& buffer) {
@@ -236,8 +236,13 @@ void FrameRecorder::writeReferenceFrames() {
     }
 }
 
-void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
+void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
     std::lock_guard lock(mutex);
+    recordLocked(std::move(call), prologueCall, shaders);
+    if (accept) accept();
+}
+
+void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
     if (state == State::Waiting) {
         if (!prologueCall) return;
         call.ordinal = ++ordinal;
@@ -360,10 +365,23 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
 
 void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
-    const auto [accepted, completed] = DriverDetail::Driver::Get().SerialProgress();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    for (const auto& span : spans) {
+        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
+        blocks.insert(blocks.end(), written.begin(), written.end());
+    }
+    auto& driver = DriverDetail::Driver::Get();
+    auto [accepted, completed] = driver.SerialProgress();
+    if (completed < accepted && (!added.empty() || !blocks.empty())) {
+        if (!driver.WaitIdleFor(std::chrono::seconds(10))) {
+            stop("stopped: the GPU work submitted before a memory delta did not finish within 10 s");
+            return;
+        }
+        std::tie(accepted, completed) = driver.SerialProgress();
+    }
     const auto group = deltaGroups + 1;
     bool any = false;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     std::vector<std::byte> bytes;
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
@@ -397,15 +415,12 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         deltaBytes += bytes.size();
         any = true;
     }
-    for (const auto& span : spans) {
-        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
-        for (const auto& [begin, end] : written) {
-            bytes.resize(static_cast<std::size_t>(end - begin));
-            GuestMemory::ReadCommittedUnsynced(begin, bytes);
-            writer->WriteDelta(group, completed, begin, bytes);
-            deltaBytes += bytes.size();
-            any = true;
-        }
+    for (const auto& [begin, end] : blocks) {
+        bytes.resize(static_cast<std::size_t>(end - begin));
+        GuestMemory::ReadCommittedUnsynced(begin, bytes);
+        writer->WriteDelta(group, completed, begin, bytes);
+        deltaBytes += bytes.size();
+        any = true;
     }
     if (!any) return;
     deltaGroups = group;
@@ -436,8 +451,13 @@ bool FrameRecorder::abandonIfDiskLow() {
     std::error_code error;
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available >= MinimumFreeBytes) return false;
-    warnings.push_back("stopped: less than 4 GiB free on the capture volume");
-    std::fprintf(stderr, "[frame-capture] stopped: less than 4 GiB free on the capture volume\n");
+    stop("stopped: less than 4 GiB free on the capture volume");
+    return true;
+}
+
+void FrameRecorder::stop(const char* reason) {
+    warnings.push_back(reason);
+    std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
         writer->Finish(header());
     } catch (const std::exception& failure) {
@@ -445,7 +465,6 @@ bool FrameRecorder::abandonIfDiskLow() {
     }
     writer.reset();
     state = State::Done;
-    return true;
 }
 
 void FrameRecorder::start() {
