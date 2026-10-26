@@ -7572,12 +7572,49 @@ void verifyInt64AtomicCapabilities() {
         }
         return false;
     };
+    const auto verifySplit = [](std::span<const std::uint32_t> words, spv::Op atomic) {
+        std::map<std::uint32_t, std::size_t> definitions;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::uint32_t uintType = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "64-bit atomics: truncated SPIR-V instruction");
+            const auto op = words[cursor] & 0xffffu;
+            if (op == spv::OpTypeInt && words[cursor + 2] == 32u && words[cursor + 3] == 0u) uintType = words[cursor + 1];
+            if (op == spv::OpConstant && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpAccessChain || op == spv::OpIAdd || op == spv::OpUConvert || op == spv::OpVariable) definitions[words[cursor + 2]] = cursor;
+            cursor += count;
+        }
+        const auto opcodeOf = [&](std::uint32_t id) { return definitions.contains(id) ? words[definitions.at(id)] & 0xffffu : 0xffffffffu; };
+        std::vector<std::size_t> halves;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            if ((words[cursor] & 0xffffu) == static_cast<std::uint32_t>(atomic) && opcodeOf(words[cursor + 3]) == spv::OpAccessChain) {
+                const auto chain = definitions.at(words[cursor + 3]);
+                if ((words[chain] >> 16u) == 6u && opcodeOf(words[chain + 3]) == spv::OpAccessChain) halves.push_back(cursor);
+            }
+            cursor += count;
+        }
+        require(halves.size() == 2u, "64-bit atomics: an unused-result bitwise buffer atomic was not emitted as two 32-bit atomics");
+        const auto low = halves[0];
+        const auto high = halves[1];
+        require(words[low + 1] == uintType && words[high + 1] == uintType, "64-bit atomics: a half of a split buffer atomic is not 32 bits wide");
+        const auto lowChain = definitions.at(words[low + 3]);
+        const auto highChain = definitions.at(words[high + 3]);
+        require(words[lowChain + 3] == words[highChain + 3], "64-bit atomics: the halves of a split buffer atomic use different buffers");
+        const auto highIndex = words[highChain + 5];
+        require(opcodeOf(highIndex) == spv::OpIAdd, "64-bit atomics: the high half of a split buffer atomic does not address the next dword");
+        const auto add = definitions.at(highIndex);
+        require(words[add + 3] == words[lowChain + 5] && constants.contains(words[add + 4]) && constants.at(words[add + 4]) == 1u, "64-bit atomics: the high half of a split buffer atomic is not one dword after the low half");
+        require(words[low + 6] != words[high + 6] && opcodeOf(words[low + 6]) == spv::OpUConvert && opcodeOf(words[high + 6]) == spv::OpUConvert, "64-bit atomics: the halves of a split buffer atomic do not take the low and high dwords of the operand");
+    };
     expectFailure([&] { static_cast<void>(compile(bufferAtomic, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics");
     require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
-    for (const auto* code : {&bufferOr, &bufferAnd, &bufferXor}) {
+    const std::array<std::pair<const std::vector<std::uint32_t>*, spv::Op>, 3> bitwise{{{&bufferOr, spv::OpAtomicOr}, {&bufferAnd, spv::OpAtomicAnd}, {&bufferXor, spv::OpAtomicXor}}};
+    for (const auto& [code, atomic] : bitwise) {
         const auto split = compile(*code, spv::CapabilityShader);
         require(!declares(split, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic declares Int64Atomics on a device without it");
-        require(!split.empty(), "64-bit atomics: an unused-result bitwise buffer atomic was not compiled as two 32-bit atomics");
+        verifySplit(split, atomic);
         require(declares(compile(*code, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
     }
     expectFailure([&] { static_cast<void>(compile(bufferOrStored, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_or_x2 whose result is stored compiled without shaderBufferInt64Atomics");
