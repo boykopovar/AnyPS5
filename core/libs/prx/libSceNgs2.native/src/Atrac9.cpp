@@ -298,6 +298,12 @@ static int ParseVag(std::size_t size, TRead&& read, Ngs2WaveformInfo& info) {
     const std::uint32_t channels = header[0x1e] != 0 ? header[0x1e] : 1u;
     const std::uint32_t frameBytes = VAG_FRAME_BYTES * channels;
     const std::uint32_t dataSize = ReadBe32(header + 0x0c);
+    const std::size_t payload = size - VAG_HEADER_SIZE;
+    if (dataSize > payload || payload < static_cast<std::size_t>(frameBytes) + VAG_FRAME_BYTES) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const bool dropsFrame = (read(VAG_HEADER_SIZE + frameBytes, VAG_FRAME_BYTES)[1] & 2) == 0;
+    const std::uint64_t lastFrame = dataSize != 0 ? (dataSize - 1u) / frameBytes : 0;
+    const std::uint64_t scanBytes = lastFrame * frameBytes + VAG_FRAME_BYTES;
+    if (!dropsFrame && dataSize != 0 && scanBytes > payload) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     info.format = {SCE_NGS2_WAVEFORM_TYPE_VAG, channels, ReadBe32(header + 0x10), 0, 0, 0};
     info.data_offset = VAG_HEADER_SIZE;
     info.data_size = dataSize;
@@ -308,14 +314,10 @@ static int ParseVag(std::size_t size, TRead&& read, Ngs2WaveformInfo& info) {
     info.num_audio_unit_per_frame = 1;
     info.audio_frame_size = frameBytes;
     info.num_audio_frame_samples = VAG_FRAME_SAMPLES;
-    if (size - VAG_HEADER_SIZE < static_cast<std::size_t>(frameBytes) + VAG_FRAME_BYTES) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
-    if ((read(VAG_HEADER_SIZE + frameBytes, VAG_FRAME_BYTES)[1] & 2) == 0) {
+    if (dropsFrame) {
         if (info.num_samples < VAG_FRAME_SAMPLES) throw std::runtime_error("NGS2: a VAG waveform shorter than one frame is not implemented");
         info.num_samples -= VAG_FRAME_SAMPLES;
     } else if (dataSize != 0) {
-        const std::uint64_t lastFrame = (dataSize - 1u) / frameBytes;
-        const std::uint64_t scanBytes = lastFrame * frameBytes + VAG_FRAME_BYTES;
-        if (scanBytes > size - VAG_HEADER_SIZE) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
         const auto* frames = read(VAG_HEADER_SIZE, static_cast<std::size_t>(scanBytes));
         for (std::uint64_t frame = 0; frame <= lastFrame; frame++) {
             const std::uint8_t flag = frames[frame * frameBytes + 1] & 0xfu;
