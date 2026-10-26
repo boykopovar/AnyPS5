@@ -22,9 +22,7 @@ std::int32_t Pin(std::int32_t codePoint) {
     return std::clamp(codePoint, 0, MaximumCodePoint);
 }
 
-}
-
-struct USet {
+struct CodePointSet {
     std::int32_t magic = SetMagic;
     std::vector<Range> ranges;
 
@@ -51,18 +49,16 @@ struct USet {
     }
 };
 
-namespace {
-
-const USet& Check(const USet* set) {
+const CodePointSet& Check(const USet* set) {
     if (!set) APS5_INVALID_ARG_EX;
     std::int32_t magic = 0;
     std::memcpy(&magic, set, sizeof(magic));
     if (magic != SetMagic) APS5_INVALID_ARG_EX;
-    return *set;
+    return *reinterpret_cast<const CodePointSet*>(set);
 }
 
-USet& Check(USet* set) {
-    return const_cast<USet&>(Check(static_cast<const USet*>(set)));
+CodePointSet& Check(USet* set) {
+    return const_cast<CodePointSet&>(Check(static_cast<const USet*>(set)));
 }
 
 }
@@ -70,13 +66,14 @@ USet& Check(USet* set) {
 extern "C" {
 
 USet* APS5_VABI uset_openEmpty_nid_postfix() {
-    return new (std::nothrow) USet();
+    return reinterpret_cast<USet*>(new (std::nothrow) CodePointSet());
 }
 
 void APS5_VABI uset_close_nid_postfix(USet* set) {
     if (!set) return;
-    Check(set).magic = 0;
-    delete set;
+    auto& target = Check(set);
+    target.magic = 0;
+    delete &target;
 }
 
 void APS5_VABI uset_add_nid_postfix(USet* set, std::int32_t codePoint) {
