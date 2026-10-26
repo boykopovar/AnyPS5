@@ -30,6 +30,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <mutex>
 #include <chrono>
@@ -423,6 +425,39 @@ static void CheckTlsTransport() {
     Require(sceSslTerm_nid_postfix(sslContext) == 0);
 }
 
+static void CheckSystemRootTrust() {
+    TlsHttpServer server;
+    const int sslContext = sceSslInit_nid_postfix(1024 * 1024);
+    Require(sslContext > 0);
+    const int context = sceHttpInit_nid_postfix(0, sslContext, 0x10000);
+    Require(context > 0);
+    const int httpTemplate = sceHttpCreateTemplate(context, "anyps5-https-roots-test", 2, 0);
+    Require(httpTemplate > 0);
+    const auto url = "https://localhost:" + std::to_string(server.Port()) + "/secure";
+    const int connection = sceHttpCreateConnectionWithURL(httpTemplate, url.c_str(), 0);
+    Require(connection > 0);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, url.c_str(), 0);
+    Require(request > 0);
+#ifdef _WIN32
+    Require(sceHttpSendRequest(request, nullptr, 0) == static_cast<int>(0x80431063u));
+    int error = 0;
+    Require(sceHttpGetLastErrno(request, &error) == 0 && error == static_cast<int>(0x8095f00cu));
+    server.Wait();
+#else
+    Require(sceHttpSendRequest(request, nullptr, 0) == 0);
+    int status = 0;
+    Require(sceHttpGetStatusCode(request, &status) == 0 && status == 200);
+    std::array<char, 8> body{};
+    Require(sceHttpReadData(request, body.data(), body.size()) == 3 && std::memcmp(body.data(), "tls", 3) == 0);
+    Require(sceHttpReadData(request, body.data(), body.size()) == 0);
+    server.Wait();
+    Require(server.Failure().empty());
+#endif
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 &&
+        sceHttpDeleteTemplate(httpTemplate) == 0 && sceHttpTerm_nid_postfix(context) == 0);
+    Require(sceSslTerm_nid_postfix(sslContext) == 0);
+}
+
 static void CheckConnectTimeout() {
     const auto objects = CreateRequestWithUrl("http://192.0.2.1:9/", 0, 0, 100000);
     const auto start = std::chrono::steady_clock::now();
@@ -477,6 +512,14 @@ int main() {
 #ifdef _WIN32
     WSADATA winsock{};
     Require(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
+#else
+    const auto roots = std::filesystem::temp_directory_path() / ("anyps5-http-roots-" + std::to_string(getpid()) + ".pem");
+    {
+        std::ofstream file(roots, std::ios::binary | std::ios::trunc);
+        file << RootPem;
+        Require(static_cast<bool>(file.flush()));
+    }
+    Require(setenv("SSL_CERT_FILE", roots.c_str(), 1) == 0);
 #endif
     alignas(16) std::array<std::byte, 0x40> processParameters{};
     const std::uint64_t processSize = processParameters.size();
@@ -493,6 +536,7 @@ int main() {
     CheckLongChunkedResponse();
     CheckRedirect();
     CheckTlsTransport();
+    CheckSystemRootTrust();
     CheckConnectTimeout();
     CheckResolveTimeout();
 #ifdef _WIN32

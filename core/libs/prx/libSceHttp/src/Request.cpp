@@ -33,6 +33,10 @@
 #include <utility>
 #include <vector>
 
+extern "C" {
+int SslTrustSystemRoots_nid_no_patch(int);
+}
+
 namespace {
 
 constexpr int kSocketLevel = 0xffff;
@@ -547,6 +551,12 @@ int CreateSocketStream(const std::shared_ptr<RequestData>& request, const Url& u
         ssl = sceSslCreateConnection(context->sslContextId, socket, url.host.c_str());
         if (ssl < 0) {
             request->lastError = ssl;
+            sceNetSocketClose(socket);
+            return ERROR_NETWORK;
+        }
+        if (const int result = SslTrustSystemRoots_nid_no_patch(ssl); result != 0) {
+            request->lastError = result;
+            sceSslDeleteConnection(ssl);
             sceNetSocketClose(socket);
             return ERROR_NETWORK;
         }
