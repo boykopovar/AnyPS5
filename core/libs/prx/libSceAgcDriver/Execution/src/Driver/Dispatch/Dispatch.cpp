@@ -364,12 +364,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         if (!pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
     }
+    std::uint64_t forgetAtCapture = 0;
     if (cached) {
         require(keepVariant != nullptr && keepVariant->shader == registeredShader, "dispatch cache belongs to another registered shader");
         captureMs += phaseTiming.Elapsed();
     } else if (!fromAhead) {
         shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
-        std::uint64_t forgetAtCapture = 0;
 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
@@ -417,7 +417,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
-        insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
+        if (!resolving) insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
     }
     if (resolving) {
         auto& parked = resolvedAhead()[currentPacketOffset()];
@@ -425,11 +425,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked.address = address;
         parked.key = key;
         parked.indirectArguments = indirectArguments;
+        parked.forgetAtCapture = forgetAtCapture;
         std::copy_n(packet.begin(), std::min(packet.size(), parked.packet.size()), parked.packet.begin());
         parked.registeredShader = registeredShader;
         parked.compiledResult = compiledResult;
         parked.keepVariant = keepVariant;
         parked.attachVariant = attachVariant;
+        parked.missedEntry = missedEntry;
         parked.shaderMemory = shaderMemory;
         parked.captured = std::move(captured);
         parked.liveWords = std::move(liveWords);
@@ -437,14 +439,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked.dataHit = dataHit;
         parked.cached = cached;
         parked.validated = validated;
+        parked.missedDiffering = missedDiffering;
+        parked.noDispatchCache = noDispatchCache || (compiledResult != nullptr && !CacheableResult(*compiledResult));
         parked.resolvedAt = std::chrono::steady_clock::now();
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;
-        if (!cached && compiledResult != nullptr && !localDevice->HasComputePipeline(*compiledResult)) {
-            SubmitLibraryPrebuild([localDevice, compiledResult, address] {
-                try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
-            });
-        }
         return;
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);
