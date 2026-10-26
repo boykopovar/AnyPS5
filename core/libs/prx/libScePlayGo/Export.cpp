@@ -107,13 +107,15 @@ static UnlistedChunkAnswer UnlistedChunks() {
 
 static bool IsKnownChunk(uint16_t id) {
     const auto& chunks = Chunks();
-    if (chunks.defined) return chunks.ids.contains(id);
-    if (chunks.scenario || id == 0) return true;
+    if (chunks.ids.contains(id)) return true;
+    if (chunks.defined) return false;
     switch (UnlistedChunks()) {
     case UnlistedChunkAnswer::Installed: return true;
     case UnlistedChunkAnswer::Absent: return false;
     case UnlistedChunkAnswer::Stop: break;
     }
+    if (chunks.scenario)
+        throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat is missing and sce_sys/playgo-scenario.json lists no chunks, so chunk ID " + std::to_string(id) + " outside the listed ids 0 to " + std::to_string(PLAYGO_SCENARIO_CHUNK_COUNT - 1) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
     throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
 }
 

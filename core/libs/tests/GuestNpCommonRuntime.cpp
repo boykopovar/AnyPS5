@@ -30,7 +30,10 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
+constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
+constexpr std::uint32_t EventFlagShared = 0x100;
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -65,6 +68,20 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+void TestSharedEventFlags() {
+    KernelEventFlag creator {};
+    Require(sceNpCreateEventFlag(&creator, "NpSharedFlag", EventFlagShared, 0) == 0, "a shared event flag is created");
+    KernelEventFlag opened {};
+    Require(sceNpOpenEventFlag(&opened, "NpSharedFlag") == 0 && opened != creator, "the shared event flag is opened by name");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(opened, 2) == 0 && sceNpPollEventFlag(creator, 2, EventFlagWaitAnd, &result) == 0 && result == 2,
+        "a bit set through the opened handle is polled through the creator");
+    Require(sceNpCloseEventFlag(creator) == KernelNotPermitted, "the creator handle is not closed");
+    Require(sceNpCloseEventFlag(opened) == 0, "the opened handle is closed");
+    Require(sceNpCloseEventFlag(opened) == KernelNoSuchObject, "a closed handle is gone");
+    Require(sceNpDeleteEventFlag(creator) == 0, "the creator deletes the shared event flag");
 }
 
 void TestThreads() {
@@ -400,6 +417,7 @@ void TestHexAndCopies() {
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestSharedEventFlags();
     TestThreads();
     TestHeaps();
     TestBase64();

@@ -6,15 +6,15 @@ import sys
 import tempfile
 
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture
-from test_guest_symbol_names import importing_executable
+from test_guest_symbol_names import DYNAMIC, RELOCATIONS, STRINGS, SYMBOLS, importing_executable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tools"))
 import import_audit
 
 
-def named_module(tag):
+def named_module(tag, name="Party.prx"):
     image = guest_fixture(PLAIN_SITE)
-    strings = b"\0Party.prx\0"
+    strings = b"\0" + name.encode() + b"\0"
     image[0x800:0x800 + len(strings)] = strings
     struct.pack_into("<Q", image, 0x618, len(strings))
     struct.pack_into("<qQqQ", image, 0x680, tag, 1, 0, 0)
@@ -30,10 +30,56 @@ def executable_with_dependencies(libraries):
     return image
 
 
+def executable_needing(name):
+    image = importing_executable([])
+    strings = b"\0" + name.encode() + b"\0"
+    image[STRINGS:STRINGS + len(strings)] = strings
+    tags = [(1, 1), (5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
+            (7, RELOCATIONS), (8, 0), (9, 24), (0, 0)]
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, DYNAMIC + index * 16, *tag)
+    struct.pack_into("<QQ", image, 152, len(tags) * 16, len(tags) * 16)
+    return image
+
+
+def dependency_names(relinker, work):
+    names = ("Party.prx", "", "$LIB.prx", "$ORIGIN/x.prx", "a:b.prx", "a\\b.prx", "a\nb.prx", "a\rb.prx")
+    for index, name in enumerate(names):
+        source = work / f"dependency-{index}.elf"
+        source.write_bytes(executable_needing(name))
+        for target, flags in enumerate(([], ["--lazy-binding"], ["--windows"], ["--macos"])):
+            output = work / f"dependency-{index}-{target}.out"
+            result = subprocess.run([str(relinker), "--skip-sce-module", *flags, str(source), str(output)],
+                                    capture_output=True, timeout=20)
+            stderr = result.stderr.replace(b"\r\n", b"\n")
+            if index == 0:
+                assert result.returncode == 0 and output.is_file(), (flags, result.stdout, stderr)
+                continue
+            expected = f"FAIL: Invalid dependency: {name} (offset {STRINGS + 1:#x})\n".encode()
+            assert result.returncode == 2 and stderr.startswith(expected) and not output.exists(), (
+                name, flags, result.returncode, stderr)
+
+
+def slash_dependency(relinker, work):
+    for target, flags in enumerate(([], ["--windows"], ["--macos"])):
+        case = work / f"slash-{target}"
+        modules = case / "sce_module"
+        modules.mkdir(parents=True)
+        (modules / "engine.prx").write_bytes(named_module(14, "dir/Party.prx"))
+        source = case / "input.elf"
+        source.write_bytes(executable_needing("dir/Party.prx"))
+        output = case / "output.out"
+        result = subprocess.run([str(relinker), *flags, str(source), str(output)],
+                                capture_output=True, timeout=20)
+        assert result.returncode == 0 and output.is_file(), (flags, result.stdout, result.stderr)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-libraries-") as directory:
         work = Path(directory)
+        dependency_names(relinker, work)
+        slash_dependency(relinker, work)
         for windows in (False, True):
             for bundled in (False, True):
                 case = work / f"{windows}-{bundled}"

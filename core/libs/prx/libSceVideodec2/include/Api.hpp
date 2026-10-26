@@ -101,6 +101,7 @@ struct OutputInfo {
     bool isValid;
     bool isErrorFrame;
     std::uint8_t pictureCount;
+    bool isDiscardedFrame;
     std::uint32_t codecType;
     std::uint32_t frameWidth;
     std::uint32_t framePitch;

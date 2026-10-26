@@ -3,24 +3,27 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from import_audit import read_host_imports
-from unwrap_self import unwrap
+from unwrap_self import Refused, unwrap
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "core/relinker/relinker/tests"))
 from guest_import_fixtures import executable
 
-CASES = ("memory", "validation", "dispatch", "ordering", "nested", "limits", "node_pool", "priority", "shutdown", "worker_policy", "worker_wake", "worker_wait", "worker_count", "worker_spin")
+CASES = ("memory", "owned_state", "concurrent_wait", "validation", "dispatch", "ordering", "nested", "limits", "node_pool", "priority", "shutdown", "worker_policy", "worker_wake", "worker_wait", "worker_count", "worker_spin")
+PARITY_CASES = tuple(case for case in CASES if case not in ("node_pool", "worker_wait"))
 
 
 def stage_libraries(directory, build, toolchain, dependencies):
     providers = {path.name.lower(): path for path in (build / "core/libs/libs").glob("*.prx")}
-    providers.update({path.name.lower(): path for path in toolchain.glob("*.dll")})
+    if toolchain is not None:
+        providers.update({path.name.lower(): path for path in toolchain.glob("*.dll")})
     pending = list(dependencies)
     staged = set()
     while pending:
@@ -44,7 +47,8 @@ def run(args, directory):
     if not helper.is_file():
         raise RuntimeError("Build the job_manager_reference target first")
     shutil.copy2(helper, libraries / "jobref.prx")
-    subprocess.run([str(args.build / "core/libs/nid_patcher.exe"), "jobref", "--preserve-export-list",
+    suffix = ".exe" if sys.platform == "win32" else ""
+    subprocess.run([str(args.build / f"core/libs/nid_patcher{suffix}"), "jobref", "--preserve-export-list",
                     str(args.build / "core/libs/libc.exports"), str(libraries / "jobref.prx")], check=True, capture_output=True)
     module_hash = None
     if args.module:
@@ -58,14 +62,19 @@ def run(args, directory):
         else:
             unwrap(args.module, target)
     source = directory / "input.elf"
-    source.write_bytes(executable("jobref.prx", symbol="Run_nid_no_patch"))
-    output = directory / "reference.exe"
+    entry = executable("jobref.prx", symbol="Run_nid_no_patch")
+    entry[0x4000:0x400f] = b"\x48\x83\xec\x08\xff\x15" + struct.pack("<i", 0x4a20 - 0x400a) + b"\x48\x83\xc4\x08\xc3"
+    source.write_bytes(entry)
+    output = directory / f"reference{suffix}"
     options = ["--skip-sce-module"] if args.host else []
-    result = subprocess.run([str(args.relinker), "--windows", "--registry", *options, str(source), str(output)],
+    platform = ["--windows"] if sys.platform == "win32" else []
+    result = subprocess.run([str(args.relinker), *platform, "--registry", *options, str(source), str(output)],
                             cwd=directory, capture_output=True, timeout=60)
     (directory / "relink.log").write_bytes(result.stdout + result.stderr)
     if result.returncode:
         raise RuntimeError(f"Relinker failed ({result.returncode}); see {directory / 'relink.log'}")
+    if sys.platform != "win32":
+        output.chmod(output.stat().st_mode | 0o111)
     dependencies = set(read_host_imports(helper)) | {"libc.prx"}
     for registry in directory.glob("*.registry.json"):
         dependencies.update(entry["library"] for entry in json.loads(registry.read_text())
@@ -75,6 +84,8 @@ def run(args, directory):
     stage_libraries(libraries, args.build, args.toolchain, dependencies)
     environment = os.environ.copy()
     environment["PATH"] = str(libraries) + os.pathsep + environment.get("PATH", "")
+    if sys.platform != "win32":
+        environment["LD_LIBRARY_PATH"] = str(libraries) + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
     environment.pop("ANYPS5_JOB_MANAGER_HOST", None)
     if args.host:
         environment["ANYPS5_JOB_MANAGER_HOST"] = "1"
@@ -93,25 +104,34 @@ def run(args, directory):
         (directory / f"{case}.log").write_bytes(log)
         results.append({"case": case, "status": status, "returncode": code})
         print(json.dumps(results[-1]), flush=True)
-    summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash, "cases": results}
+    summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash,
+               "selection": getattr(args, "suite", None) or "custom",
+               "excluded_cases": [case for case in CASES if case not in args.cases], "cases": results}
     (directory / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
     return 0 if all(result["status"] == "passed" for result in results) else 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the CPU JobManager fixtures through Windows relinker startup using an owned module or the host fallback.")
+    parser = argparse.ArgumentParser(description="Run the CPU JobManager fixtures through native relinker startup using an owned module or the host fallback.")
     provider = parser.add_mutually_exclusive_group(required=True)
     provider.add_argument("--module", type=Path, help="Owned decrypted SELF or ELF libSceJobManager.prx")
     provider.add_argument("--host", action="store_true", help="Validate the runner against the built host fallback")
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--relinker", type=Path, required=True)
-    parser.add_argument("--toolchain", type=Path, required=True, help="Directory containing the matching compiler runtime DLLs")
+    parser.add_argument("--toolchain", type=Path, help="Directory containing the matching compiler runtime DLLs (required on Windows)")
     parser.add_argument("--output", type=Path, help="New directory for staged modules, per-case logs and results.json; defaults to a temporary directory")
-    parser.add_argument("--cases", nargs="+", choices=CASES, default=list(CASES))
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--cases", nargs="+", choices=CASES)
+    selection.add_argument("--suite", choices=("all", "parity"), help="all runs every case (default); parity excludes original-module node_pool and worker_wait stalls with host kernel services")
     parser.add_argument("--timeout", type=float, default=20)
     args = parser.parse_args()
-    if sys.platform != "win32":
-        parser.error("The reference adapter currently supports Windows only")
+    if args.cases is None:
+        args.suite = args.suite or "all"
+        args.cases = list(PARITY_CASES if args.suite == "parity" else CASES)
+    if sys.platform not in ("win32", "linux"):
+        parser.error("The reference adapter supports Windows and Linux")
+    if sys.platform == "win32" and args.toolchain is None:
+        parser.error("--toolchain is required on Windows")
     if args.timeout <= 0 or args.timeout > 30:
         parser.error("--timeout must be greater than zero and at most 30 seconds")
     try:
@@ -124,7 +144,7 @@ def main():
             directory.mkdir(parents=True, exist_ok=False)
         print(f"Artifacts: {directory}", flush=True)
         return run(args, directory)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, Refused, RuntimeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr.decode(errors="replace"), file=sys.stderr)

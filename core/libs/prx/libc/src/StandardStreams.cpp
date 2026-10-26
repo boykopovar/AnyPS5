@@ -125,6 +125,7 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
 }
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
         errno = 86;

@@ -392,6 +392,57 @@ class ReleasePackageTests(unittest.TestCase):
 
 
 class DocumentationAssetsTests(unittest.TestCase):
+    def test_source_copy_failure_does_not_publish_partial_documents(self):
+        for existing, failing in ((False, "A.md"), (False, "B.md"), (True, "A.md"), (True, "B.md")):
+            with self.subTest(existing=existing, failing=failing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, output = root / "source", root / "assets"
+                source.mkdir()
+                (source / "A.md").write_bytes(b"first document")
+                (source / "B.md").write_bytes(b"second document")
+                expected = {}
+                if existing:
+                    output.mkdir()
+                    (output / "existing.zip").write_bytes(b"existing asset")
+                    expected["existing.zip"] = b"existing asset"
+                real_copy = package_release.shutil.copy2
+
+                def fail_copy(source_path, destination, *args, **kwargs):
+                    if Path(source_path).name == failing:
+                        Path(destination).write_bytes(b"partial document")
+                        raise OSError("simulated source read failure")
+                    return real_copy(source_path, destination, *args, **kwargs)
+
+                with patch.object(package_release.shutil, "copy2", side_effect=fail_copy):
+                    with self.assertRaisesRegex(OSError, "simulated source read failure"):
+                        package_release.collect_docs(source, output)
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+                self.assertEqual((source / "A.md").read_bytes(), b"first document")
+                self.assertEqual((source / "B.md").read_bytes(), b"second document")
+                package_release.collect_docs(source, output)
+                expected.update({"A.md": b"first document", "B.md": b"second document"})
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+
+    def test_readonly_source_metadata_survives_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / "source", root / "assets"
+            source.mkdir()
+            document = source / "Readonly.md"
+            document.write_bytes(b"readonly documentation")
+            document.chmod(stat.S_IREAD)
+            try:
+                package_release.collect_docs(source, output)
+                published = output / document.name
+                self.assertEqual(published.read_bytes(), document.read_bytes())
+                self.assertEqual(stat.S_IMODE(published.stat().st_mode), stat.S_IMODE(document.stat().st_mode))
+                self.assertEqual(published.stat().st_mtime_ns, document.stat().st_mtime_ns)
+                self.assertEqual({path.name for path in output.iterdir()}, {document.name})
+            finally:
+                document.chmod(stat.S_IREAD | stat.S_IWRITE)
+                if (output / document.name).exists():
+                    (output / document.name).chmod(stat.S_IREAD | stat.S_IWRITE)
+
     def test_source_not_directory_raises_runtime_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(RuntimeError, "not a directory"):
@@ -628,6 +679,78 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
             prepare_release_notes.prepare_notes(source_path, body_path, full_path)
             self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
             self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
+
+    def test_prepare_notes_accepts_utf8_bom(self):
+        notes = "# Release v1.0.0\n"
+        source = "\ufeff" + json.dumps({"body": notes})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_path = directory / "source.json"
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            source_path.write_text(source, encoding="utf-8")
+            prepare_release_notes.prepare_notes(source_path, body_path, full_path)
+            self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
+            self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
+
+    def test_main_with_explicit_argv(self):
+        notes = "# Release v1.0.0\n"
+        source = json.dumps({"body": notes})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_path = directory / "source.json"
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            source_path.write_text(source, encoding="utf-8")
+            result = prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+            self.assertEqual(result, 0)
+            self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
+            self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
+
+    def test_main_reports_error_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            input_dir = directory / "input_dir"
+            input_dir.mkdir()
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                prepare_release_notes.main(["--input", str(input_dir), "--body", str(body_path), "--full", str(full_path)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn(input_dir.name, stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, s):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(prepare_release_notes.sys, "stdout", out), patch.object(prepare_release_notes.sys, "stderr", err):
+            with tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                source_path = directory / "source.json"
+                body_path = directory / "body.md"
+                full_path = directory / "full.md"
+                source_path.write_text(json.dumps({"body": "notes"}), encoding="utf-8")
+                result = prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+                self.assertEqual(result, 0)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
     def test_body_over_limit_without_whats_changed_is_returned_unchanged(self):
         notes = "# Release\n\n## Details\n\n" + "x" * (prepare_release_notes.BODY_LIMIT + 1)

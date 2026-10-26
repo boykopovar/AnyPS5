@@ -79,6 +79,7 @@ int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t s
 int APS5_VABI sceNpTrophyDestroyContext(int context);
 int APS5_VABI sceNpTrophyCreateHandle(int* handle);
 int APS5_VABI sceNpTrophyDestroyHandle(int handle);
+int APS5_VABI sceNpTrophyAbortHandle(int handle);
 int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_t options);
 int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyFlagArray* flags, std::uint32_t* count);
 int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, int* platinumId);

@@ -34,8 +34,10 @@ using namespace AgcDriver::GuestMemory;
 
 constexpr std::size_t Block = 65536;
 #ifdef _WIN32
+constexpr wchar_t MetadataCommitMode[] = L"--metadata-commit";
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
+constexpr wchar_t RewatchImportPagesMode[] = L"--rewatch-import-pages";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
@@ -61,7 +63,9 @@ bool CheckMetadataCommit() {
     Require(committed < (64u << 20u), "write tracking committed dense generation tables for untouched guest ranges");
     const auto generation = TrackerGeneration();
     for (std::uint64_t offset = 0; offset + Block <= bytes; offset += std::uint64_t{1} << 32u) {
-        Require(NewestStamp(arena + offset, Block) == 0 && UnchangedSince(arena + offset, Block, generation), "an untouched leaf has a write stamp");
+        const bool host = GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(arena + offset, Block);
+        Require(NewestStamp(arena + offset, Block) == 0, "an untouched leaf has a write stamp");
+        Require(UnchangedSince(arena + offset, Block, generation) != host, host ? "an arena host region reads as unchanged" : "an untouched leaf reads as changed");
     }
     PROCESS_MEMORY_COUNTERS_EX queried{};
     Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&queried), sizeof(queried)), "cannot measure private commit after empty-range queries");
@@ -712,13 +716,18 @@ void CheckRewatch() {
     const auto unwatched = UnwatchSerial();
     Require(!Watched(imported, Block) && UntrackedHint(imported, Block) != 0, "the unwatched block does not read as untracked");
     bytes[Block + 8] = 0x22;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> unaligned{{{imported + 1, imported + Block}}};
+    Rewatch(unaligned);
+    Require(!Watched(imported + 4096, Block - 4096) && UnwatchSerial() == unwatched, "a range that is not whole pages returned to the write watch");
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> partial{{{imported + 4096, imported + Block}}};
     Rewatch(partial);
-    Require(!Watched(imported, Block) && UnwatchSerial() == unwatched, "part of a block returned to the write watch");
+    Require(Watched(imported + 4096, Block - 4096) && !Watched(imported, 4096) && !Watched(imported, Block), "rewatching part of a block did not return exactly its pages to the write watch");
+    const auto partly = UnwatchSerial();
+    Require(partly != unwatched, "rewatching part of a block did not invalidate what was cached while it was unwatched");
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> first{{{imported, imported + Block}}};
     Rewatch(first);
     Require(Watched(imported, Block) && !Watched(imported + Block, Block), "rewatching did not return exactly its block to the write watch");
-    Require(UnwatchSerial() != unwatched, "rewatching did not invalidate what was cached while the block was unwatched");
+    Require(UnwatchSerial() != partly, "rewatching did not invalidate what was cached while the block was unwatched");
     Require(UntrackedHint(imported, Block) == 0, "a rewatched block still reads as untracked");
     Require(!UnchangedSince(imported, Block, before) && StoredOver(imported, Block, before), "a block returned to the write watch reads as unchanged since before it left");
     Require(!UnchangedSinceCollected(imported, Block, before), "a CPU store made while the block was unwatched reads as no CPU store");
@@ -738,6 +747,125 @@ void CheckRewatch() {
     Require(!Watched(base + 2 * Block, Block), "a block with uncommitted pages returned to the write watch");
     GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
     GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+}
+
+using RewatchSpan = std::array<std::pair<std::uint64_t, std::uint64_t>, 1>;
+
+RewatchSpan BlockSpan(std::uint64_t address, std::size_t bytes) {
+    return {{{address & ~std::uint64_t{Block - 1}, (address + bytes + Block - 1) & ~std::uint64_t{Block - 1}}}};
+}
+
+RewatchSpan PageSpan(std::uint64_t address, std::size_t bytes) {
+    return {{{address & ~std::uint64_t{4095}, (address + bytes + 4095) & ~std::uint64_t{4095}}}};
+}
+
+void PrintPageState(const char* page, const void* address) {
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query a page next to an import");
+    std::cout << page << ": State 0x" << std::hex << info.State << " Type 0x" << info.Type << " Protect 0x" << info.Protect << std::dec << '\n';
+}
+
+struct ImportFixture {
+    std::uint8_t* memory;
+    std::size_t reserved;
+    ImportFixture(std::size_t reservedBytes, std::size_t committed) : memory(static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(reservedBytes, Block))), reserved(reservedBytes) {
+        Require(memory != nullptr, "cannot reserve an import fixture");
+        GuestArena::GuestArenaCommit_nid_postfix(memory, committed, PAGE_READWRITE, committed);
+        std::memset(memory, 0x11, committed);
+        BumpCollectEpoch();
+        Require(CollectWrites(Base(), committed) != 0, "an import fixture was not collected");
+    }
+    ImportFixture(const ImportFixture&) = delete;
+    ImportFixture& operator=(const ImportFixture&) = delete;
+    ~ImportFixture() {
+        GuestArena::GuestArenaReset_nid_postfix(memory, reserved);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, reserved);
+    }
+    std::uint64_t Base() const {
+        return reinterpret_cast<std::uint64_t>(memory);
+    }
+};
+
+void UnwatchImport(std::uint64_t address, std::size_t bytes) {
+    Require(ImportWatched(address, bytes, [] { return true; }, false) && !Watched(address, bytes), "an import that leaves the watch stayed watched");
+}
+
+void RequireRewatchedStores(std::uint64_t address, std::size_t bytes) {
+    BumpCollectEpoch();
+    const auto collected = CollectWrites(address, bytes);
+    Require(collected != 0 && UnchangedSince(address, bytes, collected), "a rewatched import is not collected");
+    *reinterpret_cast<volatile std::uint8_t*>(address + bytes - 1) = 0x22;
+    CollectWritesUncached(address, bytes);
+    Require(!UnchangedSince(address + bytes - 1, 1, collected), "a CPU store into a rewatched import's last page was missed");
+}
+
+void CheckRewatchWholeBlockImport() {
+    constexpr std::size_t bytes = 4 * Block;
+    ImportFixture fixture(6 * Block, 6 * Block);
+    const auto import = fixture.Base() + Block;
+    const auto before = CollectWrites(fixture.Base(), 6 * Block);
+    UnwatchImport(import, bytes);
+    Require(PageSpan(import, bytes) == BlockSpan(import, bytes), "a whole-block import has a page span unlike its block span");
+    Rewatch(PageSpan(import, bytes));
+    Require(Watched(import, bytes), "a settled whole-block import did not return to the write watch");
+    Require(!UnchangedSince(import, bytes, before) && UnchangedSince(fixture.Base(), Block, before) && UnchangedSince(import + bytes, Block, before), "rewatching a whole-block import did not stamp exactly its blocks");
+    RequireRewatchedStores(import, bytes);
+}
+
+void CheckRewatchImportTail() {
+    constexpr std::size_t bytes = 0xc4000;
+    ImportFixture fixture(13 * Block, bytes);
+    const auto import = fixture.Base();
+    UnwatchImport(import, bytes);
+    PrintPageState("page past a 0xc4000-byte import", fixture.memory + bytes);
+    const auto unwatched = UnwatchSerial();
+    Rewatch(BlockSpan(import, bytes));
+    Require(!Watched(import, bytes) && UnwatchSerial() == unwatched, "the 64 KiB span past the import's committed pages returned to the write watch");
+    Rewatch(PageSpan(import, bytes));
+    Require(Watched(import, bytes), "a settled import whose size is not a whole block did not return to the write watch");
+    Require(Watched(import + 12 * Block, bytes - 12 * Block) && !Watched(import, bytes + 1) && !Watched(import + bytes - 1, 2) && !Watched(import + bytes, 4096), "rewatching an import ending inside a block did not return exactly its pages");
+    Require(UnwatchSerial() != unwatched && UntrackedHint(import, bytes) == 0, "a rewatched import still reads as unwatched");
+    RequireRewatchedStores(import, bytes);
+}
+
+void CheckRewatchUnalignedImport() {
+    constexpr std::size_t offset = 0x1000;
+    constexpr std::size_t bytes = 0xc4000;
+    constexpr std::size_t committed = 0xc8000;
+    ImportFixture fixture(13 * Block, committed);
+    const auto import = fixture.Base() + offset;
+    UnwatchImport(import, bytes);
+    PrintPageState("page past an import at block offset 0x1000", fixture.memory + committed);
+    Rewatch(BlockSpan(import, bytes));
+    Require(!Watched(import, bytes), "the 64 KiB span past the committed pages around an import returned to the write watch");
+    Rewatch(PageSpan(import, bytes));
+    Require(Watched(import, bytes), "a settled import that does not start on a block did not return to the write watch");
+    Require(!Watched(fixture.Base(), offset) && !Watched(import + bytes, 4096), "rewatching an import returned pages outside it");
+    RequireRewatchedStores(import, bytes);
+}
+
+void CheckRewatchImportBesideUnwatchedImport() {
+    constexpr std::size_t bytes = 0xc4000;
+    constexpr std::size_t otherBytes = 0x1c000;
+    ImportFixture fixture(14 * Block, 14 * Block);
+    const auto import = fixture.Base();
+    const auto other = import + bytes;
+    UnwatchImport(import, bytes);
+    UnwatchImport(other, otherBytes);
+    Rewatch(PageSpan(import, bytes));
+    Require(Watched(import, bytes), "an import sharing its last block with another unwatched import did not return to the write watch");
+    Require(!Watched(other, 4096) && !Watched(import + 13 * Block - 4096, 4096) && !Watched(other + otherBytes - 4096, 4096), "rewatching an import returned another unwatched import's pages in its last block");
+    Require(UntrackedHint(other, otherBytes) != 0, "an unwatched import beside a rewatched one does not read as untracked");
+    RequireRewatchedStores(import, bytes);
+    Rewatch(PageSpan(other, otherBytes));
+    Require(Watched(import, bytes + otherBytes), "rewatching the second import did not return both to the write watch");
+}
+
+void CheckRewatchImportPages() {
+    CheckRewatchWholeBlockImport();
+    CheckRewatchImportTail();
+    CheckRewatchUnalignedImport();
+    CheckRewatchImportBesideUnwatchedImport();
 }
 
 void CheckRewatchedDirectMemoryComparedWhenShared() {
@@ -1130,11 +1258,18 @@ std::uint64_t ChildHostHole() {
     return (arena + arenaBytes / 2) & ~(std::uint64_t{Block} - 1);
 }
 
-void CheckHostHoleInChild() {
+std::uint64_t ProbedHostHole() {
+    std::uintptr_t arena = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaBytes);
+    return arena + ((arenaBytes / 2) & ~((std::uint64_t{1} << 32u) - 1));
+}
+
+void CheckHostHoleInChild(const wchar_t* mode, std::uint64_t hole) {
     std::array<wchar_t, 32768> executable{};
     const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     Require(length != 0 && length < executable.size(), "cannot name the test executable");
-    const std::wstring command = L"\"" + std::wstring(executable.data(), length) + L"\" " + HostHoleMode;
+    const std::wstring command = L"\"" + std::wstring(executable.data(), length) + L"\" " + mode;
     std::vector<wchar_t> commandLine(command.begin(), command.end());
     commandLine.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -1145,7 +1280,7 @@ void CheckHostHoleInChild() {
     startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     PROCESS_INFORMATION process{};
     Require(CreateProcessW(executable.data(), commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &process) != 0, "cannot create the host-hole child");
-    const bool reserved = VirtualAllocEx(process.hProcess, reinterpret_cast<void*>(ChildHostHole()), Block, MEM_RESERVE, PAGE_NOACCESS) != nullptr;
+    const bool reserved = VirtualAllocEx(process.hProcess, reinterpret_cast<void*>(hole), Block, MEM_RESERVE, PAGE_NOACCESS) != nullptr;
     const bool resumed = reserved && ResumeThread(process.hThread) != static_cast<DWORD>(-1);
     const bool exited = resumed && WaitForSingleObject(process.hProcess, 60000) == WAIT_OBJECT_0;
     if (!exited) {
@@ -1381,7 +1516,7 @@ void CheckImportWindow() {
         bytes[0x100] = 0x11;
         bytes[Block + 0x2000] = 0x22;
         return true;
-    }), "the import window import failed");
+    }, true, false), "the import window import failed");
     Require(Watched(base, 3 * Block), "an import window left its range unwatched");
     const std::array<std::uint64_t, 3> generations{synced, synced, synced};
     std::array<std::uint8_t, 3> changed{};
@@ -1593,6 +1728,80 @@ void CheckUnwatchedImport() {
 #endif
 }
 
+struct HookCall {
+    std::uint64_t address;
+    std::size_t bytes;
+    bool watched;
+};
+
+std::vector<HookCall> hookCalls;
+std::uint64_t hookProbe = 0;
+std::size_t hookProbeBytes = 0;
+
+void RecordHook(std::uint64_t address, std::size_t bytes) {
+    hookCalls.push_back({address, bytes, Watched(hookProbe, hookProbeBytes)});
+}
+
+struct RecordedHook {
+    RecordedHook() {
+        hookCalls.clear();
+        SetUnwatchHook(&RecordHook);
+    }
+    ~RecordedHook() { SetUnwatchHook(nullptr); }
+    RecordedHook(const RecordedHook&) = delete;
+    RecordedHook& operator=(const RecordedHook&) = delete;
+};
+
+void RequireHookOver(std::uint64_t address, std::size_t bytes, const std::string& path) {
+    Require(hookCalls.size() == 1, path + " did not run the unwatch hook once");
+    const auto& call = hookCalls.front();
+    Require(call.address <= address && address + bytes <= call.address + call.bytes, path + " gave the unwatch hook a range that misses its own");
+    Require(call.watched, path + " ran the unwatch hook after its range left the write watch");
+}
+
+void CheckUnwatchHooks() {
+    void* memory = AllocateWatched(8 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 8 * Block);
+    Require(CollectWritesUncached(base, 8 * Block) != 0, "the hooked block is not collected");
+    const RecordedHook recorded;
+    hookProbe = base;
+    hookProbeBytes = Block;
+    Unwatch(base, Block);
+    RequireHookOver(base, Block, "Unwatch");
+    Require(!Watched(base, Block), "Unwatch left its range watched");
+
+    hookCalls.clear();
+    hookProbe = base + Block;
+    bool hookedBeforeImport = false;
+    Require(ImportWatched(base + Block, Block, [&] {
+        hookedBeforeImport = hookCalls.size() == 1;
+        return true;
+    }, false), "an import that does not stay watched failed");
+    RequireHookOver(base + Block, Block, "an import that does not stay watched");
+    Require(hookedBeforeImport, "an import that does not stay watched ran the unwatch hook after the import");
+    Require(!Watched(base + Block, Block), "an import that does not stay watched left its range watched");
+
+    hookCalls.clear();
+    Require(ImportWatched(base + 2 * Block, Block, [] { return true; }), "an import that stays watched failed");
+    Require(hookCalls.empty() && Watched(base + 2 * Block, Block), "an import whose page walk vouched for its pages ran the unwatch hook or gave up its range");
+
+#ifndef _WIN32
+    hookCalls.clear();
+    const auto late = base + 4 * Block;
+    hookProbe = late;
+    bool hookedBeforeLoss = false;
+    Require(ImportWatched(late, 3 * Block, [&] {
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(late + 2 * Block), Block);
+        hookedBeforeLoss = !hookCalls.empty();
+        return true;
+    }), "an import whose range lost a block during the import failed");
+    RequireHookOver(late, 3 * Block, "an import whose page walk failed after the import");
+    Require(!hookedBeforeLoss, "an import whose page walk failed after the import ran the unwatch hook before it");
+    Require(!Watched(late, Block), "an import whose page walk failed after the import left its range watched");
+#endif
+}
+
 class PartlyCommitted {
 public:
     static constexpr std::size_t Bytes = 4 * Block;
@@ -1756,7 +1965,7 @@ void CheckAdoptLatestEpoch() {
 int main() {
     try {
 #ifdef _WIN32
-        if (std::wstring_view(GetCommandLineW()).ends_with(L"--metadata-commit")) {
+        if (std::wstring_view(GetCommandLineW()).ends_with(MetadataCommitMode)) {
             return CheckMetadataCommit() ? 0 : 77;
         }
 #endif
@@ -1771,6 +1980,10 @@ int main() {
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
             CheckResidentDirectMappingReuse();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(RewatchImportPagesMode)) {
+            CheckRewatchImportPages();
             return 0;
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(RewatchedSharedMode)) {
@@ -1807,7 +2020,8 @@ int main() {
         CheckPrivateMappingReuse();
         CheckRewatch();
         CheckUntrackedHint();
-        CheckHostHoleInChild();
+        CheckHostHoleInChild(HostHoleMode, ChildHostHole());
+        CheckHostHoleInChild(MetadataCommitMode, ProbedHostHole());
         CheckFailedCollectUnwatch();
 #endif
         CheckVersionRanges();
@@ -1819,6 +2033,7 @@ int main() {
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();
+        CheckUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();
     } catch (const std::exception& error) {
