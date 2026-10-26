@@ -119,6 +119,18 @@ def main():
         assert any(struct.unpack_from("<I", elf, 64 + index * 56)[0] == PT_TLS
                    for index in range(struct.unpack_from("<H", elf, 0x38)[0])), "PT_TLS must be kept"
 
+        for value, size in ((TLS_MEMSZ - 4, 4), (TLS_MEMSZ, 0), (TLS_MEMSZ + 1, 0), (TLS_MEMSZ - 1, 2), (0xffffffffffffffff, 1)):
+            for flags, target in TARGETS.items():
+                data = image([(0x1000, TPOFF64, TLS_SYMBOL, 0)])
+                struct.pack_into("<QQ", data, 0x4900 + TLS_SYMBOL * 24 + 8, value, size)
+                result, output = relink(relinker, directory, f"tls-bounds-{target}-{value}-{size}", data, *flags)
+                if value <= TLS_MEMSZ and size <= TLS_MEMSZ - value:
+                    assert result.returncode == 0 and output.exists(), (target, value, size, result.stderr)
+                else:
+                    assert result.returncode == 2 and "TLS symbol exceeds TLS segment" in result.stderr, (
+                        target, value, size, result.returncode, result.stderr)
+                    assert not output.exists()
+
         result, output = relink(relinker, directory, "windows", image(local), "--windows")
         assert result.returncode == 0, (result.stdout, result.stderr)
         pe = output.read_bytes()

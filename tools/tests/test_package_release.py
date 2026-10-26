@@ -629,6 +629,78 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
             self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
             self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
 
+    def test_prepare_notes_accepts_utf8_bom(self):
+        notes = "# Release v1.0.0\n"
+        source = "\ufeff" + json.dumps({"body": notes})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_path = directory / "source.json"
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            source_path.write_text(source, encoding="utf-8")
+            prepare_release_notes.prepare_notes(source_path, body_path, full_path)
+            self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
+            self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
+
+    def test_main_with_explicit_argv(self):
+        notes = "# Release v1.0.0\n"
+        source = json.dumps({"body": notes})
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_path = directory / "source.json"
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            source_path.write_text(source, encoding="utf-8")
+            result = prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+            self.assertEqual(result, 0)
+            self.assertEqual(body_path.read_text(encoding="utf-8"), notes)
+            self.assertEqual(full_path.read_text(encoding="utf-8"), notes)
+
+    def test_main_reports_error_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            input_dir = directory / "input_dir"
+            input_dir.mkdir()
+            body_path = directory / "body.md"
+            full_path = directory / "full.md"
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                prepare_release_notes.main(["--input", str(input_dir), "--body", str(body_path), "--full", str(full_path)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn(input_dir.name, stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, s):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(prepare_release_notes.sys, "stdout", out), patch.object(prepare_release_notes.sys, "stderr", err):
+            with tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                source_path = directory / "source.json"
+                body_path = directory / "body.md"
+                full_path = directory / "full.md"
+                source_path.write_text(json.dumps({"body": "notes"}), encoding="utf-8")
+                result = prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+                self.assertEqual(result, 0)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
     def test_body_over_limit_without_whats_changed_is_returned_unchanged(self):
         notes = "# Release\n\n## Details\n\n" + "x" * (prepare_release_notes.BODY_LIMIT + 1)
         result = prepare_release_notes.release_body(notes)

@@ -276,6 +276,8 @@ def pe_headers(path, data):
 def pe_exports(path, data):
     to_offset, directory, _ = pe_headers(path, data)
     rva, size = unpack("<II", data, directory, path, "export data directory")
+    if not rva and not size:
+        return set()
     if not rva or size < 40:
         raise AuditError(f"{path}: PE file has no export table")
 
