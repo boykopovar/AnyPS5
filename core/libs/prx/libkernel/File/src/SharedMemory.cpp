@@ -129,7 +129,10 @@ bool IsHostSharedMemoryDescriptor(int descriptor) {
     if (::fcntl(descriptor, F_GETPATH, objectPath) != 0) return false;
     const std::string_view path(objectPath);
     const auto slash = path.rfind('/');
-    return slash != std::string_view::npos && path.substr(slash + 1).starts_with("anyps5-shm-");
+    if (slash == std::string_view::npos || !path.substr(slash + 1).starts_with("anyps5-shm-")) return false;
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
+    return !error && std::string_view(objectPath, slash) == directory.string();
 #else
     (void)descriptor;
     return false;
@@ -614,7 +617,7 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     const auto hostName = NamedHostName(path, validationError);
     if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
 #ifdef __APPLE__
-    NotImplemented_nid_no_patch(__func__);
+    NotImplemented_nid_no_patch("shm_open");
 #endif
     HostShmLock namespaceLock;
     if (namespaceLock.Error() != 0) {
@@ -1061,7 +1064,7 @@ extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
     const auto hostName = NamedHostName(path, validationError);
     if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
 #ifdef __APPLE__
-    NotImplemented_nid_no_patch(__func__);
+    NotImplemented_nid_no_patch("shm_unlink");
 #endif
     HostShmLock namespaceLock;
     if (namespaceLock.Error() != 0) {
