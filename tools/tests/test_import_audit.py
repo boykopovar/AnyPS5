@@ -1947,6 +1947,14 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<II", image, 0x58 + 120, 0, 0)
         self.assertEqual(import_audit.pe_imports(Path("lib.prx"), image), set())
 
+    def test_pe_directory_count_cannot_extend_past_optional_header(self):
+        image = bytearray(build_pe_with_imports(["KERNEL32.dll"], []))
+        struct.pack_into("<H", image, 0x40 + 20, 120)
+        image[0xd0:0xd0 + 120] = image[0x148:0x148 + 120]
+        struct.pack_into("<II", image, 0xd0, 0x1000, 40)
+        with self.assertRaisesRegex(import_audit.AuditError, "declares 16 data directories.*holds only 1"):
+            import_audit.pe_imports(Path("lib.prx"), image)
+
     def test_pe_import_table_must_terminate(self):
         image = bytearray(build_pe_with_imports(["libSceIme.prx"], ["alpha"]))
         struct.pack_into("<I", image, 0x58 + 124, 20)
