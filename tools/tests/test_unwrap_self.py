@@ -90,6 +90,53 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_unsupported_inner_elf_machines_are_refused(self):
+        for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):
+            with self.subTest(machine=machine):
+                container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                struct.pack_into("<H", container, ELF_HEADER_OFFSET + 0x12, machine)
+                with self.assertRaises(unwrap_self.Refused) as refused:
+                    unwrap_self.parse_elf(container)
+                self.assertEqual(str(refused.exception), f"unsupported inner ELF machine {machine} (expected 62)")
+
+    def test_invalid_inner_elf_header_sizes_are_refused(self):
+        for size in (0, 52, 63, 65, 0x4000, 0xFFFF):
+            with self.subTest(size=size):
+                container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                struct.pack_into("<H", container, ELF_HEADER_OFFSET + 0x34, size)
+                with self.assertRaises(unwrap_self.Refused) as refused:
+                    unwrap_self.parse_elf(container)
+                self.assertEqual(str(refused.exception), f"invalid inner ELF header size {size} (expected 64)")
+
+    def test_invalid_inner_elf_header_metadata_preserves_output(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for offset, value, message in ((0x12, 0, "unsupported inner ELF machine 0 (expected 62)"),
+                                       (0x12, 0x3E00, "unsupported inner ELF machine 15872 (expected 62)"),
+                                       (0x34, 0, "invalid inner ELF header size 0 (expected 64)"),
+                                       (0x34, 0x4000, "invalid inner ELF header size 16384 (expected 64)")):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, value=value, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<H", container, ELF_HEADER_OFFSET + offset, value)
+                    source.write_bytes(container)
+                    if previous is None:
+                        output.unlink(missing_ok=True)
+                    else:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"FAIL: {source}: {message}", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(set(directory.iterdir()), before)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
     def test_output_aliases_cannot_replace_the_input_container(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         source = Path(self.directory) / "input.self"

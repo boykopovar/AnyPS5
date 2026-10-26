@@ -234,10 +234,14 @@ struct PackedJob {
 };
 static_assert(sizeof(PackedJob) == 32);
 
-int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
+int JobRejected(const AjmBatchInfo* info, const JobHeader& header) {
     if (!info || !info->p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (header.inputCount > 0xffu || header.outputCount > 0xffu || header.parameterSize > sizeof(header.parameters) || header.sidebandSize > 0xffffffffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    if ((header.inputCount && !inputs) || (header.outputCount && !outputs)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
+    return 0;
+}
+
+int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
+    if (const int rejected = JobRejected(info, header)) return rejected;
     const std::size_t parameterBytes = (header.parameterSize + 7u) & ~std::size_t{7};
     const std::size_t bytes = sizeof(PackedJob) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer) + parameterBytes;
     if (info->offset > info->size || bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
@@ -252,6 +256,12 @@ int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs,
     if (header.parameterSize) std::memcpy(cursor, header.parameters, header.parameterSize);
     info->offset += bytes;
     return 0;
+}
+
+int CheckedAppend(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
+    if (const int rejected = JobRejected(info, header)) return rejected;
+    if ((header.inputCount && !inputs) || (header.outputCount && !outputs)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
+    return Append(info, header, inputs, outputs);
 }
 
 JobHeader MakeHeader(JobKind kind, std::uint32_t instance, void* sideband, std::uint64_t sidebandSize) {
@@ -2006,7 +2016,7 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
     header.flags = flags;
     header.inputCount = sideband_input_size != 0 ? 1 : 0;
     const AjmBuffer input{const_cast<void*>(sideband_input), sideband_input_size};
-    return Append(info, header, &input, nullptr);
+    return CheckedAppend(info, header, &input, nullptr);
 }
 
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
@@ -2014,7 +2024,7 @@ int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint
     header.flags = flags;
     header.inputCount = static_cast<std::uint32_t>(input_buffers_num);
     header.outputCount = static_cast<std::uint32_t>(output_buffers_num);
-    return Append(info, header, input_buffers, output_buffers);
+    return CheckedAppend(info, header, input_buffers, output_buffers);
 }
 
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size) {
@@ -2072,7 +2082,7 @@ int APS5_VABI sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, 
 
 int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result) {
     (void)interval;
-    return Append(info, MakeHeader(JobKind::GetStatistics, 0, result, 24), nullptr, nullptr);
+    return CheckedAppend(info, MakeHeader(JobKind::GetStatistics, 0, result, 24), nullptr, nullptr);
 }
 
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {

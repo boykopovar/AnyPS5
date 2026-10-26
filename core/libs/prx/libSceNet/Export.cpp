@@ -99,6 +99,7 @@ constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
 constexpr int NET_EACCES = 13;
 constexpr int NET_EFAULT = 14;
+constexpr int NET_EBUSY = 16;
 constexpr int NET_EINVAL = 22;
 constexpr int NET_ENOTTY = 25;
 constexpr int NET_ENOSPC = 28;
@@ -125,8 +126,14 @@ constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ENOTINIT = 200;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
+constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
 constexpr int NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION = 0x1;
 constexpr int NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION = 0x2;
+constexpr std::uint32_t NET_IFF_UP = 0x1;
+constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
+constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
+constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
+constexpr std::uint32_t NET_IF_LO0 = 0;
 
 constexpr int NET_AF_INET = 2;
 constexpr int NET_AF_INET6 = 28;
@@ -353,6 +360,8 @@ int g_next_epoll = 0x4000;
 int g_next_pool = 1;
 int g_next_resolver = 0x100;
 bool g_net_inited = false;
+bool g_net_init_param_set = false;
+std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
 
 int* errno_slot() {
@@ -2584,7 +2593,12 @@ int APS5_VABI sceNetGetSystemMemInfo(NetSystemMemoryInfo* info, std::uint32_t fl
 }
 
 int APS5_VABI sceNetInitParam(const NetInitializeParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_net_init_param_set) return fail(NET_EBUSY);
+    if (parameter == nullptr) return fail(NET_EINVAL);
+    std::memcpy(g_net_init_param.data(), parameter, g_net_init_param.size());
+    g_net_init_param_set = true;
+    g_net_inited = true;
     return 0;
 }
 
@@ -2787,7 +2801,10 @@ int APS5_VABI sceNetShowRoute6ForBuffer(char* buffer, std::int32_t bufferSize, s
 }
 
 int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (flags == nullptr) return NET_CONFIG_ERROR_NULL_FLAGS;
+    if (interfaceId >= 10) return -1;
+    if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
+    *flags = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
     return 0;
 }
 

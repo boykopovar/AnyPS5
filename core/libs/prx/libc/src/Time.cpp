@@ -604,7 +604,7 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {
     if (const GuestTm* local = localtime_nid_postfix(timer)) return asctime_nid_postfix(local);
-    static char unknown[26];
+    static thread_local char unknown[26];
     std::memcpy(unknown, "??? ??? ?? ??:??:?? ????\n", sizeof(unknown));
     errno = EINVAL;
     return unknown;

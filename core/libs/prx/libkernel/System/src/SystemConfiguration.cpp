@@ -5,7 +5,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
-#include "prx/libkernel/System/include/HostCpu.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
@@ -51,9 +50,10 @@ struct SystemString {
 
 constexpr SystemString SystemStrings[] = {
     {{1, 1}, "kern.ostype", "FreeBSD"},
-    {{1, 2}, "kern.osrelease", "11.4-RELEASE"},
+    {{1, 2}, "kern.osrelease", "0.0-prototype"},
     {{1, 4}, "kern.version", "FreeBSD 11.4-RELEASE\n"},
-    {{1, 10}, "kern.hostname", "AnyPS5"},
+    {{1, 10}, "kern.hostname", ""},
+    {{6, 2}, "hw.model", "100-000001020                                  "},
     {{6, 1}, "hw.machine", "amd64"},
 };
 
@@ -64,7 +64,10 @@ struct SystemInteger {
 };
 
 constexpr SystemInteger SystemIntegers[] = {
-    {{1, 24}, "kern.osreldate", 1104001},
+    {{1, 3}, "kern.osrevision", 199506},
+    {{1, 8}, "kern.argmax", 262144},
+    {{1, 18}, "kern.ngroups", 1023},
+    {{1, 24}, "kern.osreldate", 900000},
 };
 
 const SystemString* FindSystemString(const int* name) {
@@ -178,9 +181,13 @@ bool IsUnansweredName(const char* name) {
     static constexpr const char* unanswered[] = {
         "hw.byteorder",
         "hw.cacheline_size",
+        "hw.floatingpoint",
         "hw.machine_arch",
         "hw.usermem",
+        "kern.bootfile",
         "kern.clockrate",
+        "kern.cp_time",
+        "kern.ident",
         "kern.maxfiles",
         "kern.maxfilesperproc",
         "kern.maxproc",
@@ -286,15 +293,6 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         if (processors <= 0) return -1;
         const int value = static_cast<int>(processors);
         return CopyOut(&value, sizeof(value), oldValue, oldLength);
-    }
-    if (nameLength == 2 && name[0] == 6 && name[1] == 2) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static const std::string model = HostCpuModel();
-        if (model.empty()) throw std::runtime_error(std::string(__func__) + ": the host CPU has no CPUID brand string for hw.model");
-        return CopyOut(model.c_str(), model.size() + 1, oldValue, oldLength);
     }
     if (nameLength == 2 && name[0] == 6 && (name[1] == 5 || name[1] == 12)) {
         if (newValue != nullptr) {
@@ -496,10 +494,6 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
     }
     if (std::strcmp(name, "hw.ncpu") == 0) {
         static constexpr int mib[] = {6, 3};
-        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
-    }
-    if (std::strcmp(name, "hw.model") == 0) {
-        static constexpr int mib[] = {6, 2};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "hw.physmem") == 0) {

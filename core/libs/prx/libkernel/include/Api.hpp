@@ -425,6 +425,7 @@ int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char*
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr);
 int APS5_VABI pthread_condattr_init_nid_postfix(PthreadCondattr* attr);
 int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clockId);
+int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId);
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared);
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared);
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);

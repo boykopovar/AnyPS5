@@ -364,6 +364,18 @@ if(BUILD_TESTING)
     add_test(NAME file_identity COMMAND file_identity_tests)
     set_tests_properties(file_identity PROPERTIES TIMEOUT 20)
 
+    add_test_executable(file_reader_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/FileReaderTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+    )
+    target_include_directories(file_reader_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+    )
+    add_test(NAME file_reader_prefix COMMAND file_reader_tests)
+    set_tests_properties(file_reader_prefix PROPERTIES TIMEOUT 20)
+
     add_test_executable(param_json_utf8_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tests/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp)
@@ -620,6 +632,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_tls_thread_pointer.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_bss COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_bss.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_lazy_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_lazy_imports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_lazy_imports PROPERTIES TIMEOUT 30)
         add_test(NAME windows_sparse_load COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_sparse_load.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_icon COMMAND ${Python3_EXECUTABLE}

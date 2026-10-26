@@ -25,7 +25,7 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             if ((plt && type != 7) || (type != 1 && type != 6 && type != 7 && type != 8 && type != 16 && type != 17 && type != 18))
-                throw Domain::RelinkerException("Unsupported Windows relocation type " + std::to_string(type), target);
+                throw Domain::RelinkerException("Relocation type " + std::to_string(type) + " is not supported for this target", target);
             if (target > std::numeric_limits<std::uint64_t>::max() - 8)
                 throw Domain::RelinkerException("Relocation target address overflow", target);
             const auto rva = image.GetRva(target, 8);

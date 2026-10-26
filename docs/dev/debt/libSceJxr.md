@@ -1,10 +1,8 @@
 # libSceJxr technical debt
 
-### Unknown function info
-
-- [PixelFormatLookup](../../../core/libs/prx/libSceJxr/Export.cpp) is listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJxr.c) and was cross-checked against firmware 13.60. Its signature and behaviour remain unverified; the declaration uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.
-
 ### Functional
+
+- [PixelFormatLookup](../../../core/libs/prx/libSceJxr/src/PixelFormatLookup.cpp) uses pinned public jxrlib through a C bridge and a 56-byte LP64 guest record. [BunnyFl reports firmware 13.42 native-PC comparisons](https://github.com/boykopovar/AnyPS5/pull/9954#issuecomment-6406356097): the 68 table entries match public jxrlib, and return values/record fields match across 802 cases repeated three times, except that the module clears padding bytes 28..31 on all 309 successes. This bridge now clears that four-byte range explicitly on success; it does not copy indeterminate C++ padding. This is attributed single-firmware evidence, not an author-run console measurement or proof of the complete Sony ABI/configuration. Module/library versions, other firmware and valid-mode null arguments remain unverified. Modes 0/1 perform forward GUID/reverse TIFF lookup; other modes and misses leave the entire record unchanged. Valid-mode null records and forward null GUIDs remain explicitly unsupported. Success borrows a read-only static GUID while the module is loaded; callers must not free it. Closes when: remaining Sony ABI, version/configuration and invalid-argument behavior are verified by attributable measurements or disassembly
 
 - [PKFree](../../../core/libs/prx/libSceJxr/Export.cpp) (libSceJxr) follows Microsoft's jxrlib [JXRGlue.c](https://github.com/4creators/jxrlib/blob/f7521879862b9085318e814c6157490dd9dbbdb4/jxrgluelib/JXRGlue.c#L53-L62), whose four exported names the module shares: a non-null `ppv` has `*ppv` released with the guest `free` and set to null, and the result is always `WMP_errSuccess` (0) as a 64-bit `ERR` (`long`). That the console's module is built from jxrlib, and that its `PKFree` releases through libc's `free`, is inferred from the export names and not checked against the console's code. Closes when: the console's `PKFree` is disassembled or measured on a PS5
 

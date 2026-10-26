@@ -237,7 +237,7 @@ def subtract(later, earlier):
 
 def window(later, earlier):
     result = Samples()
-    result.headers = {**earlier.headers, **later.headers}
+    result.headers = dict(later.headers)
     for name in ("stacks", "self_counts", "inclusive", "total"):
         setattr(result, name, subtract(getattr(later, name), getattr(earlier, name)))
     return result
