@@ -62,12 +62,9 @@ static bool RejectsData(const std::vector<std::uint8_t>& data) {
     return sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA && Cleared(info);
 }
 
-static void WriteFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& data, std::uintmax_t size) {
-    {
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    }
-    std::filesystem::resize_file(path, size);
+static void WriteFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& data) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
 static void TestParseHeader() {
@@ -112,6 +109,14 @@ static void TestParseHeader() {
     PutBe32(truncated, 0x0c, 40);
     Unit(truncated, 1, 1, 0)[1] = 2;
     Require(RejectsData(truncated));
+
+    auto large = Vag(1, 2);
+    PutBe32(large, 0x0c, 0x92492490);
+    Require(sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x92492490ull, &info) == SCE_NGS2_OK && info.data_size == 0x92492490 && info.num_samples == 0xffffffe0);
+    PutBe32(large, 0x0c, 0x924924a0);
+    RequireThrows([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924a0ull, &info); });
+    PutBe32(large, 0x0c, 0x924924c0);
+    RequireThrows([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924c0ull, &info); });
 }
 
 static void TestParseLoop() {
@@ -167,16 +172,10 @@ static void TestParseFile() {
 
     auto truncated = Vag(1, 2);
     PutBe32(truncated, 0x0c, 80);
-    WriteFile(path, truncated, truncated.size());
+    WriteFile(path, truncated);
     std::memset(&info, 0xff, sizeof(info));
     Require(sceNgs2ParseWaveformFile(guestPath, 0, &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA && Cleared(info));
 
-    PutBe32(truncated, 0x0c, 0x92492490);
-    WriteFile(path, truncated, HeaderSize + 0x92492490ull);
-    Require(sceNgs2ParseWaveformFile(guestPath, 0, &info) == SCE_NGS2_OK && info.data_size == 0x92492490 && info.num_samples == 0xffffffe0);
-    PutBe32(truncated, 0x0c, 0x924924a0);
-    WriteFile(path, truncated, HeaderSize + 0x924924a0ull);
-    RequireThrows([&] { sceNgs2ParseWaveformFile(guestPath, 0, &info); });
     std::filesystem::remove(path);
 }
 
