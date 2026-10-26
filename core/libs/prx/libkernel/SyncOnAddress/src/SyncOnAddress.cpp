@@ -693,6 +693,11 @@ int RwlockLock(UserRwlock* rwlock, bool writer, std::uint64_t operationFlags, co
         const std::uint32_t left = blocked.fetch_sub(1) - 1;
         if (left == 0 && (writer || woken)) {
             ClearRwlockBits(rwlock, waiterBit);
+            if (blocked.load() != 0) {
+                std::uint32_t current = state.load();
+                while ((current & waiterBit) == 0 && !state.compare_exchange_weak(current, current | waiterBit)) {
+                }
+            }
         }
         if (!woken) {
             return GUEST_ETIMEDOUT;

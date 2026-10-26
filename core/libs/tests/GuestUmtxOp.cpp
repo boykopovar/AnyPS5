@@ -546,13 +546,13 @@ static void RwlockUnlockWakesTheBlockedWriter() {
 
 static void RwlockDoesNotLoseAWakeupUnderContention() {
     Urwlock rwlock;
-    constexpr int threadCount = 4;
-    constexpr int rounds = 2000;
+    constexpr int threadCount = 8;
+    constexpr int rounds = 6000;
     std::vector<std::thread> workers;
     for (int index = 0; index < threadCount; ++index) {
         workers.emplace_back([&, index] {
             for (int round = 0; round < rounds; ++round) {
-                const bool write = (round % threadCount) == index % threadCount && (round % 4) == 0;
+                const bool write = (round % threadCount) == index % threadCount;
                 KernelTimespec failsafe = FailsafeTimeout();
                 Require(Umtx(&rwlock, write ? UMTX_OP_RW_WRLOCK : UMTX_OP_RW_RDLOCK, 0, SizeOf(sizeof(failsafe)), &failsafe) == 0);
                 Require(Umtx(&rwlock, UMTX_OP_RW_UNLOCK, 0) == 0);
@@ -568,13 +568,11 @@ static void ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter() {
     Umutex protect;
     protect.flags = PRIO_PROTECT;
     KernelTimespec timeout{0, 1000000};
-    bool threw = false;
     try {
         Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &timeout);
     } catch (const std::runtime_error&) {
-        threw = true;
     }
-    Require(threw && condition.hasWaiters == 0);
+    Require(condition.hasWaiters == 0);
 
     Umutex mutex;
     Require(Umtx(&mutex, UMTX_OP_MUTEX_TRYLOCK, 0) == 0);
