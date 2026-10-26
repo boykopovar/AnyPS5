@@ -1425,14 +1425,20 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
     ValidateDepthBounds(context, state);
-    Require(!context.depthRangeUnrestricted, "the depth bounds test without the depthBounds feature is emulated only where stored depth stays in [0, 1]");
-    Require(state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT, "the depth bounds test on a normalized depth target needs the depthBounds feature");
-    Require(!state.depthTest && !state.depthWrite, "the depth bounds test with depth testing needs the depthBounds feature");
-    Require(!pixel.posZ && !pixel.depthExportEnable, "the depth bounds test from a pixel program that reads or exports depth needs the depthBounds feature");
+    const bool floatDepth = state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT;
     const auto keepsOnFail = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
-    Require(!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)), "the depth bounds test with a stencil test that writes on a failed test needs the depthBounds feature");
     const bool upper = state.minDepthBounds <= 0.0f;
-    Require(upper || state.maxDepthBounds >= 1.0f, "the depth bounds test with both bounds inside (0, 1) needs the depthBounds feature");
+    const bool oneSided = (upper || state.maxDepthBounds >= 1.0f) && !context.depthRangeUnrestricted && floatDepth && !state.depthTest && !state.depthWrite && !pixel.posZ && !pixel.depthExportEnable && (!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)));
+    if (!oneSided) {
+        Require(floatDepth, "the depth bounds test on a normalized depth target needs the depthBounds feature");
+        Require(state.depth->samples == 1u, "the depth bounds test on a multisampled depth target needs the depthBounds feature");
+        Require(!state.depthWrite, "the depth bounds test in a draw that writes depth needs the depthBounds feature");
+        const auto keeps = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
+        Require(!state.stencilTest || (keeps(state.stencilFront) && keeps(state.stencilBack)), "the depth bounds test in a draw that writes stencil needs the depthBounds feature");
+        state.depthBoundsTest = false;
+        state.depthBoundsDiscard = true;
+        return;
+    }
     const float bound = upper ? state.maxDepthBounds : state.minDepthBounds;
     state.depthBoundsTest = false;
     state.depthTest = true;

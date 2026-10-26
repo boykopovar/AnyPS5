@@ -578,6 +578,23 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
 }
 
+void AddDepthBoundsSource(ShaderInfo& info) {
+    if (info.runtimeImageModes.size() != info.images.size() || std::ranges::any_of(info.images, [](const ImageResource& image) { return image.targetMerge || image.depthBoundsSource; })) {
+        return Fail("the depth bounds source image cannot join the prepared images");
+    }
+    ImageResource image;
+    image.source = std::numeric_limits<std::uint32_t>::max();
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    image.fmaskCompatible = false;
+    image.depthBoundsSource = true;
+    info.images.push_back(image);
+    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
+}
+
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
     for (auto& sampler : info.samplers) {
         sampler.uses = 0;
@@ -651,6 +668,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
     CollectBuiltinInputs(program, next);
     CollectOutputs(program, inputInfo, next);
     if (program.Resources().stage == IrShaderStage::Pixel && !inputInfo.pixel->merges.empty()) AddTargetMerge(*inputInfo.pixel, next);
+    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel->depthBoundsDiscard) AddDepthBoundsSource(next);
     if ((program.Resources().stage == IrShaderStage::Vertex || program.Resources().stage == IrShaderStage::Mesh) && inputInfo.vertex != nullptr && inputInfo.vertex->pointList) AddOutput(next, StageOutputKind::PointSize, 0, 0, "gl_PointSize");
     CollectSamplerUses(program, next);
     program.Info() = std::move(next);

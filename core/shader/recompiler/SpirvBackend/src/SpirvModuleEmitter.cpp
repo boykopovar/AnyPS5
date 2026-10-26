@@ -574,6 +574,63 @@ void MergeBlendTarget(SpirvEmitterState& state, std::size_t entry, std::uint32_t
     state.module.AddFunction(spv::OpStore, state.mergePendingVariables[entry], ConstantU32(state, 1u));
 }
 
+bool PixelDemoteAvailable(const SpirvEmitterState& state) {
+    const bool demoteCapability = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDemoteToHelperInvocation)) != state.supportedCapabilities.end();
+    const bool demoteCore = state.spirvVersion >= 0x00010600u;
+    const bool demoteExtension = std::find(state.supportedExtensions.begin(), state.supportedExtensions.end(), "SPV_EXT_demote_to_helper_invocation") != state.supportedExtensions.end();
+    return demoteCapability && (demoteCore || demoteExtension);
+}
+
+void EmitDiscardIf(SpirvEmitterState& state, std::uint32_t condition, bool demote) {
+    const auto killLabel = state.module.AllocateId();
+    const auto mergeLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, condition, killLabel, mergeLabel);
+    EmitLabel(state, killLabel);
+    if (demote) {
+        state.module.EmitCapability(spv::CapabilityDemoteToHelperInvocation);
+        if (state.spirvVersion < 0x00010600u) state.module.EmitExtension("SPV_EXT_demote_to_helper_invocation");
+        state.module.AddFunction(spv::OpDemoteToHelperInvocation);
+        state.module.AddFunction(spv::OpBranch, mergeLabel);
+    } else {
+        state.module.AddFunction(spv::OpKill);
+    }
+    EmitLabel(state, mergeLabel);
+}
+
+void EmitDepthBoundsDiscard(SpirvEmitterState& state) {
+    const auto& images = state.program.Info().images;
+    const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.depthBoundsSource; });
+    if (image == images.end()) FailEmit("the depth bounds source image was not collected");
+    if (InputVariableForKind(state, StageInputKind::FragCoord) == 0u) FailEmit("the depth bounds inputs were not declared");
+    const auto& layout = state.program.Metadata().bindings;
+    if (layout.depthBoundsDword == PushData::NoStart || state.pushConstantVariable == 0u) FailEmit("the depth bounds push constants were not declared");
+    const auto position = [&](std::uint32_t component) { return Unary(state, spv::OpConvertFToU, TypeU32(state), Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component))); };
+    const auto x = position(0u);
+    const auto y = position(1u);
+    const auto coord = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2u), coord, x, y);
+    const auto texel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, IrTextureNumericClass::Float, 4u), texel, LoadSampledImageDescriptor(state, static_cast<std::uint32_t>(image - images.begin())), coord, spv::ImageOperandsLodMask, ConstantU32(state, 0u));
+    const auto stored = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), stored, texel, 0u);
+    const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::DepthBoundsOffset, layout.depthBoundsDword);
+    const auto bound = [&](std::uint32_t word) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), word == 0u ? offset : Binary(state, spv::OpIAdd, TypeU32(state), offset, ConstantU32(state, word)));
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+        return Unary(state, spv::OpBitcast, TypeF32(state), value);
+    };
+    const auto below = Binary(state, spv::OpFOrdLessThan, TypeBool(state), stored, bound(0u));
+    const auto above = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), stored, bound(1u));
+    const bool demote = PixelDemoteAvailable(state);
+    if (!demote && state.requirements.neighbourLaneReads) {
+        throw std::runtime_error("the emulated depth bounds test leaves helper pixels whose lanes the pixel program reads (implicit-LOD sampling, whole-quad mode or cross-lane reads), which needs the device's shaderDemoteToHelperInvocation");
+    }
+    EmitDiscardIf(state, Binary(state, spv::OpLogicalOr, TypeBool(state), below, above), demote);
+}
+
 void MergeColorTarget(SpirvEmitterState& state, std::size_t entry, std::uint32_t color) {
     const auto& merge = PixelInfo(state).merges[entry];
     if (merge.blend.enabled) return MergeBlendTarget(state, entry, color);
@@ -1882,32 +1939,17 @@ void EmitProgram(SpirvEmitterState& state) {
             state.quadSampleCoverage = Unary(state, spv::OpBitcast, TypeI32(state), covered);
         }
         const auto mask = static_cast<std::uint32_t>(pixel.quadPixelMask);
-        const bool demoteCapability = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDemoteToHelperInvocation)) != state.supportedCapabilities.end();
-        const bool demoteCore = state.spirvVersion >= 0x00010600u;
-        const bool demoteExtension = std::find(state.supportedExtensions.begin(), state.supportedExtensions.end(), "SPV_EXT_demote_to_helper_invocation") != state.supportedExtensions.end();
-        const bool demote = demoteCapability && (demoteCore || demoteExtension);
+        const bool demote = PixelDemoteAvailable(state);
         if (!demote && state.requirements.neighbourLaneReads) {
             throw std::runtime_error("the PA_SC_AA_MASK quad pixel mask " + std::to_string(mask) + " leaves helper pixels whose lanes the pixel program reads (implicit-LOD sampling, whole-quad mode or cross-lane reads), which needs the device's shaderDemoteToHelperInvocation");
         }
         const auto uncovered = state.module.AllocateId();
         state.module.AddFunction(spv::OpIEqual, TypeBool(state), uncovered, bit, ConstantU32(state, 0u));
         state.quadPixelUncovered = uncovered;
-        const auto killLabel = state.module.AllocateId();
-        const auto mergeLabel = state.module.AllocateId();
-        state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, uncovered, killLabel, mergeLabel);
-        EmitLabel(state, killLabel);
-        if (demote) {
-            state.module.EmitCapability(spv::CapabilityDemoteToHelperInvocation);
-            if (!demoteCore) state.module.EmitExtension("SPV_EXT_demote_to_helper_invocation");
-            state.module.AddFunction(spv::OpDemoteToHelperInvocation);
-            state.module.AddFunction(spv::OpBranch, mergeLabel);
-        } else {
-            state.module.AddFunction(spv::OpKill);
-        }
-        EmitLabel(state, mergeLabel);
+        EmitDiscardIf(state, uncovered, demote);
         if (state.quadSampleCoverage != 0u) StoreCoverage(state, ConstantI32(state, -1));
     }
+    if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->depthBoundsDiscard) EmitDepthBoundsDiscard(state);
     if (program.BlockOrder().empty()) {
         FlushColorTargetMerge(state);
         if (OrderedPixelShader(state)) {

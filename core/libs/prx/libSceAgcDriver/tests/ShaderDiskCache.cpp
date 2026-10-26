@@ -175,6 +175,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
+    require(left.depthBoundsDword == right.depthBoundsDword, prefix + "depth bounds push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
         const auto& a = left.fragmentParameters[i];
@@ -288,6 +289,7 @@ RecompileResult sampleResult() {
     result.stencilReplaySafe = true;
     result.bdaWrites = true;
     result.stencilReferenceDword = 23u;
+    result.depthBoundsDword = 24u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
     result.barycentricEmulation = {true, false, true};
@@ -352,6 +354,7 @@ CompiledVariant sampleVariant() {
     image.flatVolumeLineCompatible = false;
     image.dimensionQueryOnly = false;
     image.sampledOnly = false;
+    image.depthBoundsSource = true;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
     image.optionalDescriptor = true;
@@ -389,6 +392,7 @@ CompiledVariant sampleVariant() {
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
     info.bindings.stencilReferenceDword = 23u;
+    info.bindings.depthBoundsDword = 24u;
     info.bindings.userDataRegisters = {4, 5, 9};
     info.bindings.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}};
     variant.bindings.layout = info.bindings;

@@ -387,6 +387,8 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
         writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
         writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMax));
     }
+    writer.WriteBool(info.depthBoundsDiscard.enabled);
+    for (const std::uint32_t word : info.depthBoundsDiscard.descriptor) writer.WriteU32(word);
 }
 
 ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
@@ -493,6 +495,10 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 49u && info.depthExportEnable) {
         info.depthExportMin = std::bit_cast<float>(reader.ReadU32());
         info.depthExportMax = std::bit_cast<float>(reader.ReadU32());
+    }
+    if (version >= 50u) {
+        info.depthBoundsDiscard.enabled = reader.ReadBool();
+        for (std::uint32_t& word : info.depthBoundsDiscard.descriptor) word = reader.ReadU32();
     }
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
@@ -898,7 +904,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(49u);
+    writer.WriteU32(50u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -948,7 +954,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 49u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

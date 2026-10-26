@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <algorithm>
 #include <spirv/unified1/spirv.hpp>
 
@@ -191,6 +192,10 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    if (product->state.depthBoundsDiscard) {
+        require(std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; }), "the depth bounds test without a pixel program needs the depthBounds feature");
+        product->pixel.depthBoundsDiscard = {true, Graphics::DepthBoundsSourceWords(*product->state.depth)};
+    }
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;

@@ -68,7 +68,7 @@ bool usesGds(const IrProgram& program) {
 
 }
 
-BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay) const {
+BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay, bool depthBounds) const {
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -119,6 +119,11 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");
         next.stencilReferenceDword = offset;
+    }
+    if (depthBounds) {
+        const auto offset = (next.UsesPushData() ? next.ShaderDataDwords() : 0u) + (stencilReplay ? 1u : 0u);
+        if (offset + 2u > pushSize) fail("the depth bounds test in the pixel program requires two unused push constant dwords");
+        next.depthBoundsDword = offset;
     }
 
     if (!info.buffers.empty()) {
@@ -207,6 +212,10 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (stencilReplay) {
         result.pushConstantOffsetBytes = layout.pushConstantOffsetBytes;
         result.pushConstantSizeBytes += sizeof(std::uint32_t);
+    }
+    if (depthBounds) {
+        result.pushConstantOffsetBytes = layout.pushConstantOffsetBytes;
+        result.pushConstantSizeBytes += 2u * sizeof(std::uint32_t);
     }
     return result;
 }

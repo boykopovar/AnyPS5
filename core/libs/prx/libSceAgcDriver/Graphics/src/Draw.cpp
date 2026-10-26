@@ -2218,6 +2218,16 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
+void patchDepthBoundsPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state, std::span<const CompiledShader> shaders) {
+    if (!state.depthBoundsDiscard) return;
+    const auto fragment = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment; });
+    Require(fragment != shaders.end() && fragment->program->depthBoundsDword != 0xffffffffu, "the emulated depth bounds test has no pixel program reading its bounds");
+    const auto offset = fragment->pushConstantOffset + fragment->program->depthBoundsDword * sizeof(std::uint32_t);
+    const std::array<float, 2> bounds{state.minDepthBounds, state.maxDepthBounds};
+    Require(offset <= block.size() - sizeof(bounds), "the depth bounds lie outside the push block");
+    std::memcpy(block.data() + offset, bounds.data(), sizeof(bounds));
+}
+
 void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -2226,6 +2236,7 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
         stages = PushConstantStages(shaders);
     }
     patchDepthRemapPush(block, state);
+    patchDepthBoundsPush(block, state, shaders);
     const auto fragment = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && !shader.program->stencilReferences.empty(); });
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
@@ -2266,6 +2277,7 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
         stages = PushConstantStages(shaders);
     }
     patchDepthRemapPush(block, state);
+    patchDepthBoundsPush(block, state, shaders);
     if (state.stages.tessellation) {
         for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || shader.pushConstantOffset >= PipelinePushSlotBytes || shader.pushConstantOffset + shader.program->pushConstants.size() <= ShaderRecompiler::TessellationLevelPushOffsetBytes, "a stage's push constants overlap the tessellation levels");
         const std::array<float, ShaderRecompiler::TessellationLevelPushBytes / 4> levels{state.stages.minTessellationLevel, state.stages.maxTessellationLevel};

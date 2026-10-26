@@ -4874,17 +4874,53 @@ void DepthBoundsEmulationTests() {
         change(state, context, program);
         expectFailure([&] { AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, program); }, expected);
     };
-    refuses("both bounds inside", [](auto& state, auto&, auto&) { state.minDepthBounds = 0.25f; });
-    refuses("with depth testing", [](auto& state, auto&, auto&) { state.depthTest = true; });
-    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.posZ = true; });
-    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.depthExportEnable = true; });
+    const auto discards = [&](const char* what, auto change) {
+        auto state = base;
+        state.minDepthBounds = 0.0f;
+        state.maxDepthBounds = 0.5f;
+        auto context = emulating;
+        auto program = pixel;
+        change(state, context, program);
+        const auto before = state;
+        AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, program);
+        auto expected = before;
+        expected.depthBoundsTest = false;
+        expected.depthBoundsDiscard = true;
+        Require(state.depthBoundsDiscard && !state.depthBoundsTest && state.depthTest == expected.depthTest && state.depthCompare == expected.depthCompare && state.depthBias == expected.depthBias && state.viewport.minDepth == expected.viewport.minDepth && state.viewport.maxDepth == expected.viewport.maxDepth && state.minDepthBounds == expected.minDepthBounds && state.maxDepthBounds == expected.maxDepthBounds, what);
+    };
+    discards("bounds inside (0, 1) were not tested by the pixel program", [](auto& state, auto&, auto&) { state.minDepthBounds = 0.25f; });
+    discards("a depth bounds test with depth testing was not tested by the pixel program", [](auto& state, auto&, auto&) {
+        state.depthTest = true;
+        state.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    });
+    discards("a pixel program that reads depth did not test the depth bounds itself", [](auto&, auto&, auto& program) { program.posZ = true; });
+    discards("a pixel program that exports depth did not test the depth bounds itself", [](auto&, auto&, auto& program) { program.depthExportEnable = true; });
+    discards("a device with an unrestricted depth range did not test the depth bounds in the pixel program", [](auto&, auto& context, auto&) { context.depthRangeUnrestricted = true; });
+    discards("a stencil test that keeps every value did not test the depth bounds in the pixel program", [](auto& state, auto&, auto&) {
+        state.minDepthBounds = 0.25f;
+        state.stencilTest = true;
+        state.stencilFront.writeMask = state.stencilBack.writeMask = 0xffu;
+    });
     refuses("normalized depth target", [](auto& state, auto&, auto&) { state.depth->format = VK_FORMAT_D16_UNORM; });
-    refuses("stays in [0, 1]", [](auto&, auto& context, auto&) { context.depthRangeUnrestricted = true; });
     refuses("depth bounds outside [0, 1]", [](auto& state, auto&, auto&) { state.maxDepthBounds = 1.5f; });
-    refuses("writes on a failed test", [](auto& state, auto&, auto&) {
+    refuses("multisampled depth target", [](auto& state, auto&, auto&) {
+        state.minDepthBounds = 0.25f;
+        state.depth->samples = 4u;
+    });
+    refuses("writes depth", [](auto& state, auto&, auto&) {
+        state.depthTest = true;
+        state.depthWrite = true;
+    });
+    refuses("writes stencil", [](auto& state, auto&, auto&) {
         state.stencilTest = true;
         state.stencilFront.writeMask = 0xffu;
         state.stencilFront.failOp = VK_STENCIL_OP_REPLACE;
+    });
+    refuses("writes stencil", [](auto& state, auto&, auto&) {
+        state.minDepthBounds = 0.25f;
+        state.stencilTest = true;
+        state.stencilBack.writeMask = 0xffu;
+        state.stencilBack.passOp = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
     });
     auto stencil = base;
     stencil.stencilTest = true;

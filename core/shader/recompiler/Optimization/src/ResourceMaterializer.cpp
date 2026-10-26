@@ -2023,7 +2023,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
-    if (image.targetMerge) return {image};
+    if (image.targetMerge || image.depthBoundsSource) return {image};
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
     std::vector<ImageResource> modes;

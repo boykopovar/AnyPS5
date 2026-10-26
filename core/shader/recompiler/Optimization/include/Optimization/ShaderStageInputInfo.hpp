@@ -208,6 +208,7 @@ struct ShaderPixelInputInfo {
     std::uint8_t mergeSamples = 1;
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;
+    bool depthBoundsDiscard = false;
     std::array<std::uint32_t, 4> sampleOrder{};
     ShaderStageRuntime stage;
 

@@ -2129,7 +2129,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
                         const auto& push = shader.program->pushConstants;
-                        const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
+                        const auto driverDword = std::min(shader.program->stencilReferences.empty() ? 0xffffffffu : shader.program->stencilReferenceDword, shader.program->depthBoundsDword);
+                        const auto pushDataBytes = driverDword == 0xffffffffu ? push.size() : driverDword * sizeof(std::uint32_t);
                         if (pushDataBytes != 0u) {
                             const auto position = shader.program->memoryOffsetDword * 4u + element;
                             Require(position < pushDataBytes, "guest buffer offset lies outside the shader's push constants");
