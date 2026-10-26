@@ -47,7 +47,7 @@ void Driver::dumpPackets(std::span<const std::uint32_t> commands, const std::uin
     }
 }
 
-void Driver::validate(const Submission& submission, const std::uint32_t* guest) {
+void Driver::validate(const Submission& submission, const std::uint32_t* guest, bool report) {
     const std::span<const std::uint32_t> commands = submission.commands;
     const auto queue = submission.queue;
     std::vector<std::size_t> guarded;
@@ -59,10 +59,12 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
             char what[96];
             std::snprintf(what, sizeof(what), "unsupported PM4 packet type: header 0x%08x at DWORD %zu of %zu", header, cursor, commands.size());
 
-            dumpPackets(commands, guest);
-            std::fprintf(stderr, "[gpu] dwords %zu..%zu:", cursor >= 8 ? cursor - 8 : 0, std::min(commands.size(), cursor + 8));
-            for (std::size_t i = cursor >= 8 ? cursor - 8 : 0; i < std::min(commands.size(), cursor + 8); ++i) std::fprintf(stderr, " %08x", commands[i]);
-            std::fprintf(stderr, "\n");
+            if (report) {
+                dumpPackets(commands, guest);
+                std::fprintf(stderr, "[gpu] dwords %zu..%zu:", cursor >= 8 ? cursor - 8 : 0, std::min(commands.size(), cursor + 8));
+                for (std::size_t i = cursor >= 8 ? cursor - 8 : 0; i < std::min(commands.size(), cursor + 8); ++i) std::fprintf(stderr, " %08x", commands[i]);
+                std::fprintf(stderr, "\n");
+            }
             throw std::runtime_error(std::string("AGC driver: ") + what);
         }
         const auto count = Pm4::PacketWords(header);
@@ -76,7 +78,7 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
                 guarded.push_back(end->second);
             }
         } catch (const std::exception& error) {
-            dumpPackets(commands, guest);
+            if (report) dumpPackets(commands, guest);
             throw std::runtime_error("AGC driver: " + Pm4::Name(header) + " at DWORD " + std::to_string(cursor) + ": " + error.what());
         }
         cursor += count;

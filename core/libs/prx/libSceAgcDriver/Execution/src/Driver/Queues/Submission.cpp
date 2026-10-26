@@ -15,6 +15,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -280,9 +281,15 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
     Submission expanded{};
     expanded.queue = submission.queue;
     std::size_t budget = std::size_t{1} << 26u;
-    if (copySegment(expanded, words.data(), words.size(), budget)) return false;
-    validate(expanded, segment.target);
-    readRegisterLists(expanded);
+    try {
+        if (copySegment(expanded, words.data(), words.size(), budget)) return false;
+        validate(expanded, segment.target, false);
+        readRegisterLists(expanded);
+    } catch (const std::exception& error) {
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 8) std::fprintf(stderr, "[gpu] indirect buffer 0x%llx (%zu dwords) changed since its submission but runs as copied: %s\n", static_cast<unsigned long long>(address), segment.words, error.what());
+        return false;
+    }
     const auto inside = [&](std::size_t cursor) { return cursor >= segment.start && cursor < end; };
     if (std::ranges::any_of(submission.flips, [&](const auto& entry) { return inside(entry.first); })) return false;
     {

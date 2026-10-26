@@ -24,6 +24,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -165,6 +166,40 @@ void NestedRewrite(const GuestBlock& block, std::uint32_t marker) {
     Require(seen == marker, "an indirect buffer called from a rewritten COND_INDIRECT_BUFFER ran as it was when the parent was read, not as the dispatch before the call wrote it: the marker is " + std::to_string(seen) + ", expected " + std::to_string(marker));
 }
 
+void InvalidRewrite(const GuestBlock& block) {
+    std::array<std::uint32_t, CommandWords> fillers{};
+    fillers.fill(Filler);
+    std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
+    Store(block, MarkerOffset, 0);
+    Store(block, LabelOffset, 0);
+    Store(block, GateOffset, 0);
+    const auto commands = block.At(CommandsOffset);
+    const auto marker = block.At(MarkerOffset);
+    const auto label = block.At(LabelOffset);
+    const auto gate = block.At(GateOffset);
+    auto words = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    const auto run = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    words.insert(words.end(), run.begin(), run.end());
+    const auto after = Pm4(0x37, {0x500u, Low(label), High(label), 1});
+    words.insert(words.end(), after.begin(), after.end());
+    Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the submission of the invalid rewrite failed");
+    std::vector<std::uint32_t> rewritten{0x00000000u, 0x00002000u};
+    const auto store = Pm4(0x37, {0x500u, Low(marker), High(marker), 1});
+    rewritten.insert(rewritten.end(), store.begin(), store.end());
+    std::memcpy(block.Bytes(CommandsOffset), rewritten.data(), rewritten.size() * sizeof(std::uint32_t));
+    Store(block, GateOffset, 1);
+    try {
+        AgcDriverWaitIdle_nid_postfix();
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("a COND_INDIRECT_BUFFER rewritten after its submission with contents that do not validate failed the queue instead of running as it was copied: ") + error.what());
+    }
+    AgcDriver::GuestMemory::FlushGpuWrites(label, sizeof(std::uint32_t));
+    AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
+    Require(Load(block, LabelOffset) == 1, "the packet after a rewritten COND_INDIRECT_BUFFER whose contents do not validate did not run");
+    Require(Load(block, MarkerOffset) == 0, "a rewritten COND_INDIRECT_BUFFER whose contents do not validate ran part of them instead of running as it was copied");
+}
+
 void Run(const GuestBlock& block, std::uint32_t marker, bool conditional) {
     std::array<std::uint32_t, CommandWords> fillers{};
     fillers.fill(Filler);
@@ -204,6 +239,7 @@ int main() {
         Run(block, 0x5eed0002u, false);
         HeldWaitAfterRewrite(block);
         NestedRewrite(block, 0x5eed0003u);
+        InvalidRewrite(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("GPU-written indirect buffer: indirect buffers run what the dispatch before them wrote");
         return 0;
