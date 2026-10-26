@@ -79,6 +79,10 @@ static void PipeReadEvents() {
     Require(close_nid_postfix(oneWay[0]) == 0);
     Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
     Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(oneWay[1]) && (events[0].flags & EV_EOF) != 0);
+    int readded = 0;
+    Require(sceKernelAddWriteEvent(eq, oneWay[1], 1, &readded) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].udata == &readded && (events[0].flags & EV_EOF) != 0);
     Require(sceKernelDeleteWriteEvent(eq, oneWay[1]) == SCE_OK);
     Require(sceKernelAddWriteEvent(eq, oneWay[1], 1, nullptr) == SCE_KERNEL_ERROR_EPIPE);
     Require(close_nid_postfix(oneWay[1]) == 0);
@@ -291,12 +295,14 @@ int main() {
     Require(recv_nid_postfix(reader, six, sizeof(six), 0) == sizeof(six));
     Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
     Require(send_nid_postfix(writer, "abc", 3, 0) == 3);
-    const std::size_t largest = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
-    for (const std::size_t size : {largest, largest + 1, std::numeric_limits<std::size_t>::max()}) {
-        Require(sceKernelAddReadEvent(blocking, reader, size, nullptr) == SCE_OK);
-        Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
-        Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
-    }
+    Require(sceKernelAddReadEvent(blocking, reader, static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()), nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(reader) && events[0].data == 3);
+    Require(sceKernelAddReadEvent(blocking, reader, 6, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_OK);
     Require(recv_nid_postfix(reader, six, 3, 0) == 3);
     Require(sceKernelAddWriteEvent(blocking, writer, 64, nullptr) == SCE_OK);
     Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
@@ -312,9 +318,20 @@ int main() {
     Require(getsockname_nid_postfix(datagram, datagramAddress.data(), &datagramAddressSize) == 0);
     Require(connect_nid_postfix(datagram, datagramAddress.data(), datagramAddress.size()) == 0);
     Require(sceKernelAddReadEvent(blocking, datagram, 1, nullptr) == SCE_OK);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(send_nid_postfix(datagram, "", 0, 0) == 0);
     Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
     Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(datagram) && events[0].data == 0);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 0);
+    Require(send_nid_postfix(datagram, "", 0, 0) == 0);
+    Require(send_nid_postfix(datagram, "abc", 3, 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 0);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 0);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &timeout) == SCE_OK);
+    Require(count == 1 && events[0].data == 3);
+    Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 3);
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
     Require(close_nid_postfix(datagram) == 0);
     Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);

@@ -1062,6 +1062,26 @@ std::int64_t ListenQueueLength(NativeSocket socket) {
 #endif
     return 1;
 }
+#ifdef _WIN32
+std::int64_t NextDatagramSize(const Socket& socket, std::int64_t queued) {
+    static thread_local char next[65536];
+    WSABUF buffer{sizeof(next), next};
+    WSAOVERLAPPED overlapped{};
+    overlapped.hEvent = WSACreateEvent();
+    if (overlapped.hEvent == WSA_INVALID_EVENT) return queued;
+    DWORD received = 0;
+    DWORD flags = MSG_PEEK;
+    std::int64_t size = queued;
+    if (WSARecv(socket.value, &buffer, 1, &received, &flags, &overlapped, nullptr) == 0) {
+        size = received;
+    } else if (WSAGetLastError() == WSA_IO_PENDING) {
+        CancelIoEx(reinterpret_cast<HANDLE>(socket.value), &overlapped);
+        size = WSAGetOverlappedResult(socket.value, &overlapped, &received, TRUE, &flags) ? received : 0;
+    }
+    WSACloseEvent(overlapped.hEvent);
+    return size;
+}
+#endif
 }
 
 bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* eof) {
@@ -1112,6 +1132,7 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
 #ifdef _WIN32
         unsigned long available = 0;
         if (ioctlsocket(socket->value, FIONREAD, &available) == 0) *data = static_cast<std::int64_t>(available);
+        if (socket->type == 2 && available != 0) *data = NextDatagramSize(*socket, *data);
 #else
         int available = 0;
         if (QueuedBytes(*socket, available) == 0) *data = available;
