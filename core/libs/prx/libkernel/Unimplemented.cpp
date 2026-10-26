@@ -132,9 +132,8 @@ int APS5_VABI sceKernelGetProcessAbiType() {
 
 extern "C" {
 
-int APS5_VABI __Ux86_64_setcontext() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __Ux86_64_setcontext(const UserUcontext* context) {
+    return setcontext_nid_postfix(context);
 }
 
 }
