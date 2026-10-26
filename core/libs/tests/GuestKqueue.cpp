@@ -140,6 +140,7 @@ static void KqueueDescriptorMetadata() {
     Require(status.st_mode == 0010000 && status.st_size == 0 && status.st_nlink == 0 && status.st_ino == 0);
     int available = 0;
     RequireFailure(ioctl_nid_postfix(kq, Fionread, &available), GuestEnotty);
+    RequireFailure(fchmod_nid_postfix(kq, 0644), GuestEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 
