@@ -2120,6 +2120,21 @@ endif()
 set_target_properties(agc_driver_graphics_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_graphics_tests)
 
+add_test_executable(agc_guest_zero_scan_tests EXCLUDE_FROM_ALL tests/GuestBytesZero.cpp)
+target_include_directories(agc_guest_zero_scan_tests PRIVATE $<TARGET_PROPERTY:libSceAgcDriver,INCLUDE_DIRECTORIES>)
+target_link_libraries(agc_guest_zero_scan_tests PRIVATE libSceAgcDriver libc)
+set_target_properties(agc_guest_zero_scan_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_guest_zero_scan_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_guest_zero_scan_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_guest_zero_scan COMMAND agc_guest_zero_scan_tests)
+    set_tests_properties(agc_guest_zero_scan PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_guest_zero_scan PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_driver_msaa_layout_tests EXCLUDE_FROM_ALL
         tests/MultisampleTextureLayout.cpp
         Graphics/src/MultisampleTextureLayout.cpp

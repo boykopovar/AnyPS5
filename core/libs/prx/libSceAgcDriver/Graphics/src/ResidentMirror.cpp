@@ -194,6 +194,14 @@ bool allZero(std::uint64_t begin, std::uint64_t end) {
     while (at < stop && reinterpret_cast<std::uintptr_t>(at) % sizeof(std::uint64_t) != 0) {
         if (*at++ != 0) return false;
     }
+    while (stop - at >= static_cast<std::ptrdiff_t>(4 * sizeof(std::uint64_t))) {
+        for (unsigned index = 0; index < 4; ++index) {
+            std::uint64_t word = 0;
+            std::memcpy(&word, at, sizeof(word));
+            if (word != 0) return false;
+            at += sizeof(word);
+        }
+    }
     while (stop - at >= static_cast<std::ptrdiff_t>(sizeof(std::uint64_t))) {
         std::uint64_t word = 0;
         std::memcpy(&word, at, sizeof(word));
