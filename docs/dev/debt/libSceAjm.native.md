@@ -26,7 +26,7 @@
 
 ### Functional
 
-- [sceAjmDecWVorbisCreateHeaderPacket](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjmWVorbis, implemented in libSceAjm.native) - refuses an output smaller than the whole packet (56 bytes plus the setup packet) with `0x8A6E0003`. The PS5 12.00 bit writer only checks that each write starts inside the buffer, so the console can accept a buffer a few bytes short and write past it
+- [sceAjmDecWVorbisCreateHeaderPacket](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjmWVorbis, implemented in libSceAjm.native) - refuses an output smaller than the whole packet (56 bytes plus the setup packet) with `0x8A6E0003`. The PS5 13.60 bit writer only checks that each write starts inside the buffer, so the console can accept a buffer a few bytes short and write past it
 - [AJM batch contexts](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native): start, wait and cancel reject context IDs not allocated by initialization; batches belong to their creating context, as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/0ebea15c24253b60f514fc37a348dabc8d0bcb90/src/core/libraries/ajm/ajm.cpp). This is not verified on PS5. Finalization still does not invalidate contexts or release their instances and outstanding batches; jobs execute synchronously and cancellation does not interrupt them.
 - [sceAjmBatchStart](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp): console results for malformed batch descriptors and corrupted jobs are unverified. A null batch buffer or an offset beyond its capacity returns the existing invalid-parameter error; a truncated or inconsistent private packed job throws before its payload is read. The packed representation belongs to this implementation.
 

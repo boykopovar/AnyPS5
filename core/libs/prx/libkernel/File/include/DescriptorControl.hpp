@@ -34,6 +34,7 @@ private:
 };
 bool IsVnode(int fd);
 bool IsCharacterDevice(int fd);
+bool GrantsAccess(int fd, bool write);
 
 }
 

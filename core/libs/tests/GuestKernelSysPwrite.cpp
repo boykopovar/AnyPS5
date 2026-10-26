@@ -130,6 +130,7 @@ int main(int argc, char** argv) {
     const int readOnly = open(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
     Require(readOnly >= 0);
     Require(writeAt(readOnly, "x", 1, 0) == -1 && *error() == 9);
+    Require(writeAt(readOnly, nullptr, 1, -1) == -1 && *error() == 9);
 #ifndef _WIN32
     Require(readAt(readOnly, contents, 1, 8) == 1 && contents[0] == '!');
 #endif

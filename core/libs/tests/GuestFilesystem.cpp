@@ -1327,6 +1327,11 @@ int main() {
     Require(sceKernelPread(directoryDescriptor, directoryBytes, sizeof(directoryBytes), 0) == static_cast<int>(0x80020015u));
     Require(sceKernelPreadv(directoryDescriptor, directoryVector, 2, 0) == static_cast<int>(0x80020015u));
     Require(sceKernelPwrite(directoryDescriptor, "x", 1, 0) == static_cast<int>(0x80020009u));
+    Require(sceKernelWrite(directoryDescriptor, "x", 1) == static_cast<int>(0x80020009u));
+    Require(write_nid_postfix(directoryDescriptor, "x", 1) == -1 && *__error_nid_postfix() == 9);
+    Require(pwrite_nid_disambig1_nid_postfix(directoryDescriptor, "x", 1, 0) == -1 && *__error_nid_postfix() == 9);
+    Require(sceKernelWritev(directoryDescriptor, directoryVector, 2) == static_cast<int>(0x80020009u));
+    Require(sceKernelPwritev(directoryDescriptor, directoryVector, 2, 0) == static_cast<int>(0x80020009u));
     std::vector<char> listing(4096);
     Require(sceKernelGetdents(directoryDescriptor, listing.data(), static_cast<int>(listing.size())) > 0);
     const int plainFile = open_nid_postfix(presentName.c_str(), 0, 0);

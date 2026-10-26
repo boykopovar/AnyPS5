@@ -322,8 +322,9 @@ RelinkResult RelinkerPipeline::Relink() {
         return type == R_X86_64_DTPMOD64 || type == R_X86_64_DTPOFF64 || type == R_X86_64_TPOFF64;
     };
 
-    const bool hasNonEmptyTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
-                                                   [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
+    const auto tlsSegment = std::find_if(programHeaders.begin(), programHeaders.end(),
+                                         [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
+    const bool hasNonEmptyTlsSegment = tlsSegment != programHeaders.end();
 
     const auto definedTlsSymbolValue = [&](const std::uint32_t symIdx, const FileByteOffset pos) -> std::optional<std::uint64_t> {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
@@ -335,6 +336,10 @@ RelinkResult RelinkerPipeline::Relink() {
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         std::uint64_t value = 0;
         std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+        std::uint64_t size = 0;
+        std::memcpy(&size, raw.data() + symOff + 16, sizeof(size));
+        if (hasNonEmptyTlsSegment && (value > tlsSegment->MemorySize || size > tlsSegment->MemorySize - value))
+            throw RelinkerException("TLS symbol exceeds TLS segment", pos);
         return value;
     };
     const auto definedTlsSymbol = [&](const std::uint32_t symIdx, const FileByteOffset pos) {

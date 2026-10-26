@@ -22,5 +22,10 @@ int main() {
     Require(handle > 0);
     Require(scePadSetVibrationMode(handle, 0) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetVibrationMode(handle, 1) == PAD_OK);
+    Require(scePadSetVibrationMode(handle, 2) == PAD_OK);
+    Require(scePadSetVibrationMode(handle, 3) == PAD_OK);
+    Require(scePadSetVibrationMode(handle, 4) == PAD_ERROR_INVALID_ARG);
+    Require(scePadSetVibrationMode(handle, 5) == PAD_OK);
+    Require(scePadSetVibrationMode(handle, 6) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(handle) == PAD_OK);
 }

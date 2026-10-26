@@ -296,11 +296,6 @@ int APS5_VABI pthread_barrier_setname_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_cond_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_get_specificarray_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -368,11 +363,6 @@ int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_rwlock_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2173,22 +2163,12 @@ int APS5_VABI scePthreadMutexattrGetgen(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrGetkind(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexattrInitForInternalLibc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI scePthreadMutexattrSetgen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexattrSetkind(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2257,11 +2237,6 @@ int APS5_VABI sem_setname_nid_postfix(void) {
 }
 
 int APS5_VABI set_phys_fmem_limit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI setlogin_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

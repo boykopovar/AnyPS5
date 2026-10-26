@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -11,15 +12,15 @@ void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size);
 std::uint32_t APS5_VABI arc4random_nid_postfix();
 int APS5_VABI __wrap_access(const char* path, int mode);
 int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp);
-int APS5_VABI __wrap_fchown();
+int APS5_VABI __wrap_fchown(int descriptor, std::uint32_t owner, std::uint32_t group);
 char* APS5_VABI __wrap_getcwd(char* buffer, std::size_t size);
 char* APS5_VABI __wrap_getenv(const char* name);
-int APS5_VABI __wrap_link();
+int APS5_VABI __wrap_link(const char* existing, const char* created);
 int APS5_VABI __wrap_lstat(const char* path, FileStat* sb);
 void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset);
-int APS5_VABI __wrap_readlink();
-int APS5_VABI __wrap_statvfs();
-int APS5_VABI __wrap_symlink();
+std::int64_t APS5_VABI __wrap_readlink(const char* path, char* buffer, std::size_t size);
+int APS5_VABI __wrap_statvfs(const char* path, LibcStatvfs* status);
+int APS5_VABI __wrap_symlink(const char* target, const char* created);
 int APS5_VABI clock_gettime_np();
 int APS5_VABI getenv_np();
 int APS5_VABI scePosixForWebKit_gethostbyname_r();

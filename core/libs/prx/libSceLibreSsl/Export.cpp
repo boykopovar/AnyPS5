@@ -1158,11 +1158,6 @@ int APS5_VABI SSL_accept_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_alert_desc_string_long_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1383,9 +1378,8 @@ int APS5_VABI SSL_write_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSLeay_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI SSLeay_nid_postfix(void) {
+    return 0x20000000;
 }
 
 int APS5_VABI SSLv23_client_method_nid_postfix(void) {
