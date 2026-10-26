@@ -63,17 +63,13 @@ if(BUILD_TESTING)
     foreach(mode IN ITEMS write flush)
         add_test(NAME agc_capture_trace_${mode}_failure
             COMMAND "${CMAKE_COMMAND}"
-                "-DFIXTURE=$<TARGET_FILE:agc_capture_trace_failure_tests>"
-                "-DMODE=${mode}"
-                "-DOUTPUT_ROOT=${agcCaptureTraceDirectory}"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceFailure.cmake")
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceFailure.cmake"
+                "$<TARGET_FILE:agc_capture_trace_failure_tests>" "${mode}" "${agcCaptureTraceDirectory}")
         set_tests_properties(agc_capture_trace_${mode}_failure PROPERTIES TIMEOUT 20)
         add_test(NAME agc_capture_trace_${mode}_failure_runtime
             COMMAND "${CMAKE_COMMAND}"
-                "-DFIXTURE=$<TARGET_FILE:agc_capture_trace_runtime_failure_tests>"
-                "-DMODE=${mode}"
-                "-DOUTPUT_ROOT=${agcCaptureTraceDirectory}"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceFailure.cmake")
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CaptureTraceFailure.cmake"
+                "$<TARGET_FILE:agc_capture_trace_runtime_failure_tests>" "${mode}" "${agcCaptureTraceDirectory}")
         set_tests_properties(agc_capture_trace_${mode}_failure_runtime PROPERTIES TIMEOUT 20)
         if(WIN32)
             set_tests_properties(agc_capture_trace_${mode}_failure_runtime PROPERTIES ENVIRONMENT_MODIFICATION
