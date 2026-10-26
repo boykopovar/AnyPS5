@@ -64,7 +64,7 @@
 - [__umodti3](../../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - the hardware traps on a zero divisor; this throws instead
 - [__modti3](../../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - the hardware traps on a zero divisor; this throws instead
 
-- [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) accept any size up to `SIZE_MAX`, as a payload process on a PS5 (firmware 13.60) does. A null buffer with a nonzero size throws here, where the console writes through it, and a result longer than `INT_MAX` throws, which was not measured
+- [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) accept any size up to `SIZE_MAX`, as a payload process on a PS5 (firmware 13.60) does. A null buffer with a nonzero size throws here, where the console writes through it. Field widths and precisions exceeding INT_MAX and results longer than INT_MAX set errno to EOVERFLOW (84) and return -1; exact console behavior on fields exceeding INT_MAX and extreme formatting widths remains unmeasured.
 
 ### Functional
 

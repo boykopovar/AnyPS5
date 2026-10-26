@@ -14,6 +14,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <type_traits>
 
@@ -106,6 +107,7 @@ public:
     }
 
     void Append(const char* text, size_t size) {
+        if (size == 0) return;
         if (size > static_cast<size_t>(INT_MAX) - count)
             throw std::overflow_error("Formatted output exceeds INT_MAX");
         if (capacity && count < capacity - 1) {
@@ -118,24 +120,18 @@ public:
         count += size;
     }
 
-    template<class T> void Value(const std::string& format, T value) {
-        const int size = std::snprintf(nullptr, 0, format.c_str(), value);
-        if (size < 0) throw std::runtime_error("Formatting conversion failed");
-        if (static_cast<size_t>(size) > static_cast<size_t>(INT_MAX) - count)
+    void Pad(char ch, size_t repeat) {
+        if (repeat == 0) return;
+        if (repeat > static_cast<size_t>(INT_MAX) - count)
             throw std::overflow_error("Formatted output exceeds INT_MAX");
-        if (complete) {
-            std::vector<char> text(static_cast<size_t>(size) + 1);
-            const int written = std::snprintf(text.data(), text.size(), format.c_str(), value);
-            if (written != size) throw std::runtime_error("Inconsistent formatting conversion");
-            complete->append(text.data(), static_cast<size_t>(size));
-        }
         if (capacity && count < capacity - 1) {
-            const size_t remaining = capacity - count;
-            const size_t required = static_cast<size_t>(size) + 1;
-            const int written = std::snprintf(destination + count, remaining < required ? remaining : required, format.c_str(), value);
-            if (written != size) throw std::runtime_error("Inconsistent formatting conversion");
+            const size_t available = capacity - 1 - count;
+            const size_t written = repeat < available ? repeat : available;
+            std::memset(destination + count, ch, written);
+            destination[count + written] = 0;
         }
-        count += static_cast<size_t>(size);
+        if (complete) complete->append(repeat, ch);
+        count += repeat;
     }
 
     int Count() const { return static_cast<int>(count); }
@@ -162,6 +158,65 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
     }
 }
 
+struct FormattedField {
+    std::string_view prefix{};
+    size_t leadingZeros = 0;
+    std::string_view body{};
+    size_t trailingZeros = 0;
+    std::string_view suffix{};
+    size_t width = 0;
+    bool left = false;
+    bool zero = false;
+};
+
+inline void EmitField(FormatOutput& output, const FormattedField& field) {
+    if (field.prefix.size() > static_cast<size_t>(INT_MAX) ||
+        field.leadingZeros > static_cast<size_t>(INT_MAX) - field.prefix.size() ||
+        field.body.size() > static_cast<size_t>(INT_MAX) - field.prefix.size() - field.leadingZeros ||
+        field.trailingZeros > static_cast<size_t>(INT_MAX) - field.prefix.size() - field.leadingZeros - field.body.size() ||
+        field.suffix.size() > static_cast<size_t>(INT_MAX) - field.prefix.size() - field.leadingZeros - field.body.size() - field.trailingZeros)
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    const size_t contentLen = field.prefix.size() + field.leadingZeros + field.body.size() + field.trailingZeros + field.suffix.size();
+    const size_t padCount = field.width > contentLen ? field.width - contentLen : 0;
+    if (padCount > static_cast<size_t>(INT_MAX) - contentLen)
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    const size_t totalFieldLen = contentLen + padCount;
+    if (totalFieldLen > static_cast<size_t>(INT_MAX) - output.Count())
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    if (!field.left && !field.zero) output.Pad(' ', padCount);
+    if (!field.prefix.empty()) output.Append(field.prefix.data(), field.prefix.size());
+    if (!field.left && field.zero) output.Pad('0', padCount);
+    output.Pad('0', field.leadingZeros);
+    if (!field.body.empty()) output.Append(field.body.data(), field.body.size());
+    output.Pad('0', field.trailingZeros);
+    if (!field.suffix.empty()) output.Append(field.suffix.data(), field.suffix.size());
+    if (field.left) output.Pad(' ', padCount);
+}
+
+inline std::string_view FormatUnsignedDigits(char* bufferEnd, unsigned long long value, int base, bool upper, bool omitZero) {
+    char* p = bufferEnd;
+    if (value == 0) {
+        if (!omitZero) *--p = '0';
+    } else if (base == 10) {
+        while (value > 0) {
+            *--p = static_cast<char>('0' + (value % 10));
+            value /= 10;
+        }
+    } else if (base == 8) {
+        while (value > 0) {
+            *--p = static_cast<char>('0' + (value & 7));
+            value >>= 3;
+        }
+    } else if (base == 16) {
+        const char* hexDigits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+        while (value > 0) {
+            *--p = hexDigits[value & 15];
+            value >>= 4;
+        }
+    }
+    return std::string_view(p, bufferEnd - p);
+}
+
 struct FloatSpec {
     bool left = false;
     bool plus = false;
@@ -172,44 +227,7 @@ struct FloatSpec {
     int precision = -1;
 };
 
-inline FloatSpec ParseFloatSpec(const std::string& spec) {
-    FloatSpec result;
-    std::size_t index = 1;
-    for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
-        result.left |= spec[index] == '-';
-        result.plus |= spec[index] == '+';
-        result.space |= spec[index] == ' ';
-        result.alternate |= spec[index] == '#';
-        result.zero |= spec[index] == '0';
-    }
-    for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) {
-        const auto digit = static_cast<std::size_t>(spec[index] - '0');
-        if (result.width > (static_cast<std::size_t>(INT_MAX) - digit) / 10)
-            throw std::overflow_error("Formatted output exceeds INT_MAX");
-        result.width = result.width * 10 + digit;
-    }
-    if (index < spec.size() && spec[index] == '.') {
-        result.precision = 0;
-        for (++index; index < spec.size(); ++index) {
-            const int digit = spec[index] - '0';
-            if (result.precision > (INT_MAX - digit) / 10)
-                throw std::overflow_error("Floating precision exceeds int range");
-            result.precision = result.precision * 10 + digit;
-        }
-    }
-    return result;
-}
-
-inline std::string PadFloat(const FloatSpec& spec, const std::string& prefix, const std::string& body) {
-    const std::size_t length = prefix.size() + body.size();
-    if (length >= spec.width) return prefix + body;
-    const std::string padding(spec.width - length, spec.left || !spec.zero ? ' ' : '0');
-    if (spec.left) return prefix + body + padding;
-    return spec.zero ? prefix + padding + body : padding + prefix + body;
-}
-
-inline std::string HexFloat(const std::string& spec, char conversion, double value, std::size_t maximumLength = INT_MAX) {
-    const FloatSpec parsed = ParseFloatSpec(spec);
+inline void HexFloat(FormatOutput& output, const FloatSpec& parsed, char conversion, double value) {
     const bool plus = parsed.plus, space = parsed.space, alternate = parsed.alternate;
     const std::size_t width = parsed.width;
     const int precision = parsed.precision;
@@ -244,22 +262,33 @@ inline std::string HexFloat(const std::string& spec, char conversion, double val
         for (; digits > 0 && (fraction & 0xf) == 0; --digits) fraction >>= 4;
     }
     const char* hex = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    std::string suffix = upper ? "P" : "p";
-    suffix += exponent < 0 ? '-' : '+';
-    suffix += std::to_string(exponent < 0 ? -exponent : exponent);
-    std::string prefix = (bits >> 63) != 0 ? "-" : plus ? "+" : space ? " " : "";
-    prefix += upper ? "0X" : "0x";
+    char suffixBuf[32];
+    const int suffixLen = std::snprintf(suffixBuf, sizeof(suffixBuf), "%c%+d", upper ? 'P' : 'p', exponent);
+    char prefixBuf[8];
+    char* pp = prefixBuf;
+    if ((bits >> 63) != 0) *pp++ = '-';
+    else if (plus) *pp++ = '+';
+    else if (space) *pp++ = ' ';
+    *pp++ = '0';
+    *pp++ = upper ? 'X' : 'x';
     const auto fractionalDigits = static_cast<std::size_t>(precision > 13 ? precision : digits);
     const bool point = fractionalDigits != 0 || alternate;
-    const std::size_t length = prefix.size() + 1 + point + fractionalDigits + suffix.size();
-    if (length > maximumLength || width > maximumLength)
-        throw std::overflow_error("Formatted output exceeds INT_MAX");
-    std::string body(1, hex[lead]);
-    if (point) body += '.';
-    for (int digit = digits - 1; digit >= 0; --digit) body += hex[(fraction >> (digit * 4)) & 0xf];
-    if (precision > 13) body.append(static_cast<std::size_t>(precision - 13), '0');
-    body += suffix;
-    return PadFloat(parsed, prefix, body);
+    char mantissaBuf[32];
+    char* mp = mantissaBuf;
+    *mp++ = hex[lead];
+    if (point) *mp++ = '.';
+    for (int digit = digits - 1; digit >= 0; --digit) *mp++ = hex[(fraction >> (digit * 4)) & 0xf];
+    const size_t extraZeros = precision > 13 ? static_cast<size_t>(precision - 13) : 0;
+    EmitField(output, FormattedField{
+        std::string_view(prefixBuf, pp - prefixBuf),
+        0,
+        std::string_view(mantissaBuf, mp - mantissaBuf),
+        extraZeros,
+        std::string_view(suffixBuf, static_cast<size_t>(suffixLen)),
+        width,
+        parsed.left,
+        parsed.zero
+    });
 }
 
 struct DecimalDigits {
@@ -387,8 +416,7 @@ inline char DigitAt(const DecimalDigits& value, long long position) {
     return value.digits[static_cast<std::size_t>(index)];
 }
 
-inline std::string DecimalFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
-    const FloatSpec parsed = ParseFloatSpec(spec);
+inline void DecimalFloat(FormatOutput& output, const FloatSpec& parsed, char conversion, long double value) {
     const DecimalDigits exact = ConsoleDecimalDigits(value);
     const bool upper = conversion == 'E' || conversion == 'G';
     const char lower = static_cast<char>(conversion | 0x20);
@@ -416,31 +444,58 @@ inline std::string DecimalFloat(const std::string& spec, char conversion, long d
     const long long whole = exponential || exponent < 0 ? 1 : exponent + 1;
     const long long exponentLength = exponential ? 2 + static_cast<long long>(std::max<std::size_t>(magnitude.size(), 2)) : 0;
     const long long length = static_cast<long long>(prefix.size()) + whole + point + precision + exponentLength;
-    if (length > static_cast<long long>(maximumLength) || parsed.width > maximumLength)
+    if (length > static_cast<long long>(INT_MAX) || parsed.width > static_cast<size_t>(INT_MAX))
         throw std::overflow_error("Formatted output exceeds INT_MAX");
-    std::string body;
-    body.reserve(static_cast<std::size_t>(length));
-    const long long first = exponential ? exponent : std::max(exponent, 0LL);
-    for (long long position = first; position >= (exponential ? exponent : 0); --position) body += DigitAt(rounded, position);
-    if (point) body += '.';
-    const long long start = exponential ? exponent - 1 : -1;
-    for (long long position = start; position > start - precision; --position) body += DigitAt(rounded, position);
-    if (exponential) {
-        body += upper ? 'E' : 'e';
-        body += exponent < 0 ? '-' : '+';
-        if (magnitude.size() < 2) body += '0';
-        body += magnitude;
-    }
-    return PadFloat(parsed, prefix, body);
-}
+    const size_t contentLen = static_cast<size_t>(length);
+    const size_t padCount = parsed.width > contentLen ? parsed.width - contentLen : 0;
+    if (padCount > static_cast<size_t>(INT_MAX) - contentLen)
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    const size_t totalFieldLen = contentLen + padCount;
+    if (totalFieldLen > static_cast<size_t>(INT_MAX) - output.Count())
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
 
-inline std::string PaddedStringSpec(const std::string& spec) {
-    std::string result = "%";
-    std::size_t index = 1;
-    for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index)
-        if (spec[index] == '-' && result.size() == 1) result += '-';
-    for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) result += spec[index];
-    return result + 's';
+    const auto emitSegment = [&](long long firstExponent, long long count) {
+        if (count <= 0) return;
+        const long long startIndex = rounded.exponent - firstExponent;
+        const long long endIndex = startIndex + count - 1;
+        const long long digitCount = static_cast<long long>(rounded.digits.size());
+        const long long leadingZeros = std::max(0LL, std::min(count, -startIndex));
+        const long long digitsStart = std::max(0LL, startIndex);
+        const long long digitsEnd = std::min(digitCount - 1, endIndex);
+        const long long overlapCount = digitsStart <= digitsEnd ? digitsEnd - digitsStart + 1 : 0;
+        const long long trailingZeros = count - leadingZeros - overlapCount;
+        output.Pad('0', static_cast<size_t>(leadingZeros));
+        if (overlapCount > 0) output.Append(rounded.digits.data() + digitsStart, static_cast<size_t>(overlapCount));
+        output.Pad('0', static_cast<size_t>(trailingZeros));
+    };
+
+    const auto emitBody = [&] {
+        const long long first = exponential ? exponent : std::max(exponent, 0LL);
+        emitSegment(first, whole);
+        if (point) output.Append(".", 1);
+        const long long start = exponential ? exponent - 1 : -1;
+        emitSegment(start, precision);
+        if (exponential) {
+            output.Append(upper ? "E" : "e", 1);
+            output.Append(exponent < 0 ? "-" : "+", 1);
+            if (magnitude.size() < 2) output.Append("0", 1);
+            output.Append(magnitude.data(), magnitude.size());
+        }
+    };
+
+    if (parsed.left) {
+        if (!prefix.empty()) output.Append(prefix.data(), prefix.size());
+        emitBody();
+        output.Pad(' ', padCount);
+    } else if (parsed.zero) {
+        if (!prefix.empty()) output.Append(prefix.data(), prefix.size());
+        output.Pad('0', padCount);
+        emitBody();
+    } else {
+        output.Pad(' ', padCount);
+        if (!prefix.empty()) output.Append(prefix.data(), prefix.size());
+        emitBody();
+    }
 }
 
 inline std::string NanText(const std::string& spec, bool negative, bool upper) {
@@ -541,185 +596,345 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
 
 inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr, bool secure = false) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
-    const char* const formatStart = format;
-    FormatArguments args(source);
-    args.Number(NumberedArgumentClasses(format));
-    FormatOutput output(buffer, size, complete);
-    const auto star = [&] {
-        const size_t position = ArgumentPosition(format);
-        return position ? args.At<int>(position) : args.Next<int>();
-    };
-    while (*format) {
-        const char* literal = format;
-        while (*format && *format != '%') ++format;
-        output.Append(literal, static_cast<size_t>(format - literal));
-        if (!*format) break;
-        ++format;
-        if (*format == '%') {
-            output.Append(format++, 1);
-            continue;
-        }
-        if (const size_t position = ArgumentPosition(format)) args.Seek(position);
-        std::string spec = "%";
-        bool unmeasuredUnknownFlag = false;
-        bool zeroFlag = false;
-        for (; *format && std::strchr("-+ #0'", *format); ++format) {
-            if (*format != '\'') spec += *format;
-            if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
-            if (*format == '0') zeroFlag = true;
-        }
-        bool widthGiven = false;
-        if (*format == '*') {
+    try {
+        const char* const formatStart = format;
+        FormatArguments args(source);
+        args.Number(NumberedArgumentClasses(format));
+        FormatOutput output(buffer, size, complete);
+        const auto star = [&] {
+            const size_t position = ArgumentPosition(format);
+            return position ? args.At<int>(position) : args.Next<int>();
+        };
+        while (*format) {
+            const char* literal = format;
+            while (*format && *format != '%') ++format;
+            output.Append(literal, static_cast<size_t>(format - literal));
+            if (!*format) break;
             ++format;
-            const int width = star();
-            if (width < 0) spec += '-';
-            spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
-            widthGiven = true;
-        } else {
-            for (; *format >= '0' && *format <= '9'; widthGiven = true) spec += *format++;
-        }
-        if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
-        size_t precisionLimit = std::numeric_limits<size_t>::max();
-        if (*format == '.') {
-            ++format;
+            if (*format == '%') {
+                output.Append(format++, 1);
+                continue;
+            }
+            if (const size_t position = ArgumentPosition(format)) args.Seek(position);
+            std::string spec = "%";
+            bool unmeasuredUnknownFlag = false;
+            bool zeroFlag = false;
+            bool leftFlag = false;
+            bool plusFlag = false;
+            bool spaceFlag = false;
+            bool altFlag = false;
+            for (; *format && std::strchr("-+ #0'", *format); ++format) {
+                if (*format != '\'') spec += *format;
+                if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
+                if (*format == '0') zeroFlag = true;
+                if (*format == '-') leftFlag = true;
+                if (*format == '+') plusFlag = true;
+                if (*format == ' ') spaceFlag = true;
+                if (*format == '#') altFlag = true;
+            }
+            bool widthGiven = false;
+            int width = 0;
             if (*format == '*') {
                 ++format;
-                const int precision = star();
-                if (precision >= 0) {
-                    spec += "." + std::to_string(precision);
+                const int starWidth = star();
+                const long long mag = starWidth < 0 ? -static_cast<long long>(starWidth) : static_cast<long long>(starWidth);
+                if (mag > INT_MAX)
+                    throw std::overflow_error("Field width exceeds INT_MAX");
+                if (starWidth < 0) {
+                    leftFlag = true;
+                    spec += '-';
+                }
+                width = static_cast<int>(mag);
+                spec += std::to_string(mag);
+                widthGiven = true;
+            } else {
+                long long parsedWidth = 0;
+                for (; *format >= '0' && *format <= '9'; widthGiven = true) {
+                    const int digit = *format++ - '0';
+                    if (parsedWidth > (static_cast<long long>(INT_MAX) - digit) / 10)
+                        throw std::overflow_error("Field width exceeds INT_MAX");
+                    parsedWidth = parsedWidth * 10 + digit;
+                    spec += static_cast<char>('0' + digit);
+                }
+                if (widthGiven) width = static_cast<int>(parsedWidth);
+            }
+            if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
+            bool hasPrecision = false;
+            int precision = 0;
+            size_t precisionLimit = std::numeric_limits<size_t>::max();
+            if (*format == '.') {
+                ++format;
+                hasPrecision = true;
+                if (*format == '*') {
+                    ++format;
+                    const int starPrecision = star();
+                    if (starPrecision >= 0) {
+                        precision = starPrecision;
+                        spec += "." + std::to_string(precision);
+                        precisionLimit = static_cast<size_t>(precision);
+                    } else {
+                        hasPrecision = false;
+                    }
+                } else {
+                    spec += '.';
+                    long long parsedPrecision = 0;
+                    while (*format >= '0' && *format <= '9') {
+                        const int digit = *format - '0';
+                        if (parsedPrecision > (static_cast<long long>(INT_MAX) - digit) / 10)
+                            throw std::overflow_error("Precision exceeds INT_MAX");
+                        parsedPrecision = parsedPrecision * 10 + digit;
+                        spec += *format++;
+                    }
+                    precision = static_cast<int>(parsedPrecision);
                     precisionLimit = static_cast<size_t>(precision);
                 }
-            } else {
-                spec += '.';
-                precisionLimit = 0;
-                while (*format >= '0' && *format <= '9') {
-                    const auto digit = static_cast<size_t>(*format - '0');
-                    precisionLimit = precisionLimit <= (std::numeric_limits<size_t>::max() - digit) / 10
-                        ? precisionLimit * 10 + digit : std::numeric_limits<size_t>::max();
-                    spec += *format++;
-                }
             }
-        }
-        std::string length;
-        if (*format && std::strchr("hljztL", *format)) {
-            length += *format++;
-            if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l'))
+            std::string length;
+            if (*format && std::strchr("hljztL", *format)) {
                 length += *format++;
-        }
-        const char conversion = *format;
-        if (!conversion) throw std::invalid_argument("Incomplete format conversion");
-        ++format;
-        if (!std::strchr(KnownConversions, conversion)) {
-            if (secure || unmeasuredUnknownFlag)
-                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
-            const char text[] = {'%', conversion, '\0'};
-            output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
-            continue;
-        }
-        const bool integerLength = length.empty() || length == "h" || length == "hh" ||
-            length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
-        if (conversion == 'd' || conversion == 'i') {
-            if (!integerLength) throw std::invalid_argument("Invalid integer length");
-            long long value;
-            if (length.empty() || length == "h" || length == "hh") {
-                value = args.Next<int>();
-                if (length == "h") value = static_cast<short>(value);
-                if (length == "hh") value = static_cast<signed char>(value);
-            } else value = args.Next<long long>();
-            output.Value(spec + "ll" + conversion, value);
-        } else if (std::strchr("ouxX", conversion)) {
-            if (!integerLength) throw std::invalid_argument("Invalid integer length");
-            for (size_t flag = 1; flag < spec.size() && std::strchr("-+ #0", spec[flag]);) {
-                if (spec[flag] == ' ' || spec[flag] == '+') spec.erase(flag, 1);
-                else ++flag;
+                if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l'))
+                    length += *format++;
             }
-            unsigned long long value;
-            if (length.empty() || length == "h" || length == "hh") {
-                value = args.Next<unsigned int>();
-                if (length == "h") value = static_cast<unsigned short>(value);
-                if (length == "hh") value = static_cast<unsigned char>(value);
-            } else value = args.Next<unsigned long long>();
-            if (conversion == 'o' && value == 0 && precisionLimit == 0 && spec.find('#') != std::string::npos)
-                spec = spec.substr(0, spec.find('.')) + ".1";
-            output.Value(spec + "ll" + conversion, value);
-        } else if (std::strchr("aAeEfFgG", conversion)) {
-            if (length == "L") {
-                static_assert(sizeof(long double) == 16);
-                static_assert(std::numeric_limits<long double>::digits == 64);
-                const long double value = args.Next<long double>();
-                if (std::isnan(value)) {
-                    output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
-                } else if (conversion != 'a' && conversion != 'A' && std::isfinite(value)) {
-                    const std::string text = DecimalFloat(spec, conversion, value, static_cast<std::size_t>(INT_MAX - output.Count()));
-                    output.Append(text.data(), text.size());
+            const char conversion = *format;
+            if (!conversion) throw std::invalid_argument("Incomplete format conversion");
+            ++format;
+            if (!std::strchr(KnownConversions, conversion)) {
+                if (secure || unmeasuredUnknownFlag)
+                    throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
+                const char text[] = {'%', conversion, '\0'};
+                const char* body = conversion == '%' ? "%" : text;
+                const size_t bodyLen = conversion == '%' ? 1 : 2;
+                EmitField(output, FormattedField{{}, 0, std::string_view(body, bodyLen), 0, {}, static_cast<size_t>(width), leftFlag, false});
+                continue;
+            }
+            const bool integerLength = length.empty() || length == "h" || length == "hh" ||
+                length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
+            if (conversion == 'd' || conversion == 'i') {
+                if (!integerLength) throw std::invalid_argument("Invalid integer length");
+                long long value;
+                if (length.empty() || length == "h" || length == "hh") {
+                    value = args.Next<int>();
+                    if (length == "h") value = static_cast<short>(value);
+                    if (length == "hh") value = static_cast<signed char>(value);
+                } else value = args.Next<long long>();
+                const char* prefix = "";
+                size_t prefixLen = 0;
+                unsigned long long mag;
+                if (value < 0) {
+                    prefix = "-";
+                    prefixLen = 1;
+                    mag = 0 - static_cast<unsigned long long>(value);
+                } else if (plusFlag) {
+                    prefix = "+";
+                    prefixLen = 1;
+                    mag = static_cast<unsigned long long>(value);
+                } else if (spaceFlag) {
+                    prefix = " ";
+                    prefixLen = 1;
+                    mag = static_cast<unsigned long long>(value);
                 } else {
-                    output.Value(spec + "L" + conversion, value);
+                    mag = static_cast<unsigned long long>(value);
                 }
+                char digitBuf[32];
+                const auto digits = FormatUnsignedDigits(digitBuf + sizeof(digitBuf), mag, 10, false, hasPrecision && precision == 0);
+                const size_t zeroCount = (hasPrecision && precision > static_cast<int>(digits.size()))
+                    ? static_cast<size_t>(precision) - digits.size() : 0;
+                const bool zeroPad = zeroFlag && !hasPrecision && !leftFlag;
+                EmitField(output, FormattedField{std::string_view(prefix, prefixLen), zeroCount, digits, 0, {}, static_cast<size_t>(width), leftFlag, zeroPad});
+            } else if (std::strchr("ouxX", conversion)) {
+                if (!integerLength) throw std::invalid_argument("Invalid integer length");
+                unsigned long long value;
+                if (length.empty() || length == "h" || length == "hh") {
+                    value = args.Next<unsigned int>();
+                    if (length == "h") value = static_cast<unsigned short>(value);
+                    if (length == "hh") value = static_cast<unsigned char>(value);
+                } else value = args.Next<unsigned long long>();
+                char digitBuf[32];
+                const int base = conversion == 'u' ? 10 : conversion == 'o' ? 8 : 16;
+                auto digits = FormatUnsignedDigits(digitBuf + sizeof(digitBuf), value, base, conversion == 'X', hasPrecision && precision == 0);
+                const char* prefix = "";
+                size_t prefixLen = 0;
+                if (altFlag) {
+                    if (conversion == 'x' && value != 0) {
+                        prefix = "0x";
+                        prefixLen = 2;
+                    } else if (conversion == 'X' && value != 0) {
+                        prefix = "0X";
+                        prefixLen = 2;
+                    } else if (conversion == 'o') {
+                        if (value == 0 && hasPrecision && precision == 0) {
+                            digits = "0";
+                        }
+                    }
+                }
+                size_t effectivePrecision = hasPrecision ? static_cast<size_t>(precision) : 0;
+                if (altFlag && conversion == 'o' && value != 0) {
+                    if (effectivePrecision <= digits.size()) effectivePrecision = digits.size() + 1;
+                }
+                const size_t zeroCount = effectivePrecision > digits.size() ? effectivePrecision - digits.size() : 0;
+                const bool zeroPad = zeroFlag && !hasPrecision && !leftFlag;
+                EmitField(output, FormattedField{std::string_view(prefix, prefixLen), zeroCount, digits, 0, {}, static_cast<size_t>(width), leftFlag, zeroPad});
+            } else if (std::strchr("aAeEfFgG", conversion)) {
+                const FloatSpec parsed{leftFlag, plusFlag, spaceFlag, altFlag, zeroFlag, static_cast<size_t>(width), hasPrecision ? precision : -1};
+                if (length == "L") {
+                    static_assert(sizeof(long double) == 16);
+                    static_assert(std::numeric_limits<long double>::digits == 64);
+                    const long double value = args.Next<long double>();
+                    if (std::isnan(value)) {
+                        const std::string nanStr = NanText(spec, std::signbit(value), conversion < 'a');
+                        EmitField(output, FormattedField{{}, 0, nanStr, 0, {}, static_cast<size_t>(width), leftFlag, false});
+                    } else if (std::isinf(value)) {
+                        char coreBuf[32];
+                        std::string coreSpec = "%";
+                        if (plusFlag) coreSpec += '+';
+                        else if (spaceFlag) coreSpec += ' ';
+                        coreSpec += "L";
+                        coreSpec += conversion;
+                        const int coreLen = std::snprintf(coreBuf, sizeof(coreBuf), coreSpec.c_str(), value);
+                        if (coreLen < 0) throw std::runtime_error("Formatting conversion failed");
+                        EmitField(output, FormattedField{{}, 0, std::string_view(coreBuf, static_cast<size_t>(coreLen)), 0, {}, static_cast<size_t>(width), leftFlag, false});
+                    } else if (conversion != 'a' && conversion != 'A') {
+                        DecimalFloat(output, parsed, conversion, value);
+                    } else {
+                        std::string coreSpec = "%";
+                        if (altFlag) coreSpec += '#';
+                        if (plusFlag) coreSpec += '+';
+                        else if (spaceFlag) coreSpec += ' ';
+                        if (hasPrecision) {
+                            if (precision > 16) coreSpec += ".16";
+                            else coreSpec += "." + std::to_string(precision);
+                        }
+                        coreSpec += "L";
+                        coreSpec += conversion;
+                        char coreBuf[64];
+                        const int coreLen = std::snprintf(coreBuf, sizeof(coreBuf), coreSpec.c_str(), value);
+                        if (coreLen < 0) throw std::runtime_error("Formatting conversion failed");
+                        size_t prefixLen = 0;
+                        if (coreBuf[0] == '-' || coreBuf[0] == '+' || coreBuf[0] == ' ') prefixLen = 3;
+                        else prefixLen = 2;
+                        if (static_cast<size_t>(coreLen) < prefixLen) prefixLen = 0;
+                        if (hasPrecision && precision > 16) {
+                            const char* pMarker = std::strpbrk(coreBuf + prefixLen, "pP");
+                            if (!pMarker) throw std::runtime_error("Long double hex missing exponent");
+                            const size_t mantissaLen = pMarker - (coreBuf + prefixLen);
+                            const size_t extraZeros = static_cast<size_t>(precision - 16);
+                            const size_t suffixLen = coreLen - (pMarker - coreBuf);
+                            EmitField(output, FormattedField{
+                                std::string_view(coreBuf, prefixLen),
+                                0,
+                                std::string_view(coreBuf + prefixLen, mantissaLen),
+                                extraZeros,
+                                std::string_view(pMarker, suffixLen),
+                                static_cast<size_t>(width),
+                                leftFlag,
+                                zeroFlag
+                            });
+                        } else {
+                            const size_t bodyLen = coreLen - prefixLen;
+                            EmitField(output, FormattedField{
+                                std::string_view(coreBuf, prefixLen),
+                                0,
+                                std::string_view(coreBuf + prefixLen, bodyLen),
+                                0,
+                                {},
+                                static_cast<size_t>(width),
+                                leftFlag,
+                                zeroFlag
+                            });
+                        }
+                    }
+                } else {
+                    if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
+                    const double value = args.Next<double>();
+                    if (std::isnan(value)) {
+                        const std::string nanStr = NanText(spec, std::signbit(value), conversion < 'a');
+                        EmitField(output, FormattedField{{}, 0, nanStr, 0, {}, static_cast<size_t>(width), leftFlag, false});
+                    } else if (std::isinf(value)) {
+                        char coreBuf[32];
+                        std::string coreSpec = "%";
+                        if (plusFlag) coreSpec += '+';
+                        else if (spaceFlag) coreSpec += ' ';
+                        coreSpec += conversion;
+                        const int coreLen = std::snprintf(coreBuf, sizeof(coreBuf), coreSpec.c_str(), value);
+                        if (coreLen < 0) throw std::runtime_error("Formatting conversion failed");
+                        EmitField(output, FormattedField{{}, 0, std::string_view(coreBuf, static_cast<size_t>(coreLen)), 0, {}, static_cast<size_t>(width), leftFlag, false});
+                    } else if (conversion == 'a' || conversion == 'A') {
+                        HexFloat(output, parsed, conversion, value);
+                    } else {
+                        DecimalFloat(output, parsed, conversion, value);
+                    }
+                }
+            } else if (conversion == 'c' && (length.empty() || length == "h")) {
+                const int ch = args.Next<int>();
+                const char byte = static_cast<char>(ch);
+                EmitField(output, FormattedField{{}, 0, std::string_view(&byte, 1), 0, {}, static_cast<size_t>(width), leftFlag, false});
+            } else if ((conversion == 'c' && length == "l") || (conversion == 'C' && length.empty())) {
+                std::string utf8;
+                AppendUtf8(utf8, static_cast<char16_t>(args.Next<unsigned int>()));
+                const char nullByte = '\0';
+                const char* data = utf8[0] == 0 ? &nullByte : utf8.data();
+                const size_t len = utf8[0] == 0 ? 1 : utf8.size();
+                EmitField(output, FormattedField{{}, 0, std::string_view(data, len), 0, {}, static_cast<size_t>(width), leftFlag, false});
+            } else if (conversion == 's' && (length.empty() || length == "h")) {
+                const char* value = args.Next<const char*>();
+                if (!value && secure) throw FormatConstraintViolation("Null string argument");
+                if (!value) value = "(null)";
+                size_t len = 0;
+                if (hasPrecision) {
+                    while (len < static_cast<size_t>(precision) && value[len] != '\0') ++len;
+                } else {
+                    len = std::strlen(value);
+                }
+                EmitField(output, FormattedField{{}, 0, std::string_view(value, len), 0, {}, static_cast<size_t>(width), leftFlag, false});
+            } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
+                const char16_t* value = args.Next<const char16_t*>();
+                if (!value && secure) throw FormatConstraintViolation("Null string argument");
+                if (!value) value = u"(null)";
+                std::string utf8;
+                while (utf8.size() < precisionLimit && *value) {
+                    const char32_t code = *value++;
+                    const auto previousSize = utf8.size();
+                    AppendUtf8(utf8, code);
+                    if (utf8.size() > precisionLimit) {
+                        utf8.resize(previousSize);
+                        break;
+                    }
+                }
+                EmitField(output, FormattedField{{}, 0, utf8, 0, {}, static_cast<size_t>(width), leftFlag, false});
+            } else if (conversion == 'p' && (length.empty() || length == "l")) {
+                const void* pointer = args.Next<void*>();
+                const auto value = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer));
+                char digitBuf[32];
+                const auto digits = FormatUnsignedDigits(digitBuf + sizeof(digitBuf), value, 16, false, hasPrecision && precision == 0);
+                const size_t zeroCount = (hasPrecision && precision > static_cast<int>(digits.size()))
+                    ? static_cast<size_t>(precision) - digits.size() : 0;
+                const bool zeroPad = zeroFlag && !hasPrecision && !leftFlag;
+                EmitField(output, FormattedField{{}, zeroCount, digits, 0, {}, static_cast<size_t>(width), leftFlag, zeroPad});
+            } else if (conversion == 'n' && secure) {
+                throw FormatConstraintViolation("Format count conversion");
+            } else if (conversion == 'n' && integerLength && spec == "%") {
+                void* pointer = args.Next<void*>();
+                if (!pointer) throw std::invalid_argument("Null format count pointer");
+                const int count = output.Count();
+                if (length == "hh") *static_cast<signed char*>(pointer) = static_cast<signed char>(count);
+                else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
+                else if (length.empty()) *static_cast<int*>(pointer) = count;
+                else *static_cast<long long*>(pointer) = count;
             } else {
-                if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                const double value = args.Next<double>();
-                if (std::isnan(value)) {
-                    output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
-                } else if ((conversion == 'a' || conversion == 'A') && std::isfinite(value)) {
-                    const std::string text = HexFloat(spec, conversion, value, static_cast<std::size_t>(INT_MAX - output.Count()));
-                    output.Append(text.data(), text.size());
-                } else if (std::isfinite(value)) {
-                    const std::string text = DecimalFloat(spec, conversion, value, static_cast<std::size_t>(INT_MAX - output.Count()));
-                    output.Append(text.data(), text.size());
-                } else {
-                    output.Value(spec + conversion, value);
-                }
+                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
             }
-        } else if (conversion == 'c' && (length.empty() || length == "h")) {
-            output.Value(spec + conversion, args.Next<int>());
-        } else if ((conversion == 'c' && length == "l") || (conversion == 'C' && length.empty())) {
-            std::string utf8;
-            AppendUtf8(utf8, static_cast<char16_t>(args.Next<unsigned int>()));
-            if (utf8[0] == 0) output.Value(spec + 'c', 0);
-            else output.Value(spec + 's', utf8.c_str());
-        } else if (conversion == 's' && (length.empty() || length == "h")) {
-            const char* value = args.Next<const char*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
-            if (!value) value = "(null)";
-            output.Value(spec + 's', value);
-        } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
-            const char16_t* value = args.Next<const char16_t*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
-            if (!value) value = u"(null)";
-            std::string utf8;
-            while (utf8.size() < precisionLimit && *value) {
-                const char32_t code = *value++;
-                const auto previousSize = utf8.size();
-                AppendUtf8(utf8, code);
-                if (utf8.size() > precisionLimit) {
-                    utf8.resize(previousSize);
-                    break;
-                }
-            }
-            output.Value(spec + 's', utf8.c_str());
-        } else if (conversion == 'p' && (length.empty() || length == "l")) {
-            const std::string text = FormatPointer(spec, args.Next<void*>());
-            output.Append(text.data(), text.size());
-        } else if (conversion == 'n' && secure) {
-            throw FormatConstraintViolation("Format count conversion");
-        } else if (conversion == 'n' && integerLength && spec == "%") {
-            void* pointer = args.Next<void*>();
-            if (!pointer) throw std::invalid_argument("Null format count pointer");
-            const int count = output.Count();
-            if (length == "hh") *static_cast<signed char*>(pointer) = static_cast<signed char>(count);
-            else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
-            else if (length.empty()) *static_cast<int*>(pointer) = count;
-            else *static_cast<long long*>(pointer) = count;
-        } else {
-            throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
         }
+        return output.Count();
+    } catch (const std::overflow_error&) {
+        errno = 84;
+        return -1;
     }
-    return output.Count();
 }
 
 inline int PrintWindows(const char* format, const void* args) {
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
+    if (size < 0) return -1;
     if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), GuestStandardOutputFile_nid_no_patch()) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;

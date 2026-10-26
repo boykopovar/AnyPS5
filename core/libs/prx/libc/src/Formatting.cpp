@@ -379,6 +379,7 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 #ifdef _WIN32
         std::string text;
         const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &text);
+        if (count < 0) return -1;
         const char* source = text.c_str();
 #else
         std::string guestText;
@@ -412,12 +413,14 @@ int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaLis
 #ifdef _WIN32
     std::string buffer;
     const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
+    if (count < 0) return -1;
     const int result = std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) ==
         static_cast<size_t>(count) ? count : -1;
 #else
     if (RequiresGuestFormatting(format)) {
         std::string buffer;
         const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
+        if (count < 0) return -1;
         const int result = std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) == static_cast<size_t>(count) ? count : -1;
         stream->SyncStatus();
         return result;
@@ -668,6 +671,7 @@ static int WriteSecure(FileStream* stream, const char* format, const void* args)
     } catch (const LibcDetail::FormatConstraintViolation&) {
         return -1;
     }
+    if (count < 0) return -1;
     const int result = std::fwrite(text.data(), 1, static_cast<size_t>(count), native) == static_cast<size_t>(count) ? count : -1;
     stream->SyncStatus();
     return result;

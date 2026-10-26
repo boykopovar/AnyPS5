@@ -485,13 +485,9 @@ static void CheckHexFloat() {
             "%.9999999999999999999999999999999999999999A", "%.0002147483648a", "%-+20.2147483648A",
             "%2147483648a", "%999999999999999999999999a", "%.2147483647a", "%.2147483641a", "%+.2147483640A",
             "x%2147483647a", "xx%.2147483640a", "x%+.2147483639A"}) {
-        bool rejected = false;
-        try {
-            snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5);
-        } catch (const std::overflow_error&) {
-            rejected = true;
-        }
-        Require(rejected);
+        *__error_nid_postfix() = 0;
+        const int result = snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5);
+        Require(result == -1 && *__error_nid_postfix() == 84);
     }
 #endif
 }
@@ -529,15 +525,167 @@ static void CheckDecimalFloat() {
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.30Le]", 0x1p-16445L) == 40 && std::strcmp(buffer, "[3.645199531882474602528000000000e-4951]") == 0);
     for (const char* format : {"%.2147483647e", "%+.2147483647E", "%.2147483647f", "% .2147483646F", "%#.2147483647g",
             "%.2147483643e", "x%.2147483645f", "x%-2147483647e", "%.2147483647Le"}) {
-        bool rejected = false;
-        try {
-            if (std::strstr(format, "L")) snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5L);
-            else snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5);
-        } catch (const std::overflow_error&) {
-            rejected = true;
-        }
-        Require(rejected);
+        *__error_nid_postfix() = 0;
+        const int result = std::strstr(format, "L") ? snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5L)
+                                                    : snprintf_nid_postfix(buffer, sizeof(buffer), format, 1.5);
+        Require(result == -1 && *__error_nid_postfix() == 84);
     }
 }
 
-int main() { CheckSizeLimits(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+static void CheckNarrowBounds() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+#ifdef _WIN32
+    constexpr int overflowError = 84;
+#else
+    constexpr int overflowError = 75;
+#endif
+    for (const Formatter formatFn : {&snprintf_nid_postfix, &FormatList}) {
+        char output[32];
+        std::memset(output, 'Z', sizeof(output));
+        *__error_nid_postfix() = 0;
+        Require(formatFn(output, sizeof(output), "%2147483648d", 42) == -1 && *__error_nid_postfix() == overflowError);
+        std::memset(output, 'Z', sizeof(output));
+        *__error_nid_postfix() = 0;
+        Require(formatFn(output, 0, "%10d", 42) == 10 && output[0] == 'Z');
+        Require(formatFn(nullptr, 0, "%10d", 42) == 10);
+        std::memset(output, 'Z', sizeof(output));
+        Require(formatFn(output, 1, "%10d", 42) == 10 && output[0] == 0 && output[1] == 'Z');
+        std::memset(output, 'Z', sizeof(output));
+        Require(formatFn(output, 16, "%1000d", 42) == 1000);
+        Require(std::all_of(output, output + 15, [](char c) { return c == ' '; }));
+        Require(output[15] == 0 && output[16] == 'Z');
+        std::memset(output, 'Z', sizeof(output));
+        Require(formatFn(output, 16, "%1000s", "test") == 1000);
+        Require(std::all_of(output, output + 15, [](char c) { return c == ' '; }));
+        Require(output[15] == 0 && output[16] == 'Z');
+    }
+#ifdef _WIN32
+    char buffer[32];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    Require(snprintf_nid_postfix(buffer, 16, "%2147483647d", 1) == 2147483647);
+    Require(std::all_of(buffer, buffer + 15, [](char c) { return c == ' '; }));
+    Require(buffer[15] == 0 && buffer[16] == 'Z');
+    std::memset(buffer, 'Z', sizeof(buffer));
+    Require(snprintf_nid_postfix(buffer, 16, "%2147483646d", 1) == 2147483646);
+    Require(buffer[15] == 0 && buffer[16] == 'Z');
+    Require(snprintf_nid_postfix(buffer, 16, "%2147483647s", "x") == 2147483647);
+    Require(buffer[15] == 0 && buffer[16] == 'Z');
+    Require(snprintf_nid_postfix(buffer, 16, "%*d", 2147483647, 1) == 2147483647);
+    Require(snprintf_nid_postfix(buffer, 16, "%*d", -2147483647, 1) == 2147483647);
+    for (const auto formatFn : {&snprintf_nid_postfix, &FormatList}) {
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%*d", -2147483647 - 1, 1) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483648d", 1) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.4294967296s", "x") == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%99999999999d", 1) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.99999999999d", 1) == -1 && *__error_nid_postfix() == 84);
+    }
+    std::memset(buffer, 'Z', sizeof(buffer));
+    Require(snprintf_nid_postfix(buffer, 16, "%.2147483647d", 0) == 2147483647);
+    Require(std::all_of(buffer, buffer + 15, [](char c) { return c == '0'; }));
+    Require(buffer[15] == 0 && buffer[16] == 'Z');
+    for (const char* format : {"%+.2147483647d", "% .2147483647d", "%#.2147483647x", "x%.2147483647o"}) {
+        *__error_nid_postfix() = 0;
+        Require(snprintf_nid_postfix(buffer, sizeof(buffer), format, 1) == -1 && *__error_nid_postfix() == 84);
+    }
+    *__error_nid_postfix() = 0;
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%.2147483640d%.10d", 0, 0) == -1 && *__error_nid_postfix() == 84);
+    *__error_nid_postfix() = 0;
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%1$2147483648d", 42) == -1 && *__error_nid_postfix() == 84);
+    *__error_nid_postfix() = 0;
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%1$*2$d", 42, -2147483647 - 1) == -1 && *__error_nid_postfix() == 84);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%.*d", -1, 42) == 2 && std::strcmp(buffer, "42") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "test") == 4 && std::strcmp(buffer, "test") == 0);
+    for (const auto formatFn : {&snprintf_nid_postfix, &FormatList}) {
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%2147483647c", 'a') == 2147483647);
+        Require(buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%2147483647p", reinterpret_cast<void*>(0x1234)) == 2147483647);
+        Require(buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%.2147483645f", 1.0) == 2147483647);
+        Require(std::strncmp(buffer, "1.0000000000000", 15) == 0 && buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%.2147483640a", 1.0) == 2147483647);
+        Require(std::strncmp(buffer, "0x1.00000000000", 15) == 0 && buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%.2147483641e", 1.0) == 2147483647);
+        Require(std::strncmp(buffer, "1.0000000000000", 15) == 0 && buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%.2147483640La", 1.0L) == 2147483647);
+        Require(std::strncmp(buffer, "0x8.00000000000", 15) == 0 && buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%.2147483645Lf", 1.0L) == 2147483647);
+        Require(std::strncmp(buffer, "1.0000000000000", 15) == 0 && buffer[15] == 0 && buffer[16] == 'Z');
+
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483646f", 1.0) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483641a", 1.0) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483642e", 1.0) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483641La", 1.0L) == -1 && *__error_nid_postfix() == 84);
+        *__error_nid_postfix() = 0;
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483646Lf", 1.0L) == -1 && *__error_nid_postfix() == 84);
+
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483647g", 1.0) == 1 && std::strcmp(buffer, "1") == 0 && buffer[2] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, sizeof(buffer), "%.2147483647Lg", 1.0L) == 1 && std::strcmp(buffer, "1") == 0 && buffer[2] == 'Z');
+
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%2147483647k") == 2147483647);
+        Require(std::all_of(buffer, buffer + 15, [](char c) { return c == ' '; }) && buffer[15] == 0 && buffer[16] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%-2147483647k") == 2147483647);
+        Require(std::strncmp(buffer, "%k", 2) == 0 && std::all_of(buffer + 2, buffer + 15, [](char c) { return c == ' '; }) && buffer[15] == 0 && buffer[16] == 'Z');
+
+        Require(formatFn(buffer, 16, "%2147483647f", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647e", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647g", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647a", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647A", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%-2147483647f", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%02147483647f", 1.0) == 2147483647);
+        Require(formatFn(buffer, 16, "%+2147483647f", 1.0) == 2147483647);
+
+        Require(formatFn(buffer, 16, "%2147483647Lf", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647Le", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647Lg", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647La", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647LA", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%-2147483647La", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%02147483647La", 1.0L) == 2147483647);
+        Require(formatFn(buffer, 16, "%+2147483647La", 1.0L) == 2147483647);
+
+        Require(formatFn(buffer, 16, "%2147483647f", INFINITY) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647f", NAN) == 2147483647);
+        Require(formatFn(buffer, 16, "%-2147483647f", INFINITY) == 2147483647);
+        Require(formatFn(buffer, 16, "%+2147483647f", INFINITY) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647Lf", static_cast<long double>(INFINITY)) == 2147483647);
+        Require(formatFn(buffer, 16, "%2147483647Lf", static_cast<long double>(NAN)) == 2147483647);
+
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 0, "%2147483647f", 1.0) == 2147483647 && buffer[0] == 'Z');
+        Require(formatFn(nullptr, 0, "%2147483647f", 1.0) == 2147483647);
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 1, "%2147483647f", 1.0) == 2147483647 && buffer[0] == 0 && buffer[1] == 'Z');
+        std::memset(buffer, 'Z', sizeof(buffer));
+        Require(formatFn(buffer, 16, "%2147483647f", 1.0) == 2147483647);
+        Require(std::all_of(buffer, buffer + 15, [](char c) { return c == ' '; }) && buffer[15] == 0 && buffer[16] == 'Z');
+
+        Require(formatFn(buffer, 16, "%1000000f", 1.0) == 1000000);
+        Require(formatFn(buffer, 16, "%.1000000f", 1.0) == 1000002);
+        Require(formatFn(buffer, 16, "%.1000000a", 1.0) == 1000007);
+        Require(formatFn(buffer, 16, "%1000000k") == 1000000);
+    }
+#endif
+}
+
+int main() { CheckNarrowBounds(); CheckSizeLimits(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
