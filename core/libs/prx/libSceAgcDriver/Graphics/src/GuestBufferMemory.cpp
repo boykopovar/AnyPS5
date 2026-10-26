@@ -3950,6 +3950,21 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
 }
 
+bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    static_cast<void>(context);
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#else
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    const auto* import = state.device == context.device ? peekImport(state, address, address + bytes) : nullptr;
+    return import != nullptr && import->unwatched;
+#endif
+}
+
 GuestBufferMemory::GuestBufferMemory(const Context& context) : context(context) {}
 
 bool GuestBufferMemory::WritesOverlap(std::uint64_t address, std::size_t bytes) const {

@@ -83,14 +83,11 @@ constexpr std::size_t GuestPathMax = 1024;
 constexpr std::size_t GuestNameMax = 255;
 
 constexpr int PcLinkMax = 1;
-constexpr int PcMaxCanon = 2;
-constexpr int PcMaxInput = 3;
 constexpr int PcNameMax = 4;
 constexpr int PcPathMax = 5;
 constexpr int PcPipeBuf = 6;
 constexpr int PcChownRestricted = 7;
 constexpr int PcNoTrunc = 8;
-constexpr int PcVdisable = 9;
 constexpr int PcAllocSizeMin = 10;
 constexpr int PcFileSizeBits = 12;
 constexpr int PcRecIncrXferSize = 14;
@@ -132,7 +129,7 @@ std::int64_t Fail(int error) {
     return -1;
 }
 
-std::int64_t PathConfigurationValue(int name, const char* function) {
+std::int64_t PathConfigurationValue(int name) {
     switch (name) {
     case PcLinkMax: return 32767;
     case PcNameMax: return static_cast<std::int64_t>(GuestNameMax);
@@ -145,20 +142,15 @@ std::int64_t PathConfigurationValue(int name, const char* function) {
     case PcSymlinkMax: return static_cast<std::int64_t>(GuestPathMax);
     case PcPrioIo: return 0;
     case PcSyncIo: return 0;
-    case PcMaxCanon:
-    case PcMaxInput:
-    case PcVdisable:
-    case PcAllocSizeMin:
-    case PcRecIncrXferSize:
-    case PcRecMinXferSize:
-    case PcRecXferAlign:
-    case PcMinHoleSize:
-    case PcAsyncIo:
-    case PcAclExtended:
-    case PcAclPathMax:
-    case PcMacPresent:
-    case PcAclNfs4:
-        throw std::runtime_error(std::string(function) + ": name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
+    case PcAllocSizeMin: return 65536;
+    case PcRecIncrXferSize: return 65536;
+    case PcRecMinXferSize: return 65536;
+    case PcRecXferAlign: return 16384;
+    case PcMinHoleSize: return 65536;
+    case PcAclExtended: return 0;
+    case PcAclPathMax: return 3;
+    case PcMacPresent: return 0;
+    case PcAclNfs4: return 0;
     default: return Fail(GuestEinval);
     }
 }
@@ -359,6 +351,16 @@ int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     return 0;
 }
 
+int APS5_VABI setlogin_nid_postfix(const char* name) {
+    constexpr std::size_t MaxLoginName = 33;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, MaxLoginName, copy);
+    if (copied == GuestEnametoolong) return static_cast<int>(Fail(GuestEinval));
+    if (copied != 0) return static_cast<int>(Fail(copied));
+    if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
+    return 0;
+}
+
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
 }
@@ -371,6 +373,10 @@ int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* 
 
 int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t count, std::size_t* actual) {
     return sceKernelGetModuleList(handles, count, actual);
+}
+
+KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
+    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
@@ -408,7 +414,7 @@ std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
     const auto status = std::filesystem::status(native, error);
     if (error) return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
     if (!std::filesystem::exists(status)) return Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent);
-    return PathConfigurationValue(name, "pathconf");
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
@@ -423,7 +429,7 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
 #endif
     if (name == PcAsyncIo) return PosixAsynchronousIo;
     if (withoutVnode) return name == PcPipeBuf ? 512 : Fail(GuestEinval);
-    return PathConfigurationValue(name, "fpathconf");
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI fpathconf_nid_postfix(int fd, int name) {

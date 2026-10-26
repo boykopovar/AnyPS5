@@ -149,6 +149,7 @@ if(BUILD_TESTING)
     target_link_libraries(pad_sdl_tests PRIVATE libSceVideoOut libScePad libSceUserService libc SDL2-static)
     configure_windows_unwind(pad_sdl_tests)
     add_test(NAME pad_sdl COMMAND pad_sdl_tests)
+    set_tests_properties(pad_sdl PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(pad_sdl PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

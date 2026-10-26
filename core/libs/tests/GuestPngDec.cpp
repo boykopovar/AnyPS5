@@ -149,6 +149,70 @@ static void Check16BitImage(void* limitedHandle, void* enabledHandle, std::span<
     }
 }
 
+static void CheckDimensionReporting(std::uint32_t width, std::uint32_t height) {
+    constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
+    constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
+    constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
+    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(width) * height * 3);
+    for (std::size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<std::uint8_t>(i * 13 + 7);
+    const auto png = Decoder::Png::Encode(rgb, width, height, 3);
+    const PngDecCreateParam create{sizeof(PngDecCreateParam), 0, width};
+    const auto memorySize = scePngDecQueryMemorySize(&create);
+    Require(memorySize > 0);
+    std::vector<std::uint8_t> memory(memorySize);
+    void* handle = nullptr;
+    Require(scePngDecCreate(&create, memory.data(), memorySize, &handle) == 0);
+    const bool packed = width <= 32767 && height <= 32767;
+    const auto result = packed ? static_cast<std::int32_t>(width << 16 | height) : 0;
+    for (const std::uint16_t format : {0, 1}) {
+        for (const std::uint32_t padding : {0, 8}) {
+            const std::uint32_t pitch = width * 4 + padding;
+            const std::uint32_t size = pitch * height;
+            std::vector<std::uint8_t> image(size + 16, 0xCC);
+            auto decode = DecodeParam(png, image);
+            decode.pixel_format = format;
+            decode.image_pitch = padding == 0 ? 0 : pitch;
+            decode.image_mem_size = size;
+            Require(scePngDecDecode(handle, &decode, nullptr) == (packed ? result : invalidAddr));
+            if (!packed) Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+            PngDecImageInfo info{};
+            Require(scePngDecDecode(handle, &decode, &info) == result);
+            Require(info.image_width == width && info.image_height == height && info.color_space == 3 && info.bit_depth == 8 && info.image_flag == 0);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    for (std::uint32_t channel = 0; channel < 3; ++channel) {
+                        const auto inputChannel = format == 0 ? channel : 2 - channel;
+                        Require(image[y * pitch + x * 4 + channel] == rgb[(static_cast<std::size_t>(y) * width + x) * 3 + inputChannel]);
+                    }
+                    Require(image[y * pitch + x * 4 + 3] == 0x77);
+                }
+                for (std::uint32_t offset = width * 4; offset < pitch; ++offset) Require(image[y * pitch + offset] == 0xCC);
+            }
+            Require(std::all_of(image.begin() + size, image.end(), [](auto byte) { return byte == 0xCC; }));
+            if (packed) continue;
+            std::fill(image.begin(), image.end(), 0xCC);
+            decode.image_mem_size = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == (padding == 0 ? invalidSize : invalidParam));
+            decode.image_mem_size = size;
+            decode.image_pitch = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+            decode.image_mem_size = 0;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidSize);
+            decode.image_mem_size = size;
+            decode.pixel_format = 2;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidParam);
+            decode.pixel_format = format;
+            decode.png_mem_size = 8;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidData);
+            Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+        }
+    }
+    Require(scePngDecDelete(handle) == 0);
+}
+
 int main() {
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
@@ -352,5 +416,9 @@ int main() {
     Require(scePngDecDelete(handle) == invalidHandle);
     Require(scePngDecDecode(handle, &decode, &info) == invalidHandle);
 
+    for (const std::uint32_t dimension : {32767, 32768, 65536}) {
+        CheckDimensionReporting(dimension, 1);
+        CheckDimensionReporting(1, dimension);
+    }
     return 0;
 }

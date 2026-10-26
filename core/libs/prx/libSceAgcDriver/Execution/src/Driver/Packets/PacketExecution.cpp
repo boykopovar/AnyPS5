@@ -71,8 +71,8 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
         }
         case 0x3c: case 0x93: {
             if (packet.size() < 5) return false;
-            const std::uint64_t awaited = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u);
             const auto bytes = Pm4::WaitAwaitedBytes(packet);
+            const std::uint64_t awaited = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
             if (DrawPipeline::Queue0().Overlaps(awaited, bytes)) return false;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), bytes, bytes);
             return Pm4::WaitSatisfiedUnchecked(packet);

@@ -169,6 +169,19 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertTrue([name for name in found if name.startswith("APS5_")])
         self.assertTrue([name for name in found if name.startswith("ANYPS5_")])
 
+    def test_reads_fails_on_a_source_file_it_cannot_decode(self):
+        root = self.fixture()
+        (root / "core" / "Latin.cpp").write_bytes(b'static const char* s = "caf\xe9";\n')
+        with self.assertRaises(ValueError) as raised:
+            env_reference.reads([root / "core"], BOTH)
+        self.assertIn("Latin.cpp", str(raised.exception))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = env_reference.main(["--check", "--doc", str(root / "missing.md"), "--root", str(root / "core")])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read", stderr.getvalue())
+        self.assertIn("Latin.cpp", stderr.getvalue())
+
     def test_check_passes_when_every_read_name_has_a_row(self):
         root = self.fixture()
         found = env_reference.reads([root / "core"])
