@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -21,6 +23,8 @@ void Expect(bool condition, const std::string& what) {
 
 std::vector<std::string> events;
 VkResult idleResult = VK_SUCCESS;
+bool inspectFree = false;
+const VkAllocationCallbacks* lastAllocator = nullptr;
 
 template<typename THandle>
 THandle Handle(std::uintptr_t value) {
@@ -35,7 +39,12 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyBuffer(VkDevice device, VkBuffer buffer, c
     events.push_back(Name("buffer ", reinterpret_cast<const void*>(buffer)) + Name(" on ", device));
 }
 
-VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks*) {
+VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
+    lastAllocator = allocator;
+    if (inspectFree) {
+        const auto snapshot = MemoryAccounting::Read(device);
+        Expect(snapshot.complete && std::none_of(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& allocation) { return allocation.memory == memory; }), "the ledger still held memory when its actual free ran");
+    }
     events.push_back(Name("memory ", reinterpret_cast<const void*>(memory)) + Name(" on ", device));
 }
 
@@ -148,10 +157,74 @@ void ALaterDeviceUsesItsOwnResolver() {
     DestroyDeferredObjects(second);
 }
 
+void AccountingUntilFree() {
+    Expect(MemoryAccounting::Enabled(), "memory accounting is not enabled");
+    events.clear();
+    inspectFree = true;
+    const auto device = Handle<VkDevice>(0x110);
+    const auto proc = DeferDestructionToIdle(device, mockProc);
+    const auto context = ContextFor(device, proc);
+    VkPhysicalDeviceMemoryProperties properties{};
+    properties.memoryHeapCount = 2;
+    properties.memoryTypeCount = 2;
+    properties.memoryTypes[0].heapIndex = 0;
+    properties.memoryTypes[1].heapIndex = 1;
+    const auto record = [&](std::uintptr_t value, std::uint32_t type) {
+        const auto memory = Handle<VkDeviceMemory>(value);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = (type + 1u) << 20u;
+        allocation.memoryTypeIndex = type;
+        MemoryAccounting::Record(device, memory, allocation, properties, "deferred memory");
+        return memory;
+    };
+    const auto count = [&] {
+        const auto snapshot = MemoryAccounting::Read(device);
+        Expect(snapshot.complete, "deferred memory accounting became incomplete");
+        return snapshot.allocations.size();
+    };
+    const auto first = record(0x31, 0);
+    const auto second = record(0x32, 1);
+    const auto third = record(0x33, 0);
+    MemoryAccounting::Free(context, first);
+    const auto freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    freeMemory(device, second, nullptr);
+    Expect(events.empty() && DeferredObjects(device) == 2 && count() == 3, "queued memory left the ledger before an actual free");
+    idleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+    bool threw = false;
+    try {
+        DestroyDeferredAtIdle(context, std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Expect(threw && DeferredObjects(device) == 2 && count() == 3, "a failed idle wait removed queued memory from the ledger");
+    idleResult = VK_ERROR_DEVICE_LOST;
+    DestroyDeferredAtIdle(context, std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    Expect(DeferredObjects(device) == 0 && count() == 1 && MemoryAccounting::Read(device).allocations.front().memory == third, "draining deferred memory did not remove just the actual frees");
+    idleResult = VK_SUCCESS;
+    MemoryAccounting::Free(freeMemory, device, third);
+    Expect(DeferredObjects(device) == 1 && count() == 1, "device cleanup memory was removed before its queued free");
+    DestroyDeferredObjects(device);
+    Expect(count() == 0 && DeferredObjects(device) == 0, "device cleanup left deferred memory counted");
+    const auto fourth = record(0x34, 1);
+    const VkAllocationCallbacks allocator{};
+    MemoryAccounting::Free(freeMemory, device, fourth, &allocator);
+    Expect(count() == 0 && DeferredObjects(device) == 0 && lastAllocator == &allocator, "a wrapper without a deferred device failed to free or forward its allocator");
+    const auto fifth = record(0x35, 0);
+    MemoryAccounting::Free(&mockFreeMemory, device, fifth);
+    Expect(count() == 0, "a direct free left memory counted");
+    MemoryAccounting::ForgetDevice(device);
+    inspectFree = false;
+    if (failures == 0) std::puts("deferred memory accounting survives queuing and failed waits, and clears at actual frees");
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--memory-accounting") == 0) {
+            AccountingUntilFree();
+            return failures == 0 ? 0 : 1;
+        }
         DeferredUntilTheQueueIsIdle();
         OtherDevicesDestroyAtOnce();
         ALaterDeviceUsesItsOwnResolver();

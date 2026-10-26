@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include <algorithm>
 #include <array>
@@ -55,8 +56,8 @@ VkResult MemoryAccounting::Allocate(const Context& context, const VkMemoryAlloca
     return result;
 }
 
-void MemoryAccounting::Free(PFN_vkFreeMemory freeMemory, VkDevice device, VkDeviceMemory memory) {
-    if (Enabled() && memory != VK_NULL_HANDLE) {
+void MemoryAccounting::Free(PFN_vkFreeMemory freeMemory, VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
+    if (Enabled() && memory != VK_NULL_HANDLE && !IsDeferredMemoryFree(freeMemory)) {
         auto& state = accounting();
         try {
             std::lock_guard lock(state.mutex);
@@ -66,7 +67,7 @@ void MemoryAccounting::Free(PFN_vkFreeMemory freeMemory, VkDevice device, VkDevi
             state.complete = false;
         }
     }
-    freeMemory(device, memory, nullptr);
+    freeMemory(device, memory, allocator);
 }
 
 void MemoryAccounting::Free(const Context& context, VkDeviceMemory memory) {
