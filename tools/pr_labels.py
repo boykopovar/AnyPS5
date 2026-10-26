@@ -12,8 +12,9 @@ import performance_compare
 
 UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)')
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
+NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
-FENCE = re.compile(r"```[^\r\n]*\r?\n(.*?)```", re.S)
+FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
 PERF_LABEL = "perf"
@@ -39,7 +40,7 @@ def strip_comments(body):
 
 def title_ids(body):
     match = UNBLOCKS.search(strip_comments(body))
-    return set(TITLE_ID.findall(match.group(1))) if match else set()
+    return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()
 
 
 def is_perf(title):
@@ -120,18 +121,25 @@ def process(repo, pr, dry_run, comment=True):
     return add, remove, post
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Label pull requests from their title and template fields.")
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--pr", type=int, help="label one pull request")
     which.add_argument("--all", action="store_true", help="label every open pull request")
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
-    args = parser.parse_args()
-    repo = repository()
-    if args.pr is not None:
-        prs = [pull(json.loads(gh("api", f"repos/{repo}/pulls/{args.pr}")))]
-    else:
-        prs = [pull(data) for data in decode_pages(gh("api", "--paginate", f"repos/{repo}/pulls?state=open&base=main&per_page=100"))]
+    args = parser.parse_args(argv)
+    try:
+        repo = repository()
+        if args.pr is not None:
+            prs = [pull(json.loads(gh("api", f"repos/{repo}/pulls/{args.pr}")))]
+        else:
+            prs = [pull(data) for data in decode_pages(gh("api", "--paginate", f"repos/{repo}/pulls?state=open&base=main&per_page=100"))]
+    except subprocess.CalledProcessError as error:
+        parser.error((error.stderr or str(error)).strip())
     failed = []
     for pr in prs:
         try:
@@ -147,7 +155,8 @@ def main():
                 time.sleep(WRITE_PAUSE)
     if failed:
         sys.exit(f"{len(failed)} pull requests not labeled: {', '.join(f'#{number}' for number in failed)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

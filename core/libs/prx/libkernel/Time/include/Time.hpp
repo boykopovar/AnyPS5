@@ -10,6 +10,7 @@ extern "C" {
     std::uint64_t APS5_VABI sceKernelGetProcessTime();
     std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter();
     std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency();
+    std::uint64_t APS5_VABI sceKernelGetTscFrequency();
     int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
     int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
     int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);

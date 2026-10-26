@@ -34,6 +34,28 @@ int main() {
     Require(Parse("0;1\n") == 0, "malformed separator");
     Require(CpuTopology::MaskFromCpuList("/nonexistent/anyps5/cpus") == 0, "missing file");
 
+    {
+        std::uint64_t byClass[4] = {};
+        bool seen[4] = {};
+        const auto empty = CpuTopology::LayoutFromClasses(byClass, seen, 4);
+        Require(!empty.hybrid && empty.efficient == 0 && empty.performant == 0, "empty classes");
+
+        byClass[0] = 0xff;
+        seen[0] = true;
+        const auto single = CpuTopology::LayoutFromClasses(byClass, seen, 4);
+        Require(!single.hybrid && single.efficient == 0 && single.performant == 0, "single class");
+
+        byClass[1] = 0xff00;
+        seen[1] = true;
+        const auto twoTier = CpuTopology::LayoutFromClasses(byClass, seen, 4);
+        Require(twoTier.hybrid && twoTier.efficient == 0xff && twoTier.performant == 0xff00, "two-tier classes");
+
+        byClass[2] = 0xff0000;
+        seen[2] = true;
+        const auto threeTier = CpuTopology::LayoutFromClasses(byClass, seen, 4);
+        Require(threeTier.hybrid && threeTier.efficient == 0xffff && threeTier.performant == 0xff0000, "three-tier classes aggregate efficient");
+    }
+
     const auto& layout = CpuTopology::Get();
     Require(layout.process != 0, "process affinity read");
     Require(!layout.hybrid || (layout.performant & layout.efficient) == 0, "hybrid classes overlap");

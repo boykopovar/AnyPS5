@@ -1,6 +1,9 @@
+#include "prx/libSceAudiodec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>
+#include <cstring>
+#include <stdexcept>
 #include <memory>
 #include <mutex>
 #include "SceTypes.hpp"
@@ -66,9 +69,9 @@ std::int32_t wordSizeOf(const void* param) {
     return static_cast<const AudiodecParamMp3*>(param)->i_bw_pcm;
 }
 
-std::int32_t validateWordSize(std::int32_t wordSize) {
-    if (wordSize == Audiodec::WORD_SIZE_16BIT || wordSize == Audiodec::WORD_SIZE_FLOAT) return 0;
-    if (wordSize == 0) NotImplemented_nid_no_patch("libSceAudiodec 24-bit PCM output");
+std::int32_t validateWordSize(std::int32_t wordSize, std::uint32_t codecType) {
+    if (wordSize == Audiodec::WORD_SIZE_16BIT) return 0;
+    if (wordSize == Audiodec::WORD_SIZE_FLOAT && codecType != TYPE_MP3) return 0;
     return ERROR_INVALID_WORD_LENGTH;
 }
 
@@ -88,11 +91,11 @@ std::int32_t validateCtrl(const AudiodecCtrl* ctrl, std::uint32_t codecType) {
             if (infoSize != sizeof(AudiodecMp3Info)) return ERROR_INVALID_BSI_INFO_SIZE;
             break;
         default:
-            if (paramSize < sizeof(AudiodecParamM4aac)) return ERROR_INVALID_PARAM_SIZE;
+            if (paramSize != sizeof(AudiodecParamM4aac) && paramSize != 28 && paramSize != 32) return ERROR_INVALID_PARAM_SIZE;
             if (infoSize != sizeof(AudiodecM4aacInfo)) return ERROR_INVALID_BSI_INFO_SIZE;
             break;
     }
-    return validateWordSize(wordSizeOf(ctrl->pParam));
+    return validateWordSize(wordSizeOf(ctrl->pParam), codecType);
 }
 
 std::int32_t validateBuffers(const AudiodecCtrl* ctrl) {
@@ -133,12 +136,20 @@ void fillMp3Info(AudiodecMp3Info* info, const Audiodec::Mp3Header& header) {
 }
 
 std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info, Instance& instance) {
+    std::uint32_t extensionMode = 0;
+    std::uint32_t outputMode = 0;
+    const auto* bytes = reinterpret_cast<const std::byte*>(param);
+    if (param->ui_size >= 28) std::memcpy(&extensionMode, bytes + 24, sizeof(extensionMode));
+    if (extensionMode > 1) return static_cast<std::int32_t>(0x807F0305);
+    if (param->ui_size == 32) std::memcpy(&outputMode, bytes + 28, sizeof(outputMode));
+    if (outputMode > 2) return static_cast<std::int32_t>(0x807F0306);
+    if (extensionMode != 0 || outputMode != 0) throw std::runtime_error("M4AAC extended decoding modes are not implemented");
     if (param->ui_config_number != M4AAC_CONFIG_ADTS && param->ui_config_number != M4AAC_CONFIG_RAW) return ERROR_M4AAC_INVALID_CONFIG_NUMBER;
     const std::uint32_t sampleRate = Audiodec::AacSampleRate(param->ui_sampling_freq_index);
     if (param->ui_config_number == M4AAC_CONFIG_RAW && sampleRate == 0) return ERROR_M4AAC_INVALID_SAMPLING_FREQ;
-    if (param->ui_max_channels > 8) return ERROR_M4AAC_INVALID_MAX_CHANNELS;
-    if (param->ui_enable_heaac > 1) return ERROR_M4AAC_INVALID_ENABLE_HEAAC;
-    const std::uint32_t channels = param->ui_max_channels == 0 ? 2 : param->ui_max_channels;
+    if (param->ui_max_channels != 1 && param->ui_max_channels != 2 && param->ui_max_channels != 6 && param->ui_max_channels != 8) return ERROR_M4AAC_INVALID_MAX_CHANNELS;
+    if (param->ui_enable_heaac > 1 || (param->ui_enable_heaac == 1 && param->ui_max_channels > 2)) return ERROR_M4AAC_INVALID_ENABLE_HEAAC;
+    const std::uint32_t channels = param->ui_max_channels;
     instance.decoder = Audiodec::CreateAac(param->i_bw_pcm, param->ui_config_number == M4AAC_CONFIG_ADTS, param->ui_sampling_freq_index, channels, param->ui_enable_heaac == 1);
     instance.channels = channels;
     instance.sampleRate = sampleRate;

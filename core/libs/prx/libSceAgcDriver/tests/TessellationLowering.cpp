@@ -1,11 +1,16 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "Optimization/ShaderStageInputInfo.hpp"
 #include "Optimization/TessellationLowering.hpp"
+#include "SpirvBackend/SpirvEmitter.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
+#include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 using namespace ShaderRecompiler;
 
@@ -102,11 +107,12 @@ struct Outcome {
 };
 
 const ShaderTessellationInputInfo Tessellation{.inputControlPoints = InputControlPoints, .outputControlPoints = InputControlPoints, .patchesPerGroup = 1u};
+const ShaderTessellationInputInfo GroupedTessellation{.inputControlPoints = InputControlPoints, .outputControlPoints = InputControlPoints, .patchesPerGroup = 1u, .primitiveGroupSize = 1u};
 
-Outcome Lower(IrProgram& program) {
+Outcome Lower(IrProgram& program, const ShaderTessellationInputInfo& tessellation = Tessellation) {
     Outcome outcome;
     try {
-        TessellationLowering{}.Lower(program, Tessellation);
+        TessellationLowering{}.Lower(program, tessellation);
     } catch (const std::exception& error) {
         outcome.reason = error.what();
         return outcome;
@@ -132,6 +138,52 @@ bool RefusedBecause(IrProgram& program, const char* reason) {
     const Outcome outcome = Lower(program);
     if (outcome.lowered) std::fprintf(stderr, "lowered instead of refusing: %s\n", reason);
     return !outcome.lowered && outcome.reason.find(reason) != std::string::npos;
+}
+
+std::uint32_t EmittedEvaluationControlPoint(std::uint32_t address) {
+    constexpr std::uint32_t ControlStride = 16u;
+    IrProgram program;
+    IrBuilder builder{program};
+    program.SetWaveSize(64);
+    program.Resources().stage = IrShaderStage::TessellationEvaluation;
+    program.Resources().srtPlanComplete = true;
+    program.Resources().resourceTrackingComplete = true;
+    program.Metadata().shaderInfoComplete = true;
+    program.Metadata().bindingLayoutComplete = true;
+    program.Metadata().tessellationControlStride = ControlStride;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    BlockInfo info;
+    info.id = block.Id();
+    program.Metadata().blockInfo.push_back(info);
+    builder.SetInsertionPoint(block);
+    auto& read = builder.Emit(IrOpcode::GetTessellationAttribute, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationAttribute::EvaluationInput)), &builder.Constant(address), &builder.ConstantBool(true)});
+    static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&read}));
+    ShaderVertexInputInfo vertex;
+    vertex.tess.inputControlPoints = InputControlPoints;
+    vertex.tess.outputControlPoints = InputControlPoints;
+    vertex.tess.domain = 1u;
+    vertex.tess.partitioning = 2u;
+    vertex.tess.outputTopology = 2u;
+    ShaderStageInputInfo inputs;
+    inputs.vertex = &vertex;
+    CompiledBindingLayout bindings;
+    bindings.layout = program.Metadata().bindings;
+    SpirvTargetOptions target{};
+    target.vulkanVersion = 0x00401000;
+    target.spirvVersion = 0x00010300;
+    target.subgroupSize = 64;
+    const auto words = SpirvEmitter().Emit(program, inputs, bindings, target);
+    std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    for (std::size_t at = 5; at < words.size(); at += words[at] >> 16u) {
+        const auto count = words[at] >> 16u;
+        if (count == 0u || at + count > words.size()) throw std::runtime_error("the domain program compiled to a malformed SPIR-V instruction");
+        const auto opcode = words[at] & 0xffffu;
+        if (opcode == spv::OpConstant && count == 4u) constants[words[at + 2u]] = words[at + 3u];
+        if (opcode == spv::OpAccessChain && count == 7u) return constants.at(words[at + 4u]);
+    }
+    throw std::runtime_error("the domain program reads no control point attribute");
 }
 
 bool run(const char* name, const std::function<bool()>& body) {
@@ -191,6 +243,22 @@ int main() {
         auto& address = hull.inPatch(hull.select(2u, LocalStride, offset));
         hull.read(address);
         return RefusedBecause(hull.program, "not a whole number of control points");
+    });
+
+    passed &= run("a hull read at a computed control-point index stays in its patch when the relative patch is also data", [] {
+        Hull hull;
+        auto& address = hull.inPatch(hull.computed(2u, LocalStride));
+        hull.read(address);
+        static_cast<void>(hull.builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&hull.relativePatch()}));
+        const Outcome outcome = Lower(hull.program, GroupedTessellation);
+        if (!outcome.lowered) std::fprintf(stderr, "refused: %s\n", outcome.reason.c_str());
+        if (!outcome.lowered || outcome.emitted->Opcode() != IrOpcode::ISub32 || outcome.emitted->Argument(0)->Resolve() != address.Resolve()) return false;
+        const IrValue* patch = outcome.emitted->Argument(1)->Resolve();
+        return patch->Opcode() == IrOpcode::IMul32 && patch->Argument(1)->Resolve()->ImmediateU32() == PatchStride;
+    });
+
+    passed &= run("a domain read at an immediate address past the last control point reads the last control point", [] {
+        return EmittedEvaluationControlPoint(InputControlPoints * 16u) == InputControlPoints - 1u;
     });
 
     return passed ? 0 : 1;

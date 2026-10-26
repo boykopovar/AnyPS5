@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -21,7 +22,10 @@ intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev) {
 
 int APS5_VABI sceKernelGetEventError(const KernelEvent* ev) {
     const KernelEvent& event = requireEvent(ev, __func__);
-    return (event.flags & EV_ERROR) != 0 ? static_cast<int>(event.data) : 0;
+    if (event.fflags == 0) {
+        return 0;
+    }
+    return static_cast<int>(0x80020000u + static_cast<std::uint32_t>(event.fflags));
 }
 
 intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev) {

@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
 #include <chrono>
@@ -18,9 +20,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" int APS5_VABI statvfs_nid_postfix(const char*, void*);
-extern "C" int* APS5_VABI __error_nid_postfix();
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "statvfs check failed at line %d\n", line);
@@ -33,7 +32,7 @@ static void RequireVolume(const char* path, const std::filesystem::path& native)
     std::array<std::uint64_t, 13> output;
     output.fill(0xA5A5A5A5A5A5A5A5ull);
     *__error_nid_postfix() = 12345;
-    Require(statvfs_nid_postfix(path, output.data() + 1) == 0);
+    Require(statvfs_nid_postfix(path, reinterpret_cast<LibcStatvfs*>(output.data() + 1)) == 0);
     Require(*__error_nid_postfix() == 12345);
     Require(output.front() == 0xA5A5A5A5A5A5A5A5ull && output.back() == output.front());
     const auto* fields = output.data() + 1;
@@ -49,7 +48,7 @@ static void RequireError(const char* path, int error) {
     output.fill(0x5A5A5A5A5A5A5A5Aull);
     const auto saved = output;
     *__error_nid_postfix() = 0;
-    const int result = statvfs_nid_postfix(path, output.data());
+    const int result = statvfs_nid_postfix(path, reinterpret_cast<LibcStatvfs*>(output.data()));
     if (result != -1)
         std::fprintf(stderr, "path %s: expected failure, got %d\n", path ? path : "(null)", result);
     Require(result == -1);
@@ -101,6 +100,8 @@ int main() {
     AddPathAlias_nid_no_patch("/anyps5-statvfs-unavailable", root.string().c_str());
     RemovePathAlias_nid_no_patch("/anyps5-statvfs-unavailable");
     Require(statvfs_nid_postfix("/anyps5-statvfs-test/file.txt", nullptr) == -1);
+    Require(*__error_nid_postfix() == 14);
+    Require(statvfs_nid_postfix("/anyps5-statvfs-test/missing", nullptr) == -1);
     Require(*__error_nid_postfix() == 14);
 
     const auto unicodeFile = root / std::filesystem::path(u8"\u65e5.txt");

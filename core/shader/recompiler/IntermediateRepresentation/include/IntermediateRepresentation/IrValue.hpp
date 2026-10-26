@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <ranges>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -35,7 +36,7 @@ public:
     [[nodiscard]] IrType Type() const;
     [[nodiscard]] std::uint32_t Id() const;
     [[nodiscard]] const std::vector<IrValue*>& Arguments() const;
-    [[nodiscard]] const std::vector<IrValue*>& Uses() const;
+    [[nodiscard]] auto Uses() const;
     [[nodiscard]] IrBlock* Parent() const;
     [[nodiscard]] bool HasImmediate() const;
     [[nodiscard]] std::uint32_t ImmediateU32() const;
@@ -103,9 +104,12 @@ private:
     std::vector<IrUse> operandUses;
     bool hasImmediate;
     std::vector<IrValue*> arguments;
-    std::vector<IrValue*> uses;
     IrBlock* parent;
 };
+
+inline auto IrValue::Uses() const {
+    return std::views::transform(operandUses, [](const IrUse& use) { return use.user; });
+}
 
 inline IrOpcode IrValue::Opcode() const {
     return opcode;

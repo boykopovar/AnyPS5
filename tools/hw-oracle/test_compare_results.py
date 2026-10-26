@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import compare_results
 import hw_oracle
 
 
@@ -41,16 +42,28 @@ class CompareResultsTests(unittest.TestCase):
             ],
         }
 
-    def cli(self, before=None, after=None):
+    def cli(self, before=None, after=None, process=False):
         self.before.write_text(json.dumps(self.report if before is None else before), encoding="utf-8")
         self.after.write_text(json.dumps(self.report if after is None else after), encoding="utf-8")
-        return subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
-                              capture_output=True, text=True, timeout=10)
+        if process:
+            return subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                  capture_output=True, text=True, timeout=10)
+        return self.compare()
+
+    def compare(self):
+        argv = [str(SCRIPT), str(self.before), str(self.after)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", argv), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                returncode = compare_results.main()
+            except SystemExit as exit:
+                returncode = exit.code
+        return subprocess.CompletedProcess(argv, returncode, stdout.getvalue(), stderr.getvalue())
 
     def test_identical_outputs_across_assembly_targets(self):
         after = copy.deepcopy(self.report)
         after["assembly_target"] = "gfx1100"
-        result = self.cli(after=after)
+        result = self.cli(after=after, process=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("gfx1030 -> gfx1100", result.stdout)
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
@@ -60,7 +73,7 @@ class CompareResultsTests(unittest.TestCase):
         after = copy.deepcopy(self.report)
         after["rows"][0]["output"][0] = 0x80000000
         after["rows"][1]["output"] = [0x7fc00002, 0]
-        result = self.cli(after=after)
+        result = self.cli(after=after, process=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("3 differing words", result.stdout)
         self.assertIn("row 1, v10: 0x00000000 -> 0x80000000", result.stdout)
@@ -147,8 +160,7 @@ class CompareResultsTests(unittest.TestCase):
             with self.subTest(content=content):
                 if content is not None:
                     self.after.write_bytes(content)
-                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
-                                        capture_output=True, text=True, timeout=10)
+                result = self.compare()
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stdout, "")
@@ -177,6 +189,26 @@ class CompareResultsTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertIn("1 differing words", result.stdout)
                     self.assertIn(f"row 1025, v{9 + outs}", result.stdout)
+
+    def test_diagnostic_limit_does_not_limit_comparison_or_hide_failure(self):
+        after = copy.deepcopy(self.report)
+        after["rows"][0]["output"][0] = 1
+        after["rows"][1]["output"] = [2, 3]
+        self.cli(after=after)
+        for limit, shown in ((0, 0), (1, 1), (3, 3), (10, 3)):
+            with self.subTest(limit=limit):
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after),
+                                         "--max-differences", str(limit)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("3 differing words", result.stdout)
+                self.assertEqual(sum(line.startswith("row ") for line in result.stdout.splitlines()), shown)
+                if shown < 3:
+                    self.assertIn(f"{3 - shown} additional differing words omitted", result.stdout)
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after),
+                                 "--max-differences", "-1"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+
 
 
 if __name__ == "__main__":

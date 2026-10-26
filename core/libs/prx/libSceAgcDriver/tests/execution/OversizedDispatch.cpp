@@ -18,11 +18,18 @@
 #include <exception>
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
 
 using AgcDriver::Graphics::Require;
 
@@ -94,7 +101,7 @@ void CheckSplitCoverage(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest.Data()), guest.Bytes);
     for (std::uint32_t i = 0; i < Stores; ++i) {
-        Require(guest.Data()[i] == Pattern[i % Period], "oversized dispatch: dword " + std::to_string(i) + " is 0x" + std::to_string(guest.Data()[i]) + ", expected 0x" + std::to_string(Pattern[i % Period]));
+        Require(guest.Data()[i] == Pattern[i % Period], "oversized dispatch: dword " + std::to_string(i) + " is " + Hex(guest.Data()[i]) + ", expected " + Hex(Pattern[i % Period]));
     }
 }
 
@@ -135,14 +142,17 @@ void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     Require(result.workgroupMemoryDwords != 0u, "oversized dispatch: the LDS shader did not take the device-memory path");
-    bool threw = false;
-    try {
-        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    } catch (const std::runtime_error&) {
-        threw = true;
+    for (const auto z : {1u, std::numeric_limits<std::uint32_t>::max()}) {
+        bool threw = false;
+        try {
+            device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, z, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()).find("a split aliases the device-memory LDS slots") != std::string::npos, "oversized dispatch: wrong LDS split refusal: " + std::string(error.what()));
+            threw = true;
+        }
+        device.WaitIdle();
+        Require(threw, "oversized dispatch: a Y count over the limit with device-memory LDS did not throw");
     }
-    device.WaitIdle();
-    Require(threw, "oversized dispatch: a Y count over the limit with device-memory LDS did not throw");
 }
 
 alignas(256) constexpr std::array<std::uint32_t, 6> GroupYCode{

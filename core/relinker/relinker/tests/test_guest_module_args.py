@@ -105,6 +105,11 @@ def check_lifecycle_host(relinker, host, work, linux, deferred):
                                  env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
                                  capture_output=True, text=True, timeout=30)
             assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+            assert not events.exists(), events.read_text()
+            run = subprocess.run([sys.executable, __file__, '--load', str(libraries / 'libkernel.prx'), str(initializer)],
+                                 env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                                 capture_output=True, text=True, timeout=30)
+            assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
         assert events.read_text() == 'result=0\n', events.read_text()
 
 
@@ -113,9 +118,40 @@ def macho_binds(image):
     return image[linkedit['fileoff']:linkedit['fileoff'] + linkedit['filesize']]
 
 
-def load_and_record(work, provider, module):
+def macho_x86_64(path):
+    header = Path(path).read_bytes()[:8]
+    return len(header) == 8 and struct.unpack('<II', header) == (0xFEEDFACF, 0x01000007)
+
+
+def macos_loader(work):
+    source, loader = work / 'loader.c', work / 'loader'
+    source.write_text(
+        '#include <dlfcn.h>\n'
+        '#include <stddef.h>\n'
+        '#include <stdio.h>\n'
+        '#include <stdlib.h>\n'
+        '\n'
+        'int main(int argc, char **argv) {\n'
+        '    if (argc != 5) return 4;\n'
+        '    void *host = dlopen(argv[1], RTLD_NOW | RTLD_GLOBAL);\n'
+        '    if (!host) { fprintf(stderr, "%s\\n", dlerror()); return 1; }\n'
+        '    void (*set)(size_t, const void *) = (void (*)(size_t, const void *))dlsym(host, "SetPendingArgs");\n'
+        '    if (!set) { fprintf(stderr, "%s\\n", dlerror()); return 2; }\n'
+        '    set((size_t)strtoull(argv[3], NULL, 0), (const void *)(size_t)strtoull(argv[4], NULL, 0));\n'
+        '    if (!dlopen(argv[2], RTLD_NOW | RTLD_LOCAL)) { fprintf(stderr, "%s\\n", dlerror()); return 3; }\n'
+        '    return 0;\n'
+        '}\n'
+    )
+    result = subprocess.run(['xcrun', 'clang', '-arch', 'x86_64', str(source), '-o', str(loader)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    return (['/usr/bin/arch', '-x86_64'] if platform.machine() == 'arm64' else []) + [str(loader)]
+
+
+def load_and_record(work, provider, module, loader=None):
     events = work / 'events.txt'
-    run = subprocess.run([sys.executable, __file__, '--load', str(provider), str(module)],
+    command = loader + [str(provider), str(module), hex(ARGS), hex(ARGP)] if loader else [sys.executable, __file__, '--load', str(provider), str(module)]
+    run = subprocess.run(command,
                          env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
                          capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
@@ -130,12 +166,25 @@ def main():
         host = ctypes.CDLL(sys.argv[2], mode=ctypes.RTLD_GLOBAL if sys.platform == 'darwin' else ctypes.DEFAULT_MODE)
         host.SetPendingArgs.argtypes = [ctypes.c_size_t, ctypes.c_void_p]
         host.SetPendingArgs(ARGS, ARGP)
-        ctypes.CDLL(sys.argv[3])
+        module = ctypes.CDLL(sys.argv[3])
+        try:
+            table = (ctypes.c_uint64 * 8).in_dll(module, '__aps5_guest_lifecycle_nid_no_patch')
+        except ValueError:
+            return
+        assert table[0] == 0x415053354c494658 and table[6] == 0
+        table[6] = 1
+        returned = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p)(table[2])(ARGS, ARGP, None) if table[2] else 0
+        for index in range(table[4]):
+            callback = ctypes.c_void_p.from_address(ctypes.c_uint64.from_address(ctypes.addressof(table) + 64 + index * 8).value).value
+            if callback:
+                ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(callback)(0, None, None)
+        host.__aps5_set_module_init_result_nid_no_patch(returned)
+        table[6] = 2
         return
     relinker = Path(sys.argv[1]).resolve()
     host = Path(sys.argv[2]).resolve()
     linux = sys.platform == 'linux' and os.uname().machine == 'x86_64'
-    macos = sys.platform == 'darwin' and platform.machine() == 'x86_64'
+    macos = sys.platform == 'darwin' and macho_x86_64(host)
     with tempfile.TemporaryDirectory(prefix='anyps5-guest-args-') as directory:
         work = Path(directory)
         for deferred in (False, True):
@@ -193,7 +242,7 @@ def main():
             libraries.mkdir()
             shutil.copyfile(host, libraries / 'libkernel.prx')
             (libraries / 'libc.prx').symlink_to('libkernel.prx')
-            load_and_record(mach, libraries / 'libkernel.prx', mach_converted)
+            load_and_record(mach, libraries / 'libkernel.prx', mach_converted, macos_loader(work))
         else:
             print('Guest module argument tests passed: native execution skipped')
             return

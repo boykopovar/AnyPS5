@@ -131,7 +131,7 @@ Captured Capture(std::byte* table) {
     result.memory = std::make_unique<AgcDriver::ShaderMemory>(std::span<const MemoryRegion>{});
     result.capture = result.memory->Capture(request);
     result.regions = result.memory->TakeRecentRegions();
-    request.context.memory = result.memory->Regions();
+    request.context.memory = result.regions;
     result.compiled = Recompile(request, *result.capture);
     return result;
 }

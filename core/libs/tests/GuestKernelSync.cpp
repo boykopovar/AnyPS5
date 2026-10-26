@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -12,19 +15,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-int APS5_VABI sceKernelMkdir(const char*, unsigned short);
-int APS5_VABI sceKernelRename(const char*, const char*);
-int APS5_VABI sceKernelUnlink(const char*);
-int APS5_VABI sceKernelChmod_nid_postfix(const char*, std::uint16_t);
-void APS5_VABI sceKernelSync();
-void APS5_VABI sync_nid_postfix();
-void* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(void*);
-}
+
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Kernel sync check failed at line %d\n", line);
@@ -50,7 +41,7 @@ int main() {
     Require(sceKernelMkdir("kernel_sync_probe/existing.bin/child", 0777) == static_cast<int>(0x80020014u));
     const int reader = sceKernelOpen("kernel_sync_probe/existing.bin", 0x0, 0);
     Require(reader >= 0 && sceKernelClose(reader) == 0);
-    void* stream = fopen_nid_postfix("kernel_sync_probe/existing.bin", "r");
+    FileStream* stream = fopen_nid_postfix("kernel_sync_probe/existing.bin", "r");
     Require(stream != nullptr && fclose_nid_postfix(stream) == 0);
     Require(!Recorded("kernel_sync_probe/existing.bin"));
     stream = fopen_nid_postfix("kernel_sync_probe/existing.bin", "a");
@@ -63,27 +54,33 @@ int main() {
     Require(Recorded("kernel_sync_probe/moved.bin"));
     Require(sceKernelUnlink("kernel_sync_probe/moved.bin") == 0);
     sceKernelSync();
+
     Require(!Recorded("kernel_sync_probe/data.bin") && !Recorded("kernel_sync_probe/moved.bin"));
     sceKernelSync();
+
     const int locked = sceKernelOpen("kernel_sync_probe/read_only.bin", 0x1 | 0x200, 0644);
     Require(locked >= 0 && sceKernelWrite(locked, "data", 4) == 4 && sceKernelClose(locked) == 0);
     Require(sceKernelChmod_nid_postfix("kernel_sync_probe/read_only.bin", 0444) == 0);
     Require(Recorded("kernel_sync_probe/read_only.bin"));
     sceKernelSync();
+
     Require(sceKernelChmod_nid_postfix("kernel_sync_probe/read_only.bin", 0644) == 0);
 #ifdef _WIN32
     const auto exclusive = CreateFileW(ResolvePath_nid_no_patch("kernel_sync_probe/read_only.bin").c_str(), GENERIC_READ, FILE_SHARE_READ,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     Require(exclusive != INVALID_HANDLE_VALUE);
     sceKernelSync();
+
     CloseHandle(exclusive);
 #endif
     sceKernelSync();
+
     const int synced = sceKernelOpen("kernel_sync_probe/synced.bin", 0x1 | 0x200 | 0x400, 0644);
     Require(synced >= 0 && sceKernelWrite(synced, "data", 4) == 4 && sceKernelClose(synced) == 0);
     Require(Recorded("kernel_sync_probe/synced.bin"));
     Require(sceKernelUnlink("kernel_sync_probe/synced.bin") == 0);
     sync_nid_postfix();
+
     Require(!Recorded("kernel_sync_probe/synced.bin"));
     std::filesystem::remove_all("kernel_sync_probe");
 }

@@ -33,7 +33,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
   CONFIGURE: >-
@@ -421,7 +421,7 @@ jobs:
 
   linux:
     needs: eligibility
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ !github.event.repository.fork && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
     runs-on: [self-hosted, linux, x64, anyps5]
     timeout-minutes: 60
     env:
@@ -641,7 +641,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: configure-seed.cmake
-          key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', '.github/workflows/build.yml') }}
+          key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', 'tools/configure_seed.py', '.github/workflows/build.yml') }}
       - shell: cmd
         run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
       - if: steps.seed-cache.outputs.cache-hit != 'true'

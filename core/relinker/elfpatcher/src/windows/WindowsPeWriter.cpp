@@ -5,7 +5,7 @@
 
 namespace Elfpatcher::Windows {
 
-std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, const bool windowsGui, const std::optional<std::uint64_t> fixedImageBase, const bool dynamicBase) const {
+std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, const bool windowsGui, const std::uint64_t imageBase, const bool fixedBase, const bool dynamicBase) const {
     constexpr std::size_t peOffset = 0x80;
     constexpr std::size_t optionalOffset = peOffset + 24;
     constexpr std::size_t sectionTable = optionalOffset + 240;
@@ -18,12 +18,12 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     Io::WriteU16(result, peOffset + 4, 0x8664);
     Io::WriteU16(result, peOffset + 6, static_cast<std::uint16_t>(sections.size()));
     Io::WriteU16(result, peOffset + 20, 240);
-    if (fixedImageBase && (directories[5].Size != 0 || *fixedImageBase < 0x10000 || (*fixedImageBase & 0xffff) != 0))
-        throw Domain::RelinkerException("Invalid fixed Windows image base or base relocations");
-    Io::WriteU16(result, peOffset + 22, fixedImageBase ? 0x23 : 0x22);
+    if (imageBase < 0x10000 || (imageBase & 0xffff) != 0 || (fixedBase && directories[5].Size != 0))
+        throw Domain::RelinkerException("Invalid Windows image base or base relocations");
+    Io::WriteU16(result, peOffset + 22, fixedBase ? 0x23 : 0x22);
     Io::WriteU16(result, optionalOffset, 0x20b);
     Io::WriteU32(result, optionalOffset + 16, entryRva);
-    Io::WriteU64(result, optionalOffset + 24, fixedImageBase.value_or(ImageBase));
+    Io::WriteU64(result, optionalOffset + 24, imageBase);
     Io::WriteU32(result, optionalOffset + 32, SectionAlignment);
     Io::WriteU32(result, optionalOffset + 36, FileAlignment);
     Io::WriteU16(result, optionalOffset + 40, 6);
@@ -72,7 +72,7 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     }
     if (!foundEntry)
         throw Domain::RelinkerException("PE entry point is not inside executable section data", entryRva);
-    if (fixedImageBase && *fixedImageBase > 0x7fffffffffff - static_cast<std::uint64_t>(endRva))
+    if (fixedBase && imageBase > 0x7fffffff0000 - static_cast<std::uint64_t>(endRva))
         throw Domain::RelinkerException("Fixed Windows image exceeds the user address space");
     Io::WriteU32(result, optionalOffset + 4, codeSize);
     Io::WriteU32(result, optionalOffset + 8, dataSize);

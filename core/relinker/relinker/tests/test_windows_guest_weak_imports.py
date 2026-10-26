@@ -4,9 +4,9 @@ import os
 import struct
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
+from guest_import_fixtures import fixture_directory
 from test_windows_import_modules import consumer, executable, provider
 
 STB_WEAK = 2
@@ -23,7 +23,7 @@ def weak_consumer(owner, symbol):
 
 def main():
     relinker = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix='anyps5-windows-guest-weak-') as directory:
+    with fixture_directory('anyps5-windows-guest-weak-') as directory:
         work = Path(directory)
 
         for name, image, expected in (('windows-guest-weak-missing', weak_consumer('a.prx', 'absent#A#B'), 11),

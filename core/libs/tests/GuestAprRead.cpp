@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
@@ -13,16 +15,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-}
 
 namespace {
 
@@ -79,13 +71,15 @@ public:
         Require(sceKernelAllocateDirectMemory(0, 13824ll << 20, MappingBytes, 0x4000, 0, &physical) == 0, "cannot allocate direct memory");
         if (sceKernelMapDirectMemory(&pointer, MappingBytes, 0x33, 0, physical, 0x4000) != 0) {
             sceKernelReleaseDirectMemory(physical, MappingBytes);
+
             throw std::runtime_error("cannot map direct memory");
         }
     }
 
     ~DirectBuffer() {
-        sceKernelMunmap(pointer, MappingBytes);
+        sceKernelMunmap(reinterpret_cast<std::uint64_t>(pointer), MappingBytes);
         sceKernelReleaseDirectMemory(physical, MappingBytes);
+
     }
 
     std::uint8_t* Data() const { return static_cast<std::uint8_t*>(pointer); }
@@ -157,6 +151,28 @@ void TestErrors(const Fixture& fixture) {
     for (const auto byte : data) Require(byte == 0xA5, "missing-file APR read modified the destination");
 }
 
+void TestStreams(const Fixture& fixture) {
+    constexpr int StreamCount = 600;
+    std::vector<FileStream*> streams;
+    for (int index = 0; index < StreamCount; ++index) {
+        FileStream* stream = fopen_nid_postfix(("apr_stream_" + std::to_string(index) + ".tmp").c_str(), "w");
+        if (stream == nullptr) break;
+        streams.push_back(stream);
+    }
+    const bool held = streams.size() == StreamCount;
+    std::vector<std::uint8_t> storage(131200, 0xCC);
+    std::string error;
+    try {
+        CheckRead(fixture, storage.data() + 17, 65537, 0);
+    } catch (const std::runtime_error& failure) {
+        error = failure.what();
+    }
+    for (FileStream* stream : streams) fclose_nid_postfix(stream);
+    for (int index = 0; index < StreamCount; ++index) std::filesystem::remove("apr_stream_" + std::to_string(index) + ".tmp");
+    Require(error.empty(), ("APR read failed while " + std::to_string(streams.size()) + " guest streams were open: " + error).c_str());
+    Require(held, "cannot hold 600 guest fopen streams");
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -204,13 +220,39 @@ private:
     void* pointer = nullptr;
     void* handler = nullptr;
 };
+
+struct SmallStackRead {
+    const Fixture* fixture = nullptr;
+    std::vector<std::uint8_t>* storage = nullptr;
+    std::string error;
+};
+
+DWORD WINAPI ReadOnSmallStack(void* parameter) {
+    auto& read = *static_cast<SmallStackRead*>(parameter);
+    try {
+        CheckRead(*read.fixture, read.storage->data() + 17, 65537, 0);
+    } catch (const std::exception& failure) {
+        read.error = failure.what();
+    }
+    return 0;
+}
+
+void TestSmallStack(const Fixture& fixture) {
+    std::vector<std::uint8_t> storage(131200, 0xCC);
+    SmallStackRead read{&fixture, &storage, {}};
+    const HANDLE thread = CreateThread(nullptr, 64u * 1024u, ReadOnSmallStack, &read, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    Require(thread != nullptr, "cannot start the small-stack APR reader");
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+    Require(read.error.empty(), read.error.c_str());
+}
 #endif
 
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected host, direct, eof, errors or fault");
+        Require(argc == 2, "expected host, direct, eof, errors, streams, fault or stack");
         const Fixture fixture;
         const std::string mode = argv[1];
         if (mode == "host") {
@@ -223,11 +265,15 @@ int main(int argc, char** argv) {
             TestEof(fixture);
         } else if (mode == "errors") {
             TestErrors(fixture);
+        } else if (mode == "streams") {
+            TestStreams(fixture);
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
             TestRead(fixture, storage.Data());
             Require(committedPages > 2, "APR did not exercise demand-committed destination pages");
+        } else if (mode == "stack") {
+            TestSmallStack(fixture);
 #endif
         } else {
             throw std::runtime_error("unknown APR read case");

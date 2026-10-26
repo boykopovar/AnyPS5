@@ -13,6 +13,7 @@ inline constexpr std::uint32_t SectionAlignment = 0x1000;
 inline constexpr std::uint32_t FileAlignment = 0x200;
 inline constexpr std::uint32_t LoadRva = 0x10000;
 inline constexpr std::uint64_t ImageBase = 0x140000000;
+inline constexpr std::uint64_t ExecutableBase = 0x400000;
 inline constexpr std::uint32_t SectionRead = 0x40000000;
 inline constexpr std::uint32_t SectionWrite = 0x80000000;
 inline constexpr std::uint32_t SectionExecute = 0x20000000;
@@ -26,6 +27,16 @@ struct PeSection {
 
     std::uint64_t MemorySize() const {
         return std::max<std::uint64_t>(Data.size(), VirtualSize);
+    }
+
+    bool Writable(const std::uint32_t rva, const std::uint64_t size) {
+        if (rva < Rva || rva - Rva > MemorySize() || size > MemorySize() - (rva - Rva))
+            return false;
+        if (rva - Rva + size > Data.size()) {
+            VirtualSize = static_cast<std::uint32_t>(MemorySize());
+            Data.resize(static_cast<std::size_t>(rva - Rva + size));
+        }
+        return true;
     }
 };
 

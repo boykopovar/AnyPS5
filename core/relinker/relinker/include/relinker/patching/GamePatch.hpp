@@ -1,6 +1,7 @@
 #pragma once
 
 #include <codegen/CodegenTypes.hpp>
+#include <codegen/x86/RedZoneFramer.hpp>
 #include <relinker/domain/RelinkResult.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <cstdint>
@@ -40,6 +41,7 @@ struct PatchEntry {
 struct PatchFile {
     std::vector<PatchEntry> Entries;
     std::optional<std::string> MainTarget;
+    std::optional<std::uint64_t> LinuxBase;
 };
 
 struct PatchedRange {
@@ -82,6 +84,8 @@ struct WriterSites {
     std::span<const WriterRange> Traps;
     std::span<const std::uint8_t> RelaData;
     std::span<const std::uint8_t> RelaPltData;
+    std::span<const Codegen::TrampolineSite> RedZoneSites = {};
+    std::span<const Codegen::RedZoneDisplacement> RedZoneDisplacements = {};
 };
 
 enum class VerifyStatus { Applicable, Applied, NotChecked, Mismatch };
@@ -114,7 +118,7 @@ void MatchTargets(const std::vector<PatchEntry>& entries, const std::vector<std:
 
 std::vector<AppliedPatch> AggregateManifest(const std::vector<std::vector<AppliedPatch>>& records);
 
-std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath);
+std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath, std::optional<std::uint64_t> linuxBase = std::nullopt);
 
 std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector<VerifyTarget>& executables, const std::vector<VerifyTarget>& modules, bool outputMode);
 

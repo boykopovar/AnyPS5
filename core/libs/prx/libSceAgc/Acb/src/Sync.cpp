@@ -25,8 +25,8 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitRegMem(CommandBuffer* buf, std::uint8_t si
     return Agc::Command::WriteWait(buf, size, compareFunction, 0, cachePolicy, address, reference, mask, pollCycles, __func__);
 }
 
-std::uint64_t APS5_VABI sceAgcAcbWaitOnAddressGetSize(std::uint8_t size) {
-    return size == 0 ? 56 : 64;
+std::uint64_t APS5_VABI sceAgcAcbWaitOnAddressGetSize(std::uint32_t size) {
+    return size == 0 ? 56 : size == 1 ? 64 : 0;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {
@@ -44,10 +44,7 @@ std::uint32_t APS5_VABI sceAgcAcbQueueEndOfShaderActionGetSize() {
     return 32;
 }
 
-std::uint32_t* APS5_VABI sceAgcAcbMemSemaphore(CommandBuffer* buf, std::uint8_t action, std::uint8_t clientCode, const volatile void* address) {
-    const std::uint8_t operation = action != 0 ? 7u : 6u;
-    const std::uint8_t signalType = clientCode & 1u;
-    const std::uint8_t waitForMailbox = (clientCode >> 1u) & 1u;
+std::uint32_t* APS5_VABI sceAgcAcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation) {
     return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, __func__);
 }
 

@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
@@ -41,6 +42,34 @@ class StubgenTests(unittest.TestCase):
 
 
 class StubGeneratorTests(unittest.TestCase):
+    def test_long_output_names(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            if os.name == "nt":
+                root = Path("\\\\?\\" + str(root))
+            limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            expected = stubgen.generate("libSceExample", ["AAAAAAAAAAA"], {})
+            for option, extra, content in (("--out", [], expected[0]),
+                                           ("--td-out", ["--td-only"], expected[1])):
+                for existing in (False, True):
+                    with self.subTest(option=option, existing=existing):
+                        output = root / ("a" * (limit - 4) + ".txt")
+                        output.write_bytes(b"previous output\n")
+                        if not existing:
+                            output.unlink()
+                        result = subprocess.run(
+                            [sys.executable, str(Path(stubgen.__file__)), "--module", "libSceExample",
+                             "--nids", str(nids), option, str(output), *extra],
+                            capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(output.read_text(encoding="utf-8"), content)
+                        self.assertEqual(nids.read_text(encoding="utf-8"), "AAAAAAAAAAA\n")
+                        self.assertEqual(set(root.iterdir()), {nids, output})
+                        output.unlink()
+
     @unittest.skipUnless(os.name == "nt", "Windows denies replacing read-only output files")
     def test_readonly_second_output_preserves_both_outputs(self):
         import subprocess
@@ -198,6 +227,38 @@ class ReadOnlyOutputTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), original)
             self.assertFalse(output.stat().st_mode & stat.S_IWRITE)
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["Export.cpp", "nids.txt"])
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+                self.newline = None
+
+            def reconfigure(self, encoding=None, errors=None, newline=None):
+                self.encoding = encoding
+                self.errors = errors
+                self.newline = newline
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(stubgen.sys, "stdout", out), patch.object(stubgen.sys, "stderr", err):
+            try:
+                stubgen.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(out.newline, "\n")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+        self.assertEqual(err.newline, "\n")
 
 
 if __name__ == "__main__":

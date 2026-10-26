@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <csignal>
@@ -16,14 +18,9 @@
 #endif
 
 extern "C" {
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
+
 extern FileStream* __stderrp_nid_postfix;
+extern FileStream* __stdoutp_nid_postfix;
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -101,5 +98,68 @@ int main() {
         if (redirect == Redirect::Reopen) Require(Contents(probe).find("report kept") == std::string::npos);
     }
     std::filesystem::remove(probe);
+
+    int host[2] = {-1, -1};
+    Require(::pipe(host) == 0);
+    const pid_t child = ::fork();
+    Require(child >= 0);
+    if (child == 0) {
+        ::close(host[0]);
+        if (::dup2(host[1], 1) != 1) ::_exit(70);
+        ::close(host[1]);
+        int guest[2] = {-1, -1};
+        if (pipe_nid_postfix(guest) != 0 || dup2_nid_postfix(guest[1], 1) != 1) ::_exit(72);
+        std::fputs("host\n", stdout);
+        std::fflush(stdout);
+        ::_exit(0);
+    }
+    ::close(host[1]);
+    std::string output;
+    char buffer[64];
+    for (ssize_t count; (count = ::read(host[0], buffer, sizeof(buffer))) > 0;) output.append(buffer, static_cast<std::size_t>(count));
+    ::close(host[0]);
+    int status = 0;
+    Require(::waitpid(child, &status, 0) == child);
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    Require(output == "host\n");
+
+    for (const int standard : {1, 2}) {
+        int host[2] = {-1, -1};
+        Require(::pipe(host) == 0);
+        const pid_t child = ::fork();
+        Require(child >= 0);
+        if (child == 0) {
+            ::close(host[0]);
+            int guest[2] = {-1, -1};
+            if (pipe_nid_postfix(guest) != 0 || dup2_nid_postfix(guest[1], standard) != standard) ::_exit(72);
+            const char* expected = "guest-fprintf\n";
+            if (standard == 1) {
+                if (printf_nid_postfix("guest-printf\n") < 0 || puts_nid_postfix("guest-puts") < 0 || fflush_nid_postfix(__stdoutp_nid_postfix) != 0) ::_exit(73);
+                expected = "guest-printf\nguest-puts\n";
+            } else {
+                if (fprintf_nid_postfix(__stderrp_nid_postfix, "guest-fprintf\n") < 0) ::_exit(73);
+                *__error_nid_postfix() = 2;
+                perror_nid_postfix("guest-perror");
+                if (fflush_nid_postfix(__stderrp_nid_postfix) != 0) ::_exit(73);
+                expected = "guest-fprintf\nguest-perror: No such file or directory\n";
+            }
+            std::string got;
+            char buffer[64];
+            const auto length = std::char_traits<char>::length(expected);
+            for (ssize_t count; got.size() < length && (count = ::read(guest[0], buffer, sizeof(buffer))) > 0;) got.append(buffer, static_cast<std::size_t>(count));
+            if (got != expected) ::_exit(75);
+            if (::write(host[1], "ok", 2) != 2) ::_exit(76);
+            ::_exit(0);
+        }
+        ::close(host[1]);
+        std::string marker;
+        char buffer[8];
+        for (ssize_t count; (count = ::read(host[0], buffer, sizeof(buffer))) > 0;) marker.append(buffer, static_cast<std::size_t>(count));
+        ::close(host[0]);
+        int status = 0;
+        Require(::waitpid(child, &status, 0) == child);
+        Require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        Require(marker == "ok");
+    }
     return 0;
 }

@@ -538,14 +538,8 @@ PerformanceOverlay::PerformanceOverlay(const Graphics::Context& context, std::si
         layoutInfo.pushConstantRangeCount = 1;
         layoutInfo.pPushConstantRanges = &push;
         Graphics::Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout performance overlay");
-        const auto createModule = context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(PERFORMANCE_OVERLAY_VERT_SPV);
-        moduleInfo.pCode = PERFORMANCE_OVERLAY_VERT_SPV;
-        Graphics::Check(createModule(context.device, &moduleInfo, nullptr, &vertex), "vkCreateShaderModule performance overlay vertex");
-        moduleInfo.codeSize = sizeof(PERFORMANCE_OVERLAY_FRAG_SPV);
-        moduleInfo.pCode = PERFORMANCE_OVERLAY_FRAG_SPV;
-        Graphics::Check(createModule(context.device, &moduleInfo, nullptr, &fragment), "vkCreateShaderModule performance overlay fragment");
+        vertex = Graphics::CreateShaderModule(context, PERFORMANCE_OVERLAY_VERT_SPV, sizeof(PERFORMANCE_OVERLAY_VERT_SPV), "vkCreateShaderModule performance overlay vertex");
+        fragment = Graphics::CreateShaderModule(context, PERFORMANCE_OVERLAY_FRAG_SPV, sizeof(PERFORMANCE_OVERLAY_FRAG_SPV), "vkCreateShaderModule performance overlay fragment");
     } catch (...) {
         release();
         throw;

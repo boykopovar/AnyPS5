@@ -8,6 +8,7 @@
 #include <iterator>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <domain/ImportModule.hpp>
 
 namespace Relinker {
@@ -37,8 +38,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::uint64_t, std::uint64_t> loads;
     constexpr std::uint32_t sceComment = 0x6fffff00;
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
+    constexpr std::uint32_t note = 4;
     for (const auto& header : image.Headers) {
         if (header.Type == sceComment || header.Type == sceLibVersion) continue;
+        if (header.Type == note && header.MappedAddress == 0 && header.MemorySize == 0) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
@@ -60,14 +63,14 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             tls = &header;
         }
     }
-    if (loads.empty() || dynamic == nullptr || dynamic->FileSize % 16 != 0) fail("Missing or invalid ELF load/dynamic segments");
+    if (loads.empty() || dynamic == nullptr) fail("Missing or invalid ELF load/dynamic segments");
     std::map<std::uint64_t, std::uint64_t> tags;
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
     std::vector<std::uint64_t> ps4ModuleImports;
     std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
-    for (std::uint64_t offset = dynamic->Offset; offset < dynamic->Offset + dynamic->FileSize; offset += 16) {
+    for (std::uint64_t offset = dynamic->Offset; dynamic->Offset + dynamic->FileSize - offset >= 16; offset += 16) {
         const auto tag = Io::ReadU64(bytes, offset);
         const auto value = Io::ReadU64(bytes, offset + 8);
         if (tag == 0) { terminated = true; break; }
@@ -161,6 +164,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (!importModules.emplace(value >> 48, string(value & 0xffffffffu)).second) fail("Duplicate import module ID");
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
+    const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
+        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
     std::map<std::string, std::size_t> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
@@ -186,14 +191,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto [found, inserted] = exports.emplace(name, image.Symbols.size());
             if (name.empty() || (!inserted && (!windows || !IdenticalOrdinaryFunctionExport(image.Symbols[found->second], symbol)))) fail("Duplicate or empty export after stripping #: " + name);
         }
+        if (section >= 0xff00 && (section != AbsoluteSection || (info & 15) == 6)) fail("Unsupported special symbol section: " + name);
         if ((info & 15) == 6 && section != 0 && (tls == nullptr || value > tls->MemorySize || size > tls->MemorySize - value)) fail("TLS symbol exceeds TLS segment: " + name);
-        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) {
-            if (section >= 0xff00) fail("Unsupported special symbol section: " + name);
-            mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
-        }
+        if (section != 0 && section != AbsoluteSection && (info & 15) != 6) mapped(value, std::max<std::uint64_t>(size, 1), (info & 15) == 2 ? 1 : 0);
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);
+        if (consoleFileNames && section == 0 && !name.empty() && name == qualifiedName) image.NamedImports.push_back(image.Symbols.size());
         image.Symbols.push_back(symbol);
     }
     if (tags.contains(14)) {
@@ -213,15 +217,26 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (name.empty() || name.find_first_of("\\:$\r\n") != std::string::npos) fail("Invalid dependency: " + name);
         if (dependencies.insert(name).second) image.Dependencies.push_back(name);
     }
-    std::map<std::uint64_t, std::uint64_t> relocationTargets;
-    const auto copyRelocations = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag, std::vector<std::uint8_t>& output, bool plt) {
-        if (!tags.contains(addressTag) && !tags.contains(sceAddressTag) && !tags.contains(sizeTag) && !tags.contains(sceSizeTag)) return;
+    const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
+        if (!tags.contains(addressTag) && !tags.contains(sceAddressTag) && !tags.contains(sizeTag) && !tags.contains(sceSizeTag)) return {0, 0};
         const auto size = get(sizeTag, sceSizeTag);
         if (size % 24 != 0) fail("Invalid relocation table size");
-        const auto offset = table(addressTag, sceAddressTag, size);
-        if (plt && size != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+        return {table(addressTag, sceAddressTag, size), size};
+    };
+    if (tags.contains(7) || tags.contains(0x6100002f)) {
+        if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
+    }
+    const auto [relaOffset, relaSize] = relocationRange(7, 0x6100002f, 8, 0x61000031);
+    const auto [pltOffset, pltSize] = relocationRange(23, 0x61000029, 2, 0x6100002d);
+    if (pltSize != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+    if (relaSize != 0 && pltSize != 0 && relaOffset < pltOffset + pltSize && pltOffset < relaOffset + relaSize
+        && relaOffset % 24 != pltOffset % 24)
+        fail("Unaligned overlapping relocation tables");
+    std::map<std::uint64_t, std::uint64_t> relocationTargets;
+    const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {
+            if (!plt && offset + index >= pltOffset && offset + index - pltOffset < pltSize) continue;
             const auto info = Io::ReadU64(bytes, offset + index + 8);
             const auto relocation = static_cast<std::uint32_t>(info);
             if (relocation == 0) continue;
@@ -232,6 +247,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto next = relocationTargets.lower_bound(target);
             if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
             relocationTargets.emplace(target, target + 8);
+            bool ownTlsBlock = false;
             if (relocation == 8) {
                 if ((info >> 32) != 0) {
                     const auto& symbol = image.Symbols[info >> 32];
@@ -251,24 +267,27 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
-                if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && tls != nullptr;
+                if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
+            const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
+            if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
         }
     };
-    if (tags.contains(7) || tags.contains(0x6100002f)) {
-        if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
-    }
-    copyRelocations(7, 0x6100002f, 8, 0x61000031, image.Dynamic.RelaData, false);
-    copyRelocations(23, 0x61000029, 2, 0x6100002d, image.Dynamic.RelaPltData, true);
+    copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);
+    copyRelocations(pltOffset, pltSize, image.Dynamic.RelaPltData, true);
     if (tags.contains(3) || tags.contains(0x61000027)) image.Got = get(3, 0x61000027);
-    if (tags.contains(12)) image.Init = tags.at(12);
+    if (tags.contains(12)) {
+        image.Init = tags.at(12);
+        image.HasInit = true;
+    }
     if (tags.contains(13)) image.Fini = tags.at(13);
-    if (image.Init != 0) mapped(image.Init, 1, 1);
+    if (image.HasInit) mapped(image.Init, 1, 1);
     if (image.Fini != 0) mapped(image.Fini, 1, 1);
     const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sizeTag, std::vector<std::uint64_t>& entries) {
-        if (!tags.contains(addressTag) && !tags.contains(sizeTag)) return;
-        if (!tags.contains(sizeTag) || (tags.at(sizeTag) != 0 && !tags.contains(addressTag))) fail("Incomplete guest lifecycle array");
+        if (!tags.contains(sizeTag)) return;
+        if (tags.at(sizeTag) != 0 && !tags.contains(addressTag)) fail("Incomplete guest lifecycle array");
         const auto size = tags.at(sizeTag);
         if (size == 0) return;
         if (size % 8 != 0) fail("Unaligned guest lifecycle array size");
@@ -298,7 +317,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     };
     readLifecycleArray(25, 27, image.InitArray);
     readLifecycleArray(26, 28, image.FiniArray);
-    if (tags.contains(33) && tags.at(33) != 0 && image.Init == 0) fail("Guest PREINIT_ARRAY has no module initializer");
+    if (tags.contains(33) && tags.at(33) != 0 && !image.HasInit) fail("Guest PREINIT_ARRAY has no module initializer");
     image.Bytes = std::move(bytes);
     return image;
 } catch (Domain::RelinkerException& error) {

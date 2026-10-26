@@ -99,7 +99,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 43 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 43 ? 20 : guestFormat;
 }
 
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
@@ -113,6 +113,11 @@ const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
 
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).vkFormat;
+}
+
+VkFormat DccClearTextureFormat(std::uint32_t guestFormat) {
+    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    return ResolveTextureFormat(guestFormat);
 }
 
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
@@ -131,7 +136,7 @@ std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatPr
 }
 
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
-    if (IsRepackedTextureFormat(guestFormat)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
@@ -166,6 +171,14 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
         case VK_FORMAT_BC2_SRGB_BLOCK:
         case VK_FORMAT_BC3_SRGB_BLOCK:
         case VK_FORMAT_BC7_SRGB_BLOCK: return true;
+        default: return false;
+    }
+}
+
+bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
+    switch (guestFormat) {
+        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
+        case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }
 }

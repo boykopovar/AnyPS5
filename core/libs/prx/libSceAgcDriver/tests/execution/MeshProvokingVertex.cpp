@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,9 +24,9 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 64;
 using Image = std::array<std::byte, Width * Height * 4>;
 alignas(256) Image Pixels{};
-alignas(256) constexpr std::array<std::uint16_t, 4> Indices{0, 1, 2, 0};
-alignas(256) constexpr std::array<std::array<float, 8>, 3> Vertices{{
-    {-0.9f, -0.8f, 0, 1, 1, 0, 0, 1}, {-0.1f, -0.8f, 0, 1, 0, 1, 0, 1}, {-0.5f, 0.8f, 0, 1, 0, 0, 1, 1}
+alignas(256) constexpr std::array<std::uint16_t, 4> Indices{0, 1, 2, 3};
+alignas(256) constexpr std::array<std::array<float, 8>, 4> Vertices{{
+    {-0.9f, -0.8f, 0, 1, 1, 0, 0, 1}, {-0.1f, -0.8f, 0, 1, 0, 1, 0, 1}, {-0.5f, 0.8f, 0, 1, 0, 0, 1, 1}, {0.3f, 0.8f, 0, 1, 1, 1, 0, 1}
 }};
 alignas(256) constexpr std::array<std::uint32_t, 7> FlatPixelCode{0xc8120002u, 0xc8160102u, 0xc81a0202u, 0xc81e0302u, 0xf800180fu, 0x07060504u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> SmoothPixelCode{0xc8100000u, 0xc8110001u, 0xc8140100u, 0xc8150101u, 0xc8180200u, 0xc8190201u, 0xc81c0300u, 0xc81d0301u, 0xf800180fu, 0x07060504u, 0xbf810000u};
@@ -64,7 +65,7 @@ void Write(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::uint
     commands.insert(commands.end(), {0xc0010000u | (opcode << 8u), offset, value});
 }
 
-Image Draw(const std::uint32_t* pixelCode, bool flat, bool last) {
+Image Draw(const std::uint32_t* pixelCode, bool flat, bool last, bool strip = false) {
     Pixels.fill(std::byte{0});
     const auto color = reinterpret_cast<std::uintptr_t>(Pixels.data());
     const auto geometry = reinterpret_cast<std::uintptr_t>(GeometryCode.data());
@@ -98,13 +99,14 @@ Image Draw(const std::uint32_t* pixelCode, bool flat, bool last) {
         {0x8, static_cast<std::uint32_t>(pixel >> 8u)}, {0x9, static_cast<std::uint32_t>(pixel >> 40u)}, {0xb, 0}
     };
     std::vector<std::uint32_t> commands;
-    Write(commands, 0x79, 0x242, 4);
+    Write(commands, 0x79, 0x242, strip ? 6u : 4u);
     Write(commands, 0x79, 0x25b, (12u << 9u) | 4u);
     for (const auto& [offset, value] : context) Write(commands, 0x69, offset, value);
     for (const auto& [offset, value] : shaders) Write(commands, 0x76, offset, value);
     commands.insert(commands.end(), {0xc0002a00u, 0u});
     const auto address = reinterpret_cast<std::uintptr_t>(Indices.data());
-    commands.insert(commands.end(), {0xc0042700u, 3u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3u, 0u});
+    const std::uint32_t count = strip ? 4u : 3u;
+    commands.insert(commands.end(), {0xc0042700u, count, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), count, 0u});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "mesh submission failed");
     AgcDriverWaitIdle_nid_postfix();
@@ -130,6 +132,25 @@ void FlatInputs() {
         }
         Require(Channel(image, 48, 48, 3) == 0, "flat input, " + mode + " provoking vertex: the draw wrote outside its triangle");
     }
+}
+
+constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 4> SecondInside{{{26, 48}, {32, 48}, {29, 44}, {29, 52}}};
+
+void CheckFlat(const Image& image, std::span<const std::pair<std::uint32_t, std::uint32_t>> pixels, const std::array<unsigned, 4>& expected, const std::string& what) {
+    for (const auto& [x, y] : pixels) {
+        for (std::uint32_t channel = 0; channel < 4; ++channel) {
+            Require(Channel(image, x, y, channel) == expected[channel], what + ": pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(Channel(image, x, y, channel)) + ", expected " + std::to_string(expected[channel]));
+        }
+    }
+}
+
+void StripFlatInputs() {
+    const auto last = Draw(FlatPixelCode.data(), true, true, true);
+    CheckFlat(last, Inside, {0u, 0u, 255u, 255u}, "triangle strip, last provoking vertex, triangle 0 (the color of vertex 2)");
+    CheckFlat(last, SecondInside, {255u, 255u, 0u, 255u}, "triangle strip, last provoking vertex, triangle 1 (the color of vertex 3)");
+    Require(Channel(last, 48, 48, 3) == 0, "triangle strip, last provoking vertex: the draw wrote outside its triangles");
+    const auto first = Draw(FlatPixelCode.data(), true, false, true);
+    CheckFlat(first, Inside, {255u, 0u, 0u, 255u}, "triangle strip, first provoking vertex, triangle 0 (the color of vertex 0)");
 }
 
 void SmoothInputs() {
@@ -169,9 +190,10 @@ int main() {
         Register(FlatPixelHeader, FlatPixelCode.data(), sizeof(FlatPixelCode), 1);
         Register(SmoothPixelHeader, SmoothPixelCode.data(), sizeof(SmoothPixelCode), 1);
         FlatInputs();
+        StripFlatInputs();
         if (smooth) SmoothInputs();
         AgcDriverShutdown_nid_postfix();
-        std::cout << "geometry-program triangles take flat inputs from vertex 0 with the first provoking vertex and from vertex 2 with the last" << (smooth ? ", and interpolate smooth inputs the same in both modes\n" : "; smooth inputs skipped without fragment shader barycentrics\n");
+        std::cout << "geometry-program triangles take flat inputs from vertex 0 with the first provoking vertex and from vertex 2 with the last, and the second triangle of a strip takes them from vertex 3 with the last" << (smooth ? ", and interpolate smooth inputs the same in both modes\n" : "; smooth inputs skipped without fragment shader barycentrics\n");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

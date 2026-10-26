@@ -95,6 +95,52 @@ void rejectFields(const Fields& f, std::string_view reason) {
 
 }
 
+static void RunR128TextureTests() {
+    constexpr std::array<std::uint32_t, 8> streamed{0xa0c18800u, 0xcad00000u, 0x01ffc1ffu, 0x905b2facu, 0u, 0u, 0u, 0u};
+    const auto view = DecodeTextureResource(streamed);
+    Require(view.baseAddress == 0xa0c1880000ull && view.format == 173u && view.tileMode == TextureTileMode::kStandard4KB && view.width == 512u && view.height == 512u && view.baseLevel == 0u && view.lastLevel == 9u && view.mipCount == 10u && view.allocatedMipCount == 10u && view.minLod == 0u,
+        "a 128-bit BC3 T# (2048x2048, levels 2..11, words 4-7 zero) must read as the 512x512 chain of its 10 resident levels, got " + std::to_string(view.width) + "x" + std::to_string(view.height) + " levels " + std::to_string(view.baseLevel) + ".." + std::to_string(view.lastLevel) + " of " + std::to_string(view.mipCount));
+    auto chainWords = streamed;
+    chainWords[3] &= ~(0xfu << 12u);
+    chainWords[5] = 11u << 4u;
+    const auto full = DecodeTextureResource(chainWords);
+    Require(full.width == 2048u && full.mipCount == 12u, "the same surface with MAX_MIP 11 must be the 12-level 2048x2048 chain");
+    const auto chain = DescribeSurface(full);
+    const auto resident = DescribeSurface(view);
+    Require(chain.mips.size() == 12u && resident.mips.size() == 10u, "the chain and the resident levels must have 12 and 10 levels");
+    for (std::uint32_t level = 0; level < 10u; ++level) {
+        const auto& a = chain.mips[level + 2u];
+        const auto& b = resident.mips[level];
+        Require(a.tiledOffset == b.tiledOffset && a.tiledSize == b.tiledSize && a.width == b.width && a.height == b.height && a.blocksPerRow == b.blocksPerRow && a.tail == b.tail && a.tailX == b.tailX && a.tailY == b.tailY, "resident level " + std::to_string(level) + " must be level " + std::to_string(level + 2u) + " of the 12-level chain");
+    }
+    Require(resident.guestBytes <= chain.mips[1].tiledOffset && chain.mips[0].tiledOffset > chain.mips[1].tiledOffset, "the resident levels must end before the chain's levels 1 and 0, which come last in a GFX10 swizzled chain");
+    auto levelZero = streamed;
+    levelZero[3] &= ~(0xfu << 12u);
+    const auto single = DecodeTextureResource(levelZero);
+    Require(single.mipCount == 1u && single.lastLevel == 0u, "a T# with words 4-7 zero that starts at level 0 must stay one level");
+    auto tailed = streamed;
+    tailed[5] = 4u << 20u;
+    reject([&] { DecodeTextureResource(tailed); }, "would move the surface's own");
+
+    constexpr std::array<std::uint32_t, 8> tall{0xa0c1de00u, 0xcad00000u, 0x01ffc0ffu, 0x905b4facu, 0u, 0u, 0u, 0u};
+    const auto tallView = DecodeTextureResource(tall);
+    Require(tallView.width == 64u && tallView.height == 128u && tallView.lastLevel == 7u && tallView.mipCount == 8u, "a 128-bit 1024x2048 T# of levels 4..11 must read as its 64x128 chain of 8 levels");
+
+    Fields clamped;
+    clamped.base40 = 0x55ea000ull;
+    clamped.format = 20;
+    clamped.width = 1024;
+    clamped.height = 1024;
+    clamped.tileModeRaw = 0x1b;
+    clamped.baseLevel = 2;
+    clamped.lastLevel = 10;
+    clamped.minLod = 2u * 256u + 64u;
+    const auto clampedView = DecodeTextureResource(pack(clamped));
+    Require(clampedView.width == 256u && clampedView.mipCount == 9u && clampedView.minLod == 64u, "reading a 128-bit T# from its resident levels must move its MIN_LOD clamp with the base level");
+    clamped.minLod = 256u;
+    Require(DecodeTextureResource(pack(clamped)).minLod == 0u, "a MIN_LOD clamp below the base level must vanish when read from the resident levels");
+}
+
 void RunGuestTextureResourceTests() {
     Fields base;
     const auto baseWords = pack(base);
@@ -123,14 +169,44 @@ void RunGuestTextureResourceTests() {
     fmask.dstSelY = fmask.dstSelZ = fmask.dstSelW = 0u;
     const auto fmaskResource = DecodeTextureResource(pack(fmask));
     Require(fmaskResource.format == 20u && fmaskResource.dimension == TextureDimension::k2D && fmaskResource.tileMode == TextureTileMode::kZ64KBX, "uncompressed 32-bit FMASK did not use an integer Z surface");
+    auto compressedFmask = fmask;
+    compressedFmask.metaCompress = compressedFmask.metaPipeAligned = true;
+    compressedFmask.metaAddr = 0x123456789aull;
+    const auto compressedResource = DecodeTextureResource(pack(compressedFmask));
+    Require(compressedResource.fmaskCmaskAddress == compressedFmask.metaAddr << 8u && compressedResource.dccAddress == 0u && compressedResource.dccPipeAligned, "compressed FMASK CMASK was interpreted as color DCC");
+    compressedFmask.metaPipeAligned = false;
+    rejectFields(compressedFmask, "FMASK CMASK metadata must be pipe aligned");
+    compressedFmask.metaPipeAligned = compressedFmask.writeCompress = true;
+    rejectFields(compressedFmask, "FMASK CMASK compression is not implemented");
     Fields fmaskArray = fmask;
     fmaskArray.typeRaw = 13u;
     fmaskArray.depth = 2u;
     fmaskArray.baseArray = 1u;
     const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
     Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
-    for (std::uint32_t format = 156u; format <= 168u; ++format) {
-        if (format == 166u) continue;
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 8> narrowFormats{{{156u, 5u}, {157u, 5u}, {158u, 5u}, {159u, 5u}, {160u, 5u}, {161u, 5u}, {163u, 11u}, {165u, 20u}}};
+    for (const auto& [format, surface] : narrowFormats) {
+        auto narrow = fmask;
+        narrow.format = format;
+        const auto narrowResource = DecodeTextureResource(pack(narrow));
+        Require(narrowResource.format == surface && narrowResource.tileMode == TextureTileMode::kZ64KBX, "FMASK " + std::to_string(format) + " did not use an integer Z surface of its storage width");
+        narrow.dstSelX = 4u;
+        narrow.dstSelY = 5u;
+        narrow.dstSelZ = 6u;
+        narrow.dstSelW = 7u;
+        Require(DecodeTextureResource(pack(narrow)).format == surface, "an expanded FMASK " + std::to_string(format) + " view with identity selectors was refused");
+        auto compressedNarrow = narrow;
+        compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
+        compressedNarrow.metaAddr = 0x123456789aull;
+        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+    }
+    auto identityWord = fmask;
+    identityWord.dstSelX = 4u;
+    identityWord.dstSelY = 5u;
+    identityWord.dstSelZ = 6u;
+    identityWord.dstSelW = 7u;
+    rejectFields(identityWord, "FMASK destination channel selector is not implemented");
+    for (const auto format : {162u, 164u, 167u, 168u}) {
         auto unsupported = fmask;
         unsupported.format = format;
         rejectFields(unsupported, "FMASK format is not implemented");
@@ -290,9 +366,14 @@ void RunGuestTextureResourceTests() {
     Fields cubeBadArray = cube;
     cubeBadArray.baseArray = 6;
     rejectFields(cubeBadArray, "base array past its last array slice");
-    Fields cubeNotMultiple = cube;
-    cubeNotMultiple.depth = 4;
-    rejectFields(cubeNotMultiple, "multiple of 6");
+    Fields cubeExtraSlice = cube;
+    cubeExtraSlice.depth = 6;
+    result = DecodeTextureResource(pack(cubeExtraSlice));
+    Require(result.baseArray == 0 && result.depthOrLastArray == 6, "a cube descriptor with a slice past its last whole cube lost a slice");
+    Require(DescribeSurface(result).imageLayers == 7, "a cube allocation with a slice past its last whole cube omitted it");
+    Fields cubePartial = cube;
+    cubePartial.depth = 4;
+    rejectFields(cubePartial, "fewer than 6 array slices");
 
     Fields multisampled = base;
     multisampled.typeRaw = 14;
@@ -615,12 +696,15 @@ void RunGuestTextureResourceTests() {
     pastUntailed.maxMip = 0;
     pastUntailed.baseLevel = 1;
     pastUntailed.lastLevel = 1;
+    pastUntailed.perfMod = 4;
     rejectFields(pastUntailed, "would move the surface's own");
     auto untailedChain = tailView;
     untailedChain.mipCount = 1;
     const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
     untailedChain.mipCount = 2;
     Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
+
+    RunR128TextureTests();
 
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
@@ -680,4 +764,21 @@ void RunGuestTextureResourceTests() {
     Fields cornered = base;
     cornered.cornerSample = true;
     Require(!SampledTexturesShareEntry(pack(base), pack(cornered)), "T#s differing in a field next to the feedback fields must not share a sampled texture entry");
+
+    Fields arrayFields = base;
+    arrayFields.typeRaw = 13;
+    arrayFields.depth = 1536;
+    arrayFields.baseArray = 3;
+    const auto arrayWords = pack(arrayFields);
+    std::array<std::uint32_t, 8> narrowed{};
+    Require(FirstLayerDescriptor(arrayWords, narrowed), "a 2D array T# naming more than its base slice must narrow to that slice");
+    const auto slice = DecodeTextureResource(narrowed);
+    const auto whole = DecodeTextureResource(arrayWords);
+    Require(slice.dimension == TextureDimension::k2DArray && slice.baseArray == 3 && slice.depthOrLastArray == 3, "a narrowed 2D array T# must name its base slice alone");
+    Require(slice.baseAddress == whole.baseAddress && slice.width == whole.width && slice.format == whole.format && slice.mipCount == whole.mipCount && slice.tileMode == whole.tileMode, "narrowing a 2D array T# must keep every other field");
+    Require(!SampledTexturesShareEntry(arrayWords, narrowed), "a narrowed 2D array T# must not share the whole array's sampled texture entry");
+    Fields single = arrayFields;
+    single.depth = 3;
+    Require(!FirstLayerDescriptor(pack(single), narrowed), "a 2D array T# of its base slice alone needs no narrowing");
+    Require(!FirstLayerDescriptor(baseWords, narrowed), "a 2D T# needs no narrowing");
 }

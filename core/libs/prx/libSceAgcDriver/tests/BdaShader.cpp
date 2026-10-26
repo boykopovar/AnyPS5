@@ -134,6 +134,14 @@ std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::ui
     return shader;
 }
 
+std::vector<std::uint32_t> MakeBdaFaultSequenceTestShader(std::initializer_list<ShaderRecompiler::BdaAbi::FaultReason> reasons) {
+    using namespace ShaderRecompiler;
+    return MakeShader(0u, false, true, [&](SpirvValueEmitContext& ctx, const IrValue&, std::uint32_t base) {
+        for (const auto reason : reasons) RecordBdaFault(ctx.state, base, ConstantU32(ctx.state, 4u), ConstantU32(ctx.state, 0x1234u), reason);
+        return std::vector<std::uint32_t>{ConstantU32(ctx.state, 1u)};
+    });
+}
+
 std::vector<std::uint32_t> MakeBdaAnchoredReadTestShader(const BdaAnchoredReadProgram& reads, bool anchored) {
     using namespace ShaderRecompiler;
     IrProgram program;

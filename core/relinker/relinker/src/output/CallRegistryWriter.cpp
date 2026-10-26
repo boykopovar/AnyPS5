@@ -1,4 +1,6 @@
 #include <relinker/output/CallRegistryWriter.hpp>
+#include <cstdint>
+#include <locale>
 #include <sstream>
 
 namespace Relinker {
@@ -7,19 +9,57 @@ static std::string _jsonString(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 2);
     out.push_back('"');
-    for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\r') out += "\\r";
-        else if (c == '\t') out += "\\t";
-        else if (static_cast<unsigned char>(c) < 0x20) {
-            constexpr char digits[] = "0123456789abcdef";
-            const auto value = static_cast<unsigned char>(c);
-            out += "\\u00";
-            out.push_back(digits[value >> 4]);
-            out.push_back(digits[value & 0x0f]);
-        } else out.push_back(c);
+    for (std::size_t i = 0; i < s.size();) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if (c < 0x80) {
+            if (c == '"') out += "\\\"";
+            else if (c == '\\') out += "\\\\";
+            else if (c == '\n') out += "\\n";
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else if (c < 0x20) {
+                constexpr char digits[] = "0123456789abcdef";
+                out += "\\u00";
+                out.push_back(digits[c >> 4]);
+                out.push_back(digits[c & 0x0f]);
+            } else out.push_back(static_cast<char>(c));
+            ++i;
+            continue;
+        }
+        unsigned count;
+        std::uint32_t codepoint;
+        std::uint32_t minimum;
+        if (c >= 0xC2 && c <= 0xDF) {
+            count = 1;
+            codepoint = c & 0x1F;
+            minimum = 0x80;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            count = 2;
+            codepoint = c & 0x0F;
+            minimum = 0x800;
+        } else if (c >= 0xF0 && c <= 0xF4) {
+            count = 3;
+            codepoint = c & 0x07;
+            minimum = 0x10000;
+        } else {
+            throw RelinkerException("Invalid UTF-8 lead byte in call registry string");
+        }
+        if (count > s.size() - (i + 1)) {
+            throw RelinkerException("Truncated UTF-8 sequence in call registry string");
+        }
+        for (unsigned index = 0; index < count; ++index) {
+            const auto byte = static_cast<unsigned char>(s[i + 1 + index]);
+            if ((byte & 0xC0) != 0x80) {
+                throw RelinkerException("Invalid UTF-8 continuation byte in call registry string");
+            }
+            codepoint = (codepoint << 6) | (byte & 0x3F);
+        }
+        if (codepoint < minimum || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+            throw RelinkerException("Invalid UTF-8 codepoint in call registry string");
+        }
+        out.push_back(static_cast<char>(c));
+        out.append(s, i + 1, count);
+        i += count + 1;
     }
     out.push_back('"');
     return out;
@@ -27,6 +67,7 @@ static std::string _jsonString(const std::string& s) {
 
 static std::string _hexOffset(FileByteOffset v) {
     std::ostringstream oss;
+    oss.imbue(std::locale::classic());
     oss << "\"0x" << std::hex << std::uppercase << v << "\"";
     return oss.str();
 }

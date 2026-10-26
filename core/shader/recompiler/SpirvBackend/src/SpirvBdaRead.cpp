@@ -607,7 +607,7 @@ std::array<std::uint32_t, 4> EmitAnchoredBdaRead(SpirvEmitterState& state, const
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, element);
             const auto loaded = state.module.AllocateId();
-            state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, BdaAccessMask(coherent), 1u);
+            state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, BdaAccessMask(coherent || bits == 16u), 1u);
             value = Binary(state, spv::OpBitwiseOr, u32, value, Binary(state, spv::OpShiftLeftLogical, u32, Unary(state, spv::OpUConvert, u32, loaded), ConstantU32(state, byte * 8u)));
         }
         directValues[0] = value;

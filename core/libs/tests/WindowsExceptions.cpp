@@ -56,6 +56,17 @@ static void TestTypeInfoVtables() {
     if (!upcastType(&multiple, &base, &object) || object != storage.data() + 16) throw std::runtime_error("multiple RTTI upcast failed");
     object = storage.data();
     if (catchType(&other, &single, &object, 0)) throw std::runtime_error("unrelated RTTI catch succeeded");
+    TypeRecord shared {classTable + 2 * sizeof(void*), "6Shared"};
+    SingleRecord publicPath {{singleTable + 2 * sizeof(void*), "10PublicPath"}, &shared};
+    SingleRecord privatePath {{singleTable + 2 * sizeof(void*), "11PrivatePath"}, &shared};
+    MultipleRecord mixed {{multipleTable + 2 * sizeof(void*), "5Mixed"}, 1, 2, {{&publicPath.type, 2}, {&privatePath.type, 16 << 8}}};
+    MultipleRecord hidden {{multipleTable + 2 * sizeof(void*), "6Hidden"}, 0, 1, {{&privatePath.type, 0}, {}}};
+    object = storage.data();
+    if (catchType(&shared, &mixed, &object, 0) || object != storage.data()) throw std::runtime_error("RTTI catch of a base repeated through a private path succeeded");
+    if (upcastType(&mixed, &shared, &object) || object != storage.data()) throw std::runtime_error("RTTI upcast to a base repeated through a private path succeeded");
+    if (!catchType(&publicPath, &mixed, &object, 0) || object != storage.data()) throw std::runtime_error("RTTI catch of the public path failed");
+    object = storage.data();
+    if (catchType(&shared, &hidden, &object, 0)) throw std::runtime_error("RTTI catch of a privately inherited base succeeded");
 }
 
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char*);
@@ -149,6 +160,26 @@ static void testGuestAbortReport() {
     std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(exitCode));
     if (exitCode != 0xC0000005 || output.find("guest abort() (int 0x45)") == std::string::npos)
         throw std::runtime_error(std::string("guest abort child exited with ") + code + " and printed:\n" + output);
+}
+
+[[gnu::noinline, noreturn]] static void GuestAssertProbe() {
+    __asm__ volatile("int $0x41");
+    __builtin_unreachable();
+}
+
+static int RunAssertChild() {
+    std::fprintf(stderr, "assert probe\n");
+    std::fflush(stderr);
+    GuestAssertProbe();
+}
+
+static void testGuestAssertReport() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" guest-assert", exitCode);
+    char code[16];
+    std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(exitCode));
+    if (exitCode != 0xC0000005 || output.find("guest assert/break (int 0x41)") == std::string::npos)
+        throw std::runtime_error(std::string("guest assert child exited with ") + code + " and printed:\n" + output);
 }
 
 static int destroyed;
@@ -299,11 +330,13 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         if (std::strcmp(argv[1], "throw-uncaught") == 0) return RunThrowChild();
         if (std::strcmp(argv[1], "guest-abort") == 0) return RunAbortChild();
+        if (std::strcmp(argv[1], "guest-assert") == 0) return RunAssertChild();
         return 100;
     }
     TestTypeInfoVtables();
     testUnhandledThrowSite();
     testGuestAbortReport();
+    testGuestAssertReport();
     testExceptionPointer();
     testFutureException();
     testMadeExceptionPointer();

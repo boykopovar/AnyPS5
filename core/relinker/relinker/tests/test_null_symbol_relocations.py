@@ -14,6 +14,7 @@ from test_linux_load_alignment import loads
 GLOB_DAT_SLOT = 0x308
 ABSOLUTE_SLOT = 0x310
 ADDEND = 0x1234
+DEFAULT_BASE = 0x400000
 CHECK_SLOTS = bytes.fromhex(
     "488b0501010000" "4885c0" "751a"
     "488b0dfd000000" "4881f934120000" "750a"
@@ -21,9 +22,9 @@ CHECK_SLOTS = bytes.fromhex(
 TARGETS = (("linux", [], b"\x7fELF"), ("windows", ["--windows"], b"MZ"), ("macos", ["--macos"], b"\xcf\xfa\xed\xfe"))
 
 
-def image_with(symbol=b""):
+def image_with(symbol=b"", index=1):
     image = fixture()
-    relocations = [(GLOB_DAT_SLOT, (1 << 32) | 6, 0), (ABSOLUTE_SLOT, (1 << 32) | 1, ADDEND)]
+    relocations = [(GLOB_DAT_SLOT, (index << 32) | 6, 0), (ABSOLUTE_SLOT, (index << 32) | 1, ADDEND)]
     struct.pack_into("<Q", image, 0x458, len(relocations) * 24)
     for index, relocation in enumerate(relocations):
         struct.pack_into("<QQq", image, 0x700 + index * 24, *relocation)
@@ -54,24 +55,25 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-null-symbol-") as directory:
         work = Path(directory)
-        source = work / "null-entry.elf"
-        source.write_bytes(image_with())
-        for target, options, magic in TARGETS:
-            for level in (0, 1):
-                output = work / f"null-entry-{target}-{level}.out"
-                result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", f"unused-filter={level}",
-                                         *options, str(source), str(output)], capture_output=True, text=True, timeout=20)
-                assert result.returncode == 0, (target, level, result.stdout, result.stderr)
-                data = output.read_bytes()
-                assert data.startswith(magic), target
-                registry = json.loads(output.with_suffix(".registry.json").read_text(encoding="utf-8"))
-                assert registry == [], (target, level, registry)
-                if target == "linux":
-                    assert linux_imports(data) == [(GLOB_DAT_SLOT, 6, 0, b"", 0x20, 0, 0, 0),
-                                                   (ABSOLUTE_SLOT, 1, ADDEND, b"", 0x20, 0, 0, 0)], level
-                if target == "windows" and os.name == "nt":
-                    run = subprocess.run([str(output)], capture_output=True, timeout=20)
-                    assert run.returncode == 42, (level, run.returncode, run.stderr)
+        for index in (1, 0):
+            source = work / f"null-entry-{index}.elf"
+            source.write_bytes(image_with(index=index))
+            for target, options, magic in TARGETS:
+                for level in (0, 1):
+                    output = work / f"null-entry-{index}-{target}-{level}.out"
+                    result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", f"unused-filter={level}",
+                                             *options, str(source), str(output)], capture_output=True, text=True, timeout=20)
+                    assert result.returncode == 0, (index, target, level, result.stdout, result.stderr)
+                    data = output.read_bytes()
+                    assert data.startswith(magic), (index, target)
+                    registry = json.loads(output.with_suffix(".registry.json").read_text(encoding="utf-8"))
+                    assert registry == [], (index, target, level, registry)
+                    if target == "linux":
+                        assert linux_imports(data) == [(DEFAULT_BASE + GLOB_DAT_SLOT, 6, 0, b"", 0x20, 0, 0, 0),
+                                                       (DEFAULT_BASE + ABSOLUTE_SLOT, 1, ADDEND, b"", 0x20, 0, 0, 0)], (index, level)
+                    if target == "windows" and os.name == "nt":
+                        run = subprocess.run([str(output)], capture_output=True, timeout=20)
+                        assert run.returncode == 42, (index, level, run.returncode, run.stderr)
         source = work / "named-unnamed.elf"
         source.write_bytes(image_with(struct.pack("<IBBHQQ", 0, 0x12, 0, 0, 0, 0)))
         for target, options, _ in TARGETS:

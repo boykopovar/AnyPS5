@@ -322,6 +322,7 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
     ParsedParamJson result;
     result.title = title;
     result.titleId = titleId;
+    if (const JsonValue* contentVersion = findObjectMember(root, "contentVersion"); contentVersion != nullptr && contentVersion->type == JsonType::String) result.contentVersion = contentVersion->stringValue;
     if (const JsonValue* attribute = findObjectMember(root, "attribute3")) {
         const auto& number = attribute->numberText;
         if (attribute->type != JsonType::Number || number.find_first_of("-.eE") != std::string::npos) throw std::runtime_error("param.json attribute3 is not an unsigned integer");

@@ -18,6 +18,14 @@ void require(bool condition, const char* message) {
 
 std::filesystem::path root;
 
+void setConfigPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
+#else
+    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
+#endif
+}
+
 void useConfig(const std::string& text) {
     const auto path = root / "anyps5-input.ini";
     {
@@ -25,11 +33,7 @@ void useConfig(const std::string& text) {
         file << text;
         require(file.good(), "write the input mapping");
     }
-#ifdef _WIN32
-    require(_putenv_s("ANYPS5_INPUT_CONFIG", path.string().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
+    setConfigPath(path);
 }
 
 bool rejects(const std::string& text) {
@@ -92,6 +96,24 @@ void performanceOverlayBinding() {
     require(rejects("TogglePerformanceOverlay = MOUSE:Left\n"), "the performance overlay toggle refuses a mouse button");
 }
 
+void screenshotBinding() {
+    useConfig("Cross = KEY:F\n");
+    bool onF12 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) onF12 = onF12 || (binding.control == Pad::InputControl::Screenshot && binding.key == SDL_SCANCODE_F12);
+    require(onF12, "F12 takes a screenshot by default");
+    useConfig("Screenshot = KEY:F9\n");
+    bool onF9 = false;
+    bool stillOnF12 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::Screenshot) continue;
+        onF9 = onF9 || binding.key == SDL_SCANCODE_F9;
+        stillOnF12 = stillOnF12 || binding.key == SDL_SCANCODE_F12;
+    }
+    require(onF9 && !stillOnF12, "the screenshot key moves to another key");
+    require(rejects("Screenshot = MOUSE:Left\n"), "the screenshot key refuses a mouse button");
+    require(rejects("Screenshot = WHEEL:Up\n"), "the screenshot key refuses the mouse wheel");
+}
+
 void mouseLookDefault() {
     useConfig("Cross = KEY:F\n");
     const auto settings = Pad::LoadInputMapping().settings;
@@ -120,14 +142,6 @@ void mouseLookReject() {
     require(rejects("MouseMaxSpeed = nan\n"), "a non-finite max speed is rejected");
     require(rejects("MouseVerticalScale = 11\n"), "a vertical scale above 10 is rejected");
     require(rejects("MouseDecayMs = 20\nmousedecayms = 30\n"), "a mouse setting given twice is rejected");
-}
-
-void setConfigPath(const std::filesystem::path& path) {
-#ifdef _WIN32
-    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
 }
 
 void nonAsciiPaths() {
@@ -262,6 +276,7 @@ int main() try {
     settingsParse();
     settingsReject();
     performanceOverlayBinding();
+    screenshotBinding();
     mouseLookDefault();
     mouseLookParse();
     mouseLookReject();

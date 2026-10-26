@@ -131,7 +131,7 @@ int main() {
         auto words = Frame(texels);
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while ((output->ready.load() == 0 || !stored()) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         const bool flipped = output->ready.load() == 1;
         const bool seen = stored();

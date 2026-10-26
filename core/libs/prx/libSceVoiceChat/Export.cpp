@@ -1,3 +1,4 @@
+#include "prx/libSceVoiceChat/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -30,8 +31,8 @@ extern "C" {
 
 int APS5_VABI sceVoiceChatInitialize(void* param) { (void)param; return 0; }
 int APS5_VABI sceVoiceChatTerminate(void) { return 0; }
-int APS5_VABI sceVoiceChatRegisterHandlers(void* a) { (void)a; return 0; }
-int APS5_VABI sceVoiceChatRegisterMicEventHandler(void* a, void* b) { (void)a; (void)b; return 0; }
+int APS5_VABI sceVoiceChatRegisterHandlers(void* handlers, void* userArg) { (void)handlers; (void)userArg; return 0; }
+int APS5_VABI sceVoiceChatRegisterMicEventHandler(std::int32_t userId, void* handler, void* userArg) { (void)userId; (void)handler; (void)userArg; return 0; }
 int APS5_VABI sceVoiceChatProcessEvent(void) { return 0; }
 int APS5_VABI sceVoiceChatDeleteRequest(int requestId) { (void)requestId; return 0; }
 

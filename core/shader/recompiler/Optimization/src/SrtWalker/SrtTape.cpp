@@ -104,7 +104,7 @@ private:
         }
         if (value->Opcode() == IrOpcode::Void) return fail();
         const auto mask = contexts[context].mask;
-        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && value->Argument(0)->Resolve() == mask) return compile(value->Argument(1), context, depth + 1);
+        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
         const auto key = std::make_pair(static_cast<const IrValue*>(value), context);
         if (const auto found = built.find(key); found != built.end()) return found->second == Building ? fail() : found->second;
         built.emplace(key, Building);
@@ -245,6 +245,8 @@ private:
             case IrOpcode::FPIsNan32: return operation(Op::FPIsNan32, value, context, depth, 1);
             case IrOpcode::FPOrdLessThanEqual32: return operation(Op::FPOrdLessThanEqual32, value, context, depth, 2);
             case IrOpcode::FPOrdGreaterThanEqual32: return operation(Op::FPOrdGreaterThanEqual32, value, context, depth, 2);
+            case IrOpcode::FPUnordLessThanEqual32: return operation(Op::FPUnordLessThanEqual32, value, context, depth, 2);
+            case IrOpcode::FPUnordGreaterThanEqual32: return operation(Op::FPUnordGreaterThanEqual32, value, context, depth, 2);
             case IrOpcode::BitwiseAnd32: return operation(Op::BitwiseAnd32, value, context, depth, 2);
             case IrOpcode::BitwiseAnd64: return operation(Op::BitwiseAnd64, value, context, depth, 2);
             case IrOpcode::BitwiseOr32: return operation(Op::BitwiseOr32, value, context, depth, 2);
@@ -343,6 +345,44 @@ bool SrtTape::evaluate(Frame& frame, std::uint32_t index, std::uint64_t& result)
 }
 
 bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) const {
+    if (node.op == Op::LogicalAnd || node.op == Op::LogicalOr) {
+        const bool decisive = node.op == Op::LogicalOr;
+        std::uint64_t first = 0;
+        std::uint64_t second = 0;
+        const bool firstEvaluated = evaluate(frame, node.arguments[0], first);
+        if (firstEvaluated && (first != 0u) == decisive) {
+            result = decisive ? 1u : 0u;
+            return true;
+        }
+        const bool secondEvaluated = evaluate(frame, node.arguments[1], second);
+        if (secondEvaluated && (second != 0u) == decisive) {
+            result = decisive ? 1u : 0u;
+            return true;
+        }
+        if (!firstEvaluated || !secondEvaluated) return false;
+        result = decisive ? 0u : 1u;
+        return true;
+    }
+    if (node.op == Op::ULessThan32 || node.op == Op::UGreaterThan32) {
+        const bool greater = node.op == Op::UGreaterThan32;
+        std::uint64_t first = 0;
+        std::uint64_t second = 0;
+        const bool firstEvaluated = evaluate(frame, node.arguments[0], first);
+        if (firstEvaluated && static_cast<std::uint32_t>(first) == (greater ? 0u : 0xffffffffu)) {
+            result = 0u;
+            return true;
+        }
+        const bool secondEvaluated = evaluate(frame, node.arguments[1], second);
+        if (secondEvaluated && static_cast<std::uint32_t>(second) == (greater ? 0xffffffffu : 0u)) {
+            result = 0u;
+            return true;
+        }
+        if (!firstEvaluated || !secondEvaluated) return false;
+        const auto lhs = static_cast<std::uint32_t>(greater ? second : first);
+        const auto rhs = static_cast<std::uint32_t>(greater ? first : second);
+        result = lhs < rhs ? 1u : 0u;
+        return true;
+    }
     std::array<std::uint64_t, 5> operand{};
     std::int32_t origin = -1;
     for (std::uint8_t index = 0; index < node.argumentCount; ++index) {
@@ -426,6 +466,8 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::FPIsNan32: result = std::isnan(float32(a)) ? 1u : 0u; return true;
         case Op::FPOrdLessThanEqual32: result = float32(a) <= float32(b) ? 1u : 0u; return true;
         case Op::FPOrdGreaterThanEqual32: result = float32(a) >= float32(b) ? 1u : 0u; return true;
+        case Op::FPUnordLessThanEqual32: result = !(float32(a) > float32(b)) ? 1u : 0u; return true;
+        case Op::FPUnordGreaterThanEqual32: result = !(float32(a) < float32(b)) ? 1u : 0u; return true;
         case Op::IAdd32: result = static_cast<std::uint32_t>(a + b); return true;
         case Op::IAdd64: result = a + b; return true;
         case Op::ISub32: result = static_cast<std::uint32_t>(a - b); return true;
@@ -483,10 +525,10 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::IEqual32: result = static_cast<std::uint32_t>(a) == static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
         case Op::INotEqual32: result = static_cast<std::uint32_t>(a) != static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
         case Op::SLessThan32: result = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(a)) < std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(b)) ? 1u : 0u; return true;
-        case Op::ULessThan32: result = static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
-        case Op::UGreaterThan32: result = static_cast<std::uint32_t>(a) > static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
-        case Op::LogicalAnd: result = (a != 0u) && (b != 0u) ? 1u : 0u; return true;
-        case Op::LogicalOr: result = (a != 0u) || (b != 0u) ? 1u : 0u; return true;
+        case Op::ULessThan32:
+        case Op::UGreaterThan32: return false;
+        case Op::LogicalAnd:
+        case Op::LogicalOr: return false;
         case Op::LogicalXor: result = (a != 0u) != (b != 0u) ? 1u : 0u; return true;
         case Op::LogicalNot: result = a == 0u ? 1u : 0u; return true;
     }
@@ -535,6 +577,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
 
     struct Scratch {
         std::vector<std::uint8_t> active;
+        std::vector<std::uint8_t> activeFlat;
         std::vector<std::uint8_t> visited;
         std::vector<std::uint32_t> pending;
         std::vector<DescriptorValue> evaluated;
@@ -545,6 +588,8 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
     auto& active = scratch.active;
     const auto imageBase = plan.descriptorSources.size();
     active.assign(imageBase + plan.info.images.size(), 1u);
+    auto& activeFlat = scratch.activeFlat;
+    activeFlat.assign(plan.srtReads.size(), 1u);
     if (!plan.controlFlow.empty()) {
         for (const auto& block : plan.controlFlow) {
             for (const auto source : block.sources) {
@@ -554,6 +599,10 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             for (const auto image : block.images) {
                 if (image >= plan.info.images.size()) return refuse();
                 active[imageBase + image] = 0u;
+            }
+            for (const auto slot : block.flatSlots) {
+                if (slot >= activeFlat.size()) return refuse();
+                activeFlat[slot] = 0u;
             }
         }
         auto& visited = scratch.visited;
@@ -569,6 +618,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             const auto& block = plan.controlFlow[index];
             for (const auto source : block.sources) active[source] = 1u;
             for (const auto image : block.images) active[imageBase + image] = 1u;
+            for (const auto slot : block.flatSlots) activeFlat[slot] = 1u;
             std::uint64_t condition = 0;
             const bool cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
             if (frame.nullRoot) return refuse();
@@ -601,6 +651,8 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
     flattened.assign(plan.srtReads.size(), 0u);
     for (std::size_t slot = 0; slot < plan.srtReads.size(); ++slot) {
         const auto& read = plan.srtReads[slot];
+        if (read.flatOffset >= activeFlat.size()) return refuse();
+        if (activeFlat[read.flatOffset] == 0u) continue;
         const bool pure = trace != nullptr && read.flatOffset < plan.pureFlatSlots.size() && plan.pureFlatSlots[read.flatOffset] != 0u;
         if (pure) {
             trace->leaf = read.value->Resolve();

@@ -15,7 +15,7 @@ set_target_properties(guest_arena_tests PROPERTIES
     CXX_EXTENSIONS OFF
     RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
 
-foreach(mode available unmappable host commit)
+foreach(mode available unmappable host gap commit)
     add_test(NAME guest_arena_${mode} COMMAND guest_arena_tests ${mode})
     set_tests_properties(guest_arena_${mode} PROPERTIES TIMEOUT 30)
 endforeach()

@@ -258,6 +258,16 @@ void RunUnmappedGapTests() {
     Require(!GuestMemory::Accessible(reinterpret_cast<const void*>(std::uintptr_t{0x18}), 4), "a near-null address counts as accessible");
     munmap(block, page);
     munmap(block + 2 * page, page);
+    alignas(4096) static std::array<std::byte, 4096> imagePage{};
+    const auto imageAddress = reinterpret_cast<std::uintptr_t>(imagePage.data());
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a main image data page is not writable");
+    Require(mprotect(imagePage.data(), page, PROT_READ) == 0, "cannot protect the main image test page behind the registry");
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a checked main image page was queried again instead of read from the page table");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(imageAddress, page);
+    Require(!GuestMemory::Accessible(imagePage.data(), page, true) && GuestMemory::Accessible(imagePage.data(), page), "an invalidated main image page kept its old access");
+    Require(mprotect(imagePage.data(), page, PROT_READ | PROT_WRITE) == 0, "cannot restore the main image test page");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(imageAddress, page);
+    Require(GuestMemory::Accessible(imagePage.data(), page, true), "a restored main image page is not writable");
     if (!GuestArena::GuestArenaAvailable_nid_postfix()) return;
     auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * page, page));
     Require(mmap(guest, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot map the arena page test pages");

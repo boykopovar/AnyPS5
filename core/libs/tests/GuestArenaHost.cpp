@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -20,7 +21,11 @@ using namespace GuestArena;
 namespace {
 
 constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull;
+constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull;
+constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull;
 constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull;
+constexpr std::uintptr_t ReservationChunk = 1ull << 30;
+constexpr std::size_t GapBytes = 0x10000;
 constexpr std::uint32_t ProtectionNoAccess = 0x01;
 constexpr std::uint32_t ProtectionReadOnly = 0x02;
 constexpr std::uint32_t ProtectionReadWrite = 0x04;
@@ -49,6 +54,15 @@ std::vector<HostRegion> RegionsInArenaRange() {
         address += size;
     }
     return regions;
+}
+
+const std::vector<HostRegion> RegionsBeforeArena = RegionsInArenaRange();
+
+bool Overlaps(const std::vector<HostRegion>& regions, std::uintptr_t start, std::uintptr_t end) {
+    for (const auto& region : regions) {
+        if (region.start < end && start < region.end) return true;
+    }
+    return false;
 }
 
 void CheckAvailable() {
@@ -88,6 +102,24 @@ void CheckHostRegionsKept() {
     std::printf("%zu host regions inside the arena range are protected\n", hostRegions);
 }
 
+void CheckGapBesideHostRegion() {
+    Require(GuestArenaAvailable_nid_postfix(), "the guest arena is unavailable on macOS");
+    Require(RegionsBeforeArena.size() < RegionsInArenaRange().size(), "the host map was read after the guest arena reserved its range");
+    for (const auto& host : RegionsBeforeArena) {
+        const auto chunk = host.start & ~(ReservationChunk - 1);
+        for (auto gap = std::max(chunk, ArenaStart); gap + GapBytes <= chunk + ReservationChunk && gap + GapBytes <= ApplicationAreaEnd; gap += GapBytes) {
+            if (Overlaps(RegionsBeforeArena, gap, gap + GapBytes) || (gap < SystemReservedEnd && SystemReservedStart < gap + GapBytes)) continue;
+            auto* pointer = reinterpret_cast<void*>(gap);
+            GuestArenaMarkUsed_nid_postfix(pointer, GapBytes);
+            GuestArenaRelease_nid_postfix(pointer, GapBytes);
+            std::printf("free range 0x%llx beside host region 0x%llx-0x%llx accepted\n", static_cast<unsigned long long>(gap),
+                static_cast<unsigned long long>(host.start), static_cast<unsigned long long>(host.end));
+            return;
+        }
+    }
+    std::puts("no free range shares a 1 GiB reservation chunk with a host region on this host; nothing to check");
+}
+
 void CheckCommitAndProtect() {
     constexpr std::size_t bytes = 0x10000;
     auto* pointer = static_cast<std::uint8_t*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
@@ -106,11 +138,12 @@ void CheckCommitAndProtect() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected available, unmappable, host or commit");
+        Require(argc == 2, "expected available, unmappable, host, gap or commit");
         const std::string_view mode(argv[1]);
         if (mode == "available") CheckAvailable();
         else if (mode == "unmappable") CheckSkipsUnmappable();
         else if (mode == "host") CheckHostRegionsKept();
+        else if (mode == "gap") CheckGapBesideHostRegion();
         else if (mode == "commit") CheckCommitAndProtect();
         else throw std::runtime_error("unknown guest arena test");
         std::printf("guest arena %s passed\n", argv[1]);

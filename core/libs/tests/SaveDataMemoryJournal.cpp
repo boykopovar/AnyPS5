@@ -1,3 +1,4 @@
+#include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -12,14 +13,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2*);
-int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2*);
-int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -91,10 +84,16 @@ int main() {
 
     Require(std::filesystem::create_directory(temporaryPath));
     first.fill('q');
-    Require(sceSaveDataSetSaveDataMemory2(&set) == static_cast<int>(0x809F000Bu));
-    Require(Read(memoryPath) == expected);
+    Require(sceSaveDataSetSaveDataMemory2(&set) == 0);
+    std::copy(first.begin(), first.end(), expected.begin() + 8);
+    Require(Read(memoryPath) == expected && Read(aliasPath) == expected);
     Require(!std::filesystem::exists(journalPath));
-    Require(!std::filesystem::exists(temporaryPath));
+    Require(std::filesystem::is_directory(temporaryPath));
+    Require(std::filesystem::remove(temporaryPath));
+    const auto temporaryPrefix = temporaryPath.filename().string();
+    for (const auto& entry : std::filesystem::directory_iterator(memoryPath.parent_path())) {
+        Require(!entry.path().filename().string().starts_with(temporaryPrefix));
+    }
 
     Write(journalPath, Journal(16, "jour"));
     std::array<char, 4> got{};

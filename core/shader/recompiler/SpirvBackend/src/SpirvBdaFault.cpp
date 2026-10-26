@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -51,6 +52,10 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     const auto previous = state.module.AllocateId();
     const auto scope = ConstantU32(state, spv::ScopeDevice);
     const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+    const auto notUnaligned = Binary(state, spv::OpINotEqual, TypeBool(state), reason, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultReason::Unaligned)));
+    EmitIfCondition(state, notUnaligned, [&] {
+        state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, ConstantU32(state, static_cast<std::uint32_t>(offsetof(BdaAbi::Fault, otherFaults) / sizeof(std::uint32_t)))), scope, relaxed, ConstantU32(state, 1u));
+    });
     state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
     const auto won = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
     EmitIfCondition(state, won, [&] {
@@ -63,7 +68,6 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
         store(4, bytes);
         store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage)));
         store(6, instruction);
-        store(7, ConstantU32(state, 0u));
         const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask);
         state.module.AddFunction(spv::OpAtomicStore, pointer, scope, release, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
     });

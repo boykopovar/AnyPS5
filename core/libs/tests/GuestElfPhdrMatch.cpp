@@ -1,12 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include "SceTypes.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info*, void*);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -41,4 +39,17 @@ int main() {
 
     info.dlpi_phnum = 0;
     Require(__elf_phdr_match_addr_nid_postfix(&info, Address(0x403800)) == 0);
+
+    ModuleInfoEx module{};
+    module.st_size = sizeof(module);
+    module.segment_count = 3;
+    module.segments[0] = {0x401000, 0x1000, 1 | 2};
+    module.segments[1] = {0x403000, 0x1000, 1 | 4};
+    module.segments[2] = {0x408000, 0x100, 1 | 2 | 4};
+
+    Require(__elf_phdr_match_addr_nid_postfix(reinterpret_cast<dl_phdr_info*>(&module), Address(0x403000)) == 1);
+    Require(__elf_phdr_match_addr_nid_postfix(reinterpret_cast<dl_phdr_info*>(&module), Address(0x403ff8)) == 1);
+    Require(__elf_phdr_match_addr_nid_postfix(reinterpret_cast<dl_phdr_info*>(&module), Address(0x404000)) == 0);
+    Require(__elf_phdr_match_addr_nid_postfix(reinterpret_cast<dl_phdr_info*>(&module), Address(0x401800)) == 0);
+    Require(__elf_phdr_match_addr_nid_postfix(reinterpret_cast<dl_phdr_info*>(&module), Address(0x408010)) == 1);
 }

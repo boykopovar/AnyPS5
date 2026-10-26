@@ -1,10 +1,11 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceVideoOut/include/Telemetry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
-#include "prx/libkernel/Time/include/Time.hpp"
 #include "Decoder/Png.hpp"
 #include "SDL_vulkan.h"
+#include <chrono>
 #include <cstdio>
 #include <span>
 #include <stdexcept>
@@ -106,22 +107,22 @@ void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) co
 void DisplayWindow::UpdateTitle() {
     require(window != nullptr, "window must exist before updating title");
     static const AppTitle title = GetAppTitle_nid_postfix();
-    static std::uint64_t fpsStart = sceKernelGetProcessTimeCounter();
-    static std::uint64_t frameNum = 0;
+    static auto fpsStart = std::chrono::steady_clock::now();
     static std::uint64_t fpsFrames = 0;
     static double currentFps = 0.0;
-    const auto now = sceKernelGetProcessTimeCounter();
-    const auto frequency = sceKernelGetProcessTimeCounterFrequency();
+    const auto now = std::chrono::steady_clock::now();
     frameNum++;
     fpsFrames++;
-    if (now - fpsStart >= frequency * 2) {
-        currentFps = static_cast<double>(fpsFrames) * static_cast<double>(frequency) / static_cast<double>(now - fpsStart);
+    const double elapsed = std::chrono::duration<double>(now - fpsStart).count();
+    if (elapsed >= 2.0) {
+        currentFps = static_cast<double>(fpsFrames) / elapsed;
         fpsStart = now;
         fpsFrames = 0;
     }
     char text[160];
     std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
     SDL_SetWindowTitle(window, text);
+    if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr && (frameNum == 1 || frameNum % 30 == 0)) telemetry->EmitPresent(frameNum, currentFps);
 }
 
 void DisplayWindow::installSubclass() {

@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -144,6 +145,7 @@ struct MeshDraw {
     VkCullModeFlags cull = VK_CULL_MODE_NONE;
     std::span<const std::uint32_t> code = {};
     std::uint32_t stagesRegister = 0x20u;
+    ShaderRecompiler::ShaderVertexStageInfo vertex{};
 };
 
 bool ReadsNumWorkgroups(std::span<const std::uint32_t> words) {
@@ -176,7 +178,7 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> geometryMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     ShaderRecompiler::RecompileRequest geometry{
         {ShaderStage::Mesh, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, geometryMemory},
+        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, setup.vertex, geometryMemory},
         target,
         {0, 0, 0, setup.geometryPushBytes},
         ShaderRecompiler::GraphicsCompileContext{0, {}, setup.mesh, std::nullopt, {setup.draw.indexAddress, setup.draw.indexCount, setup.draw.indexSize, setup.draw.instanceCount}}
@@ -207,6 +209,10 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Geometry, setup.stagesRegister, setup.waveSize, 64, setup.mesh, std::nullopt};
+    state.pointSize = setup.vertex.pointSize;
+    state.pointSizeMin = setup.vertex.pointSizeMin;
+    state.pointSizeMax = setup.vertex.pointSizeMax;
+    state.paClVsOutCntl = setup.vertex.paClVsOutCntl;
     state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
@@ -391,6 +397,63 @@ int main() {
             DrawMesh(device, {SmallSubgroup, {indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, 2u, indexed ? 2u : 0u, 1, 0, indexed}, VertexBufferDescriptor(indexed ? Scrambled.data() : Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
             for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
                 Require(PixelIs(CellPixel(triangle), Background), std::string(indexed ? "indexed" : "non-indexed") + " triangle-list draw of two vertices drew triangle " + std::to_string(triangle) + ", pixel " + PixelText(CellPixel(triangle)));
+            }
+        }
+
+        ClearPixels();
+        auto pointSubgroup = SmallSubgroup;
+        pointSubgroup.outputPrimitiveSize = 1u;
+        for (const auto pointWave : {32u, 64u}) {
+            ClearPixels();
+            DrawMesh(device, {pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, pointWave});
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                const auto& position = Ordered[3u * triangle].position;
+                const auto x = static_cast<std::uint32_t>((position[0] + 1.0f) * 0.5f * Width);
+                const auto y = static_cast<std::uint32_t>((1.0f - position[1]) * 0.5f * Height);
+                const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
+                Require(PixelIs(offset, TriangleColor(triangle)), "mesh point missing at first exported index for primitive " + std::to_string(triangle));
+                Require(PixelIs(CellPixel(triangle), Background), "mesh point output filled the interior of its packed triangle");
+            }
+        }
+
+        for (const auto pointWave : {32u, 64u}) {
+            for (const auto size : {3.0f, 4.0f}) {
+                ClearPixels();
+                MeshDraw points{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                points.waveSize = pointWave;
+                points.vertex.pointSize = size;
+                DrawMesh(device, points);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    Require(covered == static_cast<std::uint32_t>(size * size), "mesh point did not cover its register-sized square");
+                }
+            }
+            for (const auto exportedSize : {6.0f, -3.0f}) {
+                ClearPixels();
+                const auto& baseCode = pointWave == 32u ? Wave32GeometryCode : GeometryCode;
+                std::array<std::uint32_t, GeometryCode.size() + 4u> sizedCode{};
+                std::copy_n(baseCode.begin(), 101u, sizedCode.begin());
+                sizedCode[92] = 0xbf88000eu;
+                sizedCode[99] = 0xf80000cfu;
+                sizedCode[101] = 0x7e6802ffu;
+                sizedCode[102] = std::bit_cast<std::uint32_t>(exportedSize);
+                sizedCode[103] = 0xf80008d1u;
+                sizedCode[104] = 0x00000034u;
+                std::copy(baseCode.begin() + 101u, baseCode.end(), sizedCode.begin() + 105u);
+                MeshDraw exported{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                exported.waveSize = pointWave;
+                exported.code = sizedCode;
+                exported.vertex.paClVsOutCntl = (1u << 16u) | (1u << 21u);
+                exported.vertex.pointSizeMin = 3.0f;
+                exported.vertex.pointSizeMax = 4.0f;
+                DrawMesh(device, exported);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    const auto side = exportedSize < 3.0f ? 3u : 4u;
+                    Require(covered == side * side, "mesh point ignored its exported size or clamp");
+                }
             }
         }
 

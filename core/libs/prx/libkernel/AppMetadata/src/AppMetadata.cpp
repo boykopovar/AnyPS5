@@ -20,6 +20,7 @@ bool g_iconAttempted = false;
 bool g_iconLoaded = false;
 char g_title[128] = {};
 char g_titleId[12] = {};
+char g_contentVersion[16] = {};
 std::uint64_t g_downloadDataSizeMiB = 0;
 std::uint32_t g_attribute3 = 0;
 std::int32_t g_userDefinedParams[4] = {};
@@ -47,6 +48,7 @@ void ensureTitleLoaded() {
     const auto parsed = parseParams(ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath), ResolvePath_nid_no_patch(AppMetadataParamSfoGuestPath));
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
+    if (!parsed.contentVersion.empty() && parsed.contentVersion.size() < sizeof(g_contentVersion)) copyToFixedBuffer(g_contentVersion, sizeof(g_contentVersion), parsed.contentVersion);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
     g_attribute3 = parsed.attribute3;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
@@ -130,6 +132,17 @@ AppTitleId GetAppTitleId_nid_postfix() {
     ensureTitleLoaded();
     AppTitleId result{};
     std::memcpy(result.value, g_titleId, sizeof(result.value));
+    return result;
+}
+
+bool HasAppParamJson_nid_no_patch() {
+    return std::filesystem::exists(ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath));
+}
+
+AppContentVersion GetAppContentVersion_nid_no_patch() {
+    ensureTitleLoaded();
+    AppContentVersion result{};
+    std::memcpy(result.value, g_contentVersion, sizeof(result.value));
     return result;
 }
 

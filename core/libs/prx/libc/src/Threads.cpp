@@ -1,5 +1,9 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -14,13 +18,14 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
 
 constexpr std::int64_t nanosPerSecond = 1000000000;
 constexpr std::int64_t longestSleepSeconds = 86400;
@@ -43,28 +48,114 @@ timespec XtimeDeadline(const Xtime& time, const char* function) {
     return {static_cast<time_t>(seconds), static_cast<long>(nanos)};
 }
 
+std::chrono::system_clock::time_point XtimePoint(const Xtime& time, const char* function) {
+    const auto deadline = XtimeDeadline(time, function);
+    constexpr auto maxDuration = std::chrono::system_clock::duration::max();
+    constexpr auto minDuration = std::chrono::system_clock::duration::min();
+    constexpr auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
+    constexpr auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
+    constexpr auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
+    if (deadline.tv_sec > maxSeconds || (deadline.tv_sec == maxSeconds && deadline.tv_nsec > maxNanos) ||
+        deadline.tv_sec < minSeconds)
+        throw std::overflow_error(std::string(function) + ": xtime seconds overflow");
+    return std::chrono::system_clock::time_point(
+        std::chrono::seconds(deadline.tv_sec) +
+        std::chrono::ceil<std::chrono::system_clock::duration>(std::chrono::nanoseconds(deadline.tv_nsec)));
+}
+
 constexpr int threadSuccess = 0;
 constexpr int threadNomem = 1;
 constexpr int threadTimedout = 2;
 constexpr int threadBusy = 3;
 constexpr int threadError = 4;
+constexpr int threadTimedlockError = 5;
 
 constexpr int mutexRecursive = 0x100;
 
 constexpr std::uint64_t mutexTag = 0x5854'4D5F'4D54'5844ull;
 constexpr std::uint64_t conditionTag = 0x5854'4E43'5F44'4E43ull;
 
+#ifdef _WIN32
+struct DinkumwareNativeMutex {
+    CRITICAL_SECTION value;
+
+    DinkumwareNativeMutex() {
+        if (!InitializeCriticalSectionAndSpinCount(&value, 0))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Mtx_init: initializing critical section failed");
+    }
+
+    ~DinkumwareNativeMutex() { DeleteCriticalSection(&value); }
+    void lock() { EnterCriticalSection(&value); }
+    void unlock() { LeaveCriticalSection(&value); }
+    bool try_lock() { return TryEnterCriticalSection(&value) != FALSE; }
+
+    template<class Clock, class Duration>
+    bool try_lock_until(const std::chrono::time_point<Clock, Duration>& deadline) {
+        if (try_lock())
+            return true;
+        for (;;) {
+            const auto now = Clock::now();
+            if (now >= deadline)
+                return false;
+            const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+            Sleep(static_cast<DWORD>(std::min<std::int64_t>(remaining, 1)));
+            if (try_lock()) {
+                if (Clock::now() <= deadline)
+                    return true;
+                unlock();
+                return false;
+            }
+        }
+    }
+};
+
+struct DinkumwareNativeCondition {
+    CONDITION_VARIABLE value = CONDITION_VARIABLE_INIT;
+
+    void notify_one() { WakeConditionVariable(&value); }
+    void notify_all() { WakeAllConditionVariable(&value); }
+
+    void wait(std::unique_lock<DinkumwareNativeMutex>& lock) {
+        if (SleepConditionVariableCS(&value, &lock.mutex()->value, INFINITE) == FALSE)
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "_Cnd_wait: condition wait failed");
+    }
+
+    template<class Clock, class Duration>
+    std::cv_status wait_until(std::unique_lock<DinkumwareNativeMutex>& lock,
+                              const std::chrono::time_point<Clock, Duration>& deadline) {
+        for (;;) {
+            const auto now = Clock::now();
+            if (now >= deadline)
+                return std::cv_status::timeout;
+            const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+            const auto largest = static_cast<std::int64_t>(std::numeric_limits<DWORD>::max() - 1U);
+            const auto milliseconds = static_cast<DWORD>(std::min<std::int64_t>(remaining, largest));
+            if (SleepConditionVariableCS(&value, &lock.mutex()->value, milliseconds) != FALSE)
+                return std::cv_status::no_timeout;
+            const DWORD error = GetLastError();
+            if (error != ERROR_TIMEOUT)
+                throw std::system_error(static_cast<int>(error), std::system_category(), "_Cnd_timedwait: condition wait failed");
+            if (Clock::now() >= deadline)
+                return std::cv_status::timeout;
+        }
+    }
+};
+#else
+using DinkumwareNativeMutex = std::timed_mutex;
+using DinkumwareNativeCondition = std::condition_variable_any;
+#endif
+
 struct DinkumwareMutex {
     std::uint64_t tag = mutexTag;
     int type = 0;
     int count = 0;
     std::atomic<std::thread::id> owner{};
-    std::mutex native;
+    DinkumwareNativeMutex native;
 };
 
 struct DinkumwareCondition {
     std::uint64_t tag = conditionTag;
-    std::condition_variable native;
+    DinkumwareNativeCondition native;
 };
 
 DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
@@ -165,6 +256,31 @@ int APS5_VABI _Mtx_trylock_nid_postfix(void** handle) {
     return threadSuccess;
 }
 
+int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    const auto deadline = XtimePoint(*target, "_Mtx_timedlock");
+    auto* mutex = ResolveMutex(handle, "_Mtx_timedlock");
+    const auto self = std::this_thread::get_id();
+    if (mutex->owner.load(std::memory_order_acquire) == self) {
+        if ((mutex->type & mutexRecursive) == 0)
+            return threadBusy;
+        if (mutex->count == std::numeric_limits<int>::max())
+            throw std::overflow_error("_Mtx_timedlock: recursive lock count overflow");
+        ++mutex->count;
+        return threadSuccess;
+    }
+    try {
+        if (!mutex->native.try_lock_until(deadline))
+            return threadTimedout;
+    } catch (const std::system_error&) {
+        return threadTimedlockError;
+    }
+    mutex->owner.store(self, std::memory_order_release);
+    mutex->count = 1;
+    return threadSuccess;
+}
+
 int APS5_VABI _Mtx_unlock_nid_postfix(void** handle) {
     auto* mutex = ResolveMutex(handle, "_Mtx_unlock");
     if (!IsOwnedByCaller(mutex))
@@ -229,15 +345,7 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHandle, const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadline = XtimeDeadline(*target, "_Cnd_timedwait");
-    constexpr auto maxDuration = std::chrono::system_clock::duration::max();
-    constexpr auto minDuration = std::chrono::system_clock::duration::min();
-    constexpr auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
-    constexpr auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
-    constexpr auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
-    if (deadline.tv_sec > maxSeconds || (deadline.tv_sec == maxSeconds && deadline.tv_nsec > maxNanos) ||
-        deadline.tv_sec < minSeconds)
-        throw std::overflow_error("_Cnd_timedwait: xtime seconds overflow");
+    const auto deadlineTime = XtimePoint(*target, "_Cnd_timedwait");
     auto* condition = ResolveCondition(conditionHandle, "_Cnd_timedwait");
     auto* mutex = ResolveMutex(mutexHandle, "_Cnd_timedwait");
     if (!IsOwnedByCaller(mutex))
@@ -249,9 +357,6 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
     std::unique_lock lock(mutex->native, std::adopt_lock);
     bool timeout = false;
     try {
-        const auto deadlineTime = std::chrono::system_clock::time_point(
-            std::chrono::seconds(deadline.tv_sec) +
-            std::chrono::ceil<std::chrono::system_clock::duration>(std::chrono::nanoseconds(deadline.tv_nsec)));
         timeout = (condition->native.wait_until(lock, deadlineTime) == std::cv_status::timeout);
     } catch (const std::system_error&) {
         lock.release();
@@ -275,6 +380,10 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
+    return std::thread::hardware_concurrency();
+}
+
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     if (!target)
         APS5_INVALID_ARG_EX;
@@ -291,18 +400,309 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
             --remaining.tv_sec;
         }
         remaining.tv_sec = std::min<time_t>(remaining.tv_sec, longestSleepSeconds);
+#ifdef _WIN32
+        PreciseSleepHundredNanos(static_cast<unsigned long long>(remaining.tv_sec) * 10000000ULL +
+            (static_cast<unsigned long long>(remaining.tv_nsec) + 99ULL) / 100ULL);
+#else
         if (nanosleep(&remaining, nullptr) != 0) {
             if (errno == EINTR)
                 continue;
             throw std::runtime_error("_Thrd_sleep: nanosleep failed");
         }
+#endif
     }
 }
 
+int APS5_VABI _Thrd_yield_nid_postfix() {
+    std::this_thread::yield();
+    return threadSuccess;
+}
 
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
 }
 
+static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) == 0x10 && offsetof(GuestPad, started) == 0x18 && sizeof(GuestPad) == 0x20);
+
+[[noreturn]] void ThrowCppError_nid_no_patch(int code);
+
+static void RequireThrd(int result, const char* what) {
+    switch (result) {
+    case threadSuccess:
+        return;
+    case threadNomem:
+    case threadTimedout:
+        ThrowCppError_nid_no_patch(6);
+    case threadBusy:
+        ThrowCppError_nid_no_patch(0);
+    case threadError:
+        ThrowCppError_nid_no_patch(1);
+    }
+    throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
 }
 
+static std::atomic<PthreadCreateFn_nid_no_patch> registeredPthreadCreate{nullptr};
+static std::atomic<PthreadJoinFn_nid_no_patch> registeredPthreadJoin{nullptr};
+static std::atomic<PthreadDetachFn_nid_no_patch> registeredPthreadDetach{nullptr};
+
+void RegisterPthreadCreate_nid_no_patch(PthreadCreateFn_nid_no_patch fn) {
+    registeredPthreadCreate.store(fn, std::memory_order_release);
+}
+
+void RegisterPthreadJoin_nid_no_patch(PthreadJoinFn_nid_no_patch fn) {
+    registeredPthreadJoin.store(fn, std::memory_order_release);
+}
+
+void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn) {
+    registeredPthreadDetach.store(fn, std::memory_order_release);
+}
+
+static void* APS5_VABI PadEntry_nid_no_patch(void* argument) {
+    auto* pad = static_cast<GuestPad*>(argument);
+    const auto go = pad->vtable[0];
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(go(pad)));
+}
+
+void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Cnd_init_nid_postfix(&pad->condition), "_Pad::_Pad: _Cnd_init");
+    const int created = _Mtx_init_nid_postfix(&pad->mutex, 1);
+    if (created != threadSuccess) {
+        _Cnd_destroy_nid_postfix(&pad->condition);
+
+        RequireThrd(created, "_Pad::_Pad: _Mtx_init");
+    }
+    pad->started = false;
+    const int locked = _Mtx_lock_nid_postfix(&pad->mutex);
+    if (locked != threadSuccess) {
+        _Mtx_destroy_nid_postfix(&pad->mutex);
+        _Cnd_destroy_nid_postfix(&pad->condition);
+
+        RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
+    }
+}
+
+void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::~_Pad: _Mtx_unlock");
+    _Mtx_destroy_nid_postfix(&pad->mutex);
+    _Cnd_destroy_nid_postfix(&pad->condition);
+
+}
+
+void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
+    if (!pad) APS5_INVALID_ARG_EX;
+    RequireThrd(_Mtx_lock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_lock");
+    pad->started = true;
+    RequireThrd(_Cnd_signal_nid_postfix(&pad->condition), "_Pad::_Release: _Cnd_signal");
+    RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_unlock");
+}
+
+static void LaunchPad_nid_no_patch(GuestPad* pad, void** attrSlot, void** thread) {
+    if (!pad || !thread) APS5_INVALID_ARG_EX;
+    const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
+    if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
+    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad);
+    if (created != 0) ThrowCppError_nid_no_patch(6);
+    while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+    LaunchPad_nid_no_patch(pad, nullptr, thread);
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread) {
+    LaunchPad_nid_no_patch(pad, attrSlot, thread);
+}
+
+int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {
+    const auto join = registeredPthreadJoin.load(std::memory_order_acquire);
+    if (!join) throw std::runtime_error("_Thrd_join: pthread_join is not registered");
+    void* result = nullptr;
+    if (join(thread, &result) != 0) return threadError;
+    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    return threadSuccess;
+}
+
+int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
+    const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
+    if (!detach) throw std::runtime_error("_Thrd_detach: pthread_detach is not registered");
+    return detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+[[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
+    ThrowCppError_nid_no_patch(code);
+}
+
+static std::atomic<const ThreadForwards_nid_no_patch*> registeredThreadForwards{nullptr};
+
+void RegisterThreadForwards_nid_no_patch(const ThreadForwards_nid_no_patch* forwards) {
+    registeredThreadForwards.store(forwards, std::memory_order_release);
+}
+
+static const ThreadForwards_nid_no_patch& ThreadForwards(const char* function) {
+    const auto* forwards = registeredThreadForwards.load(std::memory_order_acquire);
+    if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel threads are not registered");
+    return *forwards;
+}
+
+void APS5_VABI _Call_once_nid_postfix(std::int32_t* flag, void (APS5_VABI* function)(void)) {
+    ThreadForwards(__func__).once(flag, function);
+}
+
+int APS5_VABI _Tss_create_nid_postfix(int* key, void (APS5_VABI* destructor)(void*)) {
+    return ThreadForwards(__func__).keyCreate(key, destructor);
+}
+
+int APS5_VABI _Tss_delete_nid_postfix(int key) {
+    return ThreadForwards(__func__).keyDelete(key);
+}
+
+void* APS5_VABI _Tss_get_nid_postfix(int key) {
+    return ThreadForwards(__func__).getSpecific(key);
+}
+
+int APS5_VABI _Tss_set_nid_postfix(int key, void* value) {
+    return ThreadForwards(__func__).setSpecific(key, value);
+}
+
+int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
+    return ThreadForwards(__func__).equal(first, second);
+}
+
+void* APS5_VABI _Thrd_current_nid_postfix(void) {
+    return ThreadForwards(__func__).self();
+}
+
+void* APS5_VABI _Thrd_id_nid_postfix(void) {
+    return ThreadForwards(__func__).self();
+}
+
+[[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code) {
+    ThreadForwards(__func__).exit(reinterpret_cast<void*>(static_cast<std::uintptr_t>(static_cast<unsigned int>(code))));
+    std::abort();
+}
+
+int APS5_VABI _Mtx_current_owns_nid_postfix(void**) {
+    return 1;
+}
+
+static std::atomic<const PthreadSyncForwards_nid_no_patch*> registeredPthreadSyncForwards{nullptr};
+
+void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards) {
+    registeredPthreadSyncForwards.store(forwards, std::memory_order_release);
+}
+
+static const PthreadSyncForwards_nid_no_patch& PthreadSync(const char* function) {
+    const auto* forwards = registeredPthreadSyncForwards.load(std::memory_order_acquire);
+    if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel synchronization is not registered");
+    return *forwards;
+}
+
+constexpr int KernelDeadlock = static_cast<int>(0x8002000b);
+constexpr int KernelNoMemory = static_cast<int>(0x8002000c);
+constexpr int KernelBusy = static_cast<int>(0x80020010);
+constexpr int RecursiveMutexType = 0x100;
+constexpr int KernelRecursiveMutex = 2;
+
+static int CreateResult(int result) {
+    if (result == 0) return threadSuccess;
+    return result == KernelNoMemory ? threadNomem : threadError;
+}
+
+static const char* SyncObjectName(const char* name) {
+    return name != nullptr && name[0] != '\0' ? name : nullptr;
+}
+
+int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
+    const auto& sync = PthreadSync(__func__);
+    *mutex = nullptr;
+    void* attr = nullptr;
+    const int created = sync.mutexattrInit(&attr);
+    if (created != 0) return CreateResult(created);
+    if ((type & RecursiveMutexType) != 0 && sync.mutexattrSettype(&attr, KernelRecursiveMutex) != 0) {
+        sync.mutexattrDestroy(&attr);
+        return threadError;
+    }
+    const int initialized = sync.mutexInit(mutex, &attr, SyncObjectName(name));
+    const int released = sync.mutexattrDestroy(&attr);
+    if (initialized != 0) return CreateResult(initialized);
+    if (released != 0) {
+        sync.mutexDestroy(mutex);
+        return threadError;
+    }
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Mtx_initEPP13pthread_mutexi_nid_postfix(void** mutex, int type) {
+    return _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(mutex, type, "SceLibcI_Mtx");
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(void** mutex) {
+    return PthreadSync(__func__).mutexDestroy(mutex);
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    const int result = PthreadSync(__func__).mutexLock(mutex);
+    if (result == 0) return threadSuccess;
+    return result == KernelDeadlock ? threadBusy : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    const int result = PthreadSync(__func__).mutexTrylock(mutex);
+    if (result == 0) return threadSuccess;
+    return result == KernelBusy ? threadBusy : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(void** mutex) {
+    PthreadSync(__func__).mutexUnlock(mutex);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v219_Cnd_init_with_nameEPP12pthread_condPKc_nid_postfix(void** condition, const char* name) {
+    return CreateResult(PthreadSync(__func__).condInit(condition, nullptr, SyncObjectName(name)));
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Cnd_initEPP12pthread_cond_nid_postfix(void** condition) {
+    return CreateResult(PthreadSync(__func__).condInit(condition, nullptr, "SceLibcI_Cnd"));
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Cnd_destroyEPP12pthread_cond_nid_postfix(void** condition) {
+    return PthreadSync(__func__).condDestroy(condition);
+}
+
+int APS5_VABI _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(void** condition, void** mutex) {
+    PthreadSync(__func__).condWait(condition, mutex);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v211_Cnd_signalEPP12pthread_cond_nid_postfix(void** condition) {
+    PthreadSync(__func__).condSignal(condition);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void** condition) {
+    PthreadSync(__func__).condBroadcast(condition);
+    return threadSuccess;
+}
+
+int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {
+    return PthreadSync(__func__).detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code) {
+    void* result = nullptr;
+    if (PthreadSync(__func__).join(thread, &result) != 0) return threadError;
+    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    return threadSuccess;
+}
+
+void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix() {
+    PthreadSync(__func__).yield();
+}
+
+void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
+    return _Thrd_current_nid_postfix();
+}
+
+}
