@@ -171,6 +171,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -372,6 +374,8 @@ if(NOT ANYPS5_USE_SYSTEM_DEPS)
         set_target_properties(freetype PROPERTIES SOURCES "${freetypeSources}")
     endif()
 endif()
+
+include(cmake/Jxr.cmake)
 
 set(LIBUSB_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)

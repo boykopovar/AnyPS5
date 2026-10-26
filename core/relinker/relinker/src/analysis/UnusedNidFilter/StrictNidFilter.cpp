@@ -34,9 +34,8 @@ public:
                 throw RelinkerException("Strict filter: invalid load segment size", segment.Offset);
             if (segment.Type != 2) continue;
             if (!tags.empty()) throw RelinkerException("Strict filter: multiple dynamic segments");
-            if (segment.FileSize % 16 != 0) throw RelinkerException("Strict filter: truncated dynamic segment", segment.Offset);
             bool terminated = false;
-            for (std::uint64_t offset = 0; offset < segment.FileSize; offset += 16) {
+            for (std::uint64_t offset = 0; segment.FileSize - offset >= 16; offset += 16) {
                 const auto tag = read<std::int64_t>(segment.Offset + offset);
                 if (tag == 0) {
                     terminated = true;

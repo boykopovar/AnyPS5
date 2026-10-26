@@ -6,8 +6,8 @@ extern "C" {
 
 int APS5_VABI sceVoiceChatInitialize(void* param);
 int APS5_VABI sceVoiceChatTerminate(void);
-int APS5_VABI sceVoiceChatRegisterHandlers(void* a);
-int APS5_VABI sceVoiceChatRegisterMicEventHandler(void* a, void* b);
+int APS5_VABI sceVoiceChatRegisterHandlers(void* handlers, void* userArg);
+int APS5_VABI sceVoiceChatRegisterMicEventHandler(std::int32_t userId, void* handler, void* userArg);
 int APS5_VABI sceVoiceChatProcessEvent(void);
 int APS5_VABI sceVoiceChatDeleteRequest(int requestId);
 int APS5_VABI sceVoiceChatCreateRequest(void* a, void* b);

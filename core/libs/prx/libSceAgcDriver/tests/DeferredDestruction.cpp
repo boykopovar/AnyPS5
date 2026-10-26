@@ -1,0 +1,131 @@
+#include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <exception>
+#include <string>
+#include <vector>
+
+using namespace AgcDriver::Graphics;
+
+namespace {
+
+int failures = 0;
+
+void Expect(bool condition, const std::string& what) {
+    if (condition) return;
+    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
+    ++failures;
+}
+
+std::vector<std::string> events;
+VkResult idleResult = VK_SUCCESS;
+
+template<typename THandle>
+THandle Handle(std::uintptr_t value) {
+    return reinterpret_cast<THandle>(value);
+}
+
+std::string Name(const char* kind, const void* handle) {
+    return std::string(kind) + std::to_string(reinterpret_cast<std::uintptr_t>(handle));
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks*) {
+    events.push_back(Name("buffer ", reinterpret_cast<const void*>(buffer)) + Name(" on ", device));
+}
+
+VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks*) {
+    events.push_back(Name("memory ", reinterpret_cast<const void*>(memory)) + Name(" on ", device));
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockQueueWaitIdle(VkQueue queue) {
+    events.push_back(Name("idle ", queue));
+    return idleResult;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    if (std::strcmp(name, "vkDestroyBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&mockDestroyBuffer);
+    if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&mockFreeMemory);
+    if (std::strcmp(name, "vkQueueWaitIdle") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&mockQueueWaitIdle);
+    return nullptr;
+}
+
+Context ContextFor(VkDevice device, PFN_vkGetDeviceProcAddr proc) {
+    Context context{};
+    context.device = device;
+    context.queue = Handle<VkQueue>(0x900);
+    context.deviceProc = proc;
+    return context;
+}
+
+void DeferredUntilTheQueueIsIdle() {
+    events.clear();
+    const auto device = Handle<VkDevice>(0x100);
+    const auto proc = DeferDestructionToIdle(device, mockProc);
+    const auto context = ContextFor(device, proc);
+    Expect(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle") == &mockQueueWaitIdle, "a function other than vkDestroyBuffer and vkFreeMemory was not passed through");
+    context.Function<PFN_vkFreeMemory>("vkFreeMemory")(device, Handle<VkDeviceMemory>(0x21), nullptr);
+    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, Handle<VkBuffer>(0x11), nullptr);
+    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, VK_NULL_HANDLE, nullptr);
+    Expect(events.empty() && DeferredObjects(device) == 2, "a destroy or free was not deferred, or a null handle was queued");
+    const auto start = std::chrono::steady_clock::now();
+    DestroyDeferredAtIdle(context, start);
+    Expect(events.empty() && DeferredObjects(device) == 2, "deferred objects younger than the drain age were destroyed, or the queue was waited for");
+    DestroyDeferredAtIdle(context, start + std::chrono::seconds(1));
+    const std::vector<std::string> drained{"idle 2304", "buffer 17 on 256", "memory 33 on 256"};
+    Expect(events == drained && DeferredObjects(device) == 0, "old deferred objects were not destroyed after a queue wait, buffers before memory");
+    events.clear();
+    for (std::uintptr_t index = 0; index < 512; ++index) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, Handle<VkBuffer>(0x1000 + index), nullptr);
+    DestroyDeferredAtIdle(context, std::chrono::steady_clock::now());
+    Expect(events.size() == 513 && events.front() == "idle 2304" && DeferredObjects(device) == 0, "512 young deferred objects were not destroyed after a queue wait");
+    events.clear();
+    idleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+    context.Function<PFN_vkFreeMemory>("vkFreeMemory")(device, Handle<VkDeviceMemory>(0x22), nullptr);
+    bool threw = false;
+    try {
+        DestroyDeferredAtIdle(context, std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Expect(threw && DeferredObjects(device) == 1 && events.size() == 1, "a failed queue wait did not throw, or destroyed the deferred objects");
+    idleResult = VK_SUCCESS;
+    events.clear();
+    DestroyDeferredObjects(device);
+    Expect(events == std::vector<std::string>{"memory 34 on 256"} && DeferredObjects(device) == 0, "the deferred objects were not destroyed when the device went, or the queue was waited for");
+    events.clear();
+    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, Handle<VkBuffer>(0x12), nullptr);
+    Expect(events == std::vector<std::string>{"buffer 18 on 256"}, "a destroy after the device went was deferred");
+}
+
+void OtherDevicesDestroyAtOnce() {
+    events.clear();
+    const auto device = Handle<VkDevice>(0x101);
+    const auto proc = DeferDestructionToIdle(device, mockProc);
+    const auto other = Handle<VkDevice>(0x102);
+    reinterpret_cast<PFN_vkFreeMemory>(proc(other, "vkFreeMemory"))(other, Handle<VkDeviceMemory>(0x23), nullptr);
+    Expect(events == std::vector<std::string>{"memory 35 on 258"} && DeferredObjects(other) == 0, "a free on a device without deferred destruction was deferred");
+    bool threw = false;
+    try {
+        DeferDestructionToIdle(device, mockProc);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Expect(threw, "deferred destruction was set up twice for one device");
+    DestroyDeferredObjects(device);
+}
+
+}
+
+int main() {
+    try {
+        DeferredUntilTheQueueIsIdle();
+        OtherDevicesDestroyAtOnce();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: %s\n", error.what());
+        return 1;
+    }
+    if (failures != 0) return 1;
+    std::puts("deferred destruction tests passed");
+    return 0;
+}

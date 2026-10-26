@@ -358,9 +358,7 @@ int KernelEqueuePrivate::CollectOncePerWait(KernelEvent* ev, int num) {
             e.event.data = 0;
         }
         const auto next = std::next(it);
-        if (e.triggered) {
-            requeued.splice(requeued.end(), m_events, it);
-        }
+        requeued.splice(requeued.end(), m_events, it);
         it = next;
     }
     m_events.splice(m_events.end(), requeued);

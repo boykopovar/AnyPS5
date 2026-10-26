@@ -2407,5 +2407,6 @@ int main() {
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
+    Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
 }

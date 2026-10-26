@@ -283,7 +283,7 @@ static void FileFlagsRoundTrip() {
     char written[16]{};
     Require(sceKernelRead(reading, written, sizeof(written)) == 8 && std::memcmp(written, "Ybcdeabc", 8) == 0);
     Require(sceKernelClose(reading) == 0);
-    Require(ThrowsWith([appending] { fcntl_nid_postfix(appending, SetFlags, Append | 0x80); }, "fcntl: changing O_FSYNC on a file is not implemented"));
+    Require(fcntl_nid_postfix(appending, SetFlags, Append | 0x80) == 0 && fcntl_nid_postfix(appending, GetFlags) == (WriteOnly | Append | 0x80));
     Require(sceKernelClose(appending) == 0);
     std::remove("kernel_fcntl_probe.bin");
 }

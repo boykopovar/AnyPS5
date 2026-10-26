@@ -210,10 +210,11 @@ struct JisChange {
     uint16_t code;
 };
 
-constexpr JisChange JIS_X0208_CHANGES[6] = {{0x2141, 0x301C}, {0x2142, 0x2016}, {0x215D, 0x2212}, {0x2171, 0x00A2}, {0x2172, 0x00A3}, {0x224C, 0x00AC}};
-constexpr uint16_t JIS_X0208_UNSETTLED_CELL = 0x2140;
-constexpr uint16_t JIS_X0208_UNSETTLED_CODE = 0xFF3C;
-constexpr const char* JIS_X0208_UNSETTLED = "libSceCesCs: the console's mapping of JIS X 0208 cell 0x2140 (U+005C or U+FF3C) is unknown";
+constexpr JisChange JIS_X0208_CHANGES[7] = {{0x213D, 0x2014}, {0x2141, 0x301C}, {0x2142, 0x2016}, {0x215D, 0x2212}, {0x2171, 0x00A2}, {0x2172, 0x00A3}, {0x224C, 0x00AC}};
+constexpr uint16_t JIS_X0208_BACKSLASH_CELL = 0x2140;
+constexpr JisChange JIS_X0208_EUC_FALLBACKS[2] = {{0x216F, 0x00A5}, {0x2131, 0x203E}};
+
+enum class JisStrict { None, Sjis, Euc };
 
 constexpr uint32_t jisIndex(uint16_t jis) {
     return ((jis >> 8) - 0x21) * 94 + (jis & 0xFF) - 0x21;
@@ -223,22 +224,21 @@ bool isCp932ExtensionRow(uint32_t row) {
     return row == 13 || (row >= 89 && row <= 92);
 }
 
-uint16_t strictJisX0208(uint32_t index) {
-    if (isCp932ExtensionRow(index / 94 + 1) || index == jisIndex(JIS_X0208_UNSETTLED_CELL)) return 0;
+uint16_t strictJisX0208(JisStrict strict, uint32_t index) {
+    if (isCp932ExtensionRow(index / 94 + 1)) return 0;
+    if (index == jisIndex(JIS_X0208_BACKSLASH_CELL)) return strict == JisStrict::Sjis ? 0x005C : 0xFF3C;
     for (const JisChange& change : JIS_X0208_CHANGES) {
         if (jisIndex(change.jis) == index) return change.code;
     }
     return JisX0208::TO_UCS2[index];
 }
 
-uint32_t jisX0208ToUnicode(bool strict, uint32_t index) {
-    if (!strict) return JisX0208::TO_UCS2[index];
-    if (index == jisIndex(JIS_X0208_UNSETTLED_CELL)) throw std::runtime_error(JIS_X0208_UNSETTLED);
-    return strictJisX0208(index);
+uint32_t jisX0208ToUnicode(JisStrict strict, uint32_t index) {
+    return strict == JisStrict::None ? JisX0208::TO_UCS2[index] : strictJisX0208(strict, index);
 }
 
-void requireSettledSjisX0208(uint32_t code) {
-    if (code == 0x5C || code == 0x7E || code == 0xA5 || code == 0x203E) throw std::runtime_error("libSceCesCs: the console's mapping of Shift-JIS bytes 0x5C and 0x7E (ASCII or JIS X 0201 Roman) is unknown");
+uint32_t sjisX0208Single(uint8_t byte) {
+    return byte == 0x5C ? 0x00A5 : byte == 0x7E ? 0x203E : byte;
 }
 
 constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', '6'};
@@ -507,7 +507,7 @@ const void* contextProfile(const void* context) {
 constexpr uint8_t EUC_KR_TAG[8] = {'E', 'U', 'C', 'K', 'R', '9', '4', '9'};
 constexpr uint8_t UHC_TAG[8] = {'U', 'H', 'C', 'C', 'P', '9', '4', '9'};
 constexpr uint8_t BIG5_TAG[8] = {'B', 'I', 'G', '5', 'C', '9', '5', '0'};
-constexpr uint16_t BIG5_LAST_CELL[6] = {0x2550, 0x255E, 0x2561, 0x256A, 0x5341, 0x5345};
+constexpr uint16_t BIG5_LAST_CELL[2] = {0x5341, 0x5345};
 
 bool isEucKr(const void* profile) {
     return profile != nullptr && std::memcmp(profile, EUC_KR_TAG, sizeof(EUC_KR_TAG)) == 0;
@@ -674,7 +674,7 @@ int decodeEucJp(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint
         if (mbcsMax < 2) return needBytes(2, length);
         if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
         length = 2;
-        code = jisX0208ToUnicode(isEucJpX0208(profile), (lead - 0xA1) * 94 + (mbcs[1] - 0xA1));
+        code = jisX0208ToUnicode(isEucJpX0208(profile) ? JisStrict::Euc : JisStrict::None, (lead - 0xA1) * 94 + (mbcs[1] - 0xA1));
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8F && hasSs3(profile)) {
@@ -701,9 +701,8 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
         if (lead < 0x80) {
-            if (strict) requireSettledSjisX0208(lead);
             length = 1;
-            code = lead;
+            code = strict ? sjisX0208Single(lead) : lead;
             return 0;
         }
         if (lead >= 0xA1 && lead <= 0xDF) {
@@ -738,7 +737,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
             int cell = 0;
             sjisToJis(lead, trail, row, cell);
             if (row < 1 || row > 94 || cell < 1 || cell > 94) return unassigned(2, length);
-            code = jisX0208ToUnicode(strict, (row - 1) * 94 + (cell - 1));
+            code = jisX0208ToUnicode(strict ? JisStrict::Sjis : JisStrict::None, (row - 1) * 94 + (cell - 1));
             if (code == 0) return unassigned(2, length);
             length = 2;
             return 0;
@@ -754,12 +753,15 @@ struct JisCell {
     bool supplementary;
 };
 
-std::vector<JisCell> buildJisReverse(bool strict) {
+std::vector<JisCell> buildJisReverse(JisStrict strict) {
     std::vector<JisCell> entries;
     entries.reserve(2 * 94 * 94);
     for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
-        const uint16_t code = strict ? strictJisX0208(cell) : JisX0208::TO_UCS2[cell];
+        const uint16_t code = static_cast<uint16_t>(jisX0208ToUnicode(strict, cell));
         if (code != 0) entries.push_back({code, static_cast<uint16_t>(cell), false});
+    }
+    if (strict == JisStrict::Euc) {
+        for (const JisChange& fallback : JIS_X0208_EUC_FALLBACKS) entries.push_back({fallback.code, static_cast<uint16_t>(jisIndex(fallback.jis)), false});
     }
     for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
         if (JisX0212::TO_UCS2[cell] != 0) entries.push_back({JisX0212::TO_UCS2[cell], static_cast<uint16_t>(cell), true});
@@ -769,13 +771,11 @@ std::vector<JisCell> buildJisReverse(bool strict) {
     return entries;
 }
 
-const std::vector<JisCell>& jisReverse(bool strict) {
-    if (strict) {
-        static const auto strictReverse = buildJisReverse(true);
-        return strictReverse;
-    }
-    static const auto reverse = buildJisReverse(false);
-    return reverse;
+const std::vector<JisCell>& jisReverse(JisStrict strict) {
+    static const auto reverse = buildJisReverse(JisStrict::None);
+    static const auto sjisReverse = buildJisReverse(JisStrict::Sjis);
+    static const auto eucReverse = buildJisReverse(JisStrict::Euc);
+    return strict == JisStrict::Sjis ? sjisReverse : strict == JisStrict::Euc ? eucReverse : reverse;
 }
 
 uint32_t jisAlias(uint32_t code) {
@@ -804,8 +804,12 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
-        if (strict) requireSettledSjisX0208(code);
-        if (code < 0x80) {
+        if (strict && (code == 0x00A5 || code == 0x203E)) {
+            length = 1;
+            mbcs[0] = code == 0x00A5 ? 0x5C : 0x7E;
+            return 0;
+        }
+        if (code < 0x80 && !(strict && (code == 0x5C || code == 0x7E))) {
             length = 1;
             mbcs[0] = static_cast<uint8_t>(code);
             return 0;
@@ -822,8 +826,7 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
             return 0;
         }
         if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
-        if (strict && code == JIS_X0208_UNSETTLED_CODE) throw std::runtime_error(JIS_X0208_UNSETTLED);
-        const auto& reverse = jisReverse(strict);
+        const auto& reverse = jisReverse(strict ? JisStrict::Sjis : JisStrict::None);
         const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
         if (found == reverse.end() || found->code != code || found->supplementary) return CES_ERROR_UNASSIGNED_CODE;
         jisToSjis(found->cell / 94 + 1, found->cell % 94 + 1, mbcs[0], mbcs[1]);
@@ -850,8 +853,7 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
         return 0;
     }
     if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
-    if (strict && code == JIS_X0208_UNSETTLED_CODE) throw std::runtime_error(JIS_X0208_UNSETTLED);
-    const auto& reverse = jisReverse(strict);
+    const auto& reverse = jisReverse(strict ? JisStrict::Euc : JisStrict::None);
     const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
     if (found == reverse.end() || found->code != code || (found->supplementary && !hasSs3(profile))) return CES_ERROR_UNASSIGNED_CODE;
     if (found->supplementary) {
@@ -1240,6 +1242,10 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp775(void) {
 
 const uint8_t* APS5_VABI sceCesRefersUcsProfileCp850(void) {
     return singleByteProfile(SingleByte::Cp850);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp858(void) {
+    return singleByteProfile(SingleByte::Cp858);
 }
 
 const uint8_t* APS5_VABI sceCesRefersUcsProfileCp852(void) {

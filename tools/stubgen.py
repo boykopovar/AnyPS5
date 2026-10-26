@@ -187,7 +187,7 @@ def write_outputs(outputs):
             path = Path(filename).resolve()
             if path.is_dir():
                 raise IsADirectoryError(str(path))
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as handle:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=".stubgen-", suffix=".tmp", delete=False) as handle:
                 temporary = Path(handle.name)
                 staged.append((temporary, path))
                 handle.write(content)
