@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -17,6 +18,11 @@ constexpr int UserNotFound = static_cast<int>(0x80550007u);
 constexpr int AlreadyRegistered = static_cast<int>(0x80550008u);
 constexpr int NotRegistered = static_cast<int>(0x80550009u);
 constexpr int RequestNotFound = static_cast<int>(0x80550014u);
+constexpr int InvalidId = static_cast<int>(0x80550015u);
+constexpr int IdMapperRefusedArgument = static_cast<int>(0x80553083u);
+constexpr int IdMapperRefusedRequestId = static_cast<int>(0x80553085u);
+constexpr int ManagerIntTableFull = static_cast<int>(0x80559D05u);
+constexpr int ManagerIntNotInTable = static_cast<int>(0x80559D0Au);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -112,8 +118,11 @@ void CheckStateCallbacksA() {
         Require(SignedOutOnce(stateCallsA[index], &userdata[index]), "each callback gets SIGNED_OUT once");
     }
     Require(stateCallsA[8].calls == 0, "a rejected callback was called");
-    Require(sceNpUnregisterStateCallbackA(0) == InvalidArgument, "callback id 0");
-    Require(sceNpUnregisterStateCallbackA(9) == InvalidArgument, "callback id 9");
+    Require(sceNpUnregisterStateCallbackA(0) == InvalidId, "callback id 0");
+    Require(sceNpUnregisterStateCallbackA(9) == InvalidId, "callback id 9");
+    Require(sceNpUnregisterStateCallbackA(-1) == InvalidId, "callback id -1");
+    Require(sceNpUnregisterStateCallbackA(std::numeric_limits<int>::min()) == InvalidId, "callback id INT_MIN");
+    Require(sceNpUnregisterStateCallbackA(std::numeric_limits<int>::max()) == InvalidId, "callback id INT_MAX");
     Require(sceNpUnregisterStateCallbackA(ids[3]) == 0, "unregistering one state callback");
     for (int index = 0; index < 8; ++index) {
         if (index == 3) continue;
@@ -214,6 +223,73 @@ void CheckAsyncRequestLifecycle() {
     Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
     Require(sceNpDeleteRequest(unusedAsyncResult) == 0, "delete after abort");
     Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
+}
+
+void CheckIdMapperRequests() {
+    for (const int reqId : {0, -1, -0x7fffffff}) {
+        Require(sceNpIdMapperAbortRequest(reqId) == IdMapperRefusedRequestId, "sceNpIdMapperAbortRequest must refuse a request id of 0 or less");
+        Require(sceNpIdMapperDeleteRequest(reqId) == IdMapperRefusedRequestId, "sceNpIdMapperDeleteRequest must refuse a request id of 0 or less");
+    }
+    const int first = sceNpIdMapperCreateRequest();
+    const int second = sceNpIdMapperCreateRequest();
+    Require(first > 0 && second > 0 && first != second, "sceNpIdMapperCreateRequest must return distinct positive request ids");
+    Require(sceNpIdMapperAbortRequest(first) == 0, "abort on a live IdMapper request");
+    Require(sceNpIdMapperAbortRequest(first) == 0, "abort must leave the IdMapper request live");
+    Require(sceNpIdMapperDeleteRequest(first) == 0, "delete after abort on an IdMapper request");
+    Require(sceNpIdMapperAbortRequest(first) == RequestNotFound, "abort after delete");
+    Require(sceNpIdMapperDeleteRequest(first) == RequestNotFound, "second delete of an IdMapper request");
+    Require(sceNpIdMapperAbortRequest(0x7fffffff) == RequestNotFound, "abort of a never-created IdMapper request");
+    Require(sceNpIdMapperDeleteRequest(0x7fffffff) == RequestNotFound, "delete of a never-created IdMapper request");
+    Require(sceNpIdMapperDeleteRequest(second) == 0, "delete the second IdMapper request");
+}
+
+void CheckManagerIntRequests() {
+    int live[64];
+    for (int& reqId : live) {
+        reqId = sceNpManagerIntCreateRequest();
+        Require(reqId > 0, "sceNpManagerIntCreateRequest must return a positive request id while a slot is free");
+    }
+    for (std::size_t i = 0; i < 64; ++i) {
+        for (std::size_t j = i + 1; j < 64; ++j) Require(live[i] != live[j], "live NpManagerInt request ids must differ");
+    }
+    Require(sceNpManagerIntCreateRequest() == ManagerIntTableFull, "the 65th live NpManagerInt request must give the full-table error");
+    Require(sceNpManagerIntDeleteRequest(live[0]) == 0, "deleting a live NpManagerInt request");
+    live[0] = sceNpManagerIntCreateRequest();
+    Require(live[0] > 0, "a deleted NpManagerInt request frees its slot");
+    Require(sceNpManagerIntCreateRequest() == ManagerIntTableFull, "the table is full again");
+    Require(sceNpManagerIntAbortRequest(live[1]) == 0, "abort on a live NpManagerInt request");
+    Require(sceNpManagerIntAbortRequest(live[1]) == 0, "abort must leave the NpManagerInt request live");
+    Require(sceNpManagerIntDeleteRequest(live[1]) == 0, "delete after abort on an NpManagerInt request");
+    Require(sceNpManagerIntDeleteRequest(live[1]) == ManagerIntNotInTable, "second delete of an NpManagerInt request");
+    for (const int reqId : {0, -1, 0x7fffffff}) {
+        Require(sceNpManagerIntDeleteRequest(reqId) == ManagerIntNotInTable, "delete of an NpManagerInt request id not in the table");
+        Require(sceNpManagerIntAbortRequest(reqId) == RequestNotFound, "abort of an unknown NpManagerInt request id");
+    }
+    Require(sceNpManagerIntAbortRequest(live[1]) == RequestNotFound, "abort of a deleted NpManagerInt request id");
+    for (std::size_t i = 0; i < 64; ++i) {
+        if (i != 1) Require(sceNpManagerIntDeleteRequest(live[i]) == 0, "deleting each NpManagerInt request");
+    }
+}
+
+void CheckIdMapperLookup(const char* name, decltype(&sceNpIdMapperNpIdToAccountId) lookup) {
+    constexpr int UserId = 0x10000000;
+    unsigned char input[36] = {};
+    unsigned char output[64];
+    std::memset(output, 0x5a, sizeof(output));
+    unsigned char untouched[sizeof(output)];
+    std::memcpy(untouched, output, sizeof(output));
+    Require(lookup(0, UserId, input, output, 1, 0, 0) == IdMapperRefusedRequestId, name);
+    Require(lookup(-1, UserId, input, output, 1, 0, 0) == IdMapperRefusedRequestId, name);
+    Require(lookup(1, -1, input, output, 1, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(1, UserId, nullptr, output, 1, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(1, UserId, input, nullptr, 1, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(1, UserId, input, output, 0, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(1, UserId, input, output, 1001, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(1, UserId, input, output, 0xffffffffu, 0, 0) == IdMapperRefusedArgument, name);
+    Require(lookup(0, UserId, nullptr, output, 1, 0, 0) == IdMapperRefusedRequestId, name);
+    Require(lookup(1, UserId, input, output, 1, 0, 0) == SignedOut, name);
+    Require(lookup(0x7fffffff, UserId, input, output, 1000, 0xff, ~std::uint64_t{0}) == SignedOut, name);
+    Require(std::memcmp(output, untouched, sizeof(output)) == 0, name);
 }
 
 void CheckOnlineIdQueries() {
@@ -374,6 +450,10 @@ int main() {
     CheckLegacyStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
+    CheckIdMapperRequests();
+    CheckManagerIntRequests();
+    CheckIdMapperLookup("sceNpIdMapperNpIdToAccountId", sceNpIdMapperNpIdToAccountId);
+    CheckIdMapperLookup("sceNpIdMapperOnlineIdToAccountId", sceNpIdMapperOnlineIdToAccountId);
     CheckPlusAndContentRestriction();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));

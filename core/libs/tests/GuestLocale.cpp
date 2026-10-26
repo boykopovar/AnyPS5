@@ -22,6 +22,9 @@ extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIc
 extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];
+extern std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13];
+extern std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13];
+extern std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17];
 
 }
 
@@ -137,7 +140,7 @@ static void CheckCharacterTables() {
     Require(classification[-1] == 0 && lower[-1] == -1 && upper[-1] == -1);
     Require(classification['A'] == 0x03 && classification['a'] == 0x11);
     Require(classification['G'] == 0x02 && classification['0'] == 0x21);
-    Require(classification[' '] == 0x04 && classification['\t'] == 0xc0);
+    Require(classification[' '] == 0x04 && classification['\t'] == 0x4c0);
     Require(classification['\n'] == 0xc0 && classification['!'] == 0x08);
     for (int value = 0; value < 256; ++value) {
         Require(lower[value] == (value >= 'A' && value <= 'Z' ? value + 32 : value));
@@ -334,6 +337,33 @@ static void CheckFacetGetcat() {
     Require(_ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&punct, &locale) == 4);
 }
 
+static void CheckNumGetWideVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckTimeGetVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckTimeGetWideVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -357,6 +387,9 @@ int main() {
     CheckWideNumPutVtableObject();
     CheckFacetGetcat();
     CheckCollateVtableObject();
+    CheckTimeGetVtableObject();
+    CheckTimeGetWideVtableObject();
+    CheckNumGetWideVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();

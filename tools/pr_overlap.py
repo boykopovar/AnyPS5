@@ -71,10 +71,10 @@ def depends_on(body):
     body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
     repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
     repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
     body = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", body)
-    body = re.sub(rf"https?://github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
 

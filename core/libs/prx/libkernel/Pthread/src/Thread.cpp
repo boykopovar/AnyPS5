@@ -488,6 +488,7 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
     const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
+    if (attr) inheritSched = attr->_inheritsched;
     const int inheritedPolicy = parent ? parent->schedPolicy.load(std::memory_order_relaxed) : schedPolicy.load(std::memory_order_relaxed);
     schedPolicy.store(explicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
     const int attrPriority = attr ? attr->_schedpriority : DEFAULT_THREAD_PRIORITY;
@@ -553,6 +554,26 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
 
 bool GuestThreadIsLive(const PthreadPrivate* thread) {
     return LockLiveGuestThread(thread).owns_lock();
+}
+
+extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread) {
+    constexpr int GuestEsrch = 3;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return GuestEsrch;
+    thread->suspended.store(false, std::memory_order_release);
+    thread->suspended.notify_all();
+    return 0;
+}
+
+extern "C" void ResumeAllGuestThreads_nid_no_patch() {
+    const auto* self = CurrentGuestState().current;
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread == self) continue;
+        thread->suspended.store(false, std::memory_order_release);
+        thread->suspended.notify_all();
+    }
 }
 
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask) {
@@ -775,6 +796,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const sigset_t signalMask = args->signalMask;
 #endif
     args.reset();
+    self->suspended.wait(true, std::memory_order_acquire);
 #ifndef _WIN32
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
@@ -950,6 +972,8 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         p->scope = CurrentGuestState().current->scope;
     }
     if (name) p->name = name;
+    p->createdSuspended = attr && (*attr)->_createSuspended;
+    p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32

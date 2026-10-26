@@ -104,6 +104,13 @@ def exporting(*names):
     return build_elf([(name, 1, GLOBAL_FUNCTION) for name in names])
 
 
+def elf_dynamic_range_fields(image):
+    sections = struct.unpack_from("<Q", image, 40)[0]
+    if sections:
+        return sections + 192 + 24, sections + 192 + 32
+    return 120 + 8, 120 + 32
+
+
 def with_elf_symbol_table_range(image, offset, size):
     image = bytearray(image)
     section_offset = struct.unpack_from("<Q", image, 40)[0] + 64
@@ -172,7 +179,7 @@ def build_pe_with_imports(dlls, names=()):
 def write_source(root, library, text):
     directory = Path(root) / library
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "Export.cpp").write_text(text)
+    (directory / "Export.cpp").write_text(text, encoding="utf-8")
 
 
 def write_registry(path, entries, encoding="utf-8"):
@@ -1033,6 +1040,88 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertIn(str(path), err)
                 self.assertIn("lies outside the file", err)
 
+    def test_elf_import_symbol_tables_reject_ranges_outside_the_file(self):
+        original = build_elf([("alpha", 0, GLOBAL_FUNCTION)])
+        for offset, size in ((len(original) + 1, 0), (2**64 - 1, 0),
+                             (len(original) - 23, 24), (len(original), 24)):
+            with self.subTest(offset=offset, size=size):
+                with self.assertRaisesRegex(import_audit.AuditError, "dynamic symbol table.*outside the file"):
+                    import_audit.elf_imports(Path("invalid-imports.prx"), with_elf_symbol_table_range(original, offset, size))
+
+    def test_elf_import_symbol_tables_can_end_at_eof(self):
+        original = build_elf([("alpha", 0, GLOBAL_FUNCTION)])
+        empty = with_elf_symbol_table_range(original, len(original), 0)
+        symbols, needed = import_audit.elf_imports(Path("empty.prx"), empty)
+        self.assertFalse(symbols)
+        self.assertFalse(needed)
+        sections = struct.unpack_from("<Q", original, 40)[0]
+        offset, size = struct.unpack_from("<QQ", original, sections + 64 + 24)
+        relocated = with_elf_symbol_table_range(original + original[offset:offset + size], len(original), size)
+        symbols, needed = import_audit.elf_imports(Path("relocated.prx"), relocated)
+        self.assertEqual(set(symbols), {"alpha"})
+        self.assertFalse(needed)
+
+    def test_elf_dynamic_table_ranges_are_checked_before_the_terminator(self):
+        for sectioned in (False, True):
+            original = build_elf([], ["libc.prx"]) if sectioned else build_sectionless_elf([], ["libc.prx"])
+            offset_field, size_field = elf_dynamic_range_fields(original)
+            offset = struct.unpack_from("<Q", original, offset_field)[0]
+            excessive_size = ((len(original) - offset) // 16 + 1) * 16
+            for start, size in ((offset, excessive_size), (offset, 2**64 - 16),
+                                (len(original) + 1, 0), (2**64 - 1, 16)):
+                with self.subTest(sectioned=sectioned, offset=start, size=size):
+                    image = bytearray(original)
+                    struct.pack_into("<Q", image, offset_field, start)
+                    struct.pack_into("<Q", image, size_field, size)
+                    with self.assertRaisesRegex(import_audit.AuditError, "dynamic (segment|section).*outside the file"):
+                        import_audit.elf_imports(Path("truncated.prx"), image)
+
+    def test_elf_dynamic_tables_ending_at_eof_and_terminated_padding(self):
+        for sectioned in (False, True):
+            original = build_elf([], ["libc.prx"]) if sectioned else build_sectionless_elf([], ["libc.prx"])
+            offset_field, size_field = elf_dynamic_range_fields(original)
+            offset = struct.unpack_from("<Q", original, offset_field)[0]
+            size = struct.unpack_from("<Q", original, size_field)[0]
+            for padding in (b"", struct.pack("<qQ", 1, 2**64 - 1)):
+                with self.subTest(sectioned=sectioned, padding=bool(padding)):
+                    image = bytearray(original + original[offset:offset + size] + padding)
+                    struct.pack_into("<Q", image, offset_field, len(original))
+                    struct.pack_into("<Q", image, size_field, size + len(padding))
+                    if not sectioned:
+                        struct.pack_into("<QQ", image, 64 + 32, len(image), len(image))
+                        struct.pack_into("<QQ", image, offset_field + 8, 0x400000 + len(original), 0x400000 + len(original))
+                        struct.pack_into("<Q", image, size_field + 8, size + len(padding))
+                    symbols, needed = import_audit.elf_imports(Path("valid.prx"), image)
+                    self.assertFalse(symbols)
+                    self.assertEqual(needed, {"libc.prx"})
+
+    def test_invalid_elf_dynamic_ranges_preserve_the_previous_report(self):
+        registry = self.work.root / "game.json"
+        report = self.work.root / "audit.json"
+        module = self.work.modules / "broken.prx"
+        write_registry(registry, [])
+        (self.work.libs / "libc.prx").write_bytes(exporting())
+        cases = []
+        for sectioned in (False, True):
+            original = build_elf([], ["libc.prx"]) if sectioned else build_sectionless_elf([], ["libc.prx"])
+            offset_field, size_field = elf_dynamic_range_fields(original)
+            offset = struct.unpack_from("<Q", original, offset_field)[0]
+            image = bytearray(original)
+            struct.pack_into("<Q", image, size_field, ((len(image) - offset) // 16 + 1) * 16)
+            cases.append(("dynamic section" if sectioned else "dynamic segment", image))
+        original = build_elf([], ["libc.prx"])
+        cases.append(("dynamic symbol table", with_elf_symbol_table_range(original, len(original) + 1, 0)))
+        for table, image in cases:
+            with self.subTest(table=table):
+                module.write_bytes(image)
+                report.write_bytes(b"previous report")
+                code, output, error = self.work.run(registry, "--json", str(report))
+                self.assertEqual((code, output), (2, ""))
+                self.assertIn(str(module), error)
+                self.assertIn(table, error)
+                self.assertNotIn("Traceback", error)
+                self.assertEqual(report.read_bytes(), b"previous report")
+
     def test_sectionless_elf_gnu_hash(self):
         image = build_sectionless_elf([
             ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)],
@@ -1307,6 +1396,27 @@ class ImportAuditTests(unittest.TestCase):
             ("libSceOnly.prx", nid_names.compute_nid("sceOnlyPending")): "sceOnlyPending"})
         self.assertNotIn(("libSceTwin.native.prx", twin), stubs)
         self.assertNotEqual(nid_names.compute_nid("printf"), nid_names.compute_nid("printf_nid_postfix"))
+
+    def test_source_stubs_decodes_source_with_utf8_bom(self):
+        source = self.work.source
+        write_source(source, "libSceBom", "\ufeff" + STUB_SOURCE.format(name="sceBomPending"))
+        stubs = import_audit.source_stubs(source)
+        self.assertEqual(stubs.get(("libSceBom.prx", nid_names.compute_nid("sceBomPending"))), "sceBomPending")
+
+    def test_source_stubs_passes_decoded_text_without_bom_to_alias_scanner(self):
+        source = self.work.source
+        write_source(source, "libSceBomAlias", "\ufeff" + 'APS5_EXPORT("AAAAAAAAAAA", sceBomAlias);\n' + STUB_SOURCE.format(name="sceBomAlias"))
+        seen = []
+        real = nid_names.source_aliases
+
+        def spy(text):
+            seen.append(text)
+            return real(text)
+
+        with patch.object(nid_names, "source_aliases", spy):
+            import_audit.source_stubs(source)
+        self.assertTrue(seen)
+        self.assertTrue(all(text.startswith("APS5_EXPORT(") for text in seen))
 
     def test_disambiguated_stubs_use_the_nid_of_their_symbol(self):
         source = self.work.source
@@ -1609,6 +1719,61 @@ class ImportAuditTests(unittest.TestCase):
         for cut in (0x3c, 0x60, 0x210):
             with self.assertRaisesRegex(import_audit.AuditError, "lib.prx"):
                 import_audit.pe_exports(path, image[:cut])
+
+    def test_pe_without_an_export_directory_has_no_exports(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            image = bytearray(build_pe([]))
+            struct.pack_into("<H", image, 0x58, magic)
+            struct.pack_into("<I", image, 0x58 + directory - 4, 16)
+            struct.pack_into("<II", image, 0x58 + directory, 0, 0)
+            with self.subTest(magic=magic):
+                self.assertEqual(import_audit.read_exports(Path("empty.prx"), image), set())
+
+    def test_pe_missing_export_directory_does_not_hide_malformed_tables(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for rva, size in ((0, 40), (0x1000, 0), (0x1000, 39), (0xffffff, 40)):
+                image = bytearray(build_pe([]))
+                struct.pack_into("<H", image, 0x58, magic)
+                struct.pack_into("<I", image, 0x58 + directory - 4, 16)
+                struct.pack_into("<II", image, 0x58 + directory, rva, size)
+                with self.subTest(magic=magic, rva=rva, size=size):
+                    with self.assertRaises(import_audit.AuditError):
+                        import_audit.read_exports(Path("malformed.prx"), image)
+
+    def test_audit_accepts_pe_libraries_and_modules_without_export_directories(self):
+        work = self.work
+        image = bytearray(build_pe_with_imports(["KERNEL32.dll"]))
+        struct.pack_into("<II", image, 0x58 + 112, 0, 0)
+        (work.libs / "empty.prx").write_bytes(image)
+        (work.modules / "module.prx.guest.prx").write_bytes(image)
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""), out)
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["references"], 0)
+        self.assertEqual(data["missing_libraries"], {})
+        self.assertEqual(data["missing_host_dependencies"], [])
+        write_registry(registry, [("AAAAAAAAAAA", "empty.prx")])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""), out)
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["imports"][0]["class"], "absent")
+        self.assertEqual(data["imports"][0]["providers"], [])
+        self.assertEqual(data["stops"][0]["nid"], "AAAAAAAAAAA")
+
+    def test_exportless_pe_library_still_reports_missing_host_dependencies(self):
+        work = self.work
+        image = bytearray(build_pe_with_imports(["libSceMissing.prx"]))
+        struct.pack_into("<II", image, 0x58 + 112, 0, 0)
+        (work.libs / "empty.prx").write_bytes(image)
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["missing_host_dependencies"], [
+            {"importer": "empty.prx", "chain": ["empty.prx", "libSceMissing.prx"]},
+        ])
 
     def test_pe_ignores_bytes_after_the_declared_directory_count(self):
         image = bytearray(build_pe(["alpha"]))
@@ -2273,6 +2438,33 @@ class StrictProviderTests(unittest.TestCase):
         registry = work.root / "registry.json"
         write_registry(registry, [("AAAAAAAAAAA", "libSceMissing.prx")])
         self.assertEqual(work.run(registry, "--strict-providers")[0], 1)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(import_audit.sys, "stdout", out), patch.object(import_audit.sys, "stderr", err):
+            try:
+                import_audit.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

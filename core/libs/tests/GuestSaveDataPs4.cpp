@@ -107,7 +107,7 @@ void TestMountPs4() {
     std::strcpy(dir.data, "kept");
     mount.dir_name = &dir;
     mount.mount_mode = MountReadWrite;
-    Check(ThrowsRuntimeError([&] { sceSaveDataMount(&mount, nullptr); }), "null mount_result throws");
+    Check(sceSaveDataMount(&mount, nullptr) == SaveDataErrorParameter, "null mount_result is PARAMETER");
     Check(sceSaveDataMount(&mount, &result) == 0, "mount existing save directory succeeds");
     Check(result.mount_point.data[0] != '\0', "mount writes mount point");
     Check(sceSaveDataUmount(&result.mount_point) == 0, "umount mounted point succeeds");

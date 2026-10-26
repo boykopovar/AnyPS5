@@ -74,10 +74,22 @@ static void CheckRefusals() {
     Require(sceKernelGetModuleInfoInternal(-1, &unknown) == SCE_KERNEL_ERROR_ESRCH && unknown.name[0] == '\0');
 }
 
+static void CheckLoadStartSysmodule() {
+    int res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, &res) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    Require(res == 0);
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, nullptr) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0, nullptr, &res) ==
+            static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT));
+    Require(res == 0);
+}
+
 int main() {
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
     CheckRefusals();
+    CheckLoadStartSysmodule();
     return 0;
 }

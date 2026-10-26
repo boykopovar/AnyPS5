@@ -60,11 +60,15 @@ static int CheckScenarioWithoutChunkTable(const char* root) {
     int handle = 0;
     Require(scePlayGoInitialize(&init) == 0);
     Require(scePlayGoOpen(&handle, nullptr) == 0);
-    const std::uint16_t anyIds[3] = {1, 10, 0xFFFF};
+    const std::uint16_t listedIds[3] = {1, 10, 999};
     std::int8_t loci[3] = {0, 0, 0};
-    Require(scePlayGoGetLocus(handle, anyIds, 3, loci) == 0 && loci[0] == 3 && loci[1] == 3 && loci[2] == 3);
-    const PlayGoToDo todo[2] = {{0, 3, 0}, {0xFFFF, 3, 0}};
+    Require(scePlayGoGetLocus(handle, listedIds, 3, loci) == 0 && loci[0] == 3 && loci[1] == 3 && loci[2] == 3);
+    const PlayGoToDo todo[2] = {{0, 3, 0}, {999, 3, 0}};
     Require(scePlayGoSetToDoList(handle, todo, 2) == 0);
+    for (const std::uint16_t unlisted : {std::uint16_t{1000}, std::uint16_t{0xFFFF}}) {
+        std::int8_t locus = 0;
+        RequireMissingChunkMetadata([&] { scePlayGoGetLocus(handle, &unlisted, 1, &locus); });
+    }
     std::uint32_t chunkCount = 0;
     Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 1000);
     std::vector<std::uint16_t> ids(chunkCount + 1, 0xFFFF);
@@ -197,6 +201,27 @@ static int CheckNoPlayGoFileAnswered(const char* root, const char* answer) {
     return 0;
 }
 
+static int CheckScenarioWithoutChunkTableAnswered(const char* root, const char* answer) {
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
+    SetUnlistedChunks(answer);
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t unlisted[2] = {1000, 0xFFFF};
+    std::int8_t loci[2] = {0, 0};
+    const int result = scePlayGoGetLocus(handle, unlisted, 2, loci);
+    if (std::string_view(answer) == "installed") Require(result == 0 && loci[0] == 3 && loci[1] == 3);
+    else Require(result == badChunkId);
+    const std::uint16_t listed[2] = {0, 999};
+    Require(scePlayGoGetLocus(handle, listed, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    std::uint32_t chunkCount = 0;
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 1000);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
 static int CheckUnknownUnlistedChunkAnswer(const char* root) {
     SetUnlistedChunks("maybe");
     std::filesystem::current_path(root);
@@ -249,6 +274,8 @@ int main(int argc, char** argv) {
         if (mode == "--no-file-unknown-answer") return CheckUnknownUnlistedChunkAnswer(argv[2]);
         if (mode == "--package-chunk-table" || mode == "--scenario-with-chunk-table") return CheckPackageChunkTable(argv[2]);
         if (mode == "--scenario-only") return CheckScenarioWithoutChunkTable(argv[2]);
+        if (mode == "--scenario-only-installed") return CheckScenarioWithoutChunkTableAnswered(argv[2], "installed");
+        if (mode == "--scenario-only-absent") return CheckScenarioWithoutChunkTableAnswered(argv[2], "absent");
         if (mode == "--ficm-only") return CheckRejectedLayout(argv[2], "playgo-ficm.dat");
         if (mode == "--hash-table-only") return CheckRejectedLayout(argv[2], "playgo-hash-table.dat");
         if (mode == "--invalid-chunk-table") return CheckRejectedLayout(argv[2], "playgo-chunk.dat");
@@ -260,7 +287,25 @@ int main(int argc, char** argv) {
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
     RunLayout(argv[0], "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
+    std::int64_t eta = -1;
+    std::int32_t speed = -1;
+    PlayGoInitParams fixtureInit{};
+    int validHandle = -1;
+    Require(scePlayGoInitialize(&fixtureInit) == 0);
+    Require(scePlayGoOpen(&validHandle, nullptr) == 0);
+    constexpr int badHandleError = static_cast<int>(0x80B20009);
+    constexpr int badPointerError = static_cast<int>(0x80B2000A);
+    Require(scePlayGoGetEta(-1, nullptr, 0, &eta) == badHandleError);
+    Require(scePlayGoGetEta(validHandle, nullptr, 0, nullptr) == badPointerError);
+    Require(scePlayGoGetInstallSpeed(-1, &speed) == badHandleError);
+    Require(scePlayGoGetInstallSpeed(0x506C476F, &speed) == badHandleError && speed == -1);
+    Require(scePlayGoGetInstallSpeed(validHandle, nullptr) == badPointerError);
+    Require(scePlayGoGetInstallSpeed(validHandle, &speed) == 0 && speed == 2);
+    Require(scePlayGoPrefetch(-1, nullptr, 0, 0) == badHandleError);
+    Require(scePlayGoClose(validHandle) == 0);
     RunLayout(argv[0], "--scenario-only", {{"playgo-scenario.json", "{}"}});
+    RunLayout(argv[0], "--scenario-only-installed", {{"playgo-scenario.json", "{}"}});
+    RunLayout(argv[0], "--scenario-only-absent", {{"playgo-scenario.json", "{}"}});
     RunLayout(argv[0], "--ficm-only", {{"playgo-ficm.dat", "x"}});
     RunLayout(argv[0], "--hash-table-only", {{"playgo-hash-table.dat", "x"}});
     RunLayout(argv[0], "--invalid-chunk-table", {{"playgo-chunk.dat", "not a chunk table"}});
