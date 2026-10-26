@@ -651,7 +651,7 @@ static void TestCustomRackChecks() {
         for (std::uint32_t index = 0; index < count; ++index) {
             sampler.custom_rack_option.module[index].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
         }
-        sampler.custom_rack_option.module[count - 1].module_id = 0x19;
+        sampler.custom_rack_option.module[count - 1].module_id = 0x99;
         Require(CreateSamplerThrows<std::runtime_error>(sampler));
         for (const bool useAllocator : {false, true}) {
             rack = 0;
@@ -775,6 +775,63 @@ static void TestCustomLegacyUserFx(std::uint32_t moduleIndex) {
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.125f && out[i * 2 + 1] == 0.75f);
 
     Require(sceNgs2RackDestroy(rackNullOpt, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static Ngs2CustomSamplerRackOption LegacySamplerRackOption(const Ngs2CustomModuleOption* option, std::uint32_t moduleIndex) {
+    Ngs2CustomSamplerRackOption rack{};
+    auto& common = rack.custom_rack_option.rack_option;
+    common.size = sizeof(rack);
+    common.max_grain_samples = 512;
+    common.max_voices = 1;
+    common.max_matrices = 1;
+    common.max_ports = 1;
+    rack.custom_rack_option.num_buffers = 1;
+    rack.custom_rack_option.num_modules = moduleIndex + 1;
+    for (std::uint32_t index = 0; index <= moduleIndex; ++index) {
+        rack.custom_rack_option.module[index].option = option;
+        rack.custom_rack_option.module[index].module_id = SCE_NGS2_CUSTOM_MODULE_ID_USER_FX;
+    }
+    rack.max_channel_works = 1;
+    rack.max_waveform_blocks = 1;
+    return rack;
+}
+
+static void TestCustomSamplerLegacyUserFx(std::uint32_t moduleIndex) {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+    const Ngs2CustomModuleOption header{sizeof(Ngs2CustomModuleOption)};
+    auto option = LegacySamplerRackOption(nullptr, moduleIndex);
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &option.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &option.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
+
+    const auto voice = Voice(rack);
+    Control(voice, SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0}});
+    std::vector<std::int16_t> pcm(Grain * 2 * 8, 16384);
+    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 1, 0, static_cast<std::uint32_t>(pcm.size() / 2), 0, 0};
+    Control(voice, SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    Patch(voice, master);
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    LegacyUserFxState state{};
+    const auto param = Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456};
+    Control(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | (moduleIndex + 1), param);
+    auto out = Render(system);
+    Require(state.calls == 1 && state.flags == 3);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.25f && out[i * 2 + 1] == 0.5f);
+    out = Render(system);
+    Require(state.calls == 2 && state.flags == 0);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.25f && out[i * 2 + 1] == 0.5f);
+
+    Require(ControlThrows<std::invalid_argument>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 0, param));
+    Require(ControlThrows<std::invalid_argument>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | (moduleIndex + 2), param));
+    Require(CreateSamplerThrows<std::runtime_error>(LegacySamplerRackOption(&header, moduleIndex)));
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -1153,6 +1210,7 @@ int main() {
     TestCustomSampler();
     TestCustomFilter();
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
+    for (const auto moduleIndex : {0u, 1u}) TestCustomSamplerLegacyUserFx(moduleIndex);
     TestCustomSamplerGain();
     TestCustomGain();
     TestCustomModuleInfo();

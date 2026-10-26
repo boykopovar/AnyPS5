@@ -78,7 +78,9 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
         } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER) {
             if (info.option != nullptr || info.state_size != 0 || info.state_offset != 0) APS5_INVALID_ARG_EX;
         } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_USER_FX) {
-            if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::runtime_error("NGS2: the custom UserFx module on a custom sampler rack is not implemented");
+            if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && rackId != SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
+                throw std::runtime_error("NGS2: the custom UserFx module on this rack is not implemented");
+            }
             if (info.option != nullptr) throw std::runtime_error("NGS2: a custom UserFx module option is not implemented");
         } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_DELAY) {
             CheckDelayModule(rackId, info);
@@ -374,8 +376,15 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         return;
     }
     if ((param.id & ~0x1fu) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX) {
-        if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
-        SetCustomUserFxParam(voice, param.id & 0x1f, ParamAs<Ngs2CustomVoiceUserFxParam>(param));
+        if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && rackId != SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
+            throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
+        }
+        auto index = param.id & 0x1f;
+        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
+            if (index == 0) APS5_INVALID_ARG_EX;
+            index--;
+        }
+        SetCustomUserFxParam(voice, index, ParamAs<Ngs2CustomVoiceUserFxParam>(param));
         return;
     }
     if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
