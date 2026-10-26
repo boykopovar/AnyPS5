@@ -86,6 +86,11 @@ MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshA
 // resource cache and kept by the batch).
 enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, Count };
 const char* DrawRecipeMissName(DrawRecipeMiss miss);
+
+enum class DrawRecipeSkip : std::uint8_t { Built, NoOutput, StencilReplay, QuadList, ProxiedTarget, Disabled, Uncacheable, Waited, Indirect, NotReusable, MovedBuffers, Multisampled, ReorderedSamples, Count };
+constexpr std::size_t DrawRecipeSkipCount = static_cast<std::size_t>(DrawRecipeSkip::Count);
+const char* DrawRecipeSkipName(DrawRecipeSkip skip);
+std::array<std::uint64_t, DrawRecipeSkipCount> DrawRecipeSkips();
 struct DrawRecipeOutcome {
     bool recorded = false;
     DrawRecipeMiss miss = DrawRecipeMiss::None;

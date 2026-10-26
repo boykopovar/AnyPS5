@@ -664,6 +664,8 @@ struct DrawProfile {
     // Draw recipe outcomes (DrawWithRecipe): hits, and misses by DrawRecipeMiss.
     std::uint64_t recipeHits = 0;
     std::array<std::uint64_t, static_cast<std::size_t>(DrawRecipeMiss::Count)> recipeMisses{};
+    std::array<std::uint64_t, DrawRecipeSkipCount> recipeSkips{};
+    std::array<std::uint64_t, DrawRecipeSkipCount> reportedRecipeSkips{};
     // Indirect draws by path (IndirectDrawPath), the GPU-side ones whose records were rewritten
     // with a constant, and the time of the CPU record reads (their syncs).
     std::array<std::uint64_t, IndirectPathCount> indirect{};
@@ -781,6 +783,11 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     for (std::size_t i = 1; i < profile.recipeMisses.size() && room(); ++i) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", DrawRecipeMissName(static_cast<DrawRecipeMiss>(i)), static_cast<unsigned long long>(profile.recipeMisses[i]));
     }
+    if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; recipes built %llu, not built because:", static_cast<unsigned long long>(profile.recipeSkips[0] - profile.reportedRecipeSkips[0]));
+    for (std::size_t i = 1; i < DrawRecipeSkipCount && room(); ++i) {
+        const auto count = profile.recipeSkips[i] - profile.reportedRecipeSkips[i];
+        if (count != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", DrawRecipeSkipName(static_cast<DrawRecipeSkip>(i)), static_cast<unsigned long long>(count));
+    }
     AgcDriver::ProfilePrint_nid_no_patch("%s\n", line);
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
@@ -802,6 +809,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.validateHits = profile.validateMisses = 0;
     profile.recipeHits = 0;
     profile.recipeMisses.fill(0);
+    profile.reportedRecipeSkips = profile.recipeSkips;
     profile.indirect.fill(0);
     profile.indirectRewritten = 0;
     profile.indirectReadUs = 0;
@@ -1121,6 +1129,29 @@ std::array<DrawPassCounts, 2> DrawPassTotals() {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
     return stats.passTotals;
+}
+
+std::array<std::uint64_t, DrawRecipeSkipCount> DrawRecipeSkips() {
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    return stats.recipeSkips;
+}
+
+const char* DrawRecipeSkipName(DrawRecipeSkip skip) {
+    constexpr std::array<const char*, DrawRecipeSkipCount> names{"built", "no output", "stencil replay", "quad list", "proxied target", "disabled", "uncacheable", "waited", "indirect", "not reusable", "moved buffers", "multisampled", "reordered samples"};
+    return names[static_cast<std::size_t>(skip)];
+}
+
+namespace {
+
+void countRecipeSkip(DrawRecipeSkip skip) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    ++stats.recipeSkips[static_cast<std::size_t>(skip)];
+}
+
 }
 
 void CountDrawSkip(DrawSkip kind, double us) {
@@ -2451,6 +2482,7 @@ struct PreparedDraw {
     PreparedDraw(const PreparedDraw&) = delete;
     PreparedDraw& operator=(const PreparedDraw&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
+    DrawRecipeSkip recipeRefusal = DrawRecipeSkip::NoOutput;
     const DrawTraceContext* trace = nullptr;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
@@ -2486,6 +2518,10 @@ struct PreparedDraw {
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
     auto*& recipeOut = prepared.recipeOut;
+    const auto refuseRecipe = [&](DrawRecipeSkip why) {
+        if (recipeOut != nullptr) prepared.recipeRefusal = why;
+        recipeOut = nullptr;
+    };
     auto& stencilReferences = prepared.stencilReferences;
     for (const auto& shader : shaders) {
         if (shader.program != nullptr && !shader.program->stencilReferences.empty()) {
@@ -2507,9 +2543,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
         Require(static_cast<std::uint64_t>(draw.firstInstance) + draw.instanceCount <= 0x100000000ull && (draw.indexed || static_cast<std::uint64_t>(draw.firstVertex) + draw.indexCount <= 0x100000000ull), "stencil replay draw indices overflow");
         Require(state.samples == 1u && (!state.depth || HasStencil(state.depth->format)), "stencil replay requires single-sample rendering and an eight-bit stencil format");
-        recipeOut = nullptr;
+        refuseRecipe(DrawRecipeSkip::StencilReplay);
     }
-    if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
+    if (state.quadList || StripPatches(state, shaders)) refuseRecipe(DrawRecipeSkip::QuadList);
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
     auto& timing = prepared.timing.emplace("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
@@ -2806,7 +2842,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     // The state is copied only when a mask must change.
     auto& masked = prepared.masked;
     masked = maskedState(state, inputs.fragmentOutputs);
-    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
+    if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) refuseRecipe(DrawRecipeSkip::ProxiedTarget);
     for (std::size_t index = 0; index < targets.size(); ++index) {
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
@@ -2928,7 +2964,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled && !pipeline->ReordersSamples()) {
+        const auto recipeSkip = recipeOut == nullptr ? prepared.recipeRefusal : !DrawRecipes() ? DrawRecipeSkip::Disabled : !cacheable ? DrawRecipeSkip::Uncacheable : outcome.waited ? DrawRecipeSkip::Waited : args != nullptr ? DrawRecipeSkip::Indirect : !resources->Reusable() ? DrawRecipeSkip::NotReusable : !resolved.moved.empty() ? DrawRecipeSkip::MovedBuffers : multisampled ? DrawRecipeSkip::Multisampled : pipeline->ReordersSamples() ? DrawRecipeSkip::ReorderedSamples : DrawRecipeSkip::Built;
+        countRecipeSkip(recipeSkip);
+        if (recipeSkip == DrawRecipeSkip::Built) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
