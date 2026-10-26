@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -172,10 +173,25 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 spec = spec.substr(0, spec.find('.')) + ".1";
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
-            if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
-            else {
+            const char narrow = static_cast<char>(conversion);
+            const bool hexadecimal = narrow == 'a' || narrow == 'A';
+            if (length == "L") {
+                const long double value = args.Next<long double>();
+                if (!hexadecimal && std::isfinite(value)) {
+                    const std::string text = LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + "L" + narrow, value);
+                }
+            } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
-                AppendNumber(out, spec + static_cast<char>(conversion), args.Next<double>());
+                const double value = args.Next<double>();
+                if (std::isfinite(value)) {
+                    const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
+                    out.append(text.begin(), text.end());
+                } else {
+                    AppendNumber(out, spec + narrow, value);
+                }
             }
         } else if (conversion == u'p' && length.empty()) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());

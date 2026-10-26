@@ -359,6 +359,16 @@ int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     return 0;
 }
 
+int APS5_VABI setlogin_nid_postfix(const char* name) {
+    constexpr std::size_t MaxLoginName = 33;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, MaxLoginName, copy);
+    if (copied == GuestEnametoolong) return static_cast<int>(Fail(GuestEinval));
+    if (copied != 0) return static_cast<int>(Fail(copied));
+    if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
+    return 0;
+}
+
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
 }
@@ -371,6 +381,10 @@ int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* 
 
 int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t count, std::size_t* actual) {
     return sceKernelGetModuleList(handles, count, actual);
+}
+
+KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
+    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {

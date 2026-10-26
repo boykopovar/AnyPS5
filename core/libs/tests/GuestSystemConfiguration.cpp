@@ -10,6 +10,7 @@
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 static_assert(offsetof(SceKernelSystemSwVersion, size) == 0x00);
@@ -887,7 +888,55 @@ static void CheckNameToMib() {
     *__error_nid_postfix() = 13;
     Require(sysctlnametomib_nid_postfix("kern.anyps5_no_such_name", mib, &size) == -1 && *__error_nid_postfix() == 2);
 }
+static void CheckUnknownRootsAndTopLevelNames() {
+    for (const int root : {99, 10, 255, -1, -5}) {
+        const int mib[] = {root, 1};
+        int value = 0x5a5a5a5a;
+        std::size_t length = sizeof(value);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(mib, 2, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(value == 0x5a5a5a5a && length == sizeof(value));
+    }
+    struct TopLevel {
+        const char* name;
+        int number;
+    };
+    for (const TopLevel& node : {TopLevel{"sysctl", 0}, TopLevel{"kern", 1}, TopLevel{"vm", 2}, TopLevel{"vfs", 3}, TopLevel{"net", 4},
+                                 TopLevel{"debug", 5}, TopLevel{"hw", 6}, TopLevel{"machdep", 7}, TopLevel{"user", 8}, TopLevel{"p1003_1b", 9}}) {
+        for (const bool dotted : {false, true}) {
+            const std::string name = std::string(node.name) + (dotted ? "." : "");
+            int mib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+            std::size_t size = 3;
+            Require(sysctlnametomib_nid_postfix(name.c_str(), mib, &size) == 0 && size == 1 && mib[0] == node.number && mib[1] == 0x5a5a5a5a);
+            int value = 0x5a5a5a5a;
+            std::size_t length = sizeof(value);
+            *__error_nid_postfix() = 13;
+            Require(sysctlbyname_nid_postfix(name.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+            Require(value == 0x5a5a5a5a && length == sizeof(value));
+        }
+    }
+    int mib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t size = 3;
+    Require(sysctlnametomib_nid_postfix("hw.ncpu.", mib, &size) == 0 && size == 2 && mib[0] == 6 && mib[1] == 3);
+    for (const char* name : {"kern..", ".", "kern.anyps5.x", "kernel"}) {
+        size = 3;
+        *__error_nid_postfix() = 13;
+        Require(sysctlnametomib_nid_postfix(name, mib, &size) == -1 && *__error_nid_postfix() == 2);
+    }
+    int value = 0;
+    std::size_t length = sizeof(value);
+    Require(sysctlbyname_nid_postfix("hw.ncpu.", &value, &length, nullptr, 0) == 0 && value > 0 && length == sizeof(value));
+    std::string tooLong(1024, 'a');
+    length = sizeof(value);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(tooLong.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 63);
+    tooLong.resize(1023);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix(tooLong.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+}
+
 int main() {
+    CheckUnknownRootsAndTopLevelNames();
     CheckProcessorCountSysctl();
     CheckPageSizeSysctl();
     CheckPhysicalMemorySysctl(5, "hw.physmem");

@@ -11058,6 +11058,97 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+class LibraryCreateFlags {
+public:
+    explicit LibraryCreateFlags(const Context& context) : resolver(context.deviceProc), device(context.device) {
+        create = function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+        active = this;
+    }
+    ~LibraryCreateFlags() { active = nullptr; }
+    LibraryCreateFlags(const LibraryCreateFlags&) = delete;
+    LibraryCreateFlags& operator=(const LibraryCreateFlags&) = delete;
+    PFN_vkGetDeviceProcAddr Resolver() const { return resolve; }
+    std::uint32_t Libraries() const { return libraries.load(); }
+    std::uint32_t Retaining() const { return retaining.load(); }
+
+private:
+    template<typename TFunction>
+    TFunction function(const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+        const auto result = active->create(device, cache, count, infos, callbacks, pipelines);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (pipelines[index] == VK_NULL_HANDLE || (infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) == 0) continue;
+            active->libraries.fetch_add(1);
+            if ((infos[index].flags & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0) active->retaining.fetch_add(1);
+        }
+        return result;
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(createPipelines);
+        return active->resolver(device, name);
+    }
+    PFN_vkGetDeviceProcAddr resolver;
+    VkDevice device;
+    PFN_vkCreateGraphicsPipelines create = nullptr;
+    std::atomic<std::uint32_t> libraries{0};
+    std::atomic<std::uint32_t> retaining{0};
+    static inline LibraryCreateFlags* active = nullptr;
+};
+
+void pipelineLibraryLtoInfoTests(const Device& device) {
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    LibraryCreateFlags created(context);
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    if (!context.graphicsPipelineLibrary) {
+        std::cout << "graphics pipeline libraries unavailable or disabled: no library retains link-time optimization info\n";
+        return;
+    }
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 41;
+    fragment.variantId = 42;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    ShaderResources resources(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    VertexInputLayout input;
+    auto fast = context;
+    fast.deviceProc = created.Resolver();
+    fast.pipelineLinkTimeOptimization = false;
+    auto optimizing = fast;
+    optimizing.pipelineLinkTimeOptimization = true;
+    const bool lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
+    const auto fastPipeline = CachedPipeline(fast, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+    const auto fastLibraries = created.Libraries();
+    Require(fastLibraries != 0, "the pipeline was not linked from libraries created through the traced device");
+    Require(created.Retaining() == 0, std::to_string(created.Retaining()) + " of the " + std::to_string(fastLibraries) + " libraries made for a context without optimized links were created to retain link-time optimization info");
+    WaitForOptimizedPipelines(context.device);
+    Require(!fastPipeline->Optimized(), "a pipeline of a context without optimized links was optimized in the background");
+    const auto optimizedPipeline = CachedPipeline(optimizing, state, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    Require(optimizedPipeline != fastPipeline, "the two attachment layouts shared one cached pipeline");
+    const auto libraries = created.Libraries() - fastLibraries;
+    if (lto) {
+        Require(libraries == fastLibraries, "a link that will be optimized made " + std::to_string(libraries) + " libraries, expected " + std::to_string(fastLibraries) + ": it reused libraries made without link-time optimization info");
+        Require(created.Retaining() == libraries, std::to_string(created.Retaining()) + " of the " + std::to_string(libraries) + " libraries of a link that will be optimized were created to retain link-time optimization info");
+    } else {
+        Require(libraries == 0 && created.Retaining() == 0, "with APS5_NO_PIPELINE_LTO set, forcing pipelineLinkTimeOptimization changed the libraries or their create flags");
+    }
+    WaitForOptimizedPipelines(context.device);
+    Require(optimizedPipeline->Optimized() == lto, lto ? "the pipeline linked from libraries that retain link-time optimization info was not optimized in the background" : "a pipeline was optimized with APS5_NO_PIPELINE_LTO set");
+    std::cout << "Pipeline library link-time optimization info tests passed: " << fastLibraries << " libraries without the info, " << created.Retaining() << " with it\n";
+}
+
 void pipelineLibraryTests(const Device& device) {
     std::lock_guard gpu(GpuMutex());
     const auto& context = device.GetContext();
@@ -11437,6 +11528,10 @@ int main(int argc, char** argv) {
                 return 77;
             }
             return sparseRunImportTests(device, true) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-lto-info-only") {
+            pipelineLibraryLtoInfoTests(device);
+            return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);

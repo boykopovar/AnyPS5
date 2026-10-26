@@ -663,6 +663,10 @@ int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode) {
     return allocatePort(PORT_TYPE_SYS, SYS_PORT_SAMPLES, SYS_PORT_FRAME_RATE, Format::S16_8Ch);
 }
 
+int APS5_VABI sceAudioOutSetMainOutput() {
+    return 0;
+}
+
 int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, std::uint32_t mixLevel) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);

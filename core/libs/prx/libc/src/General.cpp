@@ -541,11 +541,15 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
 }
 }
 
-extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination) {
-    constexpr std::size_t maximum = 1024;
+extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination) {
     if (source == nullptr) return 14;
     const auto address = reinterpret_cast<std::uintptr_t>(source);
-    std::array<char, maximum> bytes{};
+    std::vector<char> bytes;
+    try {
+        bytes.resize(maximum);
+    } catch (const std::bad_alloc&) {
+        return 12;
+    }
     std::size_t offset = 0;
     while (offset < bytes.size()) {
         if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return 14;
@@ -564,6 +568,10 @@ extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& desti
         offset += count;
     }
     return 63;
+}
+
+extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination) {
+    return CopyGuestString_nid_no_patch(source, 1024, destination);
 }
 
 #ifndef _WIN32

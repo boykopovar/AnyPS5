@@ -18,6 +18,7 @@ namespace {
 
 constexpr int NP_TROPHY_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80551604u);
 constexpr int NP_TROPHY_ERROR_INSUFFICIENT_BUFFER = static_cast<int>(0x80551605u);
+constexpr int NP_TROPHY_ERROR_ABORT = static_cast<int>(0x80551607u);
 constexpr int NP_TROPHY_ERROR_INVALID_HANDLE = static_cast<int>(0x80551608u);
 constexpr int NP_TROPHY_ERROR_INVALID_CONTEXT = static_cast<int>(0x80551609u);
 constexpr int NP_TROPHY_ERROR_INVALID_TROPHY_ID = static_cast<int>(0x8055160au);
@@ -69,6 +70,7 @@ struct Context {
 std::mutex g_mutex;
 std::map<int, Context> g_contexts;
 std::set<int> g_handles;
+std::set<int> g_abortedHandles;
 int g_nextContext = 1;
 int g_nextHandle = 1;
 
@@ -123,6 +125,11 @@ int Lookup(int contextId, int handle, Context*& context) {
     if (!g_handles.contains(handle)) return NP_TROPHY_ERROR_INVALID_HANDLE;
     context = &found->second;
     return 0;
+}
+
+int LookupLive(int contextId, int handle, Context*& context) {
+    if (const int error = Lookup(contextId, handle, context)) return error;
+    return g_abortedHandles.contains(handle) ? NP_TROPHY_ERROR_ABORT : 0;
 }
 
 int Groups(const Context& context) {
@@ -187,14 +194,22 @@ int APS5_VABI sceNpTrophyCreateHandle(int* handle) {
 
 int APS5_VABI sceNpTrophyDestroyHandle(int handle) {
     std::lock_guard lock(g_mutex);
+    g_abortedHandles.erase(handle);
     return g_handles.erase(handle) == 1 ? 0 : NP_TROPHY_ERROR_INVALID_HANDLE;
+}
+
+int APS5_VABI sceNpTrophyAbortHandle(int handle) {
+    std::lock_guard lock(g_mutex);
+    if (!g_handles.contains(handle)) return NP_TROPHY_ERROR_INVALID_HANDLE;
+    g_abortedHandles.insert(handle);
+    return 0;
 }
 
 int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_t options) {
     if (options != 0) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (context->registered) return NP_TROPHY_ERROR_ALREADY_REGISTERED;
     char name[32];
     std::snprintf(name, sizeof(name), "trophy%02u.trp", context->serviceLabel);
@@ -220,7 +235,7 @@ int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyF
     if (!flags || !count) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     std::memset(flags, 0, sizeof(*flags));
     for (const auto id : context->unlocked) flags->bits[id >> 5] |= 1u << (id & 31);
@@ -232,7 +247,7 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!platinumId) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
@@ -246,7 +261,7 @@ int APS5_VABI sceNpTrophyGetGameIcon(int contextId, int handle, void* buffer, st
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     return CopyIcon(*context, "ICON0.PNG", buffer, size);
 }
@@ -255,7 +270,7 @@ int APS5_VABI sceNpTrophyGetGroupIcon(int contextId, int handle, int groupId, vo
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (groupId < 0) return NP_TROPHY_ERROR_INVALID_GROUP_ID;
     char icon[16];
@@ -267,7 +282,7 @@ int APS5_VABI sceNpTrophyGetTrophyIcon(int contextId, int handle, int trophyId, 
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (!context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED;
@@ -281,7 +296,7 @@ int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* det
     if ((details && details->size != sizeof(GameDetails)) || (data && data->size != sizeof(GameData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (details) {
         std::memset(reinterpret_cast<std::uint8_t*>(details) + sizeof(details->size), 0, sizeof(GameDetails) - sizeof(details->size));
@@ -301,7 +316,7 @@ int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, Gr
     if ((details && details->size != sizeof(GroupDetails)) || (data && data->size != sizeof(GroupData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (groupId != NP_TROPHY_BASE_GAME_GROUP_ID) {
         if (groupId < 0 || groupId >= Groups(*context)) return NP_TROPHY_ERROR_INVALID_GROUP_ID;
@@ -326,7 +341,7 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
     if ((details && details->size != sizeof(TrophyDetails)) || (data && data->size != sizeof(TrophyData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (Groups(*context) != 0) NotImplemented_nid_no_patch(__func__);
