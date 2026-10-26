@@ -96,6 +96,7 @@ struct ImageResource {
     bool volumeArraySampleCompatible = false;
     bool flatLineCompatible = true;
     bool flatVolumeLineCompatible = true;
+    bool dimensionQueryOnly = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;

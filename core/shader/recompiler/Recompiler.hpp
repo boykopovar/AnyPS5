@@ -604,6 +604,8 @@ inline std::uint64_t HashSpirvWords(std::span<const std::uint32_t> words, std::u
 // reference, or the per-dispatch copy this class removes comes back without a compiler hint.
 // ContentHash is computed once per shared holder, on first use, and dropped by a write.
 class SharedSpirv {
+    struct Holder;
+
 public:
     SharedSpirv() = default;
     SharedSpirv(std::vector<std::uint32_t> words) : holder(std::make_shared<Holder>(std::move(words), nullptr, std::span<const std::uint32_t>{})) {}
@@ -639,6 +641,25 @@ public:
     void resize(std::size_t count) { Mutable().resize(count); }
     std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
     friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return std::ranges::equal(left.Words(), right.Words()); }
+
+    class Weak {
+    public:
+        [[nodiscard]] SharedSpirv Lock() const {
+            SharedSpirv spirv;
+            spirv.holder = holder.lock();
+            return spirv;
+        }
+        [[nodiscard]] bool Expired() const { return holder.expired(); }
+
+    private:
+        friend class SharedSpirv;
+        std::weak_ptr<Holder> holder;
+    };
+    [[nodiscard]] Weak Weaken() const {
+        Weak weak;
+        weak.holder = holder;
+        return weak;
+    }
 
 private:
     struct Holder {

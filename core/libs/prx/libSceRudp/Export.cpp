@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -57,8 +58,6 @@ enum RudpOption {
     RUDP_OPTION_KEEP_ALIVE_TIMEOUT = 19,
 };
 
-using GuestRudpEventHandler = RudpEventHandler;
-
 std::mutex g_mutex;
 bool g_inited = false;
 int g_next_ctx = 0;
@@ -91,7 +90,6 @@ struct RudpPoll {
     std::size_t capacity;
     std::map<int, uint16_t> entries;
 };
-
 
 int g_next_poll = 1;
 std::map<int, RudpPoll> g_polls;

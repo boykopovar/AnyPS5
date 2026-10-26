@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -401,10 +402,21 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
     return -2144993275;
 }
 
+static std::atomic<bool> g_audioOut2Initialized{false};
+
+bool AudioOut2IsInitialized_nid_no_patch() {
+    return g_audioOut2Initialized.load();
+}
+
 extern "C" {
 
-int APS5_VABI sceAudioOutInit() {
+int APS5_VABI sceAudioOut2Initialize(void) {
+    g_audioOut2Initialized.store(true);
     return 0;
+}
+
+int APS5_VABI sceAudioOutInit() {
+    return sceAudioOut2Initialize();
 }
 
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,

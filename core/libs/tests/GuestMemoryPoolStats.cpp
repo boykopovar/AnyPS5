@@ -1,3 +1,6 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
+#include "prx/libSceNet/include/Net.hpp"
+#include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -6,41 +9,19 @@
 #include <cstdlib>
 #include <cstring>
 
-struct PoolStats {
-    std::size_t pool_size;
-    std::size_t max_inuse_size;
-    std::size_t current_inuse_size;
-    std::int32_t reserved;
-};
-
-struct NetPoolStats {
-    std::size_t pool_size;
-    std::size_t max_inuse_size;
-    std::size_t current_inuse_size;
-};
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::size_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslGetMemoryPoolStats(int, void*);
-int APS5_VABI sceHttp2Init(int, int, std::size_t, int);
-int APS5_VABI sceHttp2Term(int);
-int APS5_VABI sceHttp2GetMemoryPoolStats(int, void*);
-int APS5_VABI sceNetPoolCreate(const char*, int, int);
-int APS5_VABI sceNetPoolDestroy(int);
-int APS5_VABI sceNetGetMemoryPoolStats(int, void*);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
-using StatsCall = int(APS5_VABI*)(int, void*);
-
-static void CheckRejected(StatsCall call, int id, int expected) {
-    std::array<unsigned char, 0x40> buffer;
-    buffer.fill(0x5a);
-    Require(call(id, buffer.data()) == expected);
-    for (std::size_t i = 0; i < sizeof(PoolStats); ++i) Require(buffer[i] == 0);
-    for (std::size_t i = sizeof(PoolStats); i < buffer.size(); ++i) Require(buffer[i] == 0x5a);
+template <typename TStats>
+static void CheckRejected(int (APS5_VABI *call)(int, TStats*), int id, int expected) {
+    struct {
+        TStats stats;
+        std::array<unsigned char, 0x40 - sizeof(TStats)> guard;
+    } buffer;
+    std::memset(&buffer, 0x5a, sizeof(buffer));
+    Require(call(id, &buffer.stats) == expected);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&buffer.stats);
+    for (std::size_t i = 0; i < sizeof(TStats); ++i) Require(bytes[i] == 0);
+    for (const auto byte : buffer.guard) Require(byte == 0x5a);
 }
 
 int main() {
@@ -50,12 +31,12 @@ int main() {
     constexpr int http2NullPointer = static_cast<int>(0x817B1225);
     constexpr int netBadDescriptor = static_cast<int>(0x80410109);
     constexpr int netInvalid = static_cast<int>(0x80410116);
-    static_assert(sizeof(PoolStats) == 0x20 && sizeof(NetPoolStats) == 0x18);
+    static_assert(sizeof(SceSsl::MemoryPoolStats) == 0x20 && sizeof(Http2MemoryPoolStats) == 0x20 && sizeof(NetMemoryPoolStats) == 0x18);
 
     const int ssl = sceSslInit_nid_postfix(0x40000);
     Require(ssl > 0);
-    PoolStats stats{};
-    Require(sceSslGetMemoryPoolStats(ssl, &stats) == 0 && stats.pool_size == 0x40000);
+    SceSsl::MemoryPoolStats sslStats{};
+    Require(sceSslGetMemoryPoolStats(ssl, &sslStats) == 0 && sslStats.poolSize == 0x40000);
     Require(sceSslGetMemoryPoolStats(ssl, nullptr) == sslInvalidValue);
     Require(sceSslGetMemoryPoolStats(12345, nullptr) == sslInvalidValue);
     CheckRejected(sceSslGetMemoryPoolStats, 12345, sslInvalidId);
@@ -63,7 +44,8 @@ int main() {
 
     const int http2 = sceHttp2Init(1, ssl, 0x40000, 1);
     Require(http2 > 0);
-    Require(sceHttp2GetMemoryPoolStats(http2, &stats) == 0 && stats.pool_size == 0x40000);
+    Http2MemoryPoolStats http2Stats{};
+    Require(sceHttp2GetMemoryPoolStats(http2, &http2Stats) == 0 && http2Stats.pool_size == 0x40000);
     Require(sceHttp2GetMemoryPoolStats(http2, nullptr) == http2NullPointer);
     Require(sceHttp2GetMemoryPoolStats(12345, nullptr) == http2NullPointer);
     CheckRejected(sceHttp2GetMemoryPoolStats, 12345, http2InvalidId);
@@ -76,14 +58,17 @@ int main() {
 
     const int pool = sceNetPoolCreate("stats", 0x20000, 0);
     Require(pool > 0);
-    NetPoolStats netStats{};
+    NetMemoryPoolStats netStats{};
     Require(sceNetGetMemoryPoolStats(pool, &netStats) == 0 && netStats.pool_size == 0x20000);
     Require(sceNetGetMemoryPoolStats(pool, nullptr) == netInvalid);
     Require(sceNetGetMemoryPoolStats(12345, nullptr) == netBadDescriptor);
-    std::array<unsigned char, 0x20> untouched;
-    untouched.fill(0x5a);
+    struct {
+        NetMemoryPoolStats stats;
+        std::array<unsigned char, 8> guard;
+    } untouched;
+    std::memset(&untouched, 0x5a, sizeof(untouched));
     auto buffer = untouched;
-    Require(sceNetGetMemoryPoolStats(12345, buffer.data()) == netBadDescriptor && buffer == untouched);
+    Require(sceNetGetMemoryPoolStats(12345, &buffer.stats) == netBadDescriptor && std::memcmp(&buffer, &untouched, sizeof(buffer)) == 0);
     Require(sceNetPoolDestroy(pool) == 0);
     Require(sceNetGetMemoryPoolStats(pool, nullptr) == netBadDescriptor);
     return 0;

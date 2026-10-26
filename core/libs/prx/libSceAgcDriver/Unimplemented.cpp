@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -67,7 +68,6 @@ int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address
     if (data != nullptr && bytes != 0) std::memcpy(static_cast<std::byte*>(destination) + 8, data, bytes);
     return data == nullptr || bytes == 0 ? 2 : static_cast<int>(totalBytes / 4);
 }
-
 
 int APS5_VABI sceAgcDriverSetValidationDisabled() {
     return DEBUG_UNAVAILABLE;

@@ -1,7 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <system_error>
 #ifdef _WIN32
 #include <windows.h>
@@ -12,7 +16,16 @@
 #endif
 
 namespace {
+std::optional<std::string> g_loginForTest;
+
 int ReadLogin(char* output, int size) {
+    if (g_loginForTest) {
+        if (g_loginForTest->empty()) throw std::runtime_error("getlogin_r: host effective user has no account name");
+        const std::size_t length = g_loginForTest->size() + 1;
+        if (length > static_cast<std::size_t>(size)) return 34;
+        std::memcpy(output, g_loginForTest->c_str(), length);
+        return 0;
+    }
 #ifdef _WIN32
     std::array<wchar_t, UNLEN + 1> name{};
     DWORD count = static_cast<DWORD>(name.size());
@@ -41,6 +54,11 @@ int ReadLogin(char* output, int size) {
     return 0;
 #endif
 }
+}
+
+extern "C" void LoginNameForTest_nid_no_patch(const char* name) {
+    if (name == nullptr) g_loginForTest.reset();
+    else g_loginForTest = name;
 }
 
 extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {

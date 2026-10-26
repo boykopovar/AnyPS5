@@ -192,19 +192,24 @@ private:
     std::unordered_set<const IrValue*> active;
 };
 
-std::uint32_t IndexedWindowSlots(const IrProgram& program) {
+constexpr std::uint64_t MaxNarrowedSwitchCases = 4096;
+
+std::uint32_t IndexedWindowSlots(const IrProgram& program, std::uint32_t laneCount) {
     const auto window = program.Metadata().vectorWindowSize;
     WindowIndexBounds bounds;
     std::uint64_t reached = 0;
+    std::uint64_t dynamicAccesses = 0;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::LoadVectorWindow && inst->Opcode() != IrOpcode::StoreVectorWindow) continue;
             const IrValue* index = inst->Argument(0)->Resolve();
             if (index->HasImmediate()) continue;
+            ++dynamicAccesses;
             const auto bound = bounds.Of(*index);
             if (bound && *bound < window / 2u) reached = std::max(reached, *bound + 1u);
         }
     }
+    if (reached == 0u || dynamicAccesses * (window - reached) * laneCount > MaxNarrowedSwitchCases) return 0u;
     return static_cast<std::uint32_t>(reached);
 }
 
@@ -245,7 +250,7 @@ void DefineModule(SpirvEmitterState& state) {
     }
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
-        state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
+        state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program, state.laneCount) : 0u;
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
             if (state.vectorWindowIndexed == 0u) continue;

@@ -16,11 +16,10 @@ namespace Cli {
 
 int Autorun(const std::string& absPath, bool toWindows) {
     if (!toWindows) {
-        std::filesystem::permissions(Io::NativePath(absPath),
-            std::filesystem::perms::owner_exec |
-            std::filesystem::perms::group_exec |
-            std::filesystem::perms::others_exec,
-            std::filesystem::perm_options::add);
+        const auto path = Io::NativePath(absPath);
+        constexpr auto executable = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+        if ((std::filesystem::status(path).permissions() & executable) != executable)
+            std::filesystem::permissions(path, executable, std::filesystem::perm_options::add);
     }
 
     int rawCode = 0;

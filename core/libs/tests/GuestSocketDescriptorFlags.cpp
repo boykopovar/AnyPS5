@@ -1,17 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

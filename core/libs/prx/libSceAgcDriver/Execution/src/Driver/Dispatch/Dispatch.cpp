@@ -66,7 +66,7 @@ bool Driver::pipelineDispatch() {
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
     PerformanceTimer timing("Driver.Dispatch");
     const auto address = (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u);
-    if (address == SkippedShader() && address != 0) return;
+    if (SkippedShader(address)) return;
     auto registeredShader = RegisteredProgram(*submission.shaders, address, {0});
     if (!registeredShader) registeredShader = ReadRawShader(address);
     const auto& snapshot = *registeredShader;
@@ -414,6 +414,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         parked.resolvedAt = std::chrono::steady_clock::now();
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;
+        if (!cached && compiledResult != nullptr && !localDevice->HasComputePipeline(*compiledResult)) {
+            SubmitLibraryPrebuild([localDevice, compiledResult, address] {
+                try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
+            });
+        }
         return;
     }
     if (verifyDataHits() && dataHit) verifyDataHit(snapshot, codeOffset, request, memory, address, *keepVariant, liveWords, *compiledResult);

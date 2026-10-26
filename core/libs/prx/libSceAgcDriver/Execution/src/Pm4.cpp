@@ -1,8 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
+#include <atomic>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -11,8 +13,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-
-extern "C" void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
 
 namespace AgcDriver::Pm4 {
 
@@ -113,7 +113,6 @@ std::vector<std::byte> copySource(std::uint64_t source, std::size_t bytes, bool 
     }
     return data;
 }
-
 
 bool gdsRange(std::uint64_t offset, std::size_t bytes) {
     return offset <= GdsBytes && bytes <= GdsBytes - offset;
@@ -226,8 +225,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
             return "graphics draw, shader stages and guest render-target materialization are not implemented";
         case 0x33: case 0x3f: return "nested command buffers, branching and nested flip reservation are not implemented";
         case 0x3c: case 0x93: return {};
-        case 0x39:
-            return "cooperative command-queue waits are not implemented";
+        case 0x39: return {};
         case 0x59: return {};
         case 0x84: case 0x85: case 0x86: case 0x88:
             return "separate CE/DE execution and counter synchronization are not implemented";
@@ -458,6 +456,12 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & 7u) <= 6u, "invalid WAIT_REG_MEM compare function");
             break;
         }
+        case 0x39:
+            size(4);
+            require((packet[3] >> 29u) == 6u || (packet[3] >> 29u) == 7u, "invalid MEM_SEMAPHORE operation");
+            require(address(packet[1], packet[2]) != 0 && (packet[1] & 7u) == 0, "null or misaligned MEM_SEMAPHORE address");
+            require((packet[3] & 0x10000u) == 0, "MEM_SEMAPHORE mailbox waits are not implemented");
+            break;
         case 0x45: {
             size(9);
             require((packet[1] & ~0x317u) == 0, "COND_WRITE reserved fields are not implemented");
@@ -716,6 +720,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
             if (!label.has_value()) return {};
             return {known(label->address, label->Bytes())};
         }
+        case 0x39: return {runTime(address(packet[1], packet[2]), 8)};
         case 0x40: {
             require(packet.size() == 6, "invalid COPY_DATA size");
             if (CopyDataToRegister(packet)) return {};
@@ -771,7 +776,7 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet) {
 
 bool AccessesMemory(std::uint32_t header) {
     switch ((header >> 8u) & 0xffu) {
-        case 0x22: case 0x27: case 0x3c: case 0x93: case 0x49: case 0x16: case 0x2d: case 0x35: case 0x24: case 0x25: case 0x2c: case 0x38: case 0x37: case 0x40: case 0x45: case 0x50: case 0x63: case 0x64: case 0x83: case 0x91: case 0x9f: return true;
+        case 0x22: case 0x27: case 0x39: case 0x3c: case 0x93: case 0x49: case 0x16: case 0x2d: case 0x35: case 0x24: case 0x25: case 0x2c: case 0x38: case 0x37: case 0x40: case 0x45: case 0x50: case 0x63: case 0x64: case 0x83: case 0x91: case 0x9f: return true;
         default: return false;
     }
 }
@@ -856,12 +861,17 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
         indirect.indxOffset = offset->second;
     } else {
         const auto indexSize = indexSizeOf(queue);
-        require(queue.indexBufferSize != 0, "INDEX_BUFFER_SIZE has not been set");
-        const auto bytes = static_cast<std::uint64_t>(queue.indexBufferSize) * indexSize;
-        require(bytes <= std::numeric_limits<std::size_t>::max() && bytes <= std::numeric_limits<std::uint64_t>::max() - queue.indexBase, "index range size overflow");
         draw.indexAddress = queue.indexBase;
-        draw.indexCount = queue.indexBufferSize;
         draw.indexSize = indexSize;
+        if (queue.indexBufferSize) {
+            require(*queue.indexBufferSize != 0, "INDEX_BUFFER_SIZE is zero");
+            const auto bytes = static_cast<std::uint64_t>(*queue.indexBufferSize) * indexSize;
+            require(bytes <= std::numeric_limits<std::size_t>::max() && bytes <= std::numeric_limits<std::uint64_t>::max() - queue.indexBase, "index range size overflow");
+            draw.indexCount = *queue.indexBufferSize;
+        } else {
+            draw.indexCount = 0;
+            indirect.indexLimitKnown = false;
+        }
     }
     draw.indirect = indirect;
     return draw;
@@ -1071,6 +1081,47 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 }
             }
             return;
+        }
+        case 0x39: {
+            const auto semaphore = address(packet[1], packet[2]);
+            auto* word = reinterpret_cast<std::uint64_t*>(semaphore);
+            std::atomic_ref<std::uint64_t> shared(*word);
+            const auto prepare = [&] {
+                GuestMemory::GuardRead(semaphore, sizeof(*word));
+                GuestMemory::FlushGpuWrites(semaphore, sizeof(*word));
+                GuestMemory::CheckRange(word, sizeof(*word), std::atomic_ref<std::uint64_t>::required_alignment, true);
+            };
+            if ((packet[3] >> 29u) == 6u) {
+                prepare();
+                const bool set = (packet[3] & 0x100000u) != 0;
+                GuestMemory::StoreOwnBytes(semaphore, sizeof(*word), [&] {
+                    if (set) shared.store(1, std::memory_order_release);
+                    else shared.fetch_add(1, std::memory_order_acq_rel);
+                });
+                return;
+            }
+            const auto start = std::chrono::steady_clock::now();
+            bool warned = false;
+            for (;;) {
+                {
+                    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+                    prepare();
+                }
+                auto value = shared.load(std::memory_order_acquire);
+                if (value != 0) {
+                    bool taken = false;
+                    GuestMemory::StoreOwnBytes(semaphore, sizeof(*word), [&] {
+                        taken = shared.compare_exchange_strong(value, value - 1, std::memory_order_acq_rel);
+                    });
+                    if (taken) return;
+                    continue;
+                }
+                PreciseSleepUs(50);
+                if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
+                    warned = true;
+                    std::fprintf(stderr, "[gpu] MEM_SEMAPHORE wait at 0x%llx still waiting after 5s\n", static_cast<unsigned long long>(semaphore));
+                }
+            }
         }
         case 0x49: {
             // Earlier work has drained by the time the driver reaches this packet, so the end-of-pipe

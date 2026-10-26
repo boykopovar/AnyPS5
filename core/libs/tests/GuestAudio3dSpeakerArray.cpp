@@ -1,26 +1,11 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-
-struct Audio3dSpeakerArrayParameters {
-    const AudioOut2Position* positions;
-    std::uint32_t numSpeakers;
-    std::uint8_t is3d;
-    void* memory;
-    std::size_t memorySize;
-};
-
-extern "C" {
-size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(std::uint32_t num_speakers, std::uint8_t is_3d);
-int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters);
-int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle);
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, std::uint32_t num_coefficients);
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients2(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, std::uint32_t num_coefficients, std::uint8_t height_aware, float downmix_spread_radius);
-size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(std::uint32_t num_speakers, std::uint8_t is_3d, std::uint8_t is_ambisonics);
-}
 
 namespace {
 

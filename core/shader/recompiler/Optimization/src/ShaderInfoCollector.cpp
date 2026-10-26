@@ -623,7 +623,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             return SharedAccessOf(inst->Opcode()) == SharedAccess::Atomic && inst->Type() == IrType::U64;
         });
     });
-    next.usesFaultBuffer = next.usesFaultBuffer || (next.sharedMemoryBytes != 0u && ldsAtomic64);
+    next.usesFaultBuffer = next.usesFaultBuffer || ldsAtomic64;
     switch (program.Resources().stage) {
         case IrShaderStage::Vertex:
         case IrShaderStage::Local:

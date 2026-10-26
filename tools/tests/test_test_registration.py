@@ -363,6 +363,22 @@ class ScriptRegistrationTests(unittest.TestCase):
             ".github/workflows/web.yml": "on:\n  pull_request:\n    paths:\n      - tools/test_paths.py\n",
             "tools/test_web.py": "", "tools/test_paths.py": ""}), ["tools/test_paths.py"])
 
+    def test_workflow_script_inside_a_longer_name_does_not_run(self):
+        self.assertEqual(self.unrun({
+            ".github/workflows/build.yml": "jobs:\n  t:\n    steps:\n      - run: python3 tools/check_test_registration.py build\n"
+                                           "      - run: python3 tools/run_test_a.py\n",
+            "tools/check_test_registration.py": "", "tools/run_test_a.py": "",
+            "tools/tests/test_registration.py": "", "tools/tests/test_a.py": ""}),
+            ["tools/tests/test_a.py", "tools/tests/test_registration.py"])
+
+    def test_workflow_script_with_a_longer_suffix_does_not_run(self):
+        self.assertEqual(self.unrun({
+            ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: python3 tools/tests/test_a.pyc\n"
+                                        "      - run: python3 tools/tests/test_b.py.bak\n"
+                                        "      - run: python3 \"./tools/tests/test_c.py\" --quick\n",
+            "tools/tests/test_a.py": "", "tools/tests/test_b.py": "", "tools/tests/test_c.py": ""}),
+            ["tools/tests/test_a.py", "tools/tests/test_b.py"])
+
     def test_commented_workflow_line_does_not_run_a_script(self):
         self.assertEqual(self.unrun({
             ".github/workflows/ci.yml": "# python3 tools/tests/test_f.py\njobs:\n  t:\n    steps:\n      # python3 tools/tests/test_a.py\n"

@@ -4,8 +4,10 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
 #include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <type_traits>
 
@@ -275,13 +277,35 @@ private:
         append(key, value.maxEvaluationOutputComponents);
     }
 
+    static void appendFeatureDigest(std::vector<std::uint64_t>& key, std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
+        std::uint64_t low = 0xcbf29ce484222325ull;
+        std::uint64_t high = 0x6a09e667f3bcc909ull;
+        const auto mix = [&](std::uint64_t value) {
+            low = (low ^ value) * 0x100000001b3ull;
+            high = (high ^ (value * 0x9e3779b97f4a7c15ull)) * 0xff51afd7ed558ccdull;
+            high ^= high >> 29u;
+        };
+        mix(capabilities.size());
+        for (const auto capability : capabilities) mix(capability);
+        mix(extensions.size());
+        for (const auto extension : extensions) {
+            mix(extension.size());
+            for (std::size_t offset = 0; offset < extension.size(); offset += sizeof(std::uint64_t)) {
+                std::uint64_t chunk = 0;
+                std::memcpy(&chunk, extension.data() + offset, std::min(sizeof(std::uint64_t), extension.size() - offset));
+                mix(chunk);
+            }
+        }
+        key.push_back(low);
+        key.push_back(high);
+    }
+
     static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
         append(key, value.vulkanVersion);
         append(key, value.spirvVersion);
         append(key, value.subgroupSize);
         append(key, value.bdaAbiVersion);
-        append(key, value.supportedCapabilities);
-        append(key, value.supportedExtensions);
+        appendFeatureDigest(key, value.supportedCapabilities, value.supportedExtensions);
         append(key, value.fragmentShaderBarycentricEnabled);
         append(key, value.maxWorkgroupSize);
         append(key, value.maxWorkgroupInvocations);

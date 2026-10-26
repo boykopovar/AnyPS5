@@ -1,3 +1,9 @@
+#include "prx/libSceSaveData/SaveDataCore.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceNpCommon/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
 #include <atomic>
 #include <iterator>
@@ -14,111 +20,13 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 
-extern "C" {
-int APS5_VABI sceNpMutexInit(PthreadMutex* mutex, const char* name, std::uint64_t flags);
-int APS5_VABI sceNpMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI sceNpMutexLock(PthreadMutex* mutex);
-int APS5_VABI sceNpMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI sceNpCondInit(PthreadCond* cond, const char* name, std::uint64_t flags);
-int APS5_VABI sceNpCondDestroy(PthreadCond* cond);
-int APS5_VABI sceNpCondSignal(PthreadCond* cond);
-int APS5_VABI sceNpCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, std::uint32_t usec);
-int APS5_VABI sceNpJoinThread(Pthread thread, void** retval);
-int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched);
-int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, uint32_t attr, uint64_t init_pattern, const void* param);
-int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
-int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name);
-int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern);
-int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, uint64_t bit_pattern);
-int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat);
-int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern, int* num_wait_threads);
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI sceRtcParseRFC3339(RtcTick* utc, const char* date_time);
-int APS5_VABI sceRtcFormatRFC3339(char* date_time, const RtcTick* utc, int time_zone_minutes);
-int APS5_VABI sceRtcSetTick(RtcDateTime* time, const RtcTick* tick);
-int APS5_VABI sceRtcGetTime_t(const RtcDateTime* time, int64_t* seconds);
-int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(void* version);
-int APS5_VABI sceKernelClockGettime(KernelClockid clock_id, KernelTimespec* tp);
-int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list);
-int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name);
-int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len);
-void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags);
-int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void* handle);
-void* APS5_VABI sceLibcMspaceMalloc_nid_postfix(void* handle, std::size_t size);
-void APS5_VABI sceLibcMspaceFree_nid_postfix(void* handle, void* pointer);
-void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, std::size_t size);
-int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
-}
-
-struct NpTitleIdParts {
-    char id[9];
-    char reserved;
-    std::uint8_t index;
-};
-
-struct NpCallout {
-    NpCallout* next;
-    void (APS5_VABI *handler)(void* arg);
-    std::uint64_t deadline;
-    void* arg;
-    std::uint64_t reserved;
-};
 static_assert(sizeof(NpCallout) == 0x28);
 
-struct NpCalloutContext {
-    Pthread thread;
-    PthreadMutex mutex;
-    PthreadCond cond;
-    int initialized;
-    int stopping;
-    NpCallout* pending;
-};
 static_assert(sizeof(NpCalloutContext) == 0x28);
 
-struct NpHeap {
-    void* mspace;
-};
-
-struct NpHeapStat {
-    std::uint64_t maxSystemSize;
-    std::uint64_t maxInuseSize;
-    std::uint64_t currentInuseSize;
-};
-
-struct NpKernelMemory {
-    std::uint64_t size;
-    std::uint64_t reserved;
-    void* address;
-};
 static_assert(sizeof(NpKernelMemory) == 0x18);
 
-struct NpMemoryHeap {
-    NpKernelMemory memory;
-    NpHeap heap;
-};
 static_assert(sizeof(NpMemoryHeap) == 0x20);
-
-struct NpAllocator {
-    void* (APS5_VABI *allocate)(std::size_t size, void* context);
-    void* (APS5_VABI *reallocate)(void* pointer, std::size_t size, void* context);
-    void (APS5_VABI *release)(void* pointer, void* context);
-    void* context;
-};
-
-struct NpAllocatorEx {
-    NpAllocator allocator;
-    int outOfMemoryError;
-};
 
 namespace {
 
@@ -193,24 +101,19 @@ constexpr std::size_t NP_USER_ID_LIST_SIZE = 20;
 constexpr int USER_ID_INVALID = -1;
 constexpr KernelClockid NP_SYSTEM_CLOCK = 4;
 
-struct SystemSwVersion {
-    std::uint64_t size;
-    char versionString[0x1C];
-    std::uint32_t version;
-};
-static_assert(sizeof(SystemSwVersion) == 0x28);
+static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 
 std::uint32_t SystemVersion() {
-    SystemSwVersion version {};
+    SceKernelSystemSwVersion version {};
     version.size = sizeof(version);
     sceKernelGetSystemSwVersion_nid_postfix(&version);
+
     return version.version;
 }
 
 int BcdPair(std::uint32_t value, int shift) {
     return static_cast<int>((value >> (shift + 4)) & 0xF) * 10 + static_cast<int>((value >> shift) & 0xF);
 }
-
 
 constexpr int NP_ERROR_OUT_OF_MEMORY = static_cast<int>(0x80550005);
 constexpr int NP_ERROR_NULL_OBJECT = static_cast<int>(0x80558005);
@@ -273,6 +176,7 @@ int InitHeap(NpHeap* heap, void* base, std::size_t size, const char* name) {
 void DestroyHeap(NpHeap* heap) {
     if (heap->mspace == nullptr) return;
     sceLibcMspaceDestroy_nid_postfix(heap->mspace);
+
     heap->mspace = nullptr;
 }
 
@@ -343,6 +247,7 @@ int InitMutex(PthreadMutex* mutex, const char* name, std::uint32_t flags) {
     if ((flags & NP_MUTEX_FLAG_RECURSIVE) != 0) result = scePthreadMutexattrSettype(&attr, PTHREAD_MUTEX_TYPE_RECURSIVE);
     if (result >= 0) result = scePthreadMutexInit(mutex, &attr, name);
     scePthreadMutexattrDestroy(&attr);
+
     return NpResult(result);
 }
 
@@ -352,6 +257,7 @@ int InitCond(PthreadCond* cond, const char* name) {
     if (result < 0) return result;
     const int created = scePthreadCondInit(cond, &attr, name);
     scePthreadCondattrDestroy(&attr);
+
     return created;
 }
 
@@ -372,19 +278,6 @@ int APS5_VABI sceNpAtomicDec32(std::int32_t* value) {
     return std::atomic_ref<std::int32_t>(*value).fetch_sub(1);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 int APS5_VABI sceNpCondSignalAll(PthreadCond* cond) {
     return scePthreadCondBroadcast(cond);
 }
@@ -396,7 +289,6 @@ int APS5_VABI sceNpCondSignalTo(PthreadCond* cond, Pthread thread) {
 int APS5_VABI sceNpCondWait(PthreadCond* cond, PthreadMutex* mutex) {
     return scePthreadCondWait(cond, mutex);
 }
-
 
 int APS5_VABI sceNpLwCondInit(PthreadCond* cond, const char* name) {
     return InitCond(cond, name);
@@ -432,6 +324,10 @@ int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag) {
 
 int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name) {
     return NpResult(sceKernelOpenEventFlag(flag, name));
+}
+
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag) {
+    return NpResult(sceKernelCloseEventFlag(flag));
 }
 
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern) {
@@ -474,6 +370,7 @@ int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, 
     result = scePthreadAttrSetstacksize(&attr, stackSize);
     if (result < 0) {
         scePthreadAttrDestroy(&attr);
+
         return result;
     }
     if (priority != 0) {
@@ -488,9 +385,9 @@ int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, 
     if (result >= 0 && affinity != 0) result = scePthreadAttrSetaffinity(&attr, affinity);
     if (result >= 0) result = scePthreadCreate(thread, &attr, entry, arg, name);
     scePthreadAttrDestroy(&attr);
+
     return result;
 }
-
 
 int APS5_VABI sceNpThreadGetId(Pthread* thread) {
     if (thread == nullptr) return NP_ERROR_INVALID_ARGUMENT;
@@ -628,12 +525,10 @@ int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory) {
     return 0;
 }
 
-
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
     const std::uint32_t value = SystemVersion();
     if (version != nullptr) *version = value;
 }
-
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
     if (tick->tick == 0) return NP_ERROR_INVALID_ARGUMENT;
@@ -672,28 +567,34 @@ int APS5_VABI sceNpRtcParseRFC3339(RtcTick* utc, const char* text) {
 static std::uint64_t ClockUsec() {
     std::int64_t usec = 0;
     sceNpGetSystemClockUsec(&usec);
+
     return static_cast<std::uint64_t>(usec);
 }
 
 static void* APS5_VABI CalloutThread(void* arg) {
     auto* context = static_cast<NpCalloutContext*>(arg);
     sceNpMutexLock(&context->mutex);
+
     for (;;) {
         const std::uint64_t now = ClockUsec();
         NpCallout* head = context->pending;
         if (head != nullptr && head->deadline <= now) {
             context->pending = head->next;
             sceNpMutexUnlock(&context->mutex);
+
             head->handler(head->arg);
             sceNpMutexLock(&context->mutex);
+
             continue;
         }
         if (context->stopping > 0) break;
         const std::uint64_t wait = head != nullptr ? std::min(head->deadline - now, NP_CALLOUT_MAX_WAIT) : 0;
         sceNpCondTimedwait(&context->cond, &context->mutex, static_cast<std::uint32_t>(wait));
+
         if (context->stopping > 0) break;
     }
     sceNpMutexUnlock(&context->mutex);
+
     return nullptr;
 }
 
@@ -712,20 +613,24 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
             return 0;
         }
         sceNpCondDestroy(&context->cond);
+
     }
     sceNpMutexDestroy(&context->mutex);
+
     return result;
 }
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
     sceNpMutexLock(&context->mutex);
+
     context->stopping = 1;
     sceNpCondSignal(&context->cond);
     sceNpMutexUnlock(&context->mutex);
     sceNpJoinThread(context->thread, nullptr);
     sceNpCondDestroy(&context->cond);
     sceNpMutexDestroy(&context->mutex);
+
     context->initialized = 0;
 }
 
@@ -734,9 +639,11 @@ int APS5_VABI sceNpCalloutStartOnCtx64(NpCalloutContext* context, NpCallout* cal
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
     const std::uint64_t deadline = ClockUsec() + usec;
     sceNpMutexLock(&context->mutex);
+
     for (NpCallout* entry = context->pending; entry != nullptr; entry = entry->next) {
         if (entry == callout) {
             sceNpMutexUnlock(&context->mutex);
+
             return NP_ERROR_ALREADY_QUEUED;
         }
     }
@@ -750,6 +657,7 @@ int APS5_VABI sceNpCalloutStartOnCtx64(NpCalloutContext* context, NpCallout* cal
     *link = callout;
     sceNpCondSignal(&context->cond);
     sceNpMutexUnlock(&context->mutex);
+
     return 0;
 }
 
@@ -761,6 +669,7 @@ int APS5_VABI sceNpCalloutStartOnCtx(NpCalloutContext* context, NpCallout* callo
 int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callout, int* wasPending) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
     sceNpMutexLock(&context->mutex);
+
     int removed = 0;
     for (NpCallout** link = &context->pending; *link != nullptr; link = &(*link)->next) {
         if (*link != callout) continue;
@@ -770,6 +679,7 @@ int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callou
     }
     if (wasPending != nullptr) *wasPending = removed;
     sceNpMutexUnlock(&context->mutex);
+
     return 0;
 }
 
@@ -777,7 +687,6 @@ std::uint32_t APS5_VABI sceNpGetRandom(void) {
     std::lock_guard lock(g_randomMutex);
     return static_cast<std::uint32_t>(g_random());
 }
-
 
 int APS5_VABI sceNpUtilCmpAccountId(std::uint64_t left, std::uint64_t right) {
     return left != right ? 1 : 0;
@@ -798,7 +707,6 @@ int APS5_VABI sceNpCmpNpId(const void* npId1, const void* npId2) {
 bool APS5_VABI sceNpIntIsOnlineIdString(const char* text) {
     return text != nullptr && IsOnlineIdText(text);
 }
-
 
 int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);

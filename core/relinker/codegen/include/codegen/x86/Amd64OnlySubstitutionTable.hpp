@@ -42,6 +42,7 @@ inline constexpr Entry kRdseed = {"RDSEED", nullptr, 0};
 inline constexpr Entry kRdpid = {"RDPID", nullptr, 0};
 inline constexpr Entry kRdtscp = {"RDTSCP", nullptr, 0};
 inline constexpr Entry kClwb = {"CLWB", nullptr, 0};
+inline constexpr Entry kXsaveopt = {"XSAVEOPT", nullptr, 0};
 inline constexpr Entry kWideStore = {"256-bit store", nullptr, 0};
 inline constexpr Entry kScalarCompare = {"scalar compare", nullptr, 0};
 inline constexpr Entry kExtrq = {"EXTRQ", nullptr, 0};

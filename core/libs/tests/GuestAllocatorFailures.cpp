@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -11,18 +12,6 @@
 #ifdef __linux__
 #include <sys/resource.h>
 #endif
-
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t);
-void* APS5_VABI calloc_nid_postfix(std::size_t, std::size_t);
-void* APS5_VABI realloc_nid_postfix(void*, std::size_t);
-void* APS5_VABI memalign_nid_postfix(std::size_t, std::size_t);
-void* APS5_VABI aligned_alloc_nid_postfix(std::size_t, std::size_t);
-int APS5_VABI posix_memalign_nid_postfix(void**, std::size_t, std::size_t);
-std::size_t APS5_VABI malloc_usable_size_nid_postfix(void*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -68,6 +57,7 @@ void expectNull(const char* what, int expectedError, TCall call) {
     if (result != nullptr) {
         report(what, "returned a block");
         free_nid_postfix(result);
+
         return;
     }
     if (*__error_nid_postfix() != expectedError) {
@@ -133,6 +123,7 @@ int main() {
         void* aligned = expectBlock("memalign with an alignment that is not a power of two", [&alignment] { return memalign_nid_postfix(alignment.requested, 40); });
         if (aligned != nullptr && reinterpret_cast<std::uintptr_t>(aligned) % alignment.guaranteed != 0) report("memalign", "did not round the alignment up to a power of two");
         free_nid_postfix(aligned);
+
     }
 
     auto* block = static_cast<unsigned char*>(expectBlock("malloc(40)", [] { return malloc_nid_postfix(40); }));
@@ -149,6 +140,7 @@ int main() {
         void* regrown = expectBlock("realloc(emptied, 64)", [emptied] { return realloc_nid_postfix(emptied, 64); });
         if (regrown != nullptr && malloc_usable_size_nid_postfix(regrown) != 64) report("realloc(emptied, 64)", "did not hold 64 bytes");
         free_nid_postfix(regrown);
+
     }
 
 #ifdef ANYPS5_ENABLE_ASAN
@@ -186,6 +178,7 @@ int main() {
             }
             if (huge != nullptr) {
                 free_nid_postfix(huge);
+
                 committed = true;
             } else if (*__error_nid_postfix() != InvalidArgument) {
                 report("malloc(300 GiB)", "returned NULL without EINVAL");
@@ -225,9 +218,11 @@ int main() {
         void* small = malloc_nid_postfix(100);
         if (small == nullptr) report("malloc(100) after a failed huge malloc", "returned NULL");
         free_nid_postfix(small);
+
         void* large = malloc_nid_postfix(std::size_t{1} << 20);
         if (large == nullptr) report("malloc(1 MiB) after a failed huge malloc", "returned NULL");
         free_nid_postfix(large);
+
     }
 #endif
 
