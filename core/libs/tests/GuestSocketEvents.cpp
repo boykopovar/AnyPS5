@@ -332,6 +332,31 @@ int main() {
     Require(count == 1 && events[0].data == 3);
     Require(recv_nid_postfix(datagram, six, sizeof(six), 0) == 3);
     Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    std::atomic<bool> sending{true};
+    std::thread racingSender([&] {
+        for (int i = 0; i < 20000; ++i) {
+            const int length = i % 2 ? 3 : 0;
+            Require(send_nid_postfix(datagram, "abc", length, 0) == length);
+        }
+        sending = false;
+    });
+    std::thread racingReader([&] {
+        char drained[8];
+        for (bool more = true; more;) {
+            more = sending;
+            while (recv_nid_postfix(datagram, drained, sizeof(drained), 0x80) >= 0) {
+            }
+        }
+    });
+    const KernelUseconds instant = 1000;
+    while (sending) {
+        const int result = sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &instant);
+        Require(result == SCE_OK || result == SCE_KERNEL_ERROR_ETIMEDOUT);
+        Require(result != SCE_OK || (count == 1 && (events[0].data == 0 || events[0].data == 3)));
+    }
+    racingSender.join();
+    racingReader.join();
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
     Require(close_nid_postfix(datagram) == 0);
     Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);

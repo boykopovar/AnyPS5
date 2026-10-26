@@ -1063,22 +1063,64 @@ std::int64_t ListenQueueLength(NativeSocket socket) {
     return 1;
 }
 #ifdef _WIN32
-std::int64_t NextDatagramSize(const Socket& socket, std::int64_t queued) {
-    static thread_local char next[65536];
-    WSABUF buffer{sizeof(next), next};
+struct DatagramPeek {
     WSAOVERLAPPED overlapped{};
-    overlapped.hEvent = WSACreateEvent();
-    if (overlapped.hEvent == WSA_INVALID_EVENT) return queued;
+    WSAEVENT event = WSACreateEvent();
+    char buffer[65536];
+    bool inUse = false;
+    bool pending = false;
+};
+struct DatagramPeeks {
+    std::mutex mutex;
+    std::vector<std::unique_ptr<DatagramPeek>> peeks;
+};
+DatagramPeeks& PeekPool() {
+    static auto* pool = new DatagramPeeks();
+    return *pool;
+}
+DatagramPeek* AcquirePeek() {
+    auto& pool = PeekPool();
+    std::lock_guard lock(pool.mutex);
+    for (auto& peek : pool.peeks) {
+        if (!peek->inUse && (!peek->pending || HasOverlappedIoCompleted(&peek->overlapped))) {
+            peek->inUse = true;
+            return peek.get();
+        }
+    }
+    auto peek = std::make_unique<DatagramPeek>();
+    if (peek->event == WSA_INVALID_EVENT) return nullptr;
+    peek->inUse = true;
+    pool.peeks.push_back(std::move(peek));
+    return pool.peeks.back().get();
+}
+void ReleasePeek(DatagramPeek* peek, bool pending) {
+    std::lock_guard lock(PeekPool().mutex);
+    peek->pending = pending;
+    peek->inUse = false;
+}
+std::int64_t NextDatagramSize(const Socket& socket, std::int64_t queued) {
+    DatagramPeek* peek = AcquirePeek();
+    if (!peek) return queued;
+    WSAResetEvent(peek->event);
+    peek->overlapped = WSAOVERLAPPED{};
+    peek->overlapped.hEvent = peek->event;
+    WSABUF buffer{sizeof(peek->buffer), peek->buffer};
     DWORD received = 0;
     DWORD flags = MSG_PEEK;
     std::int64_t size = queued;
-    if (WSARecv(socket.value, &buffer, 1, &received, &flags, &overlapped, nullptr) == 0) {
+    bool pending = false;
+    if (WSARecv(socket.value, &buffer, 1, &received, &flags, &peek->overlapped, nullptr) == 0) {
         size = received;
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
-        CancelIoEx(reinterpret_cast<HANDLE>(socket.value), &overlapped);
-        size = WSAGetOverlappedResult(socket.value, &overlapped, &received, TRUE, &flags) ? received : 0;
+        CancelIoEx(reinterpret_cast<HANDLE>(socket.value), &peek->overlapped);
+        if (WSAGetOverlappedResult(socket.value, &peek->overlapped, &received, FALSE, &flags)) {
+            size = received;
+        } else {
+            size = 0;
+            pending = WSAGetLastError() == WSA_IO_INCOMPLETE;
+        }
     }
-    WSACloseEvent(overlapped.hEvent);
+    ReleasePeek(peek, pending);
     return size;
 }
 #endif
