@@ -17,6 +17,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -100,12 +101,16 @@ std::vector<std::byte> pattern(std::uint8_t seed) {
     return bytes;
 }
 
-void copyFrame(std::uint32_t* words, const Layout& layout, std::byte* target) {
-    CommandBuffer buffer{words, words + CommandBytes / sizeof(std::uint32_t), words, words + CommandBytes / sizeof(std::uint32_t), nullptr, nullptr, 0};
-    sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
-    sceAgcDcbWriteData(&buffer, GraphicsMemory, 0, at(layout.label), &Done, 1, 0, 1);
+void copy(std::uint32_t* words, std::size_t commandBytes, const std::byte* source, std::byte* target, std::uint32_t* label) {
+    CommandBuffer buffer{words, words + commandBytes / sizeof(std::uint32_t), words, words + commandBytes / sizeof(std::uint32_t), nullptr, nullptr, 0};
+    sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target), DmaMemory, 0, at(source), DataBytes, 0, 1, 0);
+    sceAgcDcbWriteData(&buffer, GraphicsMemory, 0, at(label), &Done, 1, 0, 1);
     Packet packet{words, static_cast<std::uint32_t>(buffer.cursor_up - words), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+}
+
+void copyFrame(std::uint32_t* words, const Layout& layout, std::byte* target) {
+    copy(words, CommandBytes, layout.source, target, layout.label);
 }
 
 void flip() {
@@ -187,15 +192,75 @@ void testCaptureAndReplay(const std::filesystem::path& tool) {
     check(readFile(secondDump) == second, "the replay did not reproduce the second copy");
 }
 
+void testConcurrentCopies(const std::filesystem::path& tool) {
+    constexpr std::size_t Copies = 64;
+    constexpr std::size_t Frames = 8;
+    constexpr std::size_t CopyCommandBytes = 1024;
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    const auto layout = allocate();
+    const auto other = allocate();
+    auto* const otherSource = other.base + 128 * 1024;
+    auto* const targets = otherSource + DataBytes;
+    auto* const otherLabel = reinterpret_cast<std::uint32_t*>(other.base + 512 * 1024);
+    const auto copied = pattern(57);
+    std::memcpy(otherSource, copied.data(), copied.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    std::thread copier([&] {
+        for (std::size_t index = 0; index < Copies; ++index) {
+            copy(reinterpret_cast<std::uint32_t*>(other.base + index * CopyCommandBytes), CopyCommandBytes, otherSource, targets + index * DataBytes, otherLabel);
+        }
+    });
+    for (std::size_t frame = 0; frame + 1 < Frames; ++frame) {
+        const auto bytes = pattern(static_cast<std::uint8_t>(frame));
+        std::memcpy(layout.source, bytes.data(), bytes.size());
+        copyFrame(layout.firstCommands, layout, layout.firstTarget);
+        flip();
+    }
+    copier.join();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+
+    const FrameCaptureReader reader(capture);
+    check(!reader.Truncated(), "the capture is truncated");
+    std::uint64_t base = 0;
+    std::size_t submits = 0, memory = 0;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::FrameStart) base = call.completed;
+        if (call.kind == FrameCallKind::Memory) {
+            ++memory;
+            check(call.completed >= base + submits, "a memory delta was read with " + std::to_string(base + submits - call.completed) + " of the " + std::to_string(submits) + " submissions recorded before it unfinished");
+        }
+        submits += call.kind == FrameCallKind::Submit;
+    }
+    check(submits == Copies + Frames - 1, "the capture holds " + std::to_string(submits) + " submits, not " + std::to_string(Copies + Frames - 1));
+    check(memory != 0, "the capture holds no memory deltas");
+
+    const auto dump = capture / "targets.bin";
+    const auto command = "\"\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(targets)) + ":" + std::to_string(Copies * DataBytes) + ":\"" + dump.string() + "\"\"";
+    const auto code = std::system(command.c_str());
+    check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
+    const auto replayed = readFile(dump);
+    check(replayed.size() == Copies * DataBytes, "the replay dumped " + std::to_string(replayed.size()) + " bytes of the copy targets");
+    for (std::size_t index = 0; index < Copies; ++index) {
+        check(std::memcmp(replayed.data() + index * DataBytes, copied.data(), DataBytes) == 0, "the replay did not reproduce copy " + std::to_string(index) + " of the second thread");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay>\n");
+    if (argc != 2 && !(argc == 3 && std::string(argv[2]) == "concurrent")) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent]\n");
         return 2;
     }
     try {
-        testCaptureAndReplay(argv[1]);
+        if (argc == 3) testConcurrentCopies(argv[1]);
+        else testCaptureAndReplay(argv[1]);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());
         return 1;

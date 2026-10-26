@@ -55,6 +55,14 @@ void Threads() {
     Require(sceSpPthreadMutexattrSettype(&mutexAttr, 2) == 0);
     Require(sceSpPthreadMutexattrSetprotocol(&mutexAttr, 0) == scePthreadMutexattrSetprotocol(&mutexAttr, 0));
     Require(sceSpPthreadSetprio(scePthreadSelf(), 700) == scePthreadSetprio(scePthreadSelf(), 700));
+    PthreadMutexattr ceilingAttr = nullptr;
+    Require(sceSpPthreadMutexattrInit(&ceilingAttr) == 0);
+    Require(sceSpPthreadMutexattrSetprioceiling(&ceilingAttr, 300) == static_cast<int>(0x80020016u));
+    Require(sceSpPthreadMutexattrSetprotocol(&ceilingAttr, 2) == 0);
+    Require(sceSpPthreadMutexattrSetprioceiling(&ceilingAttr, 300) == 0);
+    int ceiling = 0;
+    Require(scePthreadMutexattrGetprioceiling(&ceilingAttr, &ceiling) == 0 && ceiling == 300);
+    Require(sceSpPthreadMutexattrDestroy(&ceilingAttr) == 0);
     PthreadCondattr condAttr = nullptr;
     Require(sceSpPthreadCondattrInit(&condAttr) == 0);
 

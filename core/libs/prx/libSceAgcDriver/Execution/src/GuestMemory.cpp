@@ -24,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -1770,7 +1771,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
 #endif
 }
 
-bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched) {
+bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched, bool importMayWriteGuest) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return import();
     if (!staysWatched) {
         constexpr std::uint64_t page = 4096;
@@ -1790,7 +1791,11 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
 #ifdef __APPLE__
-        const GuestArena::HostWrite open(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
+        std::optional<GuestArena::HostWrite> open;
+        if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
+#endif
+#ifndef __APPLE__
+        static_cast<void>(importMayWriteGuest);
 #endif
         return import();
     };
@@ -1820,12 +1825,26 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
             hashes[static_cast<std::size_t>((cursor - first) / page)] = HashPage(reinterpret_cast<const std::byte*>(cursor));
         }
     }
-    std::erase_if(spans, [&](const auto& span) { return !walkWrites(tracker, span.first, span.second, StampKind::Cpu, true); });
+    const auto saveBytes = [&](std::uint64_t begin, std::uint64_t end) {
+        lock.Suspend();
+        beforeUnwatch(begin, static_cast<std::size_t>(end - begin));
+        lock.Resume();
+    };
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> leaving;
+    std::erase_if(spans, [&](const auto& span) {
+        if (walkWrites(tracker, span.first, span.second, StampKind::Cpu, true)) return false;
+        leaving.push_back(span);
+        return true;
+    });
+    for (const auto& [begin, end] : leaving) saveBytes(begin, end);
     if (!runImport()) return false;
     const WindowCopy window{first, hashes};
     auto unwatchedFrom = first;
     for (const auto& [begin, end] : spans) {
-        if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) continue;
+        if (!walkWrites(tracker, begin, end, StampKind::Cpu, true, &window)) {
+            saveBytes(begin, end);
+            continue;
+        }
 #ifdef _WIN32
         GuestArena::GuestArenaCompareResidentWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin));
 #endif

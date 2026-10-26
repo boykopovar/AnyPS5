@@ -6,15 +6,26 @@
 
 extern "C" {
 
+std::int32_t APS5_VABI FT_Outline_GetInsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
+std::int32_t APS5_VABI FT_Outline_GetOutsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
+
 int APS5_VABI FT_Init_FreeType_nid_postfix(FreeType::GuestLibrary** alibrary);
 int APS5_VABI FT_Done_FreeType_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI FT_New_Face_nid_postfix(FreeType::GuestLibrary* library, const char* filepathname, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, const unsigned char* fileBase, std::int64_t fileSize, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
+int APS5_VABI FT_Reference_Face_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Done_Face_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Select_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t strikeIndex);
+int APS5_VABI FT_New_Size_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestSizeRec** asize);
+int APS5_VABI FT_Activate_Size_nid_postfix(FreeType::GuestSizeRec* size);
+int APS5_VABI FT_Done_Size_nid_postfix(FreeType::GuestSizeRec* size);
 int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t pixelWidth, std::uint32_t pixelHeight);
 int APS5_VABI FT_Set_Char_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t charWidth, std::int64_t charHeight, std::uint32_t horizontalResolution, std::uint32_t verticalResolution);
 std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode);
 int APS5_VABI FT_Get_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t leftGlyph, std::uint32_t rightGlyph, std::uint32_t kernMode, FreeType::GuestVector* kerning);
+int APS5_VABI FT_Get_PFR_Advance_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t index, std::int64_t* advance);
+int APS5_VABI FT_Get_PFR_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t left, std::uint32_t right, FreeType::GuestVector* vector);
+int APS5_VABI FT_Get_PFR_Metrics_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t* outline, std::uint32_t* metrics, std::int64_t* xScale, std::int64_t* yScale);
 int APS5_VABI FT_Load_Glyph_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::int32_t loadFlags);
 int APS5_VABI FT_Get_Gasp_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t ppem);
 int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(FreeType::GuestFaceRec* face, const char** registry, const char** ordering, std::int32_t* supplement);

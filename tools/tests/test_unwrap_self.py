@@ -484,6 +484,30 @@ class UnwrapTest(unittest.TestCase):
                     self.assertEqual(embedded[2] - host[2], embedded[3] - host[3])
                     self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x90:0x90 + size])
 
+    def test_recorded_embedded_segments_keep_their_overlapping_load_host(self):
+        payload = b"overlapping load payload\0" * 16
+        for kind in (PT_DYNAMIC, PT_TLS):
+            for delta, size in ((0, 0x10), (0x10, 0x10), (0x40, 0x20), (0xF0, 0x10)):
+                for relocated in (False, True):
+                    with self.subTest(kind=kind, delta=delta, size=size, relocated=relocated):
+                        source = 0x800 if relocated else 0x1000
+                        segments = [(PT_LOAD, 5, 0x1000, 0x1000, 0x100, PAGE),
+                                    (PT_LOAD, 6, 0x1080, 0x3080, 0x100, PAGE),
+                                    (kind, 4, 0x1080 + delta, 0x3080 + delta, size, 8)]
+                        records = [(0x800, source, 0x100), (0x100800, source + 0x80, 0x100)] if relocated else []
+                        records.append((0x200800, source + 0x80 + delta, size))
+                        container = build_container(segments, records, {source: payload})
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        host, embedded = headers[1:]
+                        self.assertEqual(embedded[2] - host[2], delta)
+                        for header, start in zip(headers[:2], (0, 0x80)):
+                            self.assertEqual(header[2] % header[7], header[3] % header[7])
+                            self.assertEqual(data[header[2]:header[2] + header[5]], payload[start:start + 0x100])
+                        self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x80 + delta:0x80 + delta + size])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
     def test_segments_after_the_recorded_comment_are_read_from_the_container(self):
         segments = default_segments() + [(SCE_COMMENT, 4, 0x15A0, 0x0, 0x20, 0x10), (PT_NOTE, 4, 0x15C0, 0x0, 0x18, 4),
                                          (SCE_VERSION, 4, 0x15D8, 0x0, 0x10, 1)]

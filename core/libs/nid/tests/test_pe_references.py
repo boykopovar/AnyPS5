@@ -243,5 +243,203 @@ class ForwardingExportTests(unittest.TestCase):
         self.assertEqual(after, image)
 
 
+class ExecutableImportTests(unittest.TestCase):
+    names = ["foo", "foo_nid_postfix", "z", "sceExample", "helper_nid_no_patch", "plain_nid_no_patch_cut", "SDL_Init", "scePreserved", "hostFunctionLongName", "alias_nid_disambig12_nid_postfix"]
+
+    def pe(self, bits=64):
+        image = bytearray(2048)
+        image[:2] = b"MZ"
+        struct.pack_into("<I", image, 0x3c, 0x40)
+        optional_size = 240 if bits == 64 else 224
+        struct.pack_into("<IHHIIIHH", image, 0x40, 0x4550, 0x8664 if bits == 64 else 0x14c, 1, 0, 0, 0, optional_size, 0x22)
+        struct.pack_into("<H", image, 0x58, 0x20b if bits == 64 else 0x10b)
+        struct.pack_into("<II", image, 0x58 + 32, 4096, 512)
+        struct.pack_into("<II", image, 0x58 + 56, 8192, 512)
+        directory = 0x58 + (112 if bits == 64 else 96)
+        struct.pack_into("<I", image, directory - 4, 16)
+        struct.pack_into("<II", image, directory + 8, 0x1000, 40)
+        struct.pack_into("<8sIIIIIIHHI", image, 0x58 + optional_size, b".idata", 1536, 0x1000, 1536, 512, 0, 0, 0, 0, 0xc0000040)
+        struct.pack_into("<IIIII", image, 512, 0x1040, 0, 0, 0x1028, 0x10c0)
+        image[552:561] = b"test.prx\0"
+        offset = 0x380
+        for index, name in enumerate(self.names):
+            entry = name.encode() + b"\0"
+            struct.pack_into("<H", image, offset, 0)
+            image[offset + 2:offset + 2 + len(entry)] = entry
+            for table in (576, 704):
+                struct.pack_into("<Q" if bits == 64 else "<I", image, table + index * (bits // 8), offset - 512 + 0x1000)
+            offset += len(entry) + 2
+        return image
+
+    def elf(self):
+        from test_symbol_versions import build_image, SHOFF
+        entries = [(None, 1, 0, 0, 0)] + [(name, 1, 0, 2, 0) for name in self.names] + [("application_export", 1, 9, 2, 0x400100)]
+        import test_symbol_versions
+        from unittest.mock import patch
+        with patch.object(test_symbol_versions, "DYNSYM_OFFSET", 0xa00):
+            image = build_image(entries, False)
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0, 0x400000, 0x400000, 4096, 8192, 4096)
+        struct.pack_into("<IIQQQQQQ", image, 120, 2, 6, 0x700, 0x400700, 0x400700, 48, 48, 8)
+        struct.pack_into("<H", image, 60, 5)
+        struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64, 0, 6, 3, 0x400700, 0x700, 48, 2, 0, 8, 16)
+        size = struct.unpack_from("<Q", image, SHOFF + 2 * 64 + 32)[0]
+        struct.pack_into("<qQqQqQ", image, 0x700, 5, 0x400300, 10, size, 0, 0)
+        return image
+
+    def macho(self):
+        image = bytearray(build_dylib([("_application_export", 0, 0x100)], [("_" + name, 1 if index % 2 else 2) for index, name in enumerate(self.names)]))
+        struct.pack_into("<I", image, 12, 2)
+        return image
+
+    def read_names(self, image, kind):
+        if kind == "elf":
+            from test_symbol_versions import read_dynsym
+            return [name for name, section, _ in read_dynsym(image) if name and section == 0]
+        if kind == "macho":
+            from test_macho_nids import chained_imports
+            return [name[1:] for name, _ in chained_imports(image)]
+        bits = 64 if kind == "pe64" else 32
+        optional_size = 240 if bits == 64 else 224
+        count = struct.unpack_from("<H", image, 0x46)[0]
+        sections = [struct.unpack_from("<8sIIIIIIHHI", image, 0x58 + optional_size + index * 40) for index in range(count)]
+        result = []
+        for index in range(len(self.names)):
+            rva = struct.unpack_from("<Q" if bits == 64 else "<I", image, 576 + index * (bits // 8))[0]
+            self.assertEqual(rva, struct.unpack_from("<Q" if bits == 64 else "<I", image, 704 + index * (bits // 8))[0])
+            section = next(s for s in sections if s[2] <= rva < s[2] + s[3])
+            offset = section[4] + rva - section[2] + 2
+            result.append(image[offset:image.index(0, offset)].decode())
+        return result
+
+    def test_shared_import_rules_and_filter_in_all_formats(self):
+        for kind, build in (("pe64", self.pe), ("pe32", lambda: self.pe(32)), ("elf", self.elf), ("macho", self.macho)):
+            for only_sce in (False, True):
+                with self.subTest(kind=kind, only_sce=only_sce), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "arbitrary.extension"
+                    image = build()
+                    path.write_bytes(image)
+                    excluded = Path(directory) / "preserved.txt"
+                    excluded.write_bytes(b"scePreserved\n")
+                    args = [str(PATCHER), "--exec", "--preserve-export-list", str(excluded)]
+                    if only_sce:
+                        args.append("--only-sce")
+                    result = subprocess.run([*args, str(path)], capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    expected = ["foo", nid("foo"), nid("z"), nid("sceExample"), "helper_nid_no_patch", "plain", "SDL_Init", "scePreserved", nid("hostFunctionLongName"), nid("alias")]
+                    if only_sce:
+                        expected[2] = "z"
+                        expected[5] = "plain_nid_no_patch_cut"
+                        expected[8] = "hostFunctionLongName"
+                    self.assertCountEqual(self.read_names(path.read_bytes(), kind), expected)
+                    if kind == "macho":
+                        self.assertEqual(exports_of(path.read_bytes()), exports_of(image))
+                    if kind == "elf":
+                        from test_symbol_versions import read_dynsym
+                        self.assertIn(("application_export", 9, 0x400100), read_dynsym(path.read_bytes()))
+
+    def test_exec_accepts_macho_without_exports(self):
+        from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
+        image = self.macho()
+        command = command_fields(image)[LC_DYLD_EXPORTS_TRIE][0]
+        struct.pack_into("<II", image, command + 8, 0, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_elf_without_sections_rejects_dynamic_segment_without_writing(self):
+        image = self.elf()
+        struct.pack_into("<Q", image, 40, 0)
+        struct.pack_into("<HH", image, 60, 0, 0)
+        for flags in ([], ["--only-sce"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "program"
+                path.write_bytes(image)
+                result = subprocess.run([str(PATCHER), "--exec", *flags, str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("PT_DYNAMIC without a .dynsym section", result.stderr)
+                self.assertEqual(path.read_bytes(), image)
+
+    def test_elf_without_sections_or_dynamic_segment_is_unchanged(self):
+        image = self.elf()
+        struct.pack_into("<Q", image, 40, 0)
+        struct.pack_into("<HH", image, 60, 0, 0)
+        struct.pack_into("<H", image, 56, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+
+    def test_elf_short_imports_grow_without_overwriting_bss(self):
+        from test_symbol_versions import sections
+        self.names = ["a", "b", "c", "d"]
+        image = self.elf()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            after = path.read_bytes()
+            self.assertCountEqual(self.read_names(after, "elf"), [nid(name) for name in self.names])
+            offset = struct.unpack_from("<Q", after, 32)[0]
+            count = struct.unpack_from("<H", after, 56)[0]
+            segments = [struct.unpack_from("<IIQQQQQQ", after, offset + index * 56) for index in range(count)]
+            original = next(segment for segment in segments if segment[0] == 1 and segment[3] == 0x400000)
+            self.assertEqual(original[5:7], (4096, 8192))
+            phdr = next(segment for segment in segments if segment[0] == 6)
+            load = next(segment for segment in segments if segment[0] == 1 and segment[2] == offset)
+            self.assertEqual(phdr[2:4], load[2:4])
+            strings = next(section for section in sections(after) if section[1] == 3)
+            self.assertEqual(struct.unpack_from("<Q", after, 0x708)[0], strings[3])
+            self.assertEqual(struct.unpack_from("<Q", after, 0x718)[0], strings[5])
+            self.assertGreater(strings[4], len(image))
+
+    def test_pe_own_exports_remain_unchanged(self):
+        image = self.pe()
+        struct.pack_into("<II", image, 0x58 + 112, 0x1500, 96)
+        struct.pack_into("<IIHHIIIIIII", image, 0x700, 0, 0, 0, 0, 0x1540, 1, 1, 1, 0x1528, 0x152c, 0x1530)
+        struct.pack_into("<IIH", image, 0x728, 0x1100, 0x1550, 0)
+        image[0x740:0x748] = b"app.exe\0"
+        image[0x750:0x75b] = b"own_export\0"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(path.read_bytes()[0x700:0x760], image[0x700:0x760])
+
+    def test_unsupported_exec_layouts_fail_without_writing(self):
+        signed = bytearray(build_dylib([], [("_sceExample", 1)], signed=True))
+        struct.pack_into("<I", signed, 12, 2)
+        pe = self.pe()
+        struct.pack_into("<II", pe, 0x58 + 112 + 13 * 8, 0x1400, 32)
+        full_headers = self.pe()
+        struct.pack_into("<I", full_headers, 0x58 + 60, 0x58 + 240 + 40)
+        for image, message in ((signed, "signature"), (pe, "delay-loaded"), (full_headers, "section header"), (b"invalid", "unrecognized")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "program"
+                path.write_bytes(image)
+                result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(path.read_bytes(), image)
+
+    def test_only_sce_requires_exec_and_failure_does_not_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            image = self.pe()
+            path.write_bytes(image)
+            for arguments in (["libtest", "--only-sce"], ["--only-sce"], ["--exec", "--only-sce", "--only-sce"]):
+                result = subprocess.run([str(PATCHER), *arguments, str(path)], capture_output=True, timeout=20)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(path.read_bytes(), image)
+
+
 if __name__ == "__main__":
     unittest.main()

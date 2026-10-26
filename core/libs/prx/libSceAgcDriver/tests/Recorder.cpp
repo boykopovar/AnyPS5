@@ -50,6 +50,7 @@
 #endif
 #include <io.h>
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -67,6 +68,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -322,6 +324,7 @@ public:
                 }
                 return false;
             };
+            memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
@@ -516,6 +519,21 @@ public:
         return properties;
     }
     void WaitQueue() const { Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle"); }
+    struct HeapUsage {
+        std::uint64_t deviceLocal = 0;
+        std::uint64_t host = 0;
+    };
+    std::optional<HeapUsage> MemoryUsage() const {
+        if (!memoryBudget) return std::nullopt;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget};
+        function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2")(context.physical, &properties);
+        HeapUsage usage;
+        for (std::uint32_t heap = 0; heap < properties.memoryProperties.memoryHeapCount; ++heap) {
+            ((properties.memoryProperties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 ? usage.deviceLocal : usage.host) += budget.heapUsage[heap];
+        }
+        return usage;
+    }
 
 private:
     template<typename TFunction>
@@ -545,6 +563,7 @@ private:
     bool graphics = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
+    bool memoryBudget = false;
 };
 
 using Kind = Recorder::ReadKind;
@@ -10112,6 +10131,98 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
     return true;
 }
 
+std::uint64_t processPrivateBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (!K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))) return 0;
+    return counters.PrivateUsage;
+#else
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.rfind("RssAnon:", 0) == 0) return std::stoull(line.substr(8)) * 1024u;
+    }
+    return 0;
+#endif
+}
+
+// What one graphics pipeline the store keeps costs: `count` pipelines, each with its own fragment
+// module (so its own fragment shader library), built through CachedPipeline and held, after their
+// optimized relinks; process private bytes and VK_EXT_memory_budget heap usage before and after,
+// and after the store is cleared.
+int pipelineStoreMemoryBench(const Device& device, std::uint32_t count) {
+    if (!device.Graphics() || count == 0) {
+        std::cout << "skipped, the pipeline store memory bench requires a graphics queue and at least one pipeline\n";
+        return 77;
+    }
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.variantId = 21;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    std::vector<ShaderRecompiler::RecompileResult> fragments(count + 1u);
+    for (std::uint32_t index = 0; index <= count; ++index) {
+        fragments[index].variantId = 1000u + index;
+        fragments[index].spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+        fragments[index].spirv[2] = 0x50535430u + index;
+    }
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    const std::array first{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragments[count], 0}};
+    ShaderResources resources(context, first, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    const VertexInputLayout input;
+    std::vector<std::shared_ptr<Pipeline>> held;
+    held.reserve(count + 1u);
+    const auto build = [&](std::uint32_t index) {
+        const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragments[index], 0}};
+        held.push_back(CachedPipeline(context, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL));
+    };
+    struct Sample {
+        std::uint64_t privateBytes;
+        std::optional<Device::HeapUsage> heaps;
+    };
+    const auto sample = [&] {
+        WaitForOptimizedPipelines(context.device);
+        return Sample{processPrivateBytes(), device.MemoryUsage()};
+    };
+    build(count);
+    const auto before = sample();
+    const auto started = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < count; ++index) build(index);
+    const auto built = std::chrono::steady_clock::now();
+    const auto after = sample();
+    const auto linked = std::chrono::steady_clock::now();
+    const auto totals = PipelineStoreTotals();
+    held.clear();
+    ClearCachedPipelines(context.device);
+    const auto cleared = sample();
+    const auto mib = [](std::uint64_t later, std::uint64_t earlier) { return (static_cast<double>(later) - static_cast<double>(earlier)) / (1024.0 * 1024.0); };
+    const auto perPipeline = [&](std::uint64_t later, std::uint64_t earlier) { return (static_cast<double>(later) - static_cast<double>(earlier)) / 1024.0 / count; };
+    const char* linking = !context.graphicsPipelineLibrary ? "whole pipelines" : context.pipelineLinkTimeOptimization ? "libraries and optimized relinks" : "libraries, fast links only";
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "Pipeline store memory: " << count << " graphics pipelines (one fragment module each, " << linking << "), " << totals.cached << " in the store, built in "
+              << std::chrono::duration<double>(built - started).count() << " s, relinked in " << std::chrono::duration<double>(linked - built).count() << " s\n";
+    std::cout << "  process private bytes: +" << mib(after.privateBytes, before.privateBytes) << " MiB = " << perPipeline(after.privateBytes, before.privateBytes) << " KiB per pipeline; after clearing the store " << mib(cleared.privateBytes, before.privateBytes) << " MiB above the start\n";
+    if (before.heaps && after.heaps && cleared.heaps) {
+        std::cout << "  VK_EXT_memory_budget heap usage: device-local +" << mib(after.heaps->deviceLocal, before.heaps->deviceLocal) << " MiB = " << perPipeline(after.heaps->deviceLocal, before.heaps->deviceLocal) << " KiB per pipeline, host +" << mib(after.heaps->host, before.heaps->host) << " MiB = " << perPipeline(after.heaps->host, before.heaps->host)
+                  << " KiB per pipeline; after clearing the store device-local " << mib(cleared.heaps->deviceLocal, before.heaps->deviceLocal) << " MiB, host " << mib(cleared.heaps->host, before.heaps->host) << " MiB above the start\n";
+    } else {
+        std::cout << "  VK_EXT_memory_budget unavailable: no device heap usage\n";
+    }
+    return 0;
+}
+
 void pipelineCacheTests(const Device& device, bool benchmark) {
     std::thread establishThreadedProcess([] {});
     establishThreadedProcess.join();
@@ -10947,6 +11058,97 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+class LibraryCreateFlags {
+public:
+    explicit LibraryCreateFlags(const Context& context) : resolver(context.deviceProc), device(context.device) {
+        create = function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+        active = this;
+    }
+    ~LibraryCreateFlags() { active = nullptr; }
+    LibraryCreateFlags(const LibraryCreateFlags&) = delete;
+    LibraryCreateFlags& operator=(const LibraryCreateFlags&) = delete;
+    PFN_vkGetDeviceProcAddr Resolver() const { return resolve; }
+    std::uint32_t Libraries() const { return libraries.load(); }
+    std::uint32_t Retaining() const { return retaining.load(); }
+
+private:
+    template<typename TFunction>
+    TFunction function(const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+        const auto result = active->create(device, cache, count, infos, callbacks, pipelines);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (pipelines[index] == VK_NULL_HANDLE || (infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) == 0) continue;
+            active->libraries.fetch_add(1);
+            if ((infos[index].flags & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0) active->retaining.fetch_add(1);
+        }
+        return result;
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(createPipelines);
+        return active->resolver(device, name);
+    }
+    PFN_vkGetDeviceProcAddr resolver;
+    VkDevice device;
+    PFN_vkCreateGraphicsPipelines create = nullptr;
+    std::atomic<std::uint32_t> libraries{0};
+    std::atomic<std::uint32_t> retaining{0};
+    static inline LibraryCreateFlags* active = nullptr;
+};
+
+void pipelineLibraryLtoInfoTests(const Device& device) {
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    LibraryCreateFlags created(context);
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    if (!context.graphicsPipelineLibrary) {
+        std::cout << "graphics pipeline libraries unavailable or disabled: no library retains link-time optimization info\n";
+        return;
+    }
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 41;
+    fragment.variantId = 42;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    ShaderResources resources(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    VertexInputLayout input;
+    auto fast = context;
+    fast.deviceProc = created.Resolver();
+    fast.pipelineLinkTimeOptimization = false;
+    auto optimizing = fast;
+    optimizing.pipelineLinkTimeOptimization = true;
+    const bool lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
+    const auto fastPipeline = CachedPipeline(fast, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+    const auto fastLibraries = created.Libraries();
+    Require(fastLibraries != 0, "the pipeline was not linked from libraries created through the traced device");
+    Require(created.Retaining() == 0, std::to_string(created.Retaining()) + " of the " + std::to_string(fastLibraries) + " libraries made for a context without optimized links were created to retain link-time optimization info");
+    WaitForOptimizedPipelines(context.device);
+    Require(!fastPipeline->Optimized(), "a pipeline of a context without optimized links was optimized in the background");
+    const auto optimizedPipeline = CachedPipeline(optimizing, state, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    Require(optimizedPipeline != fastPipeline, "the two attachment layouts shared one cached pipeline");
+    const auto libraries = created.Libraries() - fastLibraries;
+    if (lto) {
+        Require(libraries == fastLibraries, "a link that will be optimized made " + std::to_string(libraries) + " libraries, expected " + std::to_string(fastLibraries) + ": it reused libraries made without link-time optimization info");
+        Require(created.Retaining() == libraries, std::to_string(created.Retaining()) + " of the " + std::to_string(libraries) + " libraries of a link that will be optimized were created to retain link-time optimization info");
+    } else {
+        Require(libraries == 0 && created.Retaining() == 0, "with APS5_NO_PIPELINE_LTO set, forcing pipelineLinkTimeOptimization changed the libraries or their create flags");
+    }
+    WaitForOptimizedPipelines(context.device);
+    Require(optimizedPipeline->Optimized() == lto, lto ? "the pipeline linked from libraries that retain link-time optimization info was not optimized in the background" : "a pipeline was optimized with APS5_NO_PIPELINE_LTO set");
+    std::cout << "Pipeline library link-time optimization info tests passed: " << fastLibraries << " libraries without the info, " << created.Retaining() << " with it\n";
+}
+
 void pipelineLibraryTests(const Device& device) {
     std::lock_guard gpu(GpuMutex());
     const auto& context = device.GetContext();
@@ -11327,10 +11529,15 @@ int main(int argc, char** argv) {
             }
             return sparseRunImportTests(device, true) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-lto-info-only") {
+            pipelineLibraryLtoInfoTests(device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);
             return 0;
         }
+        if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--benchmark-pipeline-store-memory") return pipelineStoreMemoryBench(device, argc == 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 4096u);
         if (argc == 2 && (std::string_view(argv[1]) == "--benchmark-pipeline-cache" || std::string_view(argv[1]) == "--pipeline-cache-only")) {
             pipelineCacheTests(device, std::string_view(argv[1]) == "--benchmark-pipeline-cache");
             return 0;

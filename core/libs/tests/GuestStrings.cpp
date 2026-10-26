@@ -176,6 +176,8 @@ static void CheckSecureStringSizeLimits() {
 }
 
 static void CheckCaseInsensitiveComparison() {
+    Require(strcoll_nid_postfix("a", "z") == -25 && strcoll_nid_postfix("z", "a") == 25 && strcoll_nid_postfix("ab", "abc") == -99);
+    Require(strcoll_nid_postfix("A", "a") == -32 && strcoll_nid_postfix("same", "same") == 0 && strcoll_nid_postfix("\xff", "\x01") == 254);
     Require(strcasecmp_nid_postfix("", "") == 0 && strcasecmp_nid_postfix("AbC", "aBc") == 0);
     Require(strcasecmp_nid_postfix("A", "b") == -1 && strcasecmp_nid_postfix("b", "A") == 1);
     Require(strcasecmp_nid_postfix("ab", "A") == 1 && strcasecmp_nid_postfix("AB", "a") == 1);

@@ -1127,6 +1127,14 @@ struct PipelineStore {
     std::uint64_t evicted = 0;
     PipelineStoreCounters totals;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
+    std::size_t capacity = 0;
+    bool fixedCapacity = false;
+    std::list<std::uint64_t> evictedOrder;
+    std::unordered_map<std::uint64_t, std::list<std::uint64_t>::iterator> evictedKeys;
+    std::size_t evictionsSinceCheck = 0;
+    std::size_t returnsSinceCheck = 0;
+    static constexpr std::size_t BaseEntries = 1024;
+    static constexpr std::size_t MaximumEntries = 4096;
 };
 
 // Never destroyed: the pipelines belong to a device that may already be gone when statics die, and
@@ -1155,9 +1163,41 @@ std::list<PipelineStore::Entry>::iterator abandon(PipelineStore& store, std::lis
     return store.entries.erase(it);
 }
 
-std::size_t storeBound() {
-    static const auto bound = static_cast<std::size_t>(std::max<std::uint64_t>(1u, PipelineSwitch("APS5_PIPELINE_STORE_ENTRIES", 1024u)));
-    return bound;
+std::size_t storeBound(PipelineStore& store) {
+    if (store.capacity == 0) {
+        const auto set = PipelineSwitch("APS5_PIPELINE_STORE_ENTRIES", 0u);
+        store.fixedCapacity = set != 0;
+        store.capacity = store.fixedCapacity ? static_cast<std::size_t>(set) : PipelineStore::BaseEntries;
+    }
+    return store.capacity;
+}
+
+void noteStoreEviction(PipelineStore& store, std::uint64_t hash) {
+    if (store.fixedCapacity) return;
+    if (const auto found = store.evictedKeys.find(hash); found != store.evictedKeys.end()) store.evictedOrder.erase(found->second);
+    store.evictedOrder.push_front(hash);
+    store.evictedKeys[hash] = store.evictedOrder.begin();
+    while (store.evictedOrder.size() > store.capacity) {
+        store.evictedKeys.erase(store.evictedOrder.back());
+        store.evictedOrder.pop_back();
+    }
+    if (++store.evictionsSinceCheck < store.capacity / 32u) return;
+    const bool churning = store.returnsSinceCheck * 2u > store.evictionsSinceCheck;
+    store.evictionsSinceCheck = 0;
+    store.returnsSinceCheck = 0;
+    if (!churning || store.capacity >= PipelineStore::MaximumEntries) return;
+    const auto previous = store.capacity;
+    store.capacity = std::min(store.capacity * 2u, PipelineStore::MaximumEntries);
+    std::fprintf(stderr, "[pipecache] bound %zu -> %zu pipelines: pipelines it evicted keep coming back\n", previous, store.capacity);
+}
+
+void noteStoreReturn(PipelineStore& store, std::uint64_t hash) {
+    if (store.fixedCapacity) return;
+    const auto found = store.evictedKeys.find(hash);
+    if (found == store.evictedKeys.end()) return;
+    store.evictedOrder.erase(found->second);
+    store.evictedKeys.erase(found);
+    ++store.returnsSinceCheck;
 }
 
 void reportPipelines(PipelineStore& store) {
@@ -1229,12 +1269,12 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
         ++store.misses;
         ++store.totals.misses;
+        noteStoreReturn(store, hash);
     }
     // Built outside the mutex: a draw that finds its pipeline resident is not held behind another
     // thread's build (the journal replay builds here too), and a device's driver compiles in
     // parallel when several threads build at once.
     auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    const auto bound = storeBound();
     const bool replaying = PipelineJournalReplaying();
     {
         std::lock_guard lock(store.mutex);
@@ -1252,7 +1292,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
         // A replayed pipeline enters at the least recently used end and never displaces a draw's:
         // the title's own pipelines evict it first, and a full store takes none.
-        if (replaying && store.entries.size() >= bound) return pipeline;
+        if (replaying && store.entries.size() >= storeBound(store)) {
+            if (store.fixedCapacity || store.capacity >= PipelineStore::MaximumEntries) return pipeline;
+            store.capacity = std::min(store.capacity * 2u, PipelineStore::MaximumEntries);
+        }
         if (replaying) {
             store.entries.push_front({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
             store.index[hash] = store.entries.begin();
@@ -1260,12 +1303,14 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.entries.push_back({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
             store.index[hash] = std::prev(store.entries.end());
         }
-        while (store.entries.size() > bound) {
+        while (store.entries.size() > storeBound(store)) {
             // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
             const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
             if (victim == store.entries.end()) break;
+            const auto evictedHash = victim->hash;
             store.index.erase(victim->hash);
             store.entries.erase(victim);
+            noteStoreEviction(store, evictedHash);
             ++store.evicted;
             ++store.totals.evicted;
         }
@@ -1284,8 +1329,14 @@ PipelineStoreCounters PipelineStoreTotals() {
     std::lock_guard lock(store.mutex);
     auto totals = store.totals;
     totals.cached = store.entries.size();
-    totals.bound = storeBound();
+    totals.bound = storeBound(store);
     return totals;
+}
+
+bool PipelineStoreCanGrow() {
+    auto& store = Pipelines();
+    std::lock_guard lock(store.mutex);
+    return storeBound(store) < PipelineStore::MaximumEntries && !store.fixedCapacity;
 }
 
 void ClearCachedPipelines(VkDevice device) {
@@ -1298,6 +1349,13 @@ void ClearCachedPipelines(VkDevice device) {
         }
         store.index.erase(it->hash);
         it = store.entries.erase(it);
+    }
+    if (store.entries.empty() && !store.fixedCapacity) {
+        store.capacity = 0;
+        store.evictedOrder.clear();
+        store.evictedKeys.clear();
+        store.evictionsSinceCheck = 0;
+        store.returnsSinceCheck = 0;
     }
     ClearPipelineLibraries(device);
     ReleasePixelFunctionLds(device);

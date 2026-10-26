@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -394,6 +395,7 @@ void Driver::execute(const Submission& submission) {
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
                 std::lock_guard gpuLock(GuestMemory::GpuMutex());
                 const auto localDevice = device.Load();
+                if (localDevice != nullptr) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("flip"));
 
                 if (!recordLabelsForPacket(localDevice.get(), submission.queue) && localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
                 if (localDevice != nullptr) {
