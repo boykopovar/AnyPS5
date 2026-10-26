@@ -1,0 +1,7 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_float16_conversion_probe_spirv COMMAND agc_driver_float16_conversion_probe_tests --verify-spirv)
+    set_tests_properties(agc_driver_float16_conversion_probe_spirv PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_float16_conversion_probe_spirv PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

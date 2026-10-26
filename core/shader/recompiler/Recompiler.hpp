@@ -352,6 +352,8 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
 };
 
 struct BindingLayout {
