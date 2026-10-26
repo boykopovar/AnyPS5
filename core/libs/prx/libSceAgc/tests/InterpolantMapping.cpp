@@ -201,6 +201,42 @@ void testUpdate0100Mapping() {
     check(mappings == mappingsBefore && links == linksBefore, "_0100 update resolved an ABI");
 }
 
+void testUpdate0100Boundary() {
+    const auto mappingsBefore = mappings;
+    const auto linksBefore = links;
+    std::array<ShaderSemantic, 32> inputs{};
+    std::array<ShaderSemantic, 32> outputs{};
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        inputs[i] = semantic(i + 1u, 0, 0);
+        inputs[i].default_value = i % 4u;
+        outputs[i] = semantic(inputs.size() - i, i, 0);
+    }
+    Shader ps{};
+    ps.input_semantics = inputs.data();
+    ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
+    Shader vs{};
+    std::array<ShaderRegister, 33> regs{};
+    std::memset(regs.data(), 0xcc, sizeof(regs));
+    const auto untouched = regs;
+    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected a producer without outputs");
+    constexpr std::array<std::uint32_t, 4> defaults{0x000u, 0x200u, 0x100u, 0x300u};
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full default mapping register offset changed");
+        check(regs[i].value == (0x20u | defaults[i % 4u]), "_0100 full default mapping changed");
+    }
+    check(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full default mapping wrote past 32 inputs");
+    vs.output_semantics = outputs.data();
+    vs.num_output_semantics = static_cast<std::uint16_t>(outputs.size());
+    regs = untouched;
+    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected 32 matched inputs");
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full matched mapping register offset changed");
+        check(regs[i].value == ((31u - i) | defaults[i % 4u]), "_0100 full matched mapping changed");
+    }
+    check(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full matched mapping wrote past 32 inputs");
+    check(mappings == mappingsBefore && links == linksBefore, "_0100 full mapping resolved an ABI");
+}
+
 void testUnversionedMapping() {
     std::array<ShaderSemantic, 5> inputs{
         semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
@@ -288,6 +324,7 @@ int main() {
         testMapping();
         testUpdateMapping();
         testUpdate0100Mapping();
+        testUpdate0100Boundary();
         testUnversionedMapping();
         testRejections();
         check(mappings == 10u && links == 8u, "mapping preparation call count changed");
