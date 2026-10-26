@@ -12,6 +12,8 @@ int APS5_VABI sceVideoOutCursorSetImageAddress(int32_t, int32_t, const void*);
 int APS5_VABI sceVideoOutCursorSetPosition(int32_t, int32_t, uint32_t, uint32_t);
 int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settingsSize);
 int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings, float gamma, uint32_t settingsSize);
+int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size);
+void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size);
 int APS5_VABI sceDbgVideoOutAddOutputModeVr60Privilege();
 int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege();
 

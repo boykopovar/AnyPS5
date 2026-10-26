@@ -1,4 +1,6 @@
 #include "SceTypes.hpp"
+#include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
 #include <cstdint>
@@ -6,13 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
-int APS5_VABI sceVideoOutClose(int handle);
-int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size);
-void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size);
-}
 
 static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
@@ -35,9 +30,6 @@ int main() {
 
     std::array<std::uint8_t, 16> info{};
     info.fill(0xAA);
-    Require(sceVideoOutGetDeviceCapabilityInfo_(-1, info.data(), 8) == INVALID_HANDLE);
-    Require(sceVideoOutGetDeviceCapabilityInfo_(0x7FFFFFFF, info.data(), 8) == INVALID_HANDLE);
-
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
@@ -47,6 +39,9 @@ int main() {
         return 77;
     }
     Require(handle > 0);
+    info.fill(0xAA);
+    Require(sceVideoOutGetDeviceCapabilityInfo_(-1, info.data(), 8) == INVALID_HANDLE);
+    Require(sceVideoOutGetDeviceCapabilityInfo_(0x7FFFFFFF, info.data(), 8) == INVALID_HANDLE);
     for (std::uint64_t size : {0ull, 4ull, 16ull}) {
         Require(sceVideoOutGetDeviceCapabilityInfo_(handle, info.data(), size) == INVALID_VALUE);
         Require(info[0] == 0xAA);
