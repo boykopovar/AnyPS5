@@ -11,6 +11,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -51,17 +52,18 @@ Bytes Fixture(const std::size_t size) {
     return bytes;
 }
 
-Domain::ProgramHeader Load(const std::uint64_t offset, const std::uint64_t vaddr, const std::uint64_t fileSize, const std::uint64_t memorySize, const std::uint32_t flags) {
-    return {1, flags, offset, vaddr, vaddr, fileSize, memorySize, 0x1000};
+Domain::ProgramHeader Load(const std::uint64_t offset, const std::uint64_t vaddr, const std::uint64_t fileSize, const std::uint64_t memorySize, const std::uint32_t flags, const std::uint64_t alignment = kPage) {
+    return {1, flags, offset, vaddr, vaddr, fileSize, memorySize, alignment};
 }
 
-Elfpatcher::Linux::LinuxElfPatcher Patcher() {
+Elfpatcher::Linux::LinuxElfPatcher Patcher(const std::optional<std::uint64_t> fixedBase = std::nullopt) {
     const auto byteWriter = std::make_shared<Io::ByteWriter>();
     return Elfpatcher::Linux::LinuxElfPatcher(
         std::make_shared<Elfpatcher::EntryStubBuilder>(),
         std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(std::make_shared<Elfpatcher::SegmentFilter>(), byteWriter),
         std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
-        byteWriter);
+        byteWriter,
+        fixedBase);
 }
 
 std::vector<Domain::ProgramHeader> OutputLoads(const Bytes& output) {
@@ -117,6 +119,12 @@ void RequireImage(const Bytes& output, const Bytes& source, const std::vector<Do
 std::uint64_t OutputOffset(const Bytes& output, const std::uint64_t vaddr) {
     for (const auto& load : OutputLoads(output))
         if (load.MappedAddress == vaddr) return load.Offset;
+    throw std::runtime_error("linux load pages: no output PT_LOAD at the segment's address");
+}
+
+std::uint64_t OutputAlignment(const Bytes& output, const std::uint64_t vaddr) {
+    for (const auto& load : OutputLoads(output))
+        if (load.MappedAddress == vaddr) return load.Alignment;
     throw std::runtime_error("linux load pages: no output PT_LOAD at the segment's address");
 }
 
@@ -199,6 +207,56 @@ void IncongruentOffsetBelowThePagePrefix() {
     RequireImage(output, source, headers, "segment whose offset lies below its page prefix");
 }
 
+void LargeAlignmentMovesToThePage() {
+    for (const auto alignment : {std::uint64_t{0x80000000}, std::uint64_t{0x4000}, std::uint64_t{0x8000000000000000}}) {
+        auto source = Fixture(0x2000);
+        std::fill(source.begin() + 0x1000, source.begin() + 0x1010, std::uint8_t{0x33});
+        std::fill(source.begin() + 0x1010, source.begin() + 0x1110, std::uint8_t{0xAA});
+        const std::vector<Domain::ProgramHeader> headers{
+            Load(0x400, 0x400, 0x10, 0x10, 5),
+            Load(0x1010, 0x1000, 0x100, 0x100, 6, alignment),
+        };
+        const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+        Require(output.size() <= source.size() + 3 * kPage, "output grew to " + std::to_string(output.size()) + " bytes for alignment " + std::to_string(alignment));
+        RequireImage(output, source, headers, "incongruent segment with a large alignment");
+        Require(OutputAlignment(output, 0x1000) == kPage, "moved segment declares an alignment its offset does not honour");
+    }
+}
+
+void LargeAlignmentOnASharedPage() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x1100, source.begin() + 0x1c20, std::uint8_t{0x55});
+    std::fill(source.begin() + 0x1c20, source.begin() + 0x2000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x100, 0x1c20, 6),
+        Load(0x1c20, 0x2c20, 0x3e0, 0x3e0, 0, std::uint64_t{0x80000000}),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    Require(output.size() <= source.size() + 3 * kPage, "output grew to " + std::to_string(output.size()) + " bytes on the shared page path");
+    RequireImage(output, source, headers, "shared page with a large alignment");
+    Require(OutputAlignment(output, 0x2c20) == kPage, "moved segment declares an alignment its offset does not honour");
+}
+
+void LargeAlignmentAtAFixedBaseIsRefused() {
+    for (const auto alignment : {std::uint64_t{0x80000000}, std::uint64_t{0x8000000000000000}}) {
+        auto source = Fixture(0x2000);
+        std::fill(source.begin() + 0x1010, source.begin() + 0x1110, std::uint8_t{0xAA});
+        const std::vector<Domain::ProgramHeader> headers{
+            Load(0x400, 0x400, 0x10, 0x10, 5),
+            Load(0x1010, 0x1000, 0x100, 0x100, 6, alignment),
+        };
+        std::string message;
+        try {
+            Patcher(0x400000).Patch(source, headers, {}, 0, "$ORIGIN/libs", false, false, {});
+        } catch (const std::exception& error) {
+            message = error.what();
+        }
+        Require(message.find("is not a multiple of the PT_LOAD alignment") != std::string::npos, "fixed base accepted an alignment it is not a multiple of: " + message);
+    }
+}
+
 }
 
 int main() {
@@ -209,6 +267,9 @@ int main() {
         IncongruentSegmentAtPageStart();
         IncongruentSegmentInsideASharedPage();
         IncongruentOffsetBelowThePagePrefix();
+        LargeAlignmentMovesToThePage();
+        LargeAlignmentOnASharedPage();
+        LargeAlignmentAtAFixedBaseIsRefused();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
