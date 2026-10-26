@@ -133,6 +133,30 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_missing_output_directory_reports_a_cli_error(self):
+        path = self.root / "missing" / "command"
+        result = subprocess.run([sys.executable, str(Path(pad_input.__file__)), str(path), "cross"],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("No such file or directory", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_io_failures_report_errors_and_preserve_command(self):
+        original = b"2000 16384 300\n"
+        for operation in ("pad_input.Path.open", "pad_input.tempfile.NamedTemporaryFile", "pad_input.os.replace"):
+            with self.subTest(operation=operation):
+                self.path.write_bytes(original)
+                errors = io.StringIO()
+                with mock.patch(operation, side_effect=PermissionError("command access denied")), \
+                        contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    self.queue(1000, "cross")
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("command access denied", errors.getvalue())
+                self.assertEqual(self.path.read_bytes(), original)
+                self.assertEqual(list(self.root.iterdir()), [self.path])
+
 
 if __name__ == "__main__":
     unittest.main()

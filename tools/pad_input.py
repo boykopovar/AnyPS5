@@ -84,27 +84,27 @@ def main():
         sticks = "".join(f" {axis}" for axis in axes)
     try:
         sequence = next_sequence(args.path)
-    except ValueError as error:
-        parser.error(str(error))
-    metadata = None
-    if os.name == "posix":
+        metadata = None
+        if os.name == "posix":
+            try:
+                metadata = args.path.stat()
+            except FileNotFoundError:
+                pass
+        temporary = None
         try:
-            metadata = args.path.stat()
-        except FileNotFoundError:
-            pass
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", dir=args.path.parent, delete=False) as output:
-            temporary = Path(output.name)
-            if metadata is not None:
-                if os.geteuid() == 0:
-                    os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
-                os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
-            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}\n")
-        os.replace(temporary, args.path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", dir=args.path.parent, delete=False) as output:
+                temporary = Path(output.name)
+                if metadata is not None:
+                    if os.geteuid() == 0:
+                        os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
+                    os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
+                output.write(f"{sequence} {mask} {args.hold_ms}{sticks}\n")
+            os.replace(temporary, args.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     print(f"Queued {args.button}{' with sticks' + sticks if sticks else ''} for {args.hold_ms} ms in {args.path}")
 
 
