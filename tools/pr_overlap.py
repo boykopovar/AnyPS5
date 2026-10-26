@@ -301,13 +301,31 @@ def overlaps(prs, a, b):
     return found if any(found.values()) else None
 
 
+
+def code_span(item):
+    item = str(item)
+    runs = re.findall(r"`+", item)
+    delimiter = "`" * (max((len(run) for run in runs), default=0) + 1)
+    if "`" in item:
+        return f"{delimiter} {item} {delimiter}"
+    return f"{delimiter}{item}{delimiter}"
+
+
 def cell(items):
-    return "<br>".join(f"`{item}`" for item in sorted(items or ()))
+    return "<br>".join(code_span(item) for item in sorted(items or ()))
+
+
 
 
 def spans(conflicts, blob):
-    return "<br>".join(f"`{path}` " + ", ".join(f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})" if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
-                                               for s, e in ranges) for path, ranges in sorted((conflicts or {}).items()))
+    return "<br>".join(
+        f"{code_span(path)} " + ", ".join(
+            f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})"
+            if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
+            for s, e in ranges
+        )
+        for path, ranges in sorted((conflicts or {}).items())
+    )
 
 
 def pull(blob, number):

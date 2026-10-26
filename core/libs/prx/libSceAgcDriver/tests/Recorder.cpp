@@ -3025,15 +3025,33 @@ void requireImportServesGuest(const Context& context, Recorder& recorder, const 
     const auto bytes = static_cast<std::size_t>(end - begin);
     Require(begin >= import.base && end <= import.base + import.bytes, what + " is not inside its import");
     const auto collected = CollectWritesUncached(begin, bytes);
-    Require(collected != 0 && Watched(begin, bytes), what + " left the write watch");
-    Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    const bool watched = Watched(begin, bytes);
+    Require(!watched || collected != 0, what + " is watched but cannot collect writes");
+    if (watched) {
+        Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    } else {
+        Require(collected == 0, what + " collects writes without being watched");
+        const auto generation = WriteGeneration();
+        Require(UntrackedHint(begin, bytes) == 0 && !UnchangedSince(begin, bytes, generation), what + " provides an unchanged or untracked-hint proof without a write watch");
+        std::vector<void*> compared(bytes / page);
+        auto count = compared.size();
+        GuestArena::GuestArenaComparedPages_nid_no_patch(begin, bytes, compared.data(), &count);
+        Require(count == compared.size(), what + " left the write watch without compared shared pages");
+        for (std::size_t index = 0; index < count; ++index) {
+            Require(compared[index] == reinterpret_cast<void*>(begin + index * page), what + " has an unexpected compared shared page");
+            MEMORY_BASIC_INFORMATION memory{};
+            Require(VirtualQuery(compared[index], &memory, sizeof(memory)) == sizeof(memory) && memory.State == MEM_COMMIT, what + " has an inaccessible compared shared page");
+            const auto protection = memory.Protect & 0xff;
+            Require(protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE, what + " has a compared shared page that is not writable");
+        }
+    }
     auto* first = reinterpret_cast<std::byte*>(begin);
     auto* last = reinterpret_cast<std::byte*>(end - page);
     for (std::size_t index = 0; index < probe; ++index) {
         first[index] = static_cast<std::byte>((index * 7u + salt) & 0xffu);
         last[index] = static_cast<std::byte>((index * 13u + salt * 5u + 1u) & 0xffu);
     }
-    Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
+    if (watched) Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
     Buffer readback(context, 2 * probe, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     const auto commands = recorder.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3163,7 +3181,7 @@ int reimportBench(const Device& device) {
         const auto* tail = HostImportFor(context, begin, static_cast<std::size_t>(end - begin));
         Require(tail != nullptr && tail->base == begin && tail->base + tail->bytes == end, "the re-import bench lost the import of its kept side");
         requireImportServesGuest(context, recorder, *tail, begin, end, ++salt, std::string("the kept side after the ") + pattern.name + " cuts");
-        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; CPU stores into it are collected and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
+        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; write tracking sees its CPU stores and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
         cleanup();
         gpu.unlock();
         return again;
@@ -3284,7 +3302,7 @@ int hostImportCutTests(const Device& device) {
         }
         cleanup();
         gpu.unlock();
-        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write watch see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
+        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write tracking see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
     };
     const auto remapWhileTrimmed = [&] {
         const std::string name = "an unmap and a new mapping of the retained side while the old import is retired";
@@ -3315,7 +3333,7 @@ int hostImportCutTests(const Device& device) {
         Require(remapped->memoryBase == begin && remapped->pinnedBytes == end - begin, "after " + name + " the pages mapped again are served from the import that pinned the old ones");
         cleanup();
         gpu.unlock();
-        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and the write watch see the guest's bytes\n";
+        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and write tracking see the guest's bytes\n";
     };
     gpu.unlock();
     try {

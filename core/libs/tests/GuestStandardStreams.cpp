@@ -575,6 +575,10 @@ static int CheckClosedStandardOutput() {
     Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
     Require(puts_nid_postfix("text") == -1 && *__error_nid_postfix() == 9);
     Require(PrintStandard("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%p", nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     Require(wprintf_nid_postfix(u"%d", 1) == -1 && *__error_nid_postfix() == 9);

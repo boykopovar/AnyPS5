@@ -104,7 +104,8 @@ class ProgressHistoryTests(unittest.TestCase):
             root = Path(directory)
             subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
             commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
-            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES), \
+                    patch.dict(os.environ, {"LC_ALL": "C"}):
                 with self.assertRaises(ValueError) as raised:
                     progress_history.daily_commits("no-such-ref")
         self.assertIn("no-such-ref", str(raised.exception))

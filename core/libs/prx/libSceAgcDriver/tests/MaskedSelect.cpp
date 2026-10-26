@@ -1236,6 +1236,38 @@ int main() {
         return StencilReplaySafe(b.program);
     };
 
+    const auto optionalPredicateBody = [&](bool negated) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& written = negated ? b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate}) : b.ballotBit(predicate);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::Bool, entry, predicate);
+        merged.AddPhiOperand(&body, &written);
+        b.keep(b.select(merged, b.constant(1u), b.constant(0u)));
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may merge a lane's own bit of the predicate's ballot with the skipped predicate", [&] { return optionalPredicateBody(false); });
+    passed &= run("an optional wave body cannot merge a value that differs from the skipped predicate on inactive lanes", [&] { return !optionalPredicateBody(true); });
     passed &= run("an optional wave body preserves inactive values consumed only within a lane", [&] { return optionalPixelBody(false); });
     passed &= run("an optional wave body cannot change helper coordinates for later implicit samples", [&] { return !optionalPixelBody(true); });
     passed &= run("an optional wave body cannot change helper coordinates for LOD queries", [&] { return !optionalPixelBody(true, IrOpcode::ImageQueryLod); });

@@ -138,6 +138,8 @@ void CheckFlags() {
     Require(fetestexcept_nid_postfix(0) == 0, "empty exception query");
     Require(fetestexcept_nid_postfix(0x3f) == 0x27, "combine x87 and SSE flags, including denormals");
     Require(fetestexcept_nid_postfix(0x0c) == 0x04, "query only requested flags");
+    const auto unmasked = ReadEnvironment();
+    Require(fetestexcept_nid_postfix(0xffff) == static_cast<int>((unmasked.x87[1] | unmasked.sse) & 0xffffu), "a mask past the exception flags returns the other status and MXCSR bits");
     struct { std::uint16_t before, value, after; } saved{0x1234, 0xffff, 0x5678};
     Require(fegetexceptflag_nid_postfix(&saved.value, 0x07) == 0 && saved.value == 0x07, "save selected flags");
     Require(saved.before == 0x1234 && saved.after == 0x5678, "fexcept_t writes exactly two bytes");
