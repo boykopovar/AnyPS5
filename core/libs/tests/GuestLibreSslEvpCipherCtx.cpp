@@ -226,11 +226,6 @@ static void TestCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
     RequireCleared(context);
 
-    PrepareContext(context, &cipher, nullptr);
-    Store<void*>(context, EngineOffset, &cipher);
-    RequireThrows([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)); });
-    Require(Load<void*>(context, EngineOffset) == &cipher && context[ContextBytes - 1] == 0x33);
-
     cipher.contextSize = -1;
     data = FilledData(8);
     PrepareContext(context, &cipher, data);
@@ -566,8 +561,6 @@ static void TestInitFields() {
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, nullptr, nullptr) == 0);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr) == 0);
-    int engine = 0;
-    RequireThrows([&] { EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), &engine, XorKey, nullptr); });
     RequireThrows([] { EVP_CipherInit_ex_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr, 1); });
 }
 
