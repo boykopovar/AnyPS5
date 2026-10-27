@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <typeinfo>
+#include <tuple>
 #include <utility>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
@@ -17,7 +18,7 @@ struct Native : Side, Source {};
 struct PrivateNative : private Source { virtual ~PrivateNative() = default; };
 struct VirtualNative : virtual Source { virtual ~VirtualNative() = default; };
 struct BaseRecord { const void* type; std::ptrdiff_t flags; };
-struct MultipleRecord { const void* vtable; const char* name; unsigned flags; unsigned count; BaseRecord bases[2]; };
+struct MultipleRecord { const void* vtable; const char* name; unsigned flags; unsigned count; BaseRecord bases[3]; };
 struct UpcastResult { const void* destination; int path; int sourceDetails; const TypeRecord* baseType; };
 struct DynamicCastResult { const void* destination; int wholeToDestination; int wholeToSource; int destinationToSource; int wholeDetails; };
 
@@ -49,6 +50,10 @@ const MultipleRecord PrivateOnlyChild{_ZTVN10__cxxabiv121__vmi_class_type_infoE_
 const MultipleRecord PublicFirstRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootD", 0, 1, {{&PublicFirstChild, 0}}};
 const MultipleRecord PrivateFirstRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootE", 0, 1, {{&PrivateFirstChild, 0}}};
 const MultipleRecord PrivateOnlyRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootF", 0, 1, {{&PrivateOnlyChild, 0}}};
+const TypeRecord SourceOnlyType{_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix + 16, "6Source", nullptr};
+const MultipleRecord PublicTargetFirstWhole{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1W", 0, 3, {{&DerivedType, 2}, {&DerivedType, 8 << 8}, {&SourceOnlyType, (16 << 8) | 2}}};
+const MultipleRecord PrivateTargetFirstWhole{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1V", 0, 3, {{&DerivedType, 0}, {&DerivedType, (8 << 8) | 2}, {&SourceOnlyType, (16 << 8) | 2}}};
+const MultipleRecord PublicTargetOnlyWhole{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1U", 0, 2, {{&DerivedType, 2}, {&SourceOnlyType, (16 << 8) | 2}}};
 const Vtable BaseVtable{0, &BaseType, nullptr};
 const Vtable DerivedVtable{0, &DerivedType, nullptr};
 const MultipleRecord MultipleType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "8Multiple", 0, 1,
@@ -160,6 +165,19 @@ int main() {
     Require(privateFirst.first && privateFirst.second);
     const auto privateOnly = publicToSource(PrivateOnlyRoot, PrivateOnlyChild, 0, 16, 8, 0);
     Require(!privateOnly.first && !privateOnly.second);
+
+    const auto ambiguousDestination = [&](const MultipleRecord& whole) {
+        alignas(std::intptr_t) unsigned char complete[32]{};
+        DynamicCastResult result{nullptr, 0, 0, 0, 0x10};
+        const bool ambiguous = CallDynamicCast(asType(whole), &DerivedType, complete, &SourceOnlyType, complete + 16, result, -1);
+        return std::tuple<bool, bool, int>{ambiguous, result.destination == nullptr, result.wholeToDestination};
+    };
+    const auto publicFirstTargets = ambiguousDestination(PublicTargetFirstWhole);
+    Require(std::get<0>(publicFirstTargets) && std::get<1>(publicFirstTargets) && std::get<2>(publicFirstTargets) == 2);
+    const auto privateFirstTargets = ambiguousDestination(PrivateTargetFirstWhole);
+    Require(std::get<0>(privateFirstTargets) && std::get<1>(privateFirstTargets) && std::get<2>(privateFirstTargets) == 2);
+    const auto onlyPublicTarget = ambiguousDestination(PublicTargetOnlyWhole);
+    Require(!std::get<0>(onlyPublicTarget) && !std::get<1>(onlyPublicTarget));
 
     void* object = __cxa_allocate_exception_nid_postfix(16);
     auto* type = reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(&DerivedType));
