@@ -1,3 +1,5 @@
+target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/SquareRoot32.cpp)
+
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_sqrt32_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSquareRoot32.cpp)
     target_include_directories(guest_freetype_sqrt32_tests PRIVATE ${LIBS_INCLUDE_DIR})
