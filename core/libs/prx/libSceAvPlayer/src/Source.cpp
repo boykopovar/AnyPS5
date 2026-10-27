@@ -147,6 +147,8 @@ public:
         overrideTime = milliseconds;
     }
 
+    bool Running() const { return running && !paused; }
+
     void Rebase(double milliseconds) {
         base = milliseconds;
         wall = std::chrono::steady_clock::now();
@@ -541,6 +543,22 @@ private:
         if (!started) return 0;
         const auto milliseconds = static_cast<std::uint64_t>(presentationClock.Now());
         return duration != 0 ? std::min(milliseconds, duration) : milliseconds;
+    }
+
+    bool followsClockLocked() const {
+        return started && !paused && presented && speed == NormalSpeed && syncMode == SyncModeDefault && presentationClock.Running();
+    }
+
+    bool lateForClockLocked(const Decoder& decoder, std::uint64_t timestamp, std::uint64_t epoch) const {
+        if (!followsClockLocked() || epoch != clockEpoch || decoder.frames.empty() || decoder.frames.back().epoch != epoch) return false;
+        return static_cast<double>(timestamp + frameDuration()) < presentationClock.Now();
+    }
+
+    void recycleLateLocked(Decoder& decoder) {
+        if (!followsClockLocked()) return;
+        const auto now = presentationClock.Now();
+        auto& frames = decoder.frames;
+        while (frames.size() > 1 && frames.front().epoch == clockEpoch && frames[1].epoch == clockEpoch && static_cast<double>(frames[1].info.timestamp) <= now) recycleFront(decoder);
     }
 
     bool audioExhausted() const {
@@ -1000,7 +1018,14 @@ private:
 
     Acquire acquireBuffer(Decoder& decoder, std::uint64_t epoch, std::uint8_t*& buffer) {
         std::unique_lock lock(mutex);
-        condition.wait(lock, [&] { return stopping || !decoder.free.empty() || epoch < minEpoch; });
+        const auto ready = [&] {
+            if (decoder.video && decoder.free.empty()) recycleLateLocked(decoder);
+            return stopping || !decoder.free.empty() || epoch < minEpoch;
+        };
+        while (!ready()) {
+            if (decoder.video && followsClockLocked()) condition.wait_for(lock, std::chrono::milliseconds(std::max<std::uint64_t>(frameDuration(), 1)));
+            else condition.wait(lock);
+        }
         if (stopping) return Acquire::Stopping;
         if (epoch < minEpoch) return Acquire::Stale;
         buffer = decoder.free.back();
@@ -1037,6 +1062,13 @@ private:
             std::lock_guard lock(mutex);
             decoder.seamless = seamless;
             return true;
+        }
+        {
+            std::lock_guard lock(mutex);
+            if (lateForClockLocked(decoder, timestamp, epoch)) {
+                decoder.seamless = seamless;
+                return true;
+            }
         }
         const auto width = static_cast<std::uint32_t>(frame.width);
         const auto height = static_cast<std::uint32_t>(frame.height);
