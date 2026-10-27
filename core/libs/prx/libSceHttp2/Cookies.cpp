@@ -137,7 +137,10 @@ bool IsDigit(char c) {
 bool LeadingDigits(std::string_view token, std::size_t minimum, std::size_t maximum, int& value, std::size_t& used) {
     used = 0;
     value = 0;
-    while (used < token.size() && IsDigit(token[used])) value = value * 10 + (token[used++] - '0');
+    while (used < token.size() && IsDigit(token[used])) {
+        if (used == maximum) return false;
+        value = value * 10 + (token[used++] - '0');
+    }
     return used >= minimum && used <= maximum;
 }
 
