@@ -1,0 +1,21 @@
+target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/SquareRootFixed.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_sqrtfixed_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSquareRootFixed.cpp)
+    target_include_directories(guest_freetype_sqrtfixed_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_sqrtfixed_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_sqrtfixed_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_sqrtfixed_tests)
+    add_dependencies(guest_freetype_sqrtfixed_tests libs)
+    add_test(NAME guest_freetype_sqrtfixed COMMAND guest_freetype_sqrtfixed_tests $<TARGET_FILE:libSceFreeType> unpatched)
+    add_test(NAME guest_freetype_sqrtfixed_nid COMMAND guest_freetype_sqrtfixed_tests ${PATCHED_DIR}/libSceFreeType.prx patched)
+    set_tests_properties(guest_freetype_sqrtfixed guest_freetype_sqrtfixed_nid PROPERTIES TIMEOUT 40)
+    if(WIN32)
+        set_tests_properties(guest_freetype_sqrtfixed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+        set_tests_properties(guest_freetype_sqrtfixed_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+endif()

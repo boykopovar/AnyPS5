@@ -3,6 +3,7 @@
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "SceTypes.hpp"
+#include "prx/libSceFreeType/include/SquareRootFixed.hpp"
 
 extern "C" {
 
