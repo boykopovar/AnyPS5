@@ -99,6 +99,7 @@ static int StatAt(const std::filesystem::path& p, NativeStat* st, int flags) {
         }
         directory = next;
         rest.erase(0, split + 1);
+        rest.erase(0, rest.find_first_not_of('/'));
     }
     const int result = ::fstatat(directory, rest.empty() ? "." : rest.c_str(), st, flags);
     const int error = errno;
