@@ -2664,6 +2664,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
+    for (const auto& target : record.targets) {
+        if (target != nullptr) target->PrepareLinearDraw();
+    }
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
