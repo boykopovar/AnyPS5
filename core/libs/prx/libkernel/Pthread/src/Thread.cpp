@@ -57,6 +57,9 @@ static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
 static constexpr int GUEST_EINVAL = 22;
 
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
+#ifdef __APPLE__
+static constexpr std::size_t HOST_CALL_STACK = 256u * 1024u + 64u * 1024u;
+#endif
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
 
@@ -305,6 +308,12 @@ static bool HostStackLimits(std::uintptr_t* low, std::uintptr_t* high) {
     GetCurrentThreadStackLimits(&lowLimit, &highLimit);
     *low = PrecommittedStackStart(lowLimit, highLimit);
     *high = highLimit;
+#elif defined(__APPLE__)
+    const auto size = pthread_get_stacksize_np(pthread_self());
+    const auto top = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
+    if (size == 0 || top < size) return false;
+    *high = top;
+    *low = top - size;
 #else
     static thread_local std::uintptr_t stackLow = 0;
     static thread_local std::uintptr_t stackHigh = 0;
@@ -785,6 +794,27 @@ asm(".text\n"
     .cfi_endproc
 )" APS5_ASM_FUNCTION_END("Aps5CallGuestEntry_nid_no_patch"));
 
+#ifdef __APPLE__
+[[gnu::noinline]] static void* CallGuestOnMeasuredStack(PthreadPrivate* self, PthreadEntry entry, void* arg) {
+    std::uintptr_t rsp = 0;
+#if defined(__x86_64__)
+    __asm__ volatile("movq %%rsp, %0" : "=r"(rsp));
+#elif defined(__aarch64__)
+    __asm__ volatile("mov %0, sp" : "=r"(rsp));
+#else
+    rsp = reinterpret_cast<std::uintptr_t>(&rsp);
+#endif
+    constexpr std::uintptr_t alignment = 16;
+    const auto high = (rsp + alignment - 1) & ~(alignment - 1);
+    if (high >= self->stackSize)
+        self->stackAddress = reinterpret_cast<void*>(high - self->stackSize);
+    RegisterStack(self);
+    void* const result = Aps5CallGuestEntry_nid_no_patch(entry, arg);
+    __asm__ volatile("" : : "r"(result) : "memory");
+    return result;
+}
+#endif
+
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
     APS5_LOG_OUT("RunThread entry=0x%llx arg=%p self=%p", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(args->entry)), args->arg, static_cast<void*>(args->self));
     const auto entry = args->entry;
@@ -793,7 +823,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+#ifndef __APPLE__
     RegisterStack(self);
+#endif
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
 #endif
@@ -802,7 +834,11 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #ifndef _WIN32
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
+#ifdef __APPLE__
+    finishThread(self, CallGuestOnMeasuredStack(self, entry, arg));
+#else
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
+#endif
     CurrentGuestState().current = nullptr;
 }
 
@@ -1012,9 +1048,14 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 #else
     const auto reserve = HostStackReserve();
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - reserve - HOST_STACK_MARGIN - page)
+#ifdef __APPLE__
+    const auto belowGuest = HOST_CALL_STACK;
+#else
+    const auto belowGuest = std::size_t{0};
+#endif
+    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - reserve - HOST_STACK_MARGIN - belowGuest - page)
         throw std::runtime_error("scePthreadCreate: invalid stack size");
-    const std::size_t nativeStack = (p->stackSize + reserve + HOST_STACK_MARGIN + page - 1) / page * page;
+    const std::size_t nativeStack = (p->stackSize + reserve + HOST_STACK_MARGIN + belowGuest + page - 1) / page * page;
     sigset_t creatorMask;
     pthread_sigmask(SIG_SETMASK, nullptr, &creatorMask);
     args->signalMask = creatorMask;
