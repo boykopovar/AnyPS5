@@ -33,6 +33,7 @@ void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 namespace {
 
 alignas(64) std::array<std::byte, 256> storage{};
+std::array<std::byte, 256> lastFreedBytes{};
 alignas(16) std::array<std::byte, 0x40> process{};
 alignas(16) std::array<std::byte, 0x38> libc{};
 alignas(16) std::array<std::byte, 0x78> replacement{};
@@ -128,6 +129,7 @@ void* APS5_VABI allocate(std::size_t bytes) {
 
 void APS5_VABI release(void* pointer) {
     require(pointer == storage.data());
+    std::memcpy(lastFreedBytes.data(), storage.data(), storage.size());
     ++frees;
 }
 
@@ -412,6 +414,23 @@ int main(int argc, char** argv) {
     require(reallocf_nid_postfix(storage.data(), 80) == storage.data() && lastSize == 80 && frees == 6);
     require(reallocf_nid_postfix(storage.data(), 16) == storage.data() && lastSize == 16 && frees == 6);
     require(reallocf_nid_postfix(storage.data(), 0) == nullptr && lastSize == 16 && frees == 7);
+    std::memset(storage.data(), 0x7a, storage.size());
+    const auto freesBeforePartial = frees;
+    freezero_nid_postfix(storage.data(), 40);
+    require(frees == freesBeforePartial + 1);
+    for (std::size_t i = 0; i < 40; ++i) require(lastFreedBytes[i] == std::byte{0});
+    for (std::size_t i = 40; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x7a});
+
+    std::memset(storage.data(), 0x33, storage.size());
+    const auto freesBeforeZero = frees;
+    freezero_nid_postfix(storage.data(), 0);
+    require(frees == freesBeforeZero + 1);
+    for (std::size_t i = 0; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x33});
+
+    const auto freesBeforeNull = frees;
+    freezero_nid_postfix(nullptr, 128);
+    freezero_nid_postfix(nullptr, 0);
+    require(frees == freesBeforeNull);
     fail = true;
     *__error_nid_postfix() = 0;
     require(reallocf_nid_postfix(storage.data(), 48) == nullptr && lastSize == 48 && frees == 8 && *__error_nid_postfix() == 12);
