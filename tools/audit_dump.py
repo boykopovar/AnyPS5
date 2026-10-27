@@ -128,6 +128,10 @@ def main(argv=None):
     dump_path = comparison_path(dump)
     if args.json:
         report = Path(args.json)
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.parent.is_dir():
+            parser.error(f"{report.parent}: no such directory")
         try:
             overlaps = report_overlaps_dump(report, dump)
         except (OSError, RuntimeError) as error:
