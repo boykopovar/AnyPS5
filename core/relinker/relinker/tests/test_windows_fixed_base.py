@@ -25,6 +25,12 @@ def file_offset(data, rva):
     raise AssertionError(f"RVA {rva:#x} has no file data")
 
 
+def image_end(path):
+    data = path.read_bytes()
+    _, optional = pe_headers(data)
+    return struct.unpack_from("<Q", data, optional + 24)[0] + struct.unpack_from("<I", data, optional + 56)[0]
+
+
 def absolute_jump(base):
     return bytes.fromhex("48 a1") + struct.pack("<Q", base + 0x300) + bytes.fromhex("ff e0")
 
@@ -68,7 +74,7 @@ def main():
             assert result.returncode == 0, (name, result.returncode, result.stdout, result.stderr)
             data = output.read_bytes()
             pe, optional = pe_headers(data)
-            assert struct.unpack_from("<Q", data, optional + 24)[0] == (0x140000000 if base is None else base - 0x10000)
+            assert struct.unpack_from("<Q", data, optional + 24)[0] == (0x400000 if base is None else base) - 0x10000
             assert bool(struct.unpack_from("<H", data, pe + 22)[0] & 1) == (base is not None)
             characteristics = struct.unpack_from("<H", data, optional + 70)[0]
             assert characteristics & 0x100
@@ -85,6 +91,7 @@ def main():
         image[0x200:0x200 + len(code)] = code
         image[0x240:0x246] = bytes.fromhex("b8 2a 00 00 00 c3")
         struct.pack_into("<q", image, 0x710, 0x240)
+        run(convert("sce-dynexec-imports-offset-default", image))
         run(convert("sce-dynexec-imports-offset", image, 0x400000))
         for base in (0x400000, 0x800000, 0x400000000):
             image = fixture()
@@ -142,7 +149,23 @@ def main():
         source.write_bytes(image)
         result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--windows-fixed-base", "0x7fffffff0000", str(source), str(output)], capture_output=True, text=True, timeout=5)
         assert result.returncode == 2 and "user address space" in result.stderr and not output.exists(), result
-    print("Windows fixed base: default, absolute GOT, 64-bit base, TLS, guest/native/lazy imports, collision and bounds passed")
+
+        size = image_end(convert("user-limit-size", fixture(), 0x400000)) - 0x3f0000
+        assert size % 0x10000, hex(size)
+        image = fixture()
+        struct.pack_into("<Q", image, 64 + 40, struct.unpack_from("<Q", image, 64 + 40)[0] + 0x10000 - size % 0x10000)
+        padded = image_end(convert("user-limit-padded-size", image, 0x400000)) - 0x3f0000
+        assert padded % 0x10000 == 0, hex(padded)
+        assert image_end(convert("user-limit-end", image, 0x7fffffff0000 - padded + 0x10000)) == 0x7fffffff0000
+
+        base = (0x800000000000 - size + 0xffff) & ~0xffff
+        assert 0x7fffffff0000 < base - 0x10000 + size <= 0x7ffffffff000, hex(base)
+        source = work / "user-limit-top.elf"
+        output = work / "user-limit-top.exe"
+        source.write_bytes(fixture())
+        result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--windows-fixed-base", hex(base), str(source), str(output)], capture_output=True, text=True, timeout=5)
+        assert result.returncode == 2 and "user address space" in result.stderr and not output.exists(), (hex(base), result)
+    print("Windows fixed base: default, absolute GOT, 64-bit base, TLS, guest/native/lazy imports, collision, bounds and user address limit passed")
 
 
 if __name__ == "__main__":

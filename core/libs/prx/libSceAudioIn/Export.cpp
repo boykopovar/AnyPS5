@@ -1,3 +1,4 @@
+#include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

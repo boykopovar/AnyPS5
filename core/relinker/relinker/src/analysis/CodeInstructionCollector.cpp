@@ -71,11 +71,11 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     for (const auto& header : headers) {
         if (header.Type == 0x61000000) sceBase = header.Offset;
         if (header.Type != 2) continue;
-        if (hasDynamic || header.FileSize % 16 != 0) throw Domain::RelinkerException("Code analysis: invalid dynamic segment");
+        if (hasDynamic) throw Domain::RelinkerException("Code analysis: invalid dynamic segment");
         hasDynamic = true;
         range(header.Offset, header.FileSize);
         bool terminated = false;
-        for (std::uint64_t offset = header.Offset; offset < header.Offset + header.FileSize; offset += 16) {
+        for (std::uint64_t offset = header.Offset; header.Offset + header.FileSize - offset >= 16; offset += 16) {
             const auto tag = Io::ReadU64(bytes, offset);
             if (tag == 0) { terminated = true; break; }
             const auto value = Io::ReadU64(bytes, offset + 8);
@@ -310,7 +310,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 const auto matchingDefinedSymbol = hasSymbol && Io::ReadU16(bytes, symbol + 6) != 0
                     && addend <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
                     && Io::ReadU64(bytes, symbol + 8) == addend;
-                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                const auto [recorded, inserted] = pointers.Values.emplace(slot, addend);
+                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || (!inserted && recorded->second != addend)) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
                 addPointerRoot(addend);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (index != 0 && index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
@@ -318,7 +319,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 if (index == 0 || Io::ReadU16(bytes, symbol + 6) == 0) importSlots.insert(slot);
                 else {
                     const auto target = Io::ReadU64(bytes, symbol + 8) + addend;
-                    if (!pointers.Values.emplace(slot, target).second) throw Domain::RelinkerException("Code analysis: duplicate pointer relocation", slot);
+                    const auto [recorded, inserted] = pointers.Values.emplace(slot, target);
+                    if (!inserted && recorded->second != target) throw Domain::RelinkerException("Code analysis: duplicate pointer relocation", slot);
                     addPointerRoot(target);
                 }
             }
@@ -346,7 +348,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
     }
-    if (sceBase) {
+    if (sceBase || !functions.empty()) {
         const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(functions.begin(), functions.end());
         for (const auto& header : codeHeaders) {
             if (header.Type != 1 || (header.Flags & 1) == 0) continue;
@@ -496,7 +498,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 const auto offset = address - header.MappedAddress;
                 const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                 addAddressTakenRoot(address, text.data() + offset, info);
-                if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(static_cast<std::uint64_t>(static_cast<std::int64_t>(address + info.Length) + info.BranchDisp));
+                if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp));
             }
         }
     } while (roots.size() != previousRoots);

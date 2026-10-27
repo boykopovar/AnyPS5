@@ -1,12 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-}
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "guest_dynamic_loader_variants: failed at %s:%u\n", location.file_name(), location.line());

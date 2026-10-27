@@ -1,23 +1,24 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI clock_gettime_nid_postfix(int, KernelTimespec*);
-char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
-char* APS5_VABI getenv_nid_postfix(const char*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-}
-
 namespace {
+
+constexpr int ThreadNameInvalid = 22;
+constexpr int ThreadNameTooLong = 63;
+constexpr std::size_t ThreadNameCapacity = 32;
 
 constexpr int FnmNomatch = 1;
 constexpr int FnmNoescape = 0x01;
@@ -188,6 +189,7 @@ void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
 std::uint32_t APS5_VABI arc4random_nid_postfix() {
     std::uint32_t value;
     arc4random_buf_nid_postfix(&value, sizeof(value));
+
     return value;
 }
 
@@ -199,10 +201,6 @@ int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp) {
     return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI __wrap_fchown() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 char* APS5_VABI __wrap_getcwd(char* buffer, std::size_t size) {
     return getcwd_nid_postfix(buffer, size);
@@ -212,10 +210,6 @@ char* APS5_VABI __wrap_getenv(const char* name) {
     return getenv_nid_postfix(name);
 }
 
-int APS5_VABI __wrap_link() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI __wrap_lstat(const char* path, FileStat* sb) {
     return lstat_nid_postfix(path, sb);
@@ -225,20 +219,8 @@ void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, i
     return mmap_nid_postfix(address, length, protection, flags, descriptor, offset);
 }
 
-int APS5_VABI __wrap_readlink() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
-int APS5_VABI __wrap_statvfs() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
-int APS5_VABI __wrap_symlink() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI clock_gettime_np() {
     NotImplemented_nid_no_patch(__func__);
@@ -279,6 +261,14 @@ int APS5_VABI setenv_np() {
 APS5_EXPORT("9Vqxt-qBPB4", scePosixForWebKit_sysinfo);
 int APS5_VABI scePosixForWebKit_sysinfo() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
+    if (thread == nullptr || name == nullptr) return ThreadNameInvalid;
+    if (std::strlen(name) >= ThreadNameCapacity) return ThreadNameTooLong;
+    std::lock_guard lock(thread->nameLock);
+    thread->name = name;
     return 0;
 }
 

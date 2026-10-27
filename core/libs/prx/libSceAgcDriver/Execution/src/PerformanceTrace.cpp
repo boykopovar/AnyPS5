@@ -214,7 +214,11 @@ double seconds(Clock::duration elapsed) {
 }
 
 void PerformanceTrace::BindThread(const char* name, std::size_t capacity) {
-    if (!Configured() || local != nullptr) return;
+    if (local != nullptr) return;
+    if (!Configured()) {
+        localName = name;
+        return;
+    }
     const bool windowed = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr;
     if (windowed && capacity == TraceThread::DefaultCapacity) capacity = TraceThread::ParseCapacity(std::getenv("APS5_TRACE_EVENTS"));
     auto bound = std::make_unique<TraceThread>(name, presentCount, windowed ? capacity : 0, buffering);
@@ -222,6 +226,39 @@ void PerformanceTrace::BindThread(const char* name, std::size_t capacity) {
     std::lock_guard lock(state.mutex);
     local = bound.get();
     state.threads.push_back(std::move(bound));
+}
+
+TraceThread* PerformanceTrace::bindNamed() {
+    if (localName == nullptr) return nullptr;
+    auto bound = std::make_unique<TraceThread>(localName, presentCount, 0, buffering);
+    auto& state = session();
+    std::lock_guard lock(state.mutex);
+    local = bound.get();
+    state.threads.push_back(std::move(bound));
+    return local;
+}
+
+void PerformanceTrace::SetOverlayTotals(bool on) {
+    if (Configured()) return;
+    binder.store(on ? &bindNamed : nullptr, std::memory_order_release);
+    recording.store(on, std::memory_order_relaxed);
+}
+
+bool PerformanceTrace::OverlayTotals() {
+    return binder.load(std::memory_order_relaxed) != nullptr;
+}
+
+std::optional<std::vector<TraceThreadTotals>> PerformanceTrace::ThreadTotals() {
+    auto& state = session();
+    std::unique_lock lock(state.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return std::nullopt;
+    std::vector<TraceThreadTotals> threads;
+    threads.reserve(state.threads.size());
+    for (const auto& thread : state.threads) {
+        auto snapshot = thread->Collect();
+        threads.push_back({std::move(snapshot.name), std::move(snapshot.totals)});
+    }
+    return threads;
 }
 
 void PerformanceTrace::OpenInterval(Clock::time_point now, std::uint64_t present) {

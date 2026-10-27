@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData.native/include/Api.hpp"
+#include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -328,7 +330,7 @@ static bool isMountedDirectory(const std::string& path) {
 
 static int deleteSave(const SaveDataDelete* del) {
     if (del == nullptr || del->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataDelete: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     const auto* nameEnd = static_cast<const char*>(std::memchr(del->dir_name->data, '\0', sizeof(del->dir_name->data)));
     if (nameEnd == nullptr) {
@@ -403,7 +405,7 @@ static SaveDataSearchInfo search_info(const std::string& real_path) {
 
 static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     if (cond == nullptr || result == nullptr) {
-        throw std::runtime_error("sceSaveDataDirNameSearch: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     result->hit_num = 0;
     result->set_num = 0;
@@ -606,7 +608,7 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
 
 static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
     if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataMount3: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
     const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
@@ -923,7 +925,7 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
 
 static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     if (cond == nullptr || result == nullptr) {
-        throw std::runtime_error("sceSaveDataDirNameSearchPs4: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     result->hit_num = 0;
     result->set_num = 0;
@@ -932,7 +934,7 @@ static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNa
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond->user_id, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1042,17 +1044,6 @@ int APS5_VABI sceSaveDataDebugTarget() {
 
 namespace {
 
-struct SaveDataMountPs4 {
-    std::int32_t user_id;
-    std::int32_t pad;
-    const void* title_id;
-    const SceSaveDataDirName* dir_name;
-    const void* fingerprint;
-    std::uint64_t blocks;
-    std::uint32_t mount_mode;
-    std::uint8_t reserved[32];
-};
-
 }
 
 extern "C" {
@@ -1062,7 +1053,7 @@ int APS5_VABI sceSaveDataInitialize(const void* init) {
 }
 
 int APS5_VABI sceSaveDataMount(const SaveDataMountPs4* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
     if (mount->title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
     SaveDataMount3 converted{};
     converted.user_id = mount->user_id;

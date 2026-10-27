@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdio>
@@ -9,23 +11,6 @@
 #include <windows.h>
 #include <io.h>
 #endif
-
-extern "C" {
-int APS5_VABI utimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI lutimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
-int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
-int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI stat_nid_postfix(const char*, FileStat*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI sceKernelFstat(int, FileStat*);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-std::int64_t APS5_VABI _fstat_nid_postfix(int, FileStat*);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -60,7 +45,6 @@ static void CheckTimes(const std::string& path, int fd, const KernelTimeval* exp
         "native modification time preserves microseconds");
 #endif
 }
-
 
 #ifdef _WIN32
 static std::uint64_t Ticks(const FILETIME& time) {
@@ -242,7 +226,14 @@ int main() {
     Require(utimes_nid_postfix(path.c_str(), second) == 0, "utimes target to second");
     std::error_code symlinkError;
     const auto linkPath = (root / "link.txt").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(linkPath).c_str(), std::filesystem::path(path).c_str(),
+            SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        symlinkError = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink(path, linkPath, symlinkError);
+#endif
     if (!symlinkError) {
         Require(lutimes_nid_postfix(linkPath.c_str(), first) == 0, "lutimes modifies symlink");
         FileStat targetStatus{};
@@ -273,5 +264,42 @@ int main() {
     Require(futimes_nid_postfix(pipe[0], first) == -1 && *__error_nid_postfix() == 22, "pipe timestamp update fails");
 #endif
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0, "close pipe");
+    const auto throughFile = (root / "file.txt" / "child").string();
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+        Require(update(throughFile.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file reports ENOTDIR");
+    }
+#ifdef _WIN32
+    const auto fileLink = (root / "file-link.txt").string();
+    const auto directoryLink = (root / "directory-link").string();
+    const auto danglingLink = (root / "dangling-link").string();
+    const auto createLink = [](const std::string& link, const std::string& target, DWORD flags) {
+        wchar_t full[MAX_PATH];
+        GetFullPathNameW(std::filesystem::path(target).c_str(), MAX_PATH, full, nullptr);
+        return CreateSymbolicLinkW(std::filesystem::path(link).c_str(), full, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+    };
+    if (createLink(fileLink, path, 0) && createLink(directoryLink, directory, SYMBOLIC_LINK_FLAG_DIRECTORY) &&
+        createLink(danglingLink, (root / "missing").string(), 0)) {
+        const auto modified = [](const char* name, bool link) {
+            FileStat status{};
+            Require((link ? lstat_nid_postfix(name, &status) : stat_nid_postfix(name, &status)) == 0, "stat a link fixture");
+            return status.st_mtim.tv_sec;
+        };
+        Require(utimes_nid_postfix(fileLink.c_str(), first) == 0 && modified(path.c_str(), false) == first[1].tv_sec, "utimes follows a file link");
+        Require(modified(fileLink.c_str(), true) != first[1].tv_sec, "utimes leaves the file link alone");
+        Require(utimes_nid_postfix(directoryLink.c_str(), second) == 0 && modified(directory.c_str(), false) == second[1].tv_sec,
+            "utimes follows a directory link");
+        Require(utimes_nid_postfix(danglingLink.c_str(), first) == -1 && *__error_nid_postfix() == 2, "utimes through a dangling link reports ENOENT");
+        Require(lutimes_nid_postfix(directoryLink.c_str(), first) == 0 && modified(directoryLink.c_str(), true) == first[1].tv_sec &&
+            modified(directory.c_str(), false) == second[1].tv_sec, "lutimes changes a directory link and not its target");
+        Require(lutimes_nid_postfix(danglingLink.c_str(), first) == 0 && modified(danglingLink.c_str(), true) == first[1].tv_sec,
+            "lutimes changes a dangling link");
+        const auto throughLink = fileLink + "/child";
+        for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+            Require(update(throughLink.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file link reports ENOTDIR");
+        }
+        Require(RemoveDirectoryW(std::filesystem::path(directoryLink).c_str()) && DeleteFileW(std::filesystem::path(fileLink).c_str()) &&
+            DeleteFileW(std::filesystem::path(danglingLink).c_str()), "remove the link fixtures");
+    }
+#endif
     std::filesystem::remove_all(root);
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceImeDialog/include/Api.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
@@ -198,7 +199,7 @@ int APS5_VABI sceImeDialogGetCurrentStarState(int64_t state) {
     return 0;
 }
 
-int APS5_VABI sceImeDialogInitInternal(Param* param, ExtendedParam* extended) {
+int APS5_VABI sceImeDialogInitInternal(const Param* param, const ExtendedParam* extended) {
     return sceImeDialogInit(param, extended);
 }
 
@@ -206,7 +207,6 @@ int APS5_VABI sceImeDialogSetPanelPosition(int32_t, int32_t) {
     std::lock_guard lock(g_mutex);
     return g_dialog.status == StatusNone ? ErrorNotInUse : ErrorSuspending;
 }
-
 
 int APS5_VABI sceImeDialogInitInternalWithSubInfo() {
     NotImplemented_nid_no_patch(__func__);

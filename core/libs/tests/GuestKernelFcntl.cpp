@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -14,23 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI __sys_socketex_nid_postfix(const char*, int, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI _fcntl_nid_postfix(int, int, ...);
-int APS5_VABI ioctl_nid_postfix(int, std::uint64_t, void*);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceKernelFcntl(int, int, ...);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static constexpr int DuplicateCommand = 0;
 static constexpr int GetDescriptorFlags = 1;
@@ -68,6 +55,7 @@ static constexpr int GuestEfault = 14;
 static constexpr int GuestEinval = 22;
 static constexpr int GuestEnotty = 25;
 static constexpr int GuestEagain = 35;
+static constexpr int GuestEopnotsupp = 45;
 static constexpr int GuestEoverflow = 84;
 static constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 static constexpr std::uint64_t ReadableRequest = 0x4004667f;
@@ -134,18 +122,27 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(duplicate, GetFlags) == (ReadWrite | NonBlocking));
     Require(sceKernelFcntl(duplicate, SetFlags, 0) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
-    const int closing = sceKernelFcntl(socket, DuplicateCloseOnExec, duplicate + 1);
+    Require(sceKernelFcntl(socket, DuplicateCloseOnExec, duplicate + 1) == SceEnotsup);
+    RequireFailure(fcntl_nid_postfix(socket, DuplicateCloseOnExec, duplicate + 1), GuestEopnotsupp);
+    const int closing = sceKernelFcntl(socket, DuplicateCommand, duplicate + 1);
     Require(closing >= duplicate + 1);
+    Require(sceKernelFcntl(closing, SetDescriptorFlags, 1) == 0);
     Require(sceKernelFcntl(closing, GetDescriptorFlags) == 1);
     Require(sceKernelFcntl(socket, SetDescriptorFlags, 0) == 0);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 0);
     Require(fcntl_nid_postfix(socket, Duplicate2Command, closing) == closing);
     Require(sceKernelFcntl(closing, GetDescriptorFlags) == 0);
-    Require(sceKernelFcntl(socket, Duplicate2CloseOnExec, closing) == closing);
-    Require(sceKernelFcntl(closing, GetDescriptorFlags) == 1);
+    for (const int target : {closing, socket, -1, -2}) {
+        const int copy = sceKernelFcntl(socket, Duplicate2CloseOnExec, target);
+        Require(copy >= 0 && copy != target && copy != socket && copy != closing);
+        Require(sceKernelFcntl(copy, GetDescriptorFlags) == 0 && sceKernelFcntl(copy, GetFlags) == ReadWrite);
+        Require(close_nid_postfix(copy) == 0);
+        const int posix = fcntl_nid_postfix(socket, Duplicate2CloseOnExec, target);
+        Require(posix >= 0 && posix != target && posix != socket && close_nid_postfix(posix) == 0);
+    }
+    Require(sceKernelFcntl(closing, GetDescriptorFlags) == 0);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 0);
-    Require(sceKernelFcntl(socket, Duplicate2CloseOnExec, socket) == socket);
-    Require(sceKernelFcntl(socket, GetDescriptorFlags) == 1);
+    Require(sceKernelFcntl(socket, SetDescriptorFlags, 1) == 0);
     Require(sceKernelFcntl(socket, Duplicate2Command, socket) == socket);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 1);
     Require(sceKernelFcntl(socket, SetDescriptorFlags, 0) == 0);
@@ -155,10 +152,19 @@ static void SocketsKeepTheirPath() {
     Require(fcntl_nid_postfix(socket, Duplicate2Command, pipe[0]) == pipe[0]);
     Require(sceKernelFcntl(pipe[0], GetFlags) == ReadWrite);
     Require(sceKernelFcntl(pipe[0], GetDescriptorFlags) == 0);
-    Require(sceKernelFcntl(socket, Duplicate2CloseOnExec, pipe[1]) == pipe[1]);
-    Require(sceKernelFcntl(pipe[1], GetFlags) == ReadWrite);
-    Require(sceKernelFcntl(pipe[1], GetDescriptorFlags) == 1);
+    const int pipeCopy = sceKernelFcntl(socket, Duplicate2CloseOnExec, pipe[1]);
+    Require(pipeCopy >= 0 && pipeCopy != pipe[1] && sceKernelFcntl(pipeCopy, GetDescriptorFlags) == 0 && close_nid_postfix(pipeCopy) == 0);
+    Require(sceKernelFcntl(pipe[1], GetDescriptorFlags) == 0);
+    for (const int end : pipe) {
+        const int copy = fcntl_nid_postfix(end, Duplicate2CloseOnExec, 300);
+        Require(copy >= 0 && copy != end && copy != 300 && fcntl_nid_postfix(copy, GetDescriptorFlags) == 0 && close_nid_postfix(copy) == 0);
+    }
+    for (const int end : pipe) RequireFailure(fcntl_nid_postfix(end, DuplicateCloseOnExec, 0), GuestEopnotsupp);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    const int shared = shm_open_nid_postfix(reinterpret_cast<const char*>(1), ReadWrite, 0600);
+    Require(shared >= 0);
+    RequireFailure(fcntl_nid_postfix(shared, DuplicateCloseOnExec, 0), GuestEopnotsupp);
+    Require(close_nid_postfix(shared) == 0);
     const int random = sceKernelOpen("/dev/urandom", ReadOnly, 0);
     Require(random >= 0);
     Require(fcntl_nid_postfix(socket, Duplicate2Command, random) == random);
@@ -168,19 +174,22 @@ static void SocketsKeepTheirPath() {
     Require(file == random);
     char byte = 0;
     Require(sceKernelRead(file, &byte, 1) == 0);
-    Require(sceKernelFcntl(socket, Duplicate2CloseOnExec, file) == file);
-    Require(sceKernelFcntl(file, GetFlags) == ReadWrite);
-    Require(sceKernelFcntl(file, GetDescriptorFlags) == 1);
+    const int fileCopy = sceKernelFcntl(file, Duplicate2CloseOnExec, 300);
+    Require(fileCopy >= 0 && fileCopy != file && fileCopy != 300);
+    Require(sceKernelFcntl(fileCopy, GetDescriptorFlags) == 0 && sceKernelFcntl(fileCopy, GetFlags) == ReadWrite);
+    Require(sceKernelLseek(file, 1, 0) == 1 && sceKernelLseek(fileCopy, 0, 1) == 1);
+    Require(close_nid_postfix(fileCopy) == 0);
+    RequireFailure(fcntl_nid_postfix(-1, Duplicate2CloseOnExec, 300), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(9999, Duplicate2CloseOnExec, 300), GuestEbadf);
+    Require(sceKernelFcntl(9999, Duplicate2CloseOnExec, 300) == SceEbadf);
     Require(close_nid_postfix(file) == 0);
     std::remove("kernel_fcntl_socket_dup2.bin");
     RequireFailure(fcntl_nid_postfix(socket, DuplicateCommand, -1), GuestEinval);
-    RequireFailure(fcntl_nid_postfix(socket, DuplicateCloseOnExec, -1), GuestEinval);
+    RequireFailure(fcntl_nid_postfix(socket, DuplicateCloseOnExec, -1), GuestEopnotsupp);
     RequireFailure(fcntl_nid_postfix(socket, Duplicate2Command, -1), GuestEbadf);
-    RequireFailure(fcntl_nid_postfix(socket, Duplicate2CloseOnExec, -1), GuestEbadf);
     Require(sceKernelFcntl(socket, DuplicateCommand, -1) == SceEinval);
-    Require(sceKernelFcntl(socket, DuplicateCloseOnExec, -1) == SceEinval);
+    Require(sceKernelFcntl(socket, DuplicateCloseOnExec, -1) == SceEnotsup);
     Require(sceKernelFcntl(socket, Duplicate2Command, -1) == SceEbadf);
-    Require(sceKernelFcntl(socket, Duplicate2CloseOnExec, -1) == SceEbadf);
     Require(sceKernelFcntl(socket, SetFlags, 0x8000) == SceEnotsup);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     Require(sceKernelFcntl(socket, 5) == SceEinval);
@@ -231,9 +240,13 @@ static void FileFlagsRoundTrip() {
     Require(fcntl_nid_postfix(duplicate, GetDescriptorFlags) == 0);
     Require(fcntl_nid_postfix(file, SetFlags, NonBlocking) == 0);
     Require(fcntl_nid_postfix(duplicate, GetFlags) == (ReadWrite | NonBlocking));
-    const int closing = fcntl_nid_postfix(file, DuplicateCloseOnExec, duplicate);
-    Require(closing > duplicate);
-    Require(fcntl_nid_postfix(closing, GetDescriptorFlags) == 1);
+    for (const int minimum : {0, duplicate, 200, -1}) {
+        RequireFailure(fcntl_nid_postfix(file, DuplicateCloseOnExec, minimum), GuestEopnotsupp);
+        Require(sceKernelFcntl(file, DuplicateCloseOnExec, minimum) == SceEnotsup);
+    }
+    RequireFailure(fcntl_nid_postfix(-1, DuplicateCloseOnExec, 0), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(9999, DuplicateCloseOnExec, 0), GuestEbadf);
+    Require(sceKernelFcntl(-1, DuplicateCloseOnExec, 0) == SceEbadf);
     Require(fcntl_nid_postfix(file, GetDescriptorFlags) == 0);
 
     Require(write_nid_postfix(file, "abcde", 5) == 5);
@@ -263,7 +276,7 @@ static void FileFlagsRoundTrip() {
     lock.type = 7;
     RequireFailure(fcntl_nid_postfix(file, SetLock, &lock), GuestEinval);
 
-    for (const int descriptor : {closing, duplicate, file}) Require(close_nid_postfix(descriptor) == 0);
+    for (const int descriptor : {duplicate, file}) Require(close_nid_postfix(descriptor) == 0);
     RequireFailure(fcntl_nid_postfix(file, GetDescriptorFlags), GuestEbadf);
     RequireFailure(fcntl_nid_postfix(file, DuplicateCommand, 0), GuestEbadf);
     RequireFailure(ioctl_nid_postfix(file, ReadableRequest, &readable), GuestEbadf);
@@ -296,7 +309,7 @@ static void FileFlagsRoundTrip() {
     char written[16]{};
     Require(sceKernelRead(reading, written, sizeof(written)) == 8 && std::memcmp(written, "Ybcdeabc", 8) == 0);
     Require(sceKernelClose(reading) == 0);
-    Require(ThrowsWith([appending] { fcntl_nid_postfix(appending, SetFlags, Append | 0x80); }, "fcntl: changing O_FSYNC on a file is not implemented"));
+    Require(fcntl_nid_postfix(appending, SetFlags, Append | 0x80) == 0 && fcntl_nid_postfix(appending, GetFlags) == (WriteOnly | Append | 0x80));
     Require(sceKernelClose(appending) == 0);
     std::remove("kernel_fcntl_probe.bin");
 }

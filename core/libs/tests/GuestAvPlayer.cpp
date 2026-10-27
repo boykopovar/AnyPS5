@@ -1,3 +1,4 @@
+#include "prx/libSceAvPlayer/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -24,37 +25,6 @@
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
-
-extern "C" {
-AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData*);
-int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx*, AvPlayerInternal**);
-int APS5_VABI sceAvPlayerPostInit(AvPlayerInternal*, const AvPlayerPostInitData*);
-int APS5_VABI sceAvPlayerSetLogCallback(void*, void*);
-int APS5_VABI sceAvPlayerAddSource(AvPlayerInternal*, const char*);
-int APS5_VABI sceAvPlayerStreamCount(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerGetStreamInfo(AvPlayerInternal*, std::uint32_t, AvPlayerStreamInfo*);
-int APS5_VABI sceAvPlayerGetStreamInfoEx(AvPlayerInternal*, std::uint32_t, AvPlayerStreamInfoEx*);
-int APS5_VABI sceAvPlayerEnableStream(AvPlayerInternal*, std::uint32_t);
-int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal*, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal*, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAvPlayerStart(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const AvPlayer::StartInfo*);
-int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal*, std::uint32_t, const void*);
-int APS5_VABI sceAvPlayerDisableStream(AvPlayerInternal*, std::uint32_t);
-int APS5_VABI sceAvPlayerStop(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerPause(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerResume(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerJumpToTime(AvPlayerInternal*, std::uint64_t);
-int APS5_VABI sceAvPlayerSetLooping(AvPlayerInternal*, Bool);
-int APS5_VABI sceAvPlayerSetAvSyncMode(AvPlayerInternal*, std::uint32_t);
-int APS5_VABI sceAvPlayerSetTrickSpeed(AvPlayerInternal*, std::int32_t);
-Bool APS5_VABI sceAvPlayerGetVideoDataEx(AvPlayerInternal*, AvPlayerFrameInfoEx*);
-Bool APS5_VABI sceAvPlayerGetVideoData(AvPlayerInternal*, AvPlayerFrameInfo*);
-Bool APS5_VABI sceAvPlayerGetAudioData(AvPlayerInternal*, AvPlayerFrameInfo*);
-Bool APS5_VABI sceAvPlayerIsActive(AvPlayerInternal*);
-std::uint64_t APS5_VABI sceAvPlayerCurrentTime(AvPlayerInternal*);
-int APS5_VABI sceAvPlayerClose(AvPlayerInternal*);
-}
 
 namespace {
 
@@ -836,6 +806,8 @@ void TestPlayback() {
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
     Check(!sceAvPlayerIsActive(player), "active without a source");
     Check(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
     Check(sceAvPlayerAddSource(player, "/app0/missing/../avplayer.mp4") == OperationFailed, "missing parent accepted");
@@ -1071,6 +1043,7 @@ void TestExtendedExports() {
     Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
     Check(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
     Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == OperationFailed, "bandwidth accepted after a source");
     Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");

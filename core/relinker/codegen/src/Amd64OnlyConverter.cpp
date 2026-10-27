@@ -103,6 +103,7 @@ private:
 
     [[nodiscard]] std::uint64_t _address(const std::size_t index) const { return _ph.MappedAddress + _matches[index].Offset; }
     [[nodiscard]] std::uint64_t _end(const std::size_t index) const { return _address(index) + _matches[index].Length; }
+    [[nodiscard]] static std::int64_t _distance(const std::uint64_t to, const std::uint64_t from) { return static_cast<std::int64_t>(to - from); }
     [[nodiscard]] std::span<const std::uint8_t> _bytes(const std::size_t index) const { return {_seg.data() + _matches[index].Offset, _matches[index].Length}; }
     [[nodiscard]] DecodedInstructionInfo _info(const std::size_t index) const { return _decoder.DecodeInstruction(_seg.data() + _matches[index].Offset, _matches[index].Length); }
 
@@ -166,7 +167,7 @@ private:
             if (head == 0 && _end(last) - _address(start) >= kJmpRel32.Size)
                 head = static_cast<std::size_t>(_end(last) - _address(start));
             const auto island = _address(start) + head;
-            const auto reach = static_cast<std::int64_t>(island) - static_cast<std::int64_t>(_address(index) + kShortJumpSize);
+            const auto reach = _distance(island, _address(index) + kShortJumpSize);
             if (head != 0 && (reach < std::numeric_limits<std::int8_t>::min() || reach > std::numeric_limits<std::int8_t>::max()))
                 return std::nullopt;
             if (head != 0 && _end(last) >= island + kJmpRel32.Size) {
@@ -200,9 +201,9 @@ private:
         placement.Sites.push_back(_site(windowStart, head, moved.Finish()));
 
         StubBodyBuilder lowered;
-        lowered.Seek(static_cast<std::int64_t>(store) - static_cast<std::int64_t>(island));
+        lowered.Seek(_distance(store, island));
         _matcher.EmitOutOfLine(lowered, _bytes(index));
-        lowered.JumpTo(static_cast<std::int64_t>(_end(index)) - static_cast<std::int64_t>(island));
+        lowered.JumpTo(_distance(_end(index), island));
         placement.Sites.push_back(_site(island, kJmpRel32.Size, lowered.Finish()));
         placement.ReplacementLength = placement.Sites.back().Body.size();
         placement.Claimed.push_back(index);
@@ -210,7 +211,7 @@ private:
         const auto offset = _matches[index].Offset;
         std::fill_n(_seg.begin() + static_cast<std::ptrdiff_t>(offset), _matches[index].Length, Amd64OnlySubstitutionTable::kTrapFill);
         _seg[offset] = X64OpcodeConstants::OneByteJmpRel8;
-        _seg[offset + 1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(island) - static_cast<std::int64_t>(store + kShortJumpSize)));
+        _seg[offset + 1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(_distance(island, store + kShortJumpSize)));
         return placement;
     }
 };

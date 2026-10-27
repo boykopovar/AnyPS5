@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <csignal>
 #include <initializer_list>
@@ -9,33 +11,13 @@
 #include <chrono>
 #include <thread>
 using Handler = void (APS5_VABI *)(int);
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
+
 extern "C" {
-Handler APS5_VABI signal_nid_postfix(int, Handler);
-int APS5_VABI raise_nid_postfix(int);
-int APS5_VABI kill_nid_postfix(int, int);
-int APS5_VABI getpid_nid_postfix();
-int APS5_VABI pthread_kill_nid_postfix(void*, int);
-void* APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadCreate(void** thread, const void* attr, void* (APS5_VABI *entry)(void*), void* arg, const char* name);
-int APS5_VABI scePthreadJoin(void* thread, void** retval);
-int APS5_VABI sigaction_nid_postfix(int, const void*, void*);
-int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
-int APS5_VABI pthread_sigmask_nid_postfix(int, const void*, void*);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet*);
-int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t);
+
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
-int APS5_VABI sigpending_nid_postfix(GuestSignalSet*);
-int APS5_VABI siginterrupt_nid_postfix(int, int);
+
 }
-struct GuestSigaction {
-    std::uintptr_t handler;
-    int flags;
-    GuestSignalSet mask;
-};
+
 static_assert(sizeof(GuestSigaction) == 32);
 extern GuestSignalSet _sigintr_nid_postfix;
 static bool Same(const GuestSigaction& left, const GuestSigaction& right) {
@@ -56,7 +38,7 @@ void* APS5_VABI SuspendEntry(void* arg) {
     return nullptr;
 }
 struct SuspendSender {
-    void* target = nullptr;
+    Pthread target = nullptr;
     int result = -1;
 };
 struct EndingThread {
@@ -81,6 +63,7 @@ GuestSignalSet maskInHandler{};
 void APS5_VABI MaskCallback(int value) {
     received = value;
     sigprocmask_nid_postfix(1, nullptr, &maskInHandler);
+
 }
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
@@ -104,11 +87,11 @@ int main() {
     Require(pthread_kill_nid_postfix(nullptr, 15) == 3);
     Require(pthread_kill_nid_postfix(nullptr, 128) == 3);
     Require(pthread_kill_nid_postfix(nullptr, 129) == 22);
-    Require(pthread_kill_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{0x10}), 15) == 3);
-    Require(pthread_kill_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{0x10}), 0) == 3);
+    Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 15) == 3);
+    Require(pthread_kill_nid_postfix(reinterpret_cast<Pthread>(std::uintptr_t{0x10}), 0) == 3);
     {
         EndingThread ending;
-        void* thread = nullptr;
+        Pthread thread = nullptr;
         Require(scePthreadCreate(&thread, nullptr, EndingEntry, &ending, nullptr) == 0);
         Require(pthread_kill_nid_postfix(thread, 0) == 0);
         ending.release.store(true);
@@ -200,6 +183,7 @@ int main() {
     bool rejected = false;
     try {
         raise_nid_postfix(6);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -247,15 +231,15 @@ int main() {
     received = 0;
     Require(raise_nid_postfix(30) == 0 && received == 0);
     Require(sigsuspend_nid_postfix(&suspendWithKillAndStop) == -1 && received == 30);
-    Require(maskInHandler.bits[0] == (1u << 28));
+    Require(maskInHandler.bits[0] == ((1u << 28) | (1u << 29)));
     Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == user.bits[0]);
     Require(signal_nid_postfix(30, Callback) != invalid);
     received = 0;
     SuspendWait wait{&empty, 0, 0};
-    void* suspender = nullptr;
+    Pthread suspender = nullptr;
     Require(scePthreadCreate(&suspender, nullptr, SuspendEntry, &wait, nullptr) == 0);
     SuspendSender sender{suspender, -1};
-    void* senderThread = nullptr;
+    Pthread senderThread = nullptr;
     Require(scePthreadCreate(&senderThread, nullptr, SuspendSend, &sender, nullptr) == 0);
     Require(scePthreadJoin(senderThread, nullptr) == 0 && sender.result == 0);
     Require(scePthreadJoin(suspender, nullptr) == 0);
@@ -270,10 +254,10 @@ int main() {
     Require(signal_nid_postfix(73, Callback) != invalid);
     received = 0;
     SuspendWait highWait{&suspendMask, 0, 0};
-    void* highSuspender = nullptr;
+    Pthread highSuspender = nullptr;
     Require(scePthreadCreate(&highSuspender, nullptr, SuspendEntry, &highWait, nullptr) == 0);
     SuspendSender highSender{highSuspender, -1};
-    void* highSenderThread = nullptr;
+    Pthread highSenderThread = nullptr;
     Require(scePthreadCreate(&highSenderThread, nullptr, SuspendSend, &highSender, nullptr) == 0);
     Require(scePthreadJoin(highSenderThread, nullptr) == 0 && highSender.result == 0);
     Require(scePthreadJoin(highSuspender, nullptr) == 0);
@@ -458,6 +442,7 @@ int main() {
     Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 &&
         interruptible.handler == reinterpret_cast<std::uintptr_t>(Callback) && interruptible.flags == 0);
     signal_nid_postfix(31, Callback);
+
     Require(sigaction_nid_postfix(31, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
     _sigintr_nid_postfix.bits[3] = 1u << 31;
     Require(signal_nid_postfix(128, Callback) == nullptr);

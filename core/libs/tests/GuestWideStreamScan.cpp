@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdarg>
@@ -8,15 +9,7 @@
 
 extern "C" {
 extern FileStream* __stdinp_nid_postfix;
-int APS5_VABI vfwscanf_nid_postfix(FileStream*, const char16_t*, void*);
-int APS5_VABI vfwscanf_s_nid_postfix(FileStream*, const char16_t*, void*);
-int APS5_VABI vwscanf_nid_postfix(const char16_t*, void*);
-int APS5_VABI vwscanf_s_nid_postfix(const char16_t*, void*);
-int APS5_VABI fwscanf_nid_postfix(FileStream*, const char16_t*, ...);
-int APS5_VABI fwscanf_s_nid_postfix(FileStream*, const char16_t*, ...);
-int APS5_VABI wscanf_nid_postfix(const char16_t*, ...);
-int APS5_VABI wscanf_s_nid_postfix(const char16_t*, ...);
-std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream*);
+
 }
 
 #ifdef _WIN32
@@ -35,28 +28,28 @@ static void Require(bool value, const char* what) {
 
 static int APS5_VABI ScanStream(FileStream* stream, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vfwscanf_nid_postfix(stream, format, args);
+    const int result = vfwscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanStreamSized(FileStream* stream, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vfwscanf_s_nid_postfix(stream, format, args);
+    const int result = vfwscanf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanInput(const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vwscanf_nid_postfix(format, args);
+    const int result = vwscanf_nid_postfix(format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanInputSized(const char16_t* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vwscanf_s_nid_postfix(format, args);
+    const int result = vwscanf_s_nid_postfix(format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }

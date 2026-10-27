@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -6,17 +8,10 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSaveDataConvert(const SaveDataConvert*);
-int APS5_VABI sceSaveDataGetConvertProgress(float*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataGetEventResult(const void*, SaveDataEvent*);
-}
 
 namespace {
 
@@ -30,6 +25,15 @@ void Check(bool condition, const std::string& what) {
     if (condition) return;
     std::fprintf(stderr, "savedata convert check failed: %s\n", what.c_str());
     ++failures;
+}
+
+bool Throws(const SaveDataConvert* convert) {
+    try {
+        sceSaveDataConvert(convert);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 int Convert(const char* data, std::size_t size) {
@@ -59,6 +63,9 @@ int main() {
 
     float progress = 0.0f;
     Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query before initialize fails with not initialized");
+    Check(Throws(nullptr), "null convert pointer throws");
+    SaveDataConvert nullDir{};
+    Check(Throws(&nullDir), "null dir_name throws");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");

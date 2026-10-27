@@ -199,6 +199,14 @@ void windowsGuiRequiresWindows() {
     require(ok.windowsGui && ok.toWindows, "--windows-gui with --windows was rejected");
 }
 
+void frameRedZoneRequiresWindows() {
+    const std::string message = "--frame-red-zone requires --windows";
+    expectThrows({"--frame-red-zone", "input.elf", "output.elf"}, message);
+    expectThrows({"--macos", "--frame-red-zone", "input.elf", "output.elf"}, message);
+    const auto ok = parse({"--windows", "--frame-red-zone", "input.elf", "output.elf"});
+    require(ok.frameRedZone && ok.toWindows, "--frame-red-zone with --windows was rejected");
+}
+
 void missingPositionals() {
     expectUsage({});
     expectUsage({"input.elf"});
@@ -322,7 +330,7 @@ void verifyMode() {
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
-    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--frame-red-zone", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
         expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
@@ -361,6 +369,7 @@ int main() {
         tooManyPositionals();
         windowsDiagnosticsRequiresWindows();
         windowsGuiRequiresWindows();
+        frameRedZoneRequiresWindows();
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();

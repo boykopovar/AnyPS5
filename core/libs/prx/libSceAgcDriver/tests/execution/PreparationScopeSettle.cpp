@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -14,8 +15,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
-
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
 namespace {
 

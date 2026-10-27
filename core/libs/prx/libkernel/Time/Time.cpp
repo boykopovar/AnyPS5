@@ -1,3 +1,7 @@
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
@@ -33,23 +37,19 @@
 #ifdef __linux__
 #include <dlfcn.h>
 #include <link.h>
+#include <pthread.h>
+#include <sched.h>
 #endif // __linux__
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
 static bool IsCpuClock(int clockId) {
-    const auto bits = static_cast<std::uint32_t>(clockId);
-    if ((bits & CPU_CLOCK_BIT) == 0)
-        return false;
-    if ((bits & CPU_CLOCK_PROCESS_BIT) != 0)
-        throw std::runtime_error("clock: unsupported process CPU clock_id " + std::to_string(clockId));
-    return true;
+    return (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_BIT) != 0;
 }
 
 static std::uint64_t RawMonotonicNanos() {
@@ -119,16 +119,6 @@ static const bool g_timerResolutionRaised = [] {
     return raised;
 }();
 
-extern "C" {
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-}
-
 static void ReportTimedWait(const char* name, const std::function<void()>& body) {
     std::vector<double> samples(200);
     for (auto& sample : samples) {
@@ -152,11 +142,13 @@ static const bool g_timerSelfTest = [] {
     scePthreadCondInit(&cond, nullptr, nullptr);
     scePthreadMutexInit(&guestMutex, nullptr, nullptr);
     scePthreadMutexLock(&guestMutex);
+
     ReportTimedWait("scePthreadCondTimedwait(1000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 1000); });
     ReportTimedWait("scePthreadCondTimedwait(13000 us)", [&] { scePthreadCondTimedwait(&cond, &guestMutex, 13000); });
     scePthreadMutexUnlock(&guestMutex);
     scePthreadMutexDestroy(&guestMutex);
     scePthreadCondDestroy(&cond);
+
     ReportTimedWait("sceKernelUsleep(1000)", [&] { sceKernelUsleep_nid_postfix(1000); });
     ReportTimedWait("Sleep(1)", [&] { Sleep(1); });
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -168,6 +160,45 @@ static const bool g_timerSelfTest = [] {
     return true;
 }();
 #endif
+
+namespace {
+
+class CurrentCpuPin {
+public:
+    CurrentCpuPin() {
+#ifdef _WIN32
+        previous = SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << GetCurrentProcessorNumber());
+#elif defined(__linux__)
+        const int cpu = sched_getcpu();
+        if (cpu < 0 || cpu >= CPU_SETSIZE || pthread_getaffinity_np(pthread_self(), sizeof(previous), &previous) != 0) return;
+        cpu_set_t one;
+        CPU_ZERO(&one);
+        CPU_SET(cpu, &one);
+        pinned = pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0;
+#endif
+    }
+
+    ~CurrentCpuPin() {
+#ifdef _WIN32
+        if (previous != 0) SetThreadAffinityMask(GetCurrentThread(), previous);
+#elif defined(__linux__)
+        if (pinned) pthread_setaffinity_np(pthread_self(), sizeof(previous), &previous);
+#endif
+    }
+
+    CurrentCpuPin(const CurrentCpuPin&) = delete;
+    CurrentCpuPin& operator=(const CurrentCpuPin&) = delete;
+
+private:
+#ifdef _WIN32
+    DWORD_PTR previous = 0;
+#elif defined(__linux__)
+    cpu_set_t previous{};
+    bool pinned = false;
+#endif
+};
+
+}
 
 extern "C" {
 
@@ -397,8 +428,11 @@ static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
 
 static int ReadClock(int clockId, KernelTimespec* tp) {
     if (IsCpuClock(clockId)) {
+        const int id = static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK);
+        const bool process = (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_PROCESS_BIT) != 0;
+        if (process && id == getpid_nid_postfix()) return ReadClock(GUEST_CLOCK_PROCESS_CPUTIME_ID, tp);
         std::uint64_t nanos = 0;
-        if (!GuestThreadCpuNanos(static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK), &nanos)) {
+        if (process || !GuestThreadCpuNanos(id, &nanos)) {
             *__error_nid_postfix() = GUEST_EINVAL;
             return -1;
         }
@@ -507,6 +541,9 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     return 0;
 }
 
+static std::mutex guestTimezoneMutex;
+static KernelTimezone guestTimezone{0, 0};
+
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     KernelTimeval ignoredTime{};
     if (tv == nullptr) tv = &ignoredTime;
@@ -526,8 +563,8 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     tv->tv_usec = static_cast<std::int64_t>(native.tv_usec);
 #endif
     if (tz != nullptr) {
-        tz->tz_minuteswest = 0;
-        tz->tz_dsttime = 0;
+        std::lock_guard lock(guestTimezoneMutex);
+        *tz = guestTimezone;
     }
     return 0;
 }
@@ -630,6 +667,23 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
     throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
 }
 
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    if (tv != nullptr && (tv->tv_usec < 0 || tv->tv_usec >= 1000000 || tv->tv_sec < 0)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (tv != nullptr) {
+        char requested[48];
+        std::snprintf(requested, sizeof(requested), "%lld.%06lld", static_cast<long long>(tv->tv_sec), static_cast<long long>(tv->tv_usec));
+        throw std::runtime_error(std::string("settimeofday: setting the time to ") + requested + " is not supported, the host clock is not changed");
+    }
+    if (tz != nullptr) {
+        std::lock_guard lock(guestTimezoneMutex);
+        guestTimezone = *tz;
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Moved as-is (not yet implemented) from the monolithic libkernel/Export.cpp.
 // ---------------------------------------------------------------------------
@@ -716,7 +770,8 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
 
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return SceKernelErrorEfault;
-    *tz = {0, 0};
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    *tz = {static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
     return 0;
 }
 
@@ -728,6 +783,7 @@ uint64_t APS5_VABI sceKernelReadTsc(void) {
 
 uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
     static const std::uint64_t frequency = [] {
+        const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
         const std::uint64_t startTicks = __rdtsc();
         TimedWait::SleepNanos(20000000ULL);
