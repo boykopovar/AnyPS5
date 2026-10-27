@@ -19,6 +19,9 @@ struct DetilerCapture {
     VkBuffer destinationBuffer;
     VkDeviceSize destinationOffset;
     VkDeviceSize destinationRange;
+    VkBuffer originalBuffer;
+    VkDeviceSize originalOffset;
+    VkDeviceSize originalRange;
 };
 
 struct TextureDetilerTestAccess {

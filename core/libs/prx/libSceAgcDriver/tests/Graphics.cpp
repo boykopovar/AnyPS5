@@ -13118,9 +13118,10 @@ int main(int argc, char** argv) {
             },
             [](VkBuffer buffer) -> std::vector<std::byte>& { return mock.memories.at(mock.bufferMemory.at(buffer)); },
             [] {
-                Require(mock.writes.size() >= 2, "expected texture detiling descriptor writes");
-                const auto& destinationWrite = mock.writes.back();
-                const auto& sourceWrite = mock.writes[mock.writes.size() - 2];
+                Require(mock.writes.size() >= 3, "expected texture detiling descriptor writes");
+                const auto& originalWrite = mock.writes.back();
+                const auto& destinationWrite = mock.writes[mock.writes.size() - 2];
+                const auto& sourceWrite = mock.writes[mock.writes.size() - 3];
                 DetilerCapture capture{};
                 capture.groupsX = mock.lastDispatchGroups.x;
                 capture.groupsY = mock.lastDispatchGroups.y;
@@ -13132,6 +13133,9 @@ int main(int argc, char** argv) {
                 capture.destinationBuffer = destinationWrite.buffers.at(0).buffer;
                 capture.destinationOffset = destinationWrite.buffers.at(0).offset;
                 capture.destinationRange = destinationWrite.buffers.at(0).range;
+                capture.originalBuffer = originalWrite.buffers.at(0).buffer;
+                capture.originalOffset = originalWrite.buffers.at(0).offset;
+                capture.originalRange = originalWrite.buffers.at(0).range;
                 return capture;
             },
             [] { return mock.pipelineCreateCount; },
