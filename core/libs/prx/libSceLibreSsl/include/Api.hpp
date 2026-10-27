@@ -21,6 +21,15 @@ struct CryptoThreadId {
     std::uint64_t val;
 };
 
+struct LibreSslAsn1Object {
+    const char* shortName;
+    const char* longName;
+    std::int32_t nid;
+    std::int32_t length;
+    const unsigned char* data;
+    std::int32_t flags;
+};
+
 struct Md4Context {
     std::uint32_t A, B, C, D;
     std::uint32_t Nl, Nh;
@@ -467,7 +476,7 @@ int APS5_VABI d2i_RSA_PUBKEY_nid_postfix(void);
 int APS5_VABI d2i_X509_nid_postfix(void);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(void);
 int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void);
-int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(void);
+int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object);
 int APS5_VABI sceLibreSslGetMemoryPoolStats(void);
 int APS5_VABI sceLibreSslInit(void);
 int APS5_VABI sceLibreSslInitEx(void);

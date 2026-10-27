@@ -33,6 +33,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Tsd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/GuestTlsMacOs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Rwlock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/MainThreadMacOs.cpp
@@ -120,6 +121,7 @@ if(BUILD_TESTING)
     if(WIN32)
         list(APPEND aprReadCases fault stack)
     endif()
+    list(APPEND aprReadCases queries)
     foreach(aprReadCase IN LISTS aprReadCases)
         set(aprReadRun ${CMAKE_CURRENT_BINARY_DIR}/apr_read_${aprReadCase})
         file(MAKE_DIRECTORY ${aprReadRun})
@@ -506,6 +508,24 @@ if(BUILD_TESTING)
     target_link_libraries(guest_aio_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_aio_tests)
     add_test(NAME guest_aio COMMAND guest_aio_tests)
+    add_test_executable(guest_aio_registry_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestAioRegistry.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp)
+    target_include_directories(guest_aio_registry_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_aio_registry_tests PRIVATE ANYPS5_AIO_TESTING)
+    target_link_libraries(guest_aio_registry_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_aio_registry_tests)
+    if(WIN32)
+        target_compile_definitions(guest_aio_registry_tests PRIVATE _WIN32_WINNT=0x0602)
+    endif()
+    foreach(mode identity admission rollback identity-exhaustion processing processing-rollback)
+        add_test(NAME guest_aio_${mode} COMMAND guest_aio_registry_tests ${mode})
+        set_tests_properties(guest_aio_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_aio_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
     if(WIN32)
         add_test(NAME guest_aio_bad_descriptors COMMAND guest_aio_tests bad-descriptors)
         set_tests_properties(guest_aio_bad_descriptors PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION

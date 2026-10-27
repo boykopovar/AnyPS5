@@ -173,6 +173,10 @@ def check_options(relinker, directory):
     source.write_bytes(bytes(import_fixture()))
     result = subprocess.run([str(relinker), "--macos", "--windows", "--skip-sce-module", str(source), str(Path(directory) / "conflict")], capture_output=True, text=True, timeout=120)
     check(result.returncode != 0 and "--windows conflicts with --macos" in result.stdout + result.stderr, "--macos together with --windows was accepted")
+    lazy = Path(directory) / "lazy"
+    result = subprocess.run([str(relinker), "--macos", "--lazy-binding", "--skip-sce-module", str(source), str(lazy)], capture_output=True, text=True, timeout=120)
+    check(result.returncode == 2 and "macOS target does not support --lazy-binding" in result.stderr, f"--macos with --lazy-binding: exit {result.returncode}: {result.stdout}{result.stderr}")
+    check(not lazy.exists(), "--macos with --lazy-binding created an output")
 
 
 def check_runpath_lists(relinker, directory):
@@ -205,6 +209,70 @@ def check_runpath_lists(relinker, directory):
         check(not output.exists(), "empty run path created an output")
 
 
+def uleb(data, offset):
+    value = shift = 0
+    while True:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, offset
+
+
+def rebases(data):
+    macho = MachO(data)
+    offset, end = macho.dyld_info[0], macho.dyld_info[0] + macho.dyld_info[1]
+    found = []
+    segment = address = 0
+    while offset < end:
+        opcode, immediate = data[offset] & 0xF0, data[offset] & 0x0F
+        offset += 1
+        if opcode == 0x00:
+            break
+        if opcode == 0x20:
+            segment = immediate
+            address, offset = uleb(data, offset)
+        elif opcode == 0x30:
+            delta, offset = uleb(data, offset)
+            address += delta
+        elif opcode == 0x40:
+            address += immediate * 8
+        elif opcode in (0x50, 0x60, 0x70):
+            count = immediate if opcode == 0x50 else 1
+            if opcode == 0x60:
+                count, offset = uleb(data, offset)
+            for _ in range(count):
+                found.append((macho.segments[segment]["name"], address))
+                address += 8
+            if opcode == 0x70:
+                delta, offset = uleb(data, offset)
+                address += delta
+        elif opcode != 0x10:
+            raise SystemExit(f"rebase opcode {opcode:#x} is not decoded")
+    return found
+
+
+def check_fixup_protection(relinker, directory):
+    for name, target in (("fixup-data", 0x5200), ("fixup-code", 0x4100)):
+        image = import_fixture()
+        struct.pack_into("<QQq", image, 0x5C30, target, 8, 0x5100)
+        struct.pack_into("<qQ", image, 0x5800 + 7 * 16, 8, 72)
+        source = Path(directory) / f"{name}.elf"
+        output = Path(directory) / name
+        source.write_bytes(bytes(image))
+        result = subprocess.run([str(relinker), "--macos", "--skip-sce-module", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        if target == 0x4100:
+            check(result.returncode == 2 and "FAIL: Mach-O fixup target is not in a writable segment (offset 0x10100)" in result.stderr,
+                  f"{name}: rebase into a non-writable segment accepted: {result.returncode} {result.stdout}{result.stderr}")
+            check(not output.exists(), f"{name}: rejected fixup created an output")
+        else:
+            check(result.returncode == 0, f"{name}: {result.stdout}{result.stderr}")
+            found = rebases(output.read_bytes())
+            check(("__ELF1", 0x200) in found, f"{name}: no rebase at __ELF1+0x200 in {found}")
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-macos-output-") as directory:
@@ -213,6 +281,7 @@ def main():
         check_tls(relink(relinker, directory, "tls", tls_fixture()))
         check_options(relinker, directory)
         check_runpath_lists(relinker, directory)
+        check_fixup_protection(relinker, directory)
     print("macOS output checks passed")
 
 

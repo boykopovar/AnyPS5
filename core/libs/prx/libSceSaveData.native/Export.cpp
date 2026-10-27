@@ -940,7 +940,7 @@ int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond,
 
 static int convert(const SaveDataConvert* param) {
     if (param == nullptr || param->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataConvert: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     g_convertProgress = 0.0f;
     const auto* nameEnd = static_cast<const char*>(std::memchr(param->dir_name->data, '\0', sizeof(param->dir_name->data)));

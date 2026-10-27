@@ -278,15 +278,17 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
     std::set<std::uint64_t> targets;
     for (const auto& match : matches) {
         const auto info = decoder.DecodeInstruction(seg.data() + match.Offset, match.Length);
-        const auto next = static_cast<std::int64_t>(ph.MappedAddress + match.Offset + info.Length);
+        const auto next = ph.MappedAddress + match.Offset + info.Length;
         if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-            const auto target = next + info.BranchDisp;
-            if (target >= 0 && !pastPrefixes(static_cast<std::uint64_t>(target)))
-                targets.insert(static_cast<std::uint64_t>(target));
+            const auto displacement = static_cast<std::uint64_t>(info.BranchDisp);
+            const auto target = next + displacement;
+            const auto wrapped = info.BranchDisp < 0 ? target > next : target < next;
+            if (!wrapped && !pastPrefixes(target))
+                targets.insert(target);
         } else if (info.HasRipRelativeDisp && info.Opcode == kLea) {
             std::int32_t displacement;
             std::memcpy(&displacement, seg.data() + match.Offset + info.RipRelativeDispOffset, sizeof(displacement));
-            const auto table = static_cast<std::uint64_t>(next + displacement);
+            const auto table = next + static_cast<std::uint64_t>(displacement);
             for (const auto& data : segments) {
                 if (data.Type != kLoadSegment || table < data.MappedAddress || table - data.MappedAddress >= data.FileSize)
                     continue;

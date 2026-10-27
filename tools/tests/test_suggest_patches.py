@@ -18,9 +18,9 @@ VERIFIED = "Verified 1 patches: 1 ok, 0 not-checked, 0 mismatch\n"
 
 class PatchAdvisorTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(prefix="patch advisor-")
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.catalog = self.root / "catalog"
         self.catalog.mkdir()
         self.input = self.root / "eboot.bin"
@@ -387,7 +387,7 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertIn("--patches", output.getvalue())
         self.assertIn("--module-dir Media/Modules", output.getvalue())
         self.assertIn("--executable picker/picker.bin", output.getvalue())
-        self.assertIn(f"--sce-module-path {self.root}", output.getvalue())
+        self.assertIn(suggest_patches.command_line(["--sce-module-path", str(self.root)]), output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_no_entries_for_title_is_distinct(self, run):

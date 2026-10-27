@@ -224,6 +224,7 @@ std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segmen
         const auto& segment = segments[index];
         if (segment.MemorySize == 0 || rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || size > segment.MemorySize - (rva - segment.Rva)) continue;
         if (index > 15) throw Domain::RelinkerException("Too many Mach-O segments for dyld opcodes", rva);
+        if ((segment.Protection & VmProtWrite) == 0) throw Domain::RelinkerException("Mach-O fixup target is not in a writable segment", rva);
         return {static_cast<std::uint8_t>(index), rva - segment.Rva};
     }
     throw Domain::RelinkerException("Mach-O fixup target is outside the image", rva);

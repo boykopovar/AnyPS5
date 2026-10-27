@@ -106,7 +106,7 @@ bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
 
 }
 
-bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputInfo& pixel) const {
+bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins) const {
     std::vector<IrValue*> selects;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -130,12 +130,18 @@ bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputI
     }
     DeadCodeEliminator{}.Eliminate(program);
     if (MaskedSelectEliminator{}.Eliminate(program).removedSelects != 0u) DeadCodeEliminator{}.Eliminate(program);
+    bool smooth = false;
+    bool noPerspective = false;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (isBarycentric(*inst) || inst->Opcode() == IrOpcode::InterpolateHostP1) return false;
+            if (inst->Opcode() == IrOpcode::InterpolateHostP1) return false;
+            if (!isBarycentric(*inst)) continue;
+            const auto kind = static_cast<StageInputKind>(inst->Argument(0)->Resolve()->ImmediateU32());
+            if (!barycentricBuiltins || BarycentricInputOf(kind) != kind) return false;
+            (kind == StageInputKind::BaryCoordSmooth ? smooth : noPerspective) = true;
         }
     }
-    return true;
+    return !(smooth && noPerspective);
 }
 
 }

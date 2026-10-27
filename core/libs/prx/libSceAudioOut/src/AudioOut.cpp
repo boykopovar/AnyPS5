@@ -142,7 +142,7 @@ static bool ensureSdlAudio() {
 }
 
 static bool openDevice(Port& port) {
-    if (!ensureSdlAudio()) {
+    if (!ensureSdlAudio() || SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
         return false;
     }
     SDL_AudioSpec desired{};
