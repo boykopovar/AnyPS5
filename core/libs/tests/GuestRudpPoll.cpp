@@ -3,12 +3,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <thread>
 
 extern "C" {
@@ -27,6 +30,7 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80770004u);
     constexpr int invalidPoll = static_cast<int>(0x8077001Fu);
     constexpr int tooManyContexts = static_cast<int>(0x80770020u);
+    constexpr int canceled = static_cast<int>(0x80770014u);
     constexpr int add = 1;
     constexpr int modify = 2;
     constexpr int remove = 3;
@@ -41,6 +45,7 @@ int main() {
     Require(sceRudpPollControl(1, add, 0, read) == notInitialized);
     Require(sceRudpPollWait(1, events.data(), eventCount, 0) == notInitialized);
     Require(sceRudpPollDestroy(1) == notInitialized);
+    Require(sceRudpPollCancel(1) == notInitialized);
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0);
 
     Require(sceRudpPollCreate(0) == invalidArgument);
@@ -48,6 +53,8 @@ int main() {
     Require(poll > 0);
     const int other = sceRudpPollCreate(2);
     Require(other > 0 && other != poll);
+    Require(sceRudpPollCancel(-1) == invalidArgument);
+    Require(sceRudpPollCancel(12345) == invalidPoll);
 
     int first = -1;
     int second = -1;
@@ -99,6 +106,130 @@ int main() {
     }
 #endif
 
+    const int cancelPoll = sceRudpPollCreate(1);
+    Require(cancelPoll > 0);
+    Require(sceRudpPollCancel(cancelPoll) == 0);
+    Require(sceRudpPollCancel(cancelPoll) == 0);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 0) == canceled);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 0) == 0);
+
+    int firstCancelResult = 0;
+    int secondCancelResult = 0;
+    int cancelWaitersArrived = 0;
+    std::mutex cancelWaitersMutex;
+    std::condition_variable cancelWaitersChanged;
+    const auto cancelWait = [&] {
+        {
+            std::lock_guard<std::mutex> lk(cancelWaitersMutex);
+            ++cancelWaitersArrived;
+        }
+        cancelWaitersChanged.notify_all();
+        return sceRudpPollWait(cancelPoll, events.data(), eventCount, 5000000);
+    };
+    std::thread firstCancelWaiter([&] { firstCancelResult = cancelWait(); });
+    std::thread secondCancelWaiter([&] { secondCancelResult = cancelWait(); });
+    {
+        std::unique_lock<std::mutex> lk(cancelWaitersMutex);
+        cancelWaitersChanged.wait(lk, [&] { return cancelWaitersArrived == 2; });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const auto canceledAt = std::chrono::steady_clock::now();
+    Require(sceRudpPollCancel(cancelPoll) == 0);
+    firstCancelWaiter.join();
+    secondCancelWaiter.join();
+    Require(firstCancelResult == canceled);
+    Require(secondCancelResult == canceled);
+    Require(std::chrono::steady_clock::now() - canceledAt < std::chrono::milliseconds(500));
+
+    Require(sceRudpPollCancel(cancelPoll) == 0);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 0) == canceled);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 0) == 0);
+    Require(sceRudpPollDestroy(cancelPoll) == 0);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 0) == invalidPoll);
+    Require(sceRudpPollCancel(cancelPoll) == invalidPoll);
+
+    const int fanPoll = sceRudpPollCreate(1);
+    Require(fanPoll > 0);
+    int fanResult = -1;
+    int fanArrived = 0;
+    std::mutex fanMutex;
+    std::condition_variable fanChanged;
+    std::thread fanWaiter([&] {
+        {
+            std::lock_guard<std::mutex> lk(fanMutex);
+            ++fanArrived;
+        }
+        fanChanged.notify_all();
+        fanResult = sceRudpPollWait(fanPoll, events.data(), eventCount, 5000000);
+    });
+    {
+        std::unique_lock<std::mutex> lk(fanMutex);
+        fanChanged.wait(lk, [&] { return fanArrived == 1; });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    Require(sceRudpPollCancel(fanPoll) == 0);
+    Require(sceRudpPollWait(fanPoll, events.data(), eventCount, 0) == 0);
+    fanWaiter.join();
+    Require(fanResult == canceled);
+    Require(sceRudpPollDestroy(fanPoll) == 0);
+
+    const int doublePoll = sceRudpPollCreate(1);
+    Require(doublePoll > 0);
+    int doubleResult = -1;
+    int doubleArrived = 0;
+    std::mutex doubleMutex;
+    std::condition_variable doubleChanged;
+    std::thread doubleWaiter([&] {
+        {
+            std::lock_guard<std::mutex> lk(doubleMutex);
+            ++doubleArrived;
+        }
+        doubleChanged.notify_all();
+        doubleResult = sceRudpPollWait(doublePoll, events.data(), eventCount, 5000000);
+    });
+    {
+        std::unique_lock<std::mutex> lk(doubleMutex);
+        doubleChanged.wait(lk, [&] { return doubleArrived == 1; });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    Require(sceRudpPollCancel(doublePoll) == 0);
+    Require(sceRudpPollCancel(doublePoll) == 0);
+    doubleWaiter.join();
+    Require(doubleResult == canceled);
+    Require(sceRudpPollWait(doublePoll, events.data(), eventCount, 0) == canceled);
+    Require(sceRudpPollWait(doublePoll, events.data(), eventCount, 0) == 0);
+    Require(sceRudpPollDestroy(doublePoll) == 0);
+
+    const int orderPoll = sceRudpPollCreate(1);
+    Require(orderPoll > 0);
+    int orderResult = -1;
+    std::atomic<bool> orderReturned{false};
+    int orderArrived = 0;
+    std::mutex orderMutex;
+    std::condition_variable orderChanged;
+    std::thread orderWaiter([&] {
+        {
+            std::lock_guard<std::mutex> lk(orderMutex);
+            ++orderArrived;
+        }
+        orderChanged.notify_all();
+        orderResult = sceRudpPollWait(orderPoll, events.data(), eventCount, 5000000);
+        orderReturned.store(true);
+    });
+    {
+        std::unique_lock<std::mutex> lk(orderMutex);
+        orderChanged.wait(lk, [&] { return orderArrived == 1; });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    Require(sceRudpPollCancel(orderPoll) == 0);
+    for (int attempt = 0; attempt < 100 && !orderReturned.load(); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(orderReturned.load());
+    orderWaiter.join();
+    Require(orderResult == canceled);
+    Require(sceRudpPollDestroy(orderPoll) == 0);
+
     Require(sceRudpTerminate(second) == 0);
     Require(sceRudpPollControl(poll, add, first, read) == 0);
     Require(sceRudpTerminate(first) == 0);
@@ -128,6 +259,8 @@ int main() {
     destroyedWaiter.join();
     Require(destroyedResult == invalidPoll);
     Require(sceRudpPollDestroy(poll) == invalidPoll);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 0) == invalidPoll);
+    Require(sceRudpPollCancel(poll) == invalidPoll);
     Require(sceRudpPollDestroy(-1) == invalidArgument);
     Require(sceRudpPollControl(poll, add, third, read) == invalidPoll);
 
@@ -137,6 +270,7 @@ int main() {
     Require(sceRudpEnd() == 0);
     endedWaiter.join();
     Require(endedResult == notInitialized);
+    Require(sceRudpPollCancel(other) == notInitialized);
 
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0);
     Require(sceRudpPollDestroy(other) == invalidPoll);

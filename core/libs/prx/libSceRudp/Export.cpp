@@ -25,6 +25,7 @@ constexpr int RUDP_ERROR_MEMORY = static_cast<int>(0x80770007u);
 constexpr int RUDP_ERROR_CONN_RESET = static_cast<int>(0x80770009u);
 constexpr int RUDP_ERROR_CONN_REFUSED = static_cast<int>(0x8077000Au);
 constexpr int RUDP_ERROR_NOT_ACCEPTABLE = static_cast<int>(0x80770011u);
+constexpr int RUDP_ERROR_CANCELED = static_cast<int>(0x80770014u);
 constexpr int RUDP_ERROR_INVALID_POLL_ID = static_cast<int>(0x8077001Fu);
 constexpr int RUDP_ERROR_TOO_MANY_CONTEXTS = static_cast<int>(0x80770020u);
 
@@ -89,11 +90,23 @@ void* g_handler_arg = nullptr;
 struct RudpPoll {
     std::size_t capacity;
     std::map<int, uint16_t> entries;
+    bool cancelPending = false;
+    uint64_t cancelGeneration = 0;
+    std::size_t activeWaiters = 0;
 };
 
 int g_next_poll = 1;
 std::map<int, RudpPoll> g_polls;
 TimedWait::Condition g_polls_changed;
+thread_local int g_waiting_poll = 0;
+
+struct WaitingPollScope {
+    explicit WaitingPollScope(int poll) : previous(g_waiting_poll) { g_waiting_poll = poll; }
+    ~WaitingPollScope() { g_waiting_poll = previous; }
+    WaitingPollScope(const WaitingPollScope&) = delete;
+    WaitingPollScope& operator=(const WaitingPollScope&) = delete;
+    int previous;
+};
 
 bool valid_ctx(int ctx) {
     return g_ctx.count(ctx) != 0;
@@ -443,16 +456,44 @@ int APS5_VABI sceRudpPollWait(int pollId, RudpPollEvent* events, std::size_t eve
     if (pollId < 0 || events == nullptr || eventLen == 0) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    if (g_polls.count(pollId) == 0) {
+    const auto poll = g_polls.find(pollId);
+    if (poll == g_polls.end()) {
         return RUDP_ERROR_INVALID_POLL_ID;
     }
-    const auto closed = [pollId] { return !g_inited || g_polls.count(pollId) == 0; };
-    if (timeout > RUDP_POLL_WAIT_MAX_USEC) {
-        g_polls_changed.Wait(lk, closed);
-    } else if (!g_polls_changed.WaitUntil(lk, TimedWait::DeadlineNanos(timeout), closed)) {
-        return 0;
+    if (poll->second.cancelPending) {
+        poll->second.cancelPending = false;
+        return RUDP_ERROR_CANCELED;
     }
-    return g_inited ? RUDP_ERROR_INVALID_POLL_ID : RUDP_ERROR_NOT_INITIALIZED;
+    const uint64_t cancelGeneration = poll->second.cancelGeneration;
+    ++poll->second.activeWaiters;
+    const WaitingPollScope waitingPoll(pollId);
+    const auto closed = [pollId] { return !g_inited || g_polls.count(pollId) == 0; };
+    const auto cancelled = [pollId, cancelGeneration] {
+        const auto current = g_polls.find(pollId);
+        return current != g_polls.end() && current->second.cancelGeneration != cancelGeneration;
+    };
+    const auto changed = [&] { return closed() || cancelled(); };
+    if (timeout > RUDP_POLL_WAIT_MAX_USEC) {
+        g_polls_changed.Wait(lk, changed);
+    } else {
+        g_polls_changed.WaitUntil(lk, TimedWait::DeadlineNanos(timeout), changed);
+    }
+    int result = 0;
+    if (!g_inited) {
+        result = RUDP_ERROR_NOT_INITIALIZED;
+    } else {
+        const auto current = g_polls.find(pollId);
+        if (current == g_polls.end()) {
+            result = RUDP_ERROR_INVALID_POLL_ID;
+        } else {
+            if (current->second.cancelGeneration != cancelGeneration) {
+                result = RUDP_ERROR_CANCELED;
+            }
+            --current->second.activeWaiters;
+            g_polls_changed.NotifyAll();
+        }
+    }
+    return result;
 }
 
 int APS5_VABI sceRudpPollDestroy(int pollId) {
@@ -490,8 +531,34 @@ int APS5_VABI sceRudpListen() {
     return 0;
 }
 
-int APS5_VABI sceRudpPollCancel() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpPollCancel(int pollId) {
+    std::unique_lock<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (pollId < 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    const auto poll = g_polls.find(pollId);
+    if (poll == g_polls.end()) {
+        return RUDP_ERROR_INVALID_POLL_ID;
+    }
+    if (poll->second.activeWaiters == 0) {
+        poll->second.cancelPending = true;
+        return 0;
+    }
+    if (g_waiting_poll == pollId) {
+        ++poll->second.cancelGeneration;
+        g_polls_changed.NotifyAll();
+        return 0;
+    }
+    ++poll->second.cancelGeneration;
+    g_polls_changed.NotifyAll();
+    const auto drained = [pollId] {
+        const auto current = g_polls.find(pollId);
+        return current == g_polls.end() || current->second.activeWaiters == 0;
+    };
+    g_polls_changed.Wait(lk, drained);
     return 0;
 }
 
