@@ -127,6 +127,12 @@ def merge(*args):
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
     if result.returncode not in (0, 1) or not lines[0]:
+        required = (2, 40) if any(arg.startswith("--merge-base") for arg in args) else (2, 38)
+        found = re.match(rb"git version (\d+)\.(\d+)", subprocess.run(["git", "version"], capture_output=True).stdout)
+        version = (int(found.group(1)), int(found.group(2))) if found else None
+        if version and version < required:
+            raise RuntimeError(f"git merge-tree {' '.join(args)} needs git {required[0]}.{required[1]} or newer; "
+                               f"this git is {version[0]}.{version[1]}")
         error = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {error}")
     return lines[0], set(lines[1:]) if result.returncode else set()

@@ -925,7 +925,7 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
 
 static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     if (cond == nullptr || result == nullptr) {
-        throw std::runtime_error("sceSaveDataDirNameSearchPs4: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     result->hit_num = 0;
     result->set_num = 0;
@@ -934,7 +934,7 @@ static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNa
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond->user_id, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1053,7 +1053,7 @@ int APS5_VABI sceSaveDataInitialize(const void* init) {
 }
 
 int APS5_VABI sceSaveDataMount(const SaveDataMountPs4* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
     if (mount->title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
     SaveDataMount3 converted{};
     converted.user_id = mount->user_id;

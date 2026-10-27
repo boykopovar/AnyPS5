@@ -717,7 +717,9 @@ SidebandFormat CurrentFormat(const Instance& instance) {
     case CODEC_AT9: return {static_cast<std::uint32_t>(instance.info.channels), ChannelMask(static_cast<std::size_t>(instance.info.channels)), static_cast<std::uint32_t>(instance.info.samplingRate), PcmEncoding(instance), At9Bitrate(instance), 0};
     case CODEC_MP3: return {instance.mp3Channels, ChannelMask(instance.mp3Channels), instance.mp3SampleRate, PcmEncoding(instance), instance.mp3Bitrate, 0};
     case CODEC_OPUS: return {instance.opusChannels, ChannelMask(instance.opusChannels), instance.opusSampleRate, PcmEncoding(instance), 0, 0};
-    case CODEC_M4AAC: return {instance.aacChannels, ChannelMask(instance.aacChannels), instance.aacSampleRate, PcmEncoding(instance), instance.aacBitrate, 0};
+    case CODEC_M4AAC:
+        if (instance.aacChannels == 3 || instance.aacChannels == 5) NotImplemented_nid_no_patch("AJM M4AAC format with an unknown three- or five-channel speaker mask");
+        return {instance.aacChannels, ChannelMask(instance.aacChannels), instance.aacSampleRate, PcmEncoding(instance), instance.aacBitrate, 0};
     case CODEC_PCM: return {instance.pcmChannels, ChannelMask(instance.pcmChannels), instance.pcmSampleRate, PcmEncoding(instance), 0, 0};
     default: throw std::runtime_error("AJM: the format of codec " + std::to_string(instance.codec) + " is not implemented");
     }
@@ -1433,7 +1435,7 @@ std::int32_t InitializeAac(Instance& instance, const std::uint8_t* parameters, s
     if (config != M4AAC_CONFIG_ADTS && config != M4AAC_CONFIG_RAW) return AJM_RESULT_INVALID_PARAMETER;
     if (config == M4AAC_CONFIG_RAW && frequencyIndex >= 12) return AJM_RESULT_INVALID_PARAMETER;
     const std::uint32_t rawChannels = AacRawChannels(instance);
-    if (config == M4AAC_CONFIG_RAW && rawChannels != 1 && rawChannels != 2 && rawChannels != 6) throw std::runtime_error("AJM M4AAC: raw initialization of an instance created for " + std::to_string(rawChannels) + " channels is not implemented (only 1, 2 and 6)");
+    if (config == M4AAC_CONFIG_RAW && (rawChannels < 1 || rawChannels > 6)) throw std::runtime_error("AJM M4AAC: raw initialization of an instance created for " + std::to_string(rawChannels) + " channels is not implemented (only 1 through 6)");
     instance.aacConfig = config;
     instance.aacFrequencyIndex = frequencyIndex;
     OpenAac(instance);
@@ -1482,8 +1484,11 @@ std::size_t EmittedSamples(const Instance& instance, std::size_t samples) {
 bool AacLayoutImplemented(const AVChannelLayout& layout) {
     const AVChannelLayout mono = AV_CHANNEL_LAYOUT_MONO;
     const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    const AVChannelLayout three = AV_CHANNEL_LAYOUT_SURROUND;
+    const AVChannelLayout four = AV_CHANNEL_LAYOUT_4POINT0;
+    const AVChannelLayout five = AV_CHANNEL_LAYOUT_5POINT0_BACK;
     const AVChannelLayout surround = AV_CHANNEL_LAYOUT_5POINT1_BACK;
-    return av_channel_layout_compare(&layout, &mono) == 0 || av_channel_layout_compare(&layout, &stereo) == 0 || av_channel_layout_compare(&layout, &surround) == 0;
+    return av_channel_layout_compare(&layout, &mono) == 0 || av_channel_layout_compare(&layout, &stereo) == 0 || av_channel_layout_compare(&layout, &three) == 0 || av_channel_layout_compare(&layout, &four) == 0 || av_channel_layout_compare(&layout, &five) == 0 || av_channel_layout_compare(&layout, &surround) == 0;
 }
 
 std::size_t AdtsFrameBytes(const Instance& instance, const std::uint8_t* data) {
@@ -1492,7 +1497,7 @@ std::size_t AdtsFrameBytes(const Instance& instance, const std::uint8_t* data) {
     if (header.profile != 1) throw std::runtime_error("AJM M4AAC: ADTS profile " + std::to_string(header.profile) + " is not implemented (only AAC LC)");
     if (header.rawBlocks != 0) throw std::runtime_error("AJM M4AAC: ADTS frames with more than one raw data block are not implemented");
     if (header.frequencyIndex >= 12) throw std::runtime_error("AJM M4AAC: ADTS sampling frequency index " + std::to_string(header.frequencyIndex) + " is not implemented");
-    if (header.channelConfig != 1 && header.channelConfig != 2 && header.channelConfig != 6) throw std::runtime_error("AJM M4AAC: ADTS channel configuration " + std::to_string(header.channelConfig) + " is not implemented (only 1, 2 and 6)");
+    if (header.channelConfig < 1 || header.channelConfig > 6) throw std::runtime_error("AJM M4AAC: ADTS channel configuration " + std::to_string(header.channelConfig) + " is not implemented (only 1 through 6)");
     const std::uint32_t limit = InstanceChannels(instance);
     if (limit != 0 && header.channelConfig > limit) throw std::runtime_error("AJM M4AAC: an ADTS stream of " + std::to_string(header.channelConfig) + " channels on an instance created for " + std::to_string(limit) + " is not implemented");
     return header.frameBytes;
@@ -1505,6 +1510,17 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     PcmOutputs pcmOutputs(outputs, job.outputCount);
     const auto encoding = PcmEncoding(instance);
     if (encoding > 2) throw std::runtime_error("AJM M4AAC: PCM encoding " + std::to_string(encoding) + " is not implemented");
+    if (job.flags & SIDEBAND_FORMAT) {
+        static_cast<void>(CurrentFormat(instance));
+        if (raw && !input.empty() && (AacRawChannels(instance) == 3 || AacRawChannels(instance) == 5)) NotImplemented_nid_no_patch("AJM M4AAC format with an unknown three- or five-channel speaker mask");
+        for (std::size_t offset = 0; !raw && input.size() - offset >= ADTS_HEADER_BYTES;) {
+            AdtsHeader header{};
+            if (!ParseAdtsHeader(input.data() + offset, header) || header.frameBytes > input.size() - offset) break;
+            if (header.channelConfig == 3 || header.channelConfig == 5) NotImplemented_nid_no_patch("AJM M4AAC format with an unknown three- or five-channel speaker mask");
+            if ((job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
+            offset += header.frameBytes;
+        }
+    }
     const std::size_t sampleBytes = encoding == 0 ? sizeof(std::int16_t) : sizeof(std::int32_t);
     std::unique_ptr<AVPacket, void (*)(AVPacket*)> packet(av_packet_alloc(), [](AVPacket* p) { av_packet_free(&p); });
     std::unique_ptr<AVFrame, void (*)(AVFrame*)> decoded(av_frame_alloc(), [](AVFrame* f) { av_frame_free(&f); });
@@ -1543,7 +1559,7 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             if (++received > 1) throw std::runtime_error("AJM M4AAC: one input frame decoded to more than one output frame (raw input holding several access units is not implemented)");
             const auto format = static_cast<AVSampleFormat>(decoded->format);
             if (format != AV_SAMPLE_FMT_FLTP) throw std::runtime_error("AJM M4AAC: FFmpeg sample format " + std::to_string(decoded->format) + " is not converted");
-            if (!AacLayoutImplemented(decoded->ch_layout)) throw std::runtime_error("AJM M4AAC: a decoded layout of " + std::to_string(decoded->ch_layout.nb_channels) + " channels is not implemented (only mono, stereo and 5.1)");
+            if (!AacLayoutImplemented(decoded->ch_layout)) throw std::runtime_error("AJM M4AAC: decoded channel layout is not implemented");
             const bool heaac = instance.aac->profile == AV_PROFILE_AAC_HE || instance.aac->profile == AV_PROFILE_AAC_HE_V2;
             if (heaac && (instance.flags & M4AAC_ENABLE_SBR_DECODE) == 0) throw std::runtime_error("AJM M4AAC: an HE-AAC (SBR or PS) stream on an instance without ENABLE_SBR_DECODE is not implemented");
             const auto channels = static_cast<std::size_t>(decoded->ch_layout.nb_channels);
@@ -1577,7 +1593,7 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
 
     AJM_TRACE("[ajm] instance %u m4aac run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, %u channels, %u Hz, %u bps, heaac %d, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced,
               instance.aacChannels, instance.aacSampleRate, instance.aacBitrate, instance.aacHeaac ? 1 : 0, static_cast<unsigned long long>(instance.totalDecodedSamples));
-    WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
+    WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, (job.flags & SIDEBAND_FORMAT) ? CurrentFormat(instance) : SidebandFormat{});
 }
 
 void ClearContext(Instance& instance) {
@@ -1704,7 +1720,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
             NotImplemented_nid_no_patch("AJM RUN_GET_CODEC_INFO for a codec other than ATRAC9 and M4AAC");
         } else if (job.inputCount == 0 && job.outputCount == 0) {
             AJM_TRACE("[ajm] instance %u run flags 0x%llx without buffers, sideband %llu bytes\n", job.instance, static_cast<unsigned long long>(job.flags), static_cast<unsigned long long>(job.sidebandSize));
-            WriteRunSideband(job, *instance, 0, 0, 0, 0, CurrentFormat(*instance));
+            WriteRunSideband(job, *instance, 0, 0, 0, 0, (job.flags & SIDEBAND_FORMAT) ? CurrentFormat(*instance) : SidebandFormat{});
         } else if (instance->codec == CODEC_AT9) {
             RunAt9(*instance, job, inputs, outputs);
         } else if (instance->codec == CODEC_MP3) {

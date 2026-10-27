@@ -568,6 +568,7 @@ private:
             for (const auto& info : program.Metadata().blockInfo) if (info.condition && info.condition->Resolve() == current && !controlProven(info)) return true;
             for (const auto& use : current->OperandUses()) {
                 const auto opcode = use.user->Opcode();
+                if (opcode == IrOpcode::Ballot && restricted.contains(use.user) && use.user->ArgumentCount() == 1u && onHelper(use.user->Argument(0), 0u) == std::optional<std::uint32_t>{0u}) continue;
                 if (opcode == IrOpcode::Ballot) {
                     std::vector<const IrValue*> terminals;
                     if (ownBitBallot(use.user, terminals)) {

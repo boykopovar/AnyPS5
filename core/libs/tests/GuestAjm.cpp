@@ -1445,7 +1445,7 @@ void TestM4aacInitialize(std::uint32_t context) {
     Require(Refused(context, info));
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 
-    Require(sceAjmInstanceCreate(context, CODEC_M4AAC, 3ull << 3, &instance) == 0);
+    Require(sceAjmInstanceCreate(context, CODEC_M4AAC, 7ull << 3, &instance) == 0);
     const AacInitialize raw{2, 3};
     std::int32_t rawResult[2] = {-1, -1};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);

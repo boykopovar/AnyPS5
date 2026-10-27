@@ -47,17 +47,7 @@ def strip_nid_postfix(name):
     return re.sub(r"_nid_disambig[0-9]+$", "", name.removesuffix(NID_POSTFIX))
 
 
-def load_db(path):
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        print("downloading NID database to %s ..." % path, file=sys.stderr)
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
-            temporary = Path(download.name)
-        try:
-            urllib.request.urlretrieve(DB_URL, str(temporary))
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+def read_db(path):
     db = {}
     with open(path, encoding="utf-8-sig", errors="replace") as handle:
         for line in handle:
@@ -67,6 +57,24 @@ def load_db(path):
                 if nid and name:
                     db.setdefault(nid, name)
     return db
+
+
+def load_db(path):
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print("downloading NID database to %s ..." % path, file=sys.stderr)
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
+            temporary = Path(download.name)
+        try:
+            urllib.request.urlretrieve(DB_URL, str(temporary))
+            db = read_db(temporary)
+            if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
+                raise ValueError(f"{path}: downloaded database contains no valid NID records")
+            temporary.replace(path)
+            return db
+        finally:
+            temporary.unlink(missing_ok=True)
+    return read_db(path)
 
 
 def source_files(root):
@@ -231,7 +239,7 @@ def main(argv=None):
         else:
             unknowns = collect_unknowns()
         real_names = collect_real_names() if unknowns else set()
-    except (OSError, UnicodeError) as error:
+    except (OSError, ValueError) as error:
         parser.error(str(error))
 
     rows = []

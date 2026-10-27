@@ -28,6 +28,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <cstdio>
@@ -247,6 +248,7 @@ std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std:
         for (const auto location : state.sampleLocations) mix(location);
     }
     if (!context.provokingVertexModePerPipeline) mix(state.provokingVertexMode);
+    if (state.rasterizerDiscard) mix(0x6469736361726400ull);
     return key;
 }
 
@@ -1039,7 +1041,7 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
                 if (size == 0 || address == 0) continue;
                 const auto element = offset / 4;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                if (const std::uint64_t stride = descriptor.Stride(); !written && stride != 0 && address < target.address && address + size > target.address && address + size - target.address < stride) size = target.address - address;
+                if (!written) size = ShaderResources::BytesUpToTarget(address, size, descriptor.Stride(), &target);
                 Require(!overlap(address, size, target.address, target.bytes), "shader buffer aliases the render target");
                 Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
             }
@@ -1691,7 +1693,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             const bool valid = cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 resolved.resources = std::move(cached);
@@ -1744,7 +1746,7 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
         }
     };
     const auto* args = indirect != nullptr ? indirect->args : nullptr;
-    if (state.stages.mesh && args != nullptr) {
+    if (state.stages.mesh && (args != nullptr || state.tessellationCapture != nullptr)) {
         context.Function<PFN_vkCmdDrawMeshTasksIndirectEXT>("vkCmdDrawMeshTasksIndirectEXT")(commands, argumentBuffer, argumentOffset, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
         recorded(subdraw++);
         return;
@@ -1840,6 +1842,10 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     argumentBuffer = scratch->Handle();
     argumentOffset = 0;
     return true;
+}
+
+void recordCaptureBarrier(const Context& context, VkCommandBuffer commands) {
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
 }
 
 std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::span<const std::uint32_t> restartTable) {
@@ -2063,13 +2069,23 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
         static_assert(ShaderRecompiler::TessellationLevelPushOffsetBytes + ShaderRecompiler::TessellationLevelPushBytes == PipelinePushSlotBytes);
         std::memcpy(block.data() + ShaderRecompiler::TessellationLevelPushOffsetBytes, levels.data(), sizeof(levels));
     }
+    const auto capturedItems = state.tessellationCapture != nullptr ? state.tessellationCapture->items->DeviceAddress() : 0;
     if (!state.stages.mesh) {
+        if (state.tessellationCapture != nullptr) {
+            for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || shader.pushConstantOffset >= PipelinePushSlotBytes || shader.pushConstantOffset + shader.program->pushConstants.size() <= ShaderRecompiler::MeshDrawPushOffsetBytes, "a stage's push constants overlap the tessellation capture addresses");
+            const auto header = state.tessellationCapture->header->DeviceAddress();
+            const std::array<std::uint32_t, 4> words{static_cast<std::uint32_t>(capturedItems), static_cast<std::uint32_t>(capturedItems >> 32u), static_cast<std::uint32_t>(header), static_cast<std::uint32_t>(header >> 32u)};
+            static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + sizeof(std::uint32_t) * 4 <= ShaderRecompiler::TessellationLevelPushOffsetBytes);
+            std::memcpy(block.data() + ShaderRecompiler::MeshDrawPushOffsetBytes, words.data(), sizeof(words));
+            stages |= VK_SHADER_STAGE_GEOMETRY_BIT;
+        }
         pipeline.PushConstants(commands, stages, block);
         return;
     }
     const auto firstVertex = draw.indirect ? draw.indirect->vertexConstant : draw.firstVertex;
     const auto firstInstance = draw.indirect ? draw.indirect->instanceConstant : draw.firstInstance;
-    const std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, firstVertex, firstInstance, draw.indexed ? draw.indexSize | (restartTable ? ShaderRecompiler::MeshIndexRestartTable : 0u) : 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
+    std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, firstVertex, firstInstance, draw.indexed ? draw.indexSize | (restartTable ? ShaderRecompiler::MeshIndexRestartTable : 0u) : 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
+    if (state.tessellationCapture != nullptr) words = {static_cast<std::uint32_t>(capturedItems), static_cast<std::uint32_t>(capturedItems >> 32u), 0u, 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
     static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + ShaderRecompiler::MeshDrawPushBytes == PipelinePushSlotBytes);
     std::memcpy(block.data() + ShaderRecompiler::MeshDrawPushOffsetBytes, words.data(), sizeof(words));
     pipeline.PushConstants(commands, stages | VK_SHADER_STAGE_MESH_BIT_EXT, block);
@@ -2198,6 +2214,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
+    const bool captured = state.stages.mesh && state.tessellationCapture != nullptr;
     const bool addressBased = resources.HoldsLease();
     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* passReadsSlot = nullptr;
     auto& passReads = ShaderRecompiler::ThreadOwned(passReadsSlot);
@@ -2247,13 +2264,16 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
     const auto commands = start.commands;
-    if (!continued) recorder->PrepareSampleSlot();
+    if (!continued) {
+        recorder->PrepareSampleSlot();
+        PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+    }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
     // continued draw lies inside its pass's range).
@@ -2296,7 +2316,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
         if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, commands, pixelLdsSubgroup);
-        if (meshIndirect) {
+        if (captured) {
+            recordCaptureBarrier(context, commands);
+            countBarrier(1);
+            meshArguments = state.tessellationCapture->header;
+            argumentBuffer = meshArguments->Handle();
+        } else if (meshIndirect) {
             meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
@@ -2325,6 +2350,15 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
+    static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
+    auto eachDrawTiming = Recorder::NoTiming;
+    if (timeEachDraw) {
+        std::uint64_t key = 0;
+        for (const auto& shader : shaders) {
+            if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+        }
+        eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
+    }
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -2338,7 +2372,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->ContinueSecondChannel(commands);
         recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
+    recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
+    if (state.tessellationCapture != nullptr) {
+        recorder->Keep(state.tessellationCapture->header);
+        recorder->Keep(state.tessellationCapture->items);
+    }
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
@@ -2434,6 +2473,10 @@ struct TargetBinding {
     std::shared_ptr<StorageTexture> resident;
     bool proxied = false;
     std::unique_ptr<Buffer> transfer;
+    bool banded = false;
+    VkRect2D band{};
+    std::size_t bandOffset = 0;
+    std::uint32_t bandPitch = 0;
     std::unique_ptr<Buffer> tiled;
     std::unique_ptr<DeviceBuffer> tiledDevice;
     std::unique_ptr<DeviceBuffer> linearDevice;
@@ -2613,8 +2656,24 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
             std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
         } else {
-            binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
-            ReadColorTarget(color, binding.transfer->Bytes());
+            const auto x0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.x, 0));
+            const auto y0 = static_cast<std::uint32_t>(std::max(state.scissor.offset.y, 0));
+            const auto x1 = std::min<std::uint32_t>(x0 + state.scissor.extent.width, color.extent.width);
+            const auto y1 = std::min<std::uint32_t>(y0 + state.scissor.extent.height, color.extent.height);
+            binding.banded = color.tileMode == ColorTileMode::Linear && color.dccAddress == 0 && x0 < x1 && y0 < y1 && (x1 - x0 < color.extent.width || y1 - y0 < color.extent.height);
+            if (binding.banded) {
+                binding.band = {{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)}, {x1 - x0, y1 - y0}};
+                binding.bandOffset = colorLayout.Offset(x0, y0);
+                binding.bandPitch = static_cast<std::uint32_t>(colorLayout.Bytes() / (std::size_t{color.extent.height} * color.elementBytes));
+                const auto bandBytes = colorLayout.Offset(x1 - 1, y1 - 1) + color.elementBytes - binding.bandOffset;
+                binding.transfer = std::make_unique<Buffer>(context, bandBytes, copies);
+                binding.original.resize(bandBytes);
+                GuestMemory::Read(color.address + binding.bandOffset, binding.original, color.elementBytes);
+                std::memcpy(binding.transfer->Bytes().data(), binding.original.data(), bandBytes);
+            } else {
+                binding.transfer = std::make_unique<Buffer>(context, colorLayout.LinearBytes(), copies);
+                ReadColorTarget(color, binding.transfer->Bytes());
+            }
         }
         // A fast-cleared DCC target holds its clear value wherever the draw does not write.
         if (color.dccAddress != 0) {
@@ -3016,7 +3075,12 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
     if (pixelLdsSubgroup != 0u) PreparePixelFunctionLds(context, commands, pixelLdsSubgroup);
     std::shared_ptr<Buffer> meshArguments;
-    if (state.stages.mesh && args != nullptr) {
+    if (state.stages.mesh && state.tessellationCapture != nullptr) {
+        recordCaptureBarrier(context, commands);
+        countBarrier();
+        meshArguments = state.tessellationCapture->header;
+        argumentBuffer = meshArguments->Handle();
+    } else if (state.stages.mesh && args != nullptr) {
         meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable);
         argumentBuffer = meshArguments->Handle();
     } else if (!inputs.restartTable.empty()) {
@@ -3038,6 +3102,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         VkBufferImageCopy copy{};
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.imageExtent = {binding.color.extent.width, binding.color.extent.height, 1};
+        if (binding.banded) {
+            copy.bufferRowLength = binding.bandPitch;
+            copy.imageOffset = {binding.band.offset.x, binding.band.offset.y, 0};
+            copy.imageExtent = {binding.band.extent.width, binding.band.extent.height, 1};
+        }
         const VkBuffer linear = binding.gpuTiling ? binding.linearDevice->Handle() : binding.transfer->Handle();
         countBarrier(binding.gpuTiling ? 4 : 2);
         if (binding.gpuTiling) {
@@ -3075,6 +3144,10 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (meshArguments != nullptr && recorded) recorder->Keep(meshArguments);
+    if (state.tessellationCapture != nullptr && recorded) {
+        recorder->Keep(state.tessellationCapture->header);
+        recorder->Keep(state.tessellationCapture->items);
+    }
     if (args != nullptr) CountIndirectDraw(indirect.path, indirect.readMs, rewritten);
     auto checkRecords = indirectRecordCheck(args != nullptr ? &indirect : nullptr);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
@@ -3104,6 +3177,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         VkBufferImageCopy copy{};
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.imageExtent = {binding.color.extent.width, binding.color.extent.height, 1};
+        if (binding.banded) {
+            copy.bufferRowLength = binding.bandPitch;
+            copy.imageOffset = {binding.band.offset.x, binding.band.offset.y, 0};
+            copy.imageExtent = {binding.band.extent.width, binding.band.extent.height, 1};
+        }
         countBarrier(binding.gpuTiling ? 4 : 2);
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         const VkBuffer linear = binding.gpuTiling ? binding.linearDevice->Handle() : binding.transfer->Handle();
@@ -3190,6 +3268,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             continue;
         }
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
+        else if (binding.banded) GuestMemory::WriteChanged(binding.color.address + binding.bandOffset, binding.transfer->Bytes(), binding.original);
         else WriteColorTarget(binding.color, binding.transfer->Bytes());
         // The stored texels are the whole target now, so later reads must see them rather than a fast clear.
         const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
@@ -3229,8 +3308,58 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
 
 }
 
+constexpr std::uint64_t MaxCapturedTriangles = 1ull << 20u;
+
+void drawTessellationGeometry(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawTraceContext* trace) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    Require(context.meshShader && context.geometryShader, "tessellation followed by a geometry stage needs mesh and geometry shaders");
+    Require(!draw.indirect, "an indirect draw with tessellation and a geometry stage must be resolved by the driver");
+    Require(draw.instanceCount <= 1u, "tessellation followed by a geometry stage is drawn for one instance only");
+    if (draw.indexCount == 0 || draw.instanceCount == 0) return;
+    const auto& tessellation = *state.stages.tessellation;
+    const auto& geometry = *state.stages.tessellationGeometry;
+    std::vector<CompiledShader> first;
+    std::vector<CompiledShader> second;
+    for (const auto& shader : shaders) {
+        if (shader.stage != Stage::Mesh && shader.stage != Stage::Fragment) first.push_back(shader);
+        if (shader.stage == Stage::Mesh || shader.stage == Stage::Fragment) second.push_back(shader);
+    }
+    Require(second.size() == 2u && second.front().stage == Stage::Mesh && std::ranges::count_if(first, [](const CompiledShader& shader) { return shader.stage == Stage::Geometry; }) == 1, "tessellation followed by a geometry stage needs its capture and mesh stages");
+    const auto patches = static_cast<std::uint64_t>(draw.indexCount / tessellation.inputControlPoints);
+    const auto level = static_cast<std::uint64_t>(std::ceil(std::clamp(state.stages.maxTessellationLevel, 1.0f, 64.0f))) + 1u;
+    const auto perPatch = 2u * level * level;
+    const auto capacity = static_cast<std::uint32_t>(std::min(perPatch * patches, MaxCapturedTriangles));
+    auto capture = std::make_shared<TessellationCapture>();
+    capture->header = std::make_shared<Buffer>(context, ShaderRecompiler::MeshCapturedHeaderBytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    std::array<std::uint32_t, ShaderRecompiler::MeshCapturedHeaderBytes / 4> header{};
+    header[1] = 1u;
+    header[2] = 1u;
+    header[ShaderRecompiler::MeshCapturedCapacityDword] = capacity;
+    std::memcpy(capture->header->Bytes().data(), header.data(), sizeof(header));
+    capture->items = std::make_shared<Buffer>(context, static_cast<std::size_t>(capacity) * 3u * geometry.esgsItemSize * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    auto tessellated = state;
+    tessellated.stages.path = ShaderPath::Tessellation;
+    tessellated.stages.tessellationGeometry.reset();
+    tessellated.rasterizerDiscard = true;
+    tessellated.tessellationCapture = capture;
+    Draw(context, tessellated, draw, first, snapshots, nullptr, trace);
+    auto meshed = state;
+    meshed.stages.path = ShaderPath::Geometry;
+    meshed.stages.mesh = geometry;
+    meshed.stages.tessellation.reset();
+    meshed.stages.tessellationGeometry.reset();
+    meshed.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    meshed.tessellationCapture = capture;
+    const Pm4::DrawParameters captured{0, 3u, 0, 1u, 0, false, 0, 0};
+    Draw(context, meshed, captured, second, snapshots, nullptr, trace);
+}
+
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
+    if (state.stages.tessellationGeometry) {
+        drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
+        return;
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
     prepared.recipeOut = recipeOut;
