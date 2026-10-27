@@ -65,6 +65,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -87,6 +88,10 @@
 #include <vector>
 
 namespace {
+
+struct TestConfigurationError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
@@ -516,6 +521,13 @@ public:
                 function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
                 context.hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
                 context.discreteGpu = properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+                if (const char* forced = std::getenv("ANYPS5_TEST_HOST_IMPORT_ALIGNMENT"); forced != nullptr) {
+                    VkDeviceSize alignment = 0;
+                    const auto [end, error] = std::from_chars(forced, forced + std::strlen(forced), alignment);
+                    if (error != std::errc{} || *end != '\0') throw TestConfigurationError("ANYPS5_TEST_HOST_IMPORT_ALIGNMENT is not a number");
+                    if (alignment != 0 && alignment % hostProperties.minImportedHostPointerAlignment != 0) throw TestConfigurationError("ANYPS5_TEST_HOST_IMPORT_ALIGNMENT is not a multiple of the device's host import alignment");
+                    context.hostImportAlignment = alignment;
+                }
             }
             if (driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
@@ -7196,11 +7208,15 @@ void writeBackBlockTests(const Device& device, Recorder& recorder) {
     std::cout << "write-back blocks: ok\n";
 }
 
-void flushWaitMipChainTests(const Device& device, Recorder& recorder) {
+bool flushWaitMipChainTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
-        std::cout << "host imports unavailable: the flush wait over a DCC mip chain not tested\n";
-        return;
+    if (base.hostImportAlignment == 0) {
+        std::cout << "skipped, host imports are unavailable: the flush wait over a DCC mip chain not tested\n";
+        return false;
+    }
+    if (65536 % base.hostImportAlignment != 0) {
+        std::cout << "skipped, the host import alignment " << base.hostImportAlignment << " does not divide 64 KiB: the flush wait over a DCC mip chain not tested\n";
+        return false;
     }
     const std::string what = "flush wait over a DCC mip chain: ";
     GuestTextureResource resource{};
@@ -7274,6 +7290,7 @@ void flushWaitMipChainTests(const Device& device, Recorder& recorder) {
 #endif
     Require(waited, what + "a flush of the first unit did not complete the batch of a writer over another pending unit, which a write-back of a DCC image with more than one mip may store");
     std::cout << "flush wait over a DCC mip chain: ok\n";
+    return true;
 }
 
 void singlePassTests(const Device& device, Recorder& recorder, bool watched) {
@@ -12348,6 +12365,8 @@ int main(int argc, char** argv) {
         std::unique_ptr<Device> created;
         try {
             created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"));
+        } catch (const TestConfigurationError&) {
+            throw;
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
@@ -12671,14 +12690,7 @@ int main(int argc, char** argv) {
             writeBackBlockTests(device, recorder);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--flush-wait-mip-chain-only") {
-            if (device.GetContext().hostImportAlignment == 0) {
-                std::cout << "skipped, host imports are unavailable\n";
-                return 77;
-            }
-            flushWaitMipChainTests(device, recorder);
-            return 0;
-        }
+        if (argc == 2 && std::string_view(argv[1]) == "--flush-wait-mip-chain-only") return flushWaitMipChainTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--metadata-pass-only") {
             metadataPassTests(device, recorder);
             std::cout << "Color metadata pass tests passed\n";
