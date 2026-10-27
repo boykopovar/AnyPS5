@@ -9,6 +9,7 @@
 
 using namespace SceJson2;
 
+
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
@@ -94,6 +95,13 @@ int main() {
     _ZN3sce4Json5Value3setERKNS0_6StringE(&cross, _ZNK3sce4Json5Value9getStringEv(&Front(cross)));
     Require(cross.type == TypeString && std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&cross)), "retained") == 0,
             "String overload must retain descendant text before changing the destination type");
+    _ZN3sce4Json5Value5clearEv(&cross);
+    const char nestedObject[] = "[{\"a\":7}]";
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, nestedObject, sizeof(nestedObject) - 1) == 0, "Parse raw Object descendant source");
+    _ZN3sce4Json5Value3setERKNS0_6ObjectE(&cross, _ZNK3sce4Json5Value9getObjectEv(&Front(cross)));
+    const auto* member = _ZNK3sce4Json5ValueixEPKc(&cross, "a");
+    Require(cross.type == TypeObject && member->payload == 7 && member->parent == &cross,
+            "Object overload must retain descendant contents and bind their new owner");
     _ZN3sce4Json5ValueD1Ev(&cross);
     _ZN3sce4Json5Value4swapERS1_(&root, &text);
     Require(root.type == 5 && text.type == 6, "Swap must exchange payloads");
