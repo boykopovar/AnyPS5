@@ -29,7 +29,6 @@ static void WaitForWaiters(KernelEventFlag flag, int expected) {
 }
 
 static void RequireReleasedWaiterKeepsResult(bool cancel) {
-    int consumed = 0;
     for (int round = 0; round < ROUNDS; ++round) {
         KernelEventFlag flag = nullptr;
         Require(sceKernelCreateEventFlag(&flag, "released", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
@@ -40,7 +39,7 @@ static void RequireReleasedWaiterKeepsResult(bool cancel) {
         Require(sceKernelSetEventFlag(flag, 1) == SCE_OK);
         std::uint64_t remaining = 0;
         Require(sceKernelPollEventFlag(flag, 0x80, EVF_WAITMODE_OR, &remaining) == SCE_KERNEL_ERROR_EBUSY);
-        if ((remaining & 1) == 0) ++consumed;
+        Require(remaining == 0);
         if (cancel) {
             int woken = 0;
             Require(sceKernelCancelEventFlag(flag, 0, &woken) == SCE_OK);
@@ -48,13 +47,10 @@ static void RequireReleasedWaiterKeepsResult(bool cancel) {
             Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
         }
         waiter.join();
-        if ((remaining & 1) == 0) {
-            Require(result == SCE_OK);
-            Require(pattern == 1);
-        }
+        Require(result == SCE_OK);
+        Require(pattern == 1);
         if (cancel) Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
     }
-    Require(consumed == ROUNDS);
 }
 
 static void RequireCancelWinsBeforeSet() {
