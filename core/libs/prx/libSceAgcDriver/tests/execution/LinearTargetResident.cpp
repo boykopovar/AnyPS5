@@ -171,11 +171,12 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t inputAddr, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t inputAddr, std::span<const std::uint32_t> pixelCode,
+          std::uint32_t scissorWidth = Width, VkColorComponentFlags colorWriteMask = 0xf, std::span<const std::array<float, 4>> vertices = Triangle, bool halveDestination = false, bool recipe = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
-    const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
+    const auto vertexBuffer = BufferDescriptor(vertices.data(), 16u, static_cast<std::uint32_t>(vertices.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
     ShaderRecompiler::RecompileRequest vertex{
@@ -208,8 +209,14 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     }};
 
     VkPipelineColorBlendAttachmentState blend{};
-    blend.blendEnable = VK_FALSE;
-    blend.colorWriteMask = 0xf;
+    blend.blendEnable = halveDestination ? VK_TRUE : VK_FALSE;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend.colorWriteMask = colorWriteMask;
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
     state.colors = {color};
@@ -219,14 +226,23 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, {scissorWidth, Height}};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blends = {blend};
     state.blend = blend;
-    state.blendConstants = {};
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
-    device.Draw(state, draw, shaders);
+    state.blendConstants = {0.5f, 0.5f, 0.5f, 0.5f};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(vertices.size()), 0, 1, 0, false};
+    if (!recipe) {
+        device.Draw(state, draw, shaders);
+        return;
+    }
+    std::shared_ptr<const AgcDriver::DrawRecipe> captured;
+    device.Draw(state, draw, shaders, {}, &captured);
+    Require(captured != nullptr, "the linear draw did not produce a reusable recipe");
+    device.WaitIdle();
+    Require(device.DrawFromRecipe(state, draw, shaders, {}, captured) == AgcDriver::RecipeOutcome::Recorded,
+            "the linear draw did not execute its cached recipe");
 }
 
 
