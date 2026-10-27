@@ -303,6 +303,12 @@ int main(int argc, char** argv) {
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
         ApplicationHeapFree_nid_no_patch(pointer);
+        freezero_nid_postfix(nullptr, 32);
+        pointer = static_cast<unsigned char*>(malloc_nid_postfix(32));
+        require(pointer != nullptr);
+        std::memset(pointer, 0x5a, 32);
+        freezero_nid_postfix(pointer, 32);
+        reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
         pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 24));
         require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 24);
         std::memset(pointer, 0x3c, 24);
