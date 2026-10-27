@@ -904,19 +904,22 @@ static void CheckAcoshDomainErrno() {
 
 static void CheckAcoshNaNInputs() {
     constexpr int sentinel = 1234;
-    // msun's quiet NaNs pass through without errno or FE_INVALID, its signalling NaNs come back quieted with FE_INVALID; neither touches errno.
-    constexpr std::uint64_t cases[][2] = {
-        {0xfff8000000000000ull, 0xfff8000000000000ull}, {0x7ff8000000000000ull, 0x7ff8000000000000ull}, {0xfff8000000000123ull, 0xfff8000000000123ull},
-        {0x7ff4000000000000ull, 0x7ffc000000000000ull}, {0xfff4000000000000ull, 0xfffc000000000000ull},
+    // Results are msun's: a NaN comes back quieted with its payload and sign. A differential run against a title's libc.prx found errno EDOM for every NaN with the sign bit set and errno untouched for the others; exception flags are not pinned because they are not measured for the double acosh.
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x7ff8000000000000ull, 0x7ff8000000000000ull, sentinel}, {0x7ff8000000000123ull, 0x7ff8000000000123ull, sentinel},
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull, sentinel}, {0x7ff4000000000000ull, 0x7ffc000000000000ull, sentinel},
+        {0xfff8000000000000ull, 0xfff8000000000000ull, EDOM}, {0xfff8000000000123ull, 0xfff8000000000123ull, EDOM},
+        {0xfff0000000000001ull, 0xfff8000000000001ull, EDOM}, {0xfff4000000000000ull, 0xfffc000000000000ull, EDOM},
     };
-    for (const auto& [input, expected] : cases) {
-        const bool signalling = (input & 0x0008000000000000ull) == 0;
+    for (const auto& item : cases) {
         errno = sentinel;
-        std::feclearexcept(FE_ALL_EXCEPT);
-        const double result = acosh_nid_postfix(std::bit_cast<double>(input));
-        const bool invalid = std::fetestexcept(FE_INVALID) != 0;
-        if (std::bit_cast<std::uint64_t>(result) != expected || errno != sentinel || invalid != signalling) {
-            std::fprintf(stderr, "Guest acosh NaN failed for %016llx: got %016llx, expected %016llx, errno %d, FE_INVALID %d, expected %d\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(result)), static_cast<unsigned long long>(expected), errno, invalid, signalling);
+        const double result = acosh_nid_postfix(std::bit_cast<double>(item.input));
+        if (std::bit_cast<std::uint64_t>(result) != item.expected || errno != item.error) {
+            std::fprintf(stderr, "Guest acosh NaN failed for %016llx: got %016llx, expected %016llx, errno %d, expected %d\n", static_cast<unsigned long long>(item.input), static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(result)), static_cast<unsigned long long>(item.expected), errno, item.error);
             std::abort();
         }
     }
