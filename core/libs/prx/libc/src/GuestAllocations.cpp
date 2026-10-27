@@ -611,11 +611,19 @@ RangePatch replaceRange(const void* pointer, std::size_t bytes, bool remove, boo
     return patch;
 }
 
-void applyPatch(const RangePatch& patch) {
-    auto& ranges = registry().ranges;
-    for (const auto key : patch.erased) ranges.erase(key);
-    for (const auto& [key, range] : patch.inserted) ranges.emplace(key, range);
-}
+struct StagedPatch {
+    using Ranges = decltype(Registry::ranges);
+    const RangePatch& patch;
+    Ranges staged;
+    explicit StagedPatch(const RangePatch& source) : patch(source) {
+        for (const auto& [key, range] : patch.inserted) staged.emplace(key, range);
+    }
+    void apply() noexcept {
+        auto& ranges = registry().ranges;
+        for (const auto key : patch.erased) ranges.erase(key);
+        ranges.merge(staged);
+    }
+};
 
 bool allocationRemains(const Range& range, const RangePatch& patch) {
     for (const auto& [key, entry] : patch.inserted) {
@@ -636,8 +644,9 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
     GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
     recordChange(mutation, pointer, bytes);
     const auto patch = replaceRange(pointer, bytes, false, readable, writable, gpu);
+    StagedPatch staged(patch);
     apply();
-    applyPatch(patch);
+    staged.apply();
 }
 
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
@@ -663,8 +672,9 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         const auto pieceEnd = std::min<std::uint64_t>(end, range.address + range.bytes);
         const auto patch = replaceRange(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, true, false, false, false);
         const bool last = !allocationRemains(range, patch);
+        StagedPatch staged(patch);
         apply(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, reinterpret_cast<const void*>(range.allocationAddress), last);
-        applyPatch(patch);
+        staged.apply();
         if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(cursor, pieceEnd - cursor);
         any = true;
         cursor = pieceEnd;
