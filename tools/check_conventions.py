@@ -316,10 +316,12 @@ class Check:
             if status == "R" and not path.startswith("3rdparty/") and PurePosixPath(path).suffix == ".md":
                 files[path] = list(enumerate(self.show(path).split("\n"), 1))
         for path, lines in files.items():
-            fenced = fenced_lines(self.show(path))
+            source = self.show(path)
+            fenced = fenced_lines(source)
+            entries = debt_entries(source) if is_debt(path) else {}
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
-                    name = debt_name(text)
+                    name = debt_name(entries.get(number, text))
                     expected = f"{DEBT_DIR}{name}.md" if name else DEBT
                     if path != expected:
                         self.report("debt-file", path, number, expected)
@@ -401,8 +403,12 @@ class Check:
         body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
         sections = dict(zip(SECTION.findall(body), SECTION.split(body)[2::2]))
         for name in ("What", "Tested", "Checklist"):
-            if not sections.get(name, "").strip():
-                self.report("pr-template", "", 0, f"section '{name}' is missing or empty")
+            if name not in sections:
+                found = re.search(rf"^[ \t]*#+[ \t]*{name}[ \t]*$", body, re.M | re.I)
+                hint = f"; found '{found.group(0).strip()}'" if found else ""
+                self.report("pr-template", "", 0, f"add the '### {name}' heading of the template{hint}")
+            elif not sections[name].strip():
+                self.report("pr-template", "", 0, f"fill the '### {name}' section")
         checklist = sections.get("Checklist", "")
         for item in re.findall(r"^\s*[-*+]\s*\[ \]\s*(.+)$", checklist, re.M):
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
@@ -448,6 +454,25 @@ def long_debt_entry(text):
     return text.startswith("- ") and len(text) > DEBT_ENTRY_LIMIT
 
 
+def debt_entries(text):
+    entries = {}
+    start = None
+    blanks = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if line.startswith("- "):
+            start = number
+            entries[start] = [line]
+            blanks = []
+        elif start is not None and line.startswith((" ", "\t")):
+            entries[start] += blanks + [line]
+            blanks = []
+        elif line.strip():
+            start = None
+        else:
+            blanks.append(line)
+    return {number: "\n".join(lines) for number, lines in entries.items()}
+
+
 def debt_name(text):
     match = DEBT_TARGET.search(text)
     if not match:
@@ -480,13 +505,44 @@ def block(lines, start):
     return lines[start + 1:end]
 
 
+def flow_mapping(value):
+    tokens = re.findall(r'''"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^{}\[\],:\s]+|[{}\[\],:]''', value)
+    if not tokens or tokens[0] != "{" or tokens[-1] != "}":
+        return {}
+    result = {}
+    stack = []
+    start, colon = 1, None
+    for index, token in enumerate(tokens):
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]"):
+            if not stack or stack.pop() != ("{" if token == "}" else "["):
+                return {}
+            if not stack and index != len(tokens) - 1:
+                return {}
+        if len(stack) == 1 and token == ":" and colon is None:
+            colon = index
+        if (len(stack) == 1 and token == ",") or (not stack and token == "}"):
+            if colon == start + 1:
+                result[tokens[start].strip("'\"")] = " ".join(tokens[colon + 1:index])
+            elif start != index:
+                return {}
+            start, colon = index + 1, None
+    return result if not stack else {}
+
+
 def pull_request_filtered(lines, trigger):
     _, _, _, value = trigger
     if value:
+        if value.lstrip().startswith("{"):
+            triggers = flow_mapping(value)
+            return "pull_request" not in triggers or bool({"paths", "paths-ignore"} & flow_mapping(triggers["pull_request"]).keys())
         return "pull_request" not in re.findall(r"[A-Za-z_]+", value)
     triggers = block(lines, lines.index(trigger))
     for index, (_, indent, name, value) in enumerate(triggers):
         if name == "pull_request" and indent == triggers[0][1]:
+            if value:
+                return bool({"paths", "paths-ignore"} & flow_mapping(value).keys())
             return any(entry[2] in ("paths", "paths-ignore") for entry in block(triggers, index))
     return True
 

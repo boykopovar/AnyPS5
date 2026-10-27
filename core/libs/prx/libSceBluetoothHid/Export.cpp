@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <stdexcept>
 #include <string>
 #include <mutex>
 
@@ -118,7 +119,9 @@ int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::ui
 }
 
 int APS5_VABI sceBluetoothHidParamInitialize(BluetoothHidParam* param, const BluetoothHidThreadParam* threadParam) {
-    NotImplemented_nid_no_patch(__func__);
+    if (param == nullptr) return InvalidArgument;
+    param->threadParam = threadParam;
+    param->reserved = 0;
     return 0;
 }
 

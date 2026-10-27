@@ -492,10 +492,9 @@ private:
                 skip();
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                 for (;;) {
-                    Value item{};
+                    auto& item = out.array.items->emplace_back();
                     Construct(item);
                     item.node->handlers = handlers;
-                    out.array.items->push_back(item);
                     skip();
                     if (!value(*item.node)) return false;
                     skip();

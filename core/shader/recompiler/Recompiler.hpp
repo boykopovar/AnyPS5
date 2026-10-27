@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <ranges>
+#include <functional>
 #include <utility>
 #include <string_view>
 #include <vector>
@@ -127,7 +128,8 @@ enum class ColorExportPacking : std::uint8_t {
     None,
     Unorm10_11_11,
     Float11_11_10,
-    Unorm4_4_4_4
+    Unorm4_4_4_4,
+    Uint
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -209,6 +211,7 @@ struct ShaderPixelStageInfo {
     RasterPrimitive rasterPrimitive = RasterPrimitive::Triangle;
     bool layerExported = false;
     bool ditheredAlphaToCoverage = false;
+    std::uint8_t ditheredAlphaSamples = 8;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     std::uint32_t reversedBlend = 0;
@@ -319,6 +322,7 @@ struct SpirvTarget {
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
+    bool exactRobustLoads = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
     bool waveLdsMemoryBarriers = false;
@@ -393,6 +397,11 @@ inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
+inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
+inline constexpr std::uint32_t MeshCapturedCapacityDword = MeshCapturedCounterDword + 1;
+inline constexpr std::uint32_t MeshCapturedHeaderBytes = 4 * (MeshCapturedCapacityDword + 1);
+inline constexpr std::uint32_t MeshCapturedItemAddressDword = 0;
+inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
 
@@ -603,6 +612,8 @@ inline std::uint64_t HashSpirvWords(std::span<const std::uint32_t> words, std::u
 // reference, or the per-dispatch copy this class removes comes back without a compiler hint.
 // ContentHash is computed once per shared holder, on first use, and dropped by a write.
 class SharedSpirv {
+    struct Holder;
+
 public:
     SharedSpirv() = default;
     SharedSpirv(std::vector<std::uint32_t> words) : holder(std::make_shared<Holder>(std::move(words), nullptr, std::span<const std::uint32_t>{})) {}
@@ -638,6 +649,25 @@ public:
     void resize(std::size_t count) { Mutable().resize(count); }
     std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
     friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return std::ranges::equal(left.Words(), right.Words()); }
+
+    class Weak {
+    public:
+        [[nodiscard]] SharedSpirv Lock() const {
+            SharedSpirv spirv;
+            spirv.holder = holder.lock();
+            return spirv;
+        }
+        [[nodiscard]] bool Expired() const { return holder.expired(); }
+
+    private:
+        friend class SharedSpirv;
+        std::weak_ptr<Holder> holder;
+    };
+    [[nodiscard]] Weak Weaken() const {
+        Weak weak;
+        weak.holder = holder;
+        return weak;
+    }
 
 private:
     struct Holder {
@@ -693,6 +723,7 @@ struct CompiledShaderArtifact {
     bool registrationModule = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t windowLaneGuards = 0;
+    std::uint32_t descriptorFaults = 0;
     std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
     std::vector<VertexInput> vertexInputs;
     std::int32_t vertexOffsetSgpr = -1;
@@ -805,6 +836,9 @@ struct MeshOutputBudget {
 
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
+void SetResultMemoBudget(std::uint64_t bytes);
+[[nodiscard]] std::uint64_t ResultMemoBytes();
+void SetResultMemoTrimHook(std::function<void()> hook);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile
@@ -831,6 +865,7 @@ struct GeometryStageLimits {
 };
 
 [[nodiscard]] RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits);
+[[nodiscard]] RecompileResult BuildTessellationCaptureGeometryShader(const MeshConfiguration& geometry, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits);
 
 struct BarycentricTessellationShaders {
     RecompileResult control;

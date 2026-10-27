@@ -718,6 +718,62 @@ class HipOracleTests(unittest.TestCase):
                 self.oracle_hip.main(argv)
             self.assertEqual(exit.exception.code, 2)
 
+    def test_cli_rejects_output_aliases_before_oracle_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for alias in ("same", "hardlink"):
+                with self.subTest(mode="assemble", alias=alias):
+                    source = root / f"source-{alias}.s"
+                    source.write_bytes(b"assembly source")
+                    output = source
+                    if alias == "hardlink":
+                        output = root / "assembled-output"
+                        os.link(source, output)
+                    before = source.read_bytes()
+                    with patch.object(self.oracle_hip, "assemble", side_effect=AssertionError("assemble called")), \
+                            contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as exited:
+                        self.oracle_hip.main(["--assemble", str(source), str(output), "gfx1010"])
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn("--assemble output must not overwrite the source", error.getvalue())
+                    self.assertEqual(source.read_bytes(), before)
+                    if alias == "hardlink":
+                        output.unlink()
+
+            for input_name in ("code", "input"):
+                for alias in ("same", "hardlink"):
+                    with self.subTest(mode="dispatch", input=input_name, alias=alias):
+                        code = root / f"code-{input_name}-{alias}.co"
+                        inputs = root / f"input-{input_name}-{alias}.bin"
+                        code.write_bytes(b"code")
+                        inputs.write_bytes(b"input evidence")
+                        target = code if input_name == "code" else inputs
+                        output = target
+                        if alias == "hardlink":
+                            output = root / "dispatch-output"
+                            os.link(target, output)
+                        before = (code.read_bytes(), inputs.read_bytes())
+                        with patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")), \
+                                contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as exited:
+                            self.oracle_hip.main([str(code), "1", str(inputs), str(output), "1"])
+                        self.assertEqual(exited.exception.code, 2)
+                        self.assertIn("dispatch output must not overwrite an input file", error.getvalue())
+                        self.assertEqual((code.read_bytes(), inputs.read_bytes()), before)
+                        if alias == "hardlink":
+                            output.unlink()
+
+    def test_case_distinct_existing_paths_use_filesystem_identity(self):
+        source = Path("kernel.s")
+        output = Path("KERNEL.S")
+        self.assertEqual(source, output) if os.name == "nt" else self.assertNotEqual(source, output)
+        with patch.object(Path, "read_bytes", return_value=b"source"), \
+                patch.object(Path, "exists", return_value=True), \
+                patch.object(Path, "samefile", return_value=False) as samefile, \
+                patch.object(Path, "write_bytes") as write, \
+                patch.object(self.oracle_hip, "assemble", return_value=b"assembled"):
+            self.assertEqual(self.oracle_hip.main(["--assemble", str(source), str(output), "gfx1010"]), 0)
+        samefile.assert_called_once_with(output)
+        write.assert_called_once_with(b"assembled")
+
     def test_comgr_step_tries_each_action_until_one_produces_output(self):
         library = unittest.mock.MagicMock()
         for name in ("amd_comgr_create_action_info", "amd_comgr_create_data_set", "amd_comgr_action_info_set_isa_name",

@@ -8,6 +8,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
@@ -37,21 +38,46 @@
 #ifdef __linux__
 #include <dlfcn.h>
 #include <link.h>
-#endif // __linux__
+#include <pthread.h>
+#include <sched.h>
+#include <sys/uio.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #endif
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
+
+static bool ReadGuestTime(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
+#elif defined(__linux__)
+    iovec local{destination, bytes};
+    iovec remote{const_cast<void*>(source), bytes};
+    const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("time: process_vm_readv failed with errno " + std::to_string(errno));
+    return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return ::mach_vm_read_overwrite(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
+        reinterpret_cast<mach_vm_address_t>(destination), &copied) == KERN_SUCCESS && copied == bytes;
+#else
+    throw std::runtime_error("time: checked guest reads are not implemented on this host");
+#endif
+}
 
 static bool IsCpuClock(int clockId) {
-    const auto bits = static_cast<std::uint32_t>(clockId);
-    if ((bits & CPU_CLOCK_BIT) == 0)
-        return false;
-    if ((bits & CPU_CLOCK_PROCESS_BIT) != 0)
-        throw std::runtime_error("clock: unsupported process CPU clock_id " + std::to_string(clockId));
-    return true;
+    return (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_BIT) != 0;
 }
 
 static std::uint64_t RawMonotonicNanos() {
@@ -162,6 +188,45 @@ static const bool g_timerSelfTest = [] {
     return true;
 }();
 #endif
+
+namespace {
+
+class CurrentCpuPin {
+public:
+    CurrentCpuPin() {
+#ifdef _WIN32
+        previous = SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << GetCurrentProcessorNumber());
+#elif defined(__linux__)
+        const int cpu = sched_getcpu();
+        if (cpu < 0 || cpu >= CPU_SETSIZE || pthread_getaffinity_np(pthread_self(), sizeof(previous), &previous) != 0) return;
+        cpu_set_t one;
+        CPU_ZERO(&one);
+        CPU_SET(cpu, &one);
+        pinned = pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0;
+#endif
+    }
+
+    ~CurrentCpuPin() {
+#ifdef _WIN32
+        if (previous != 0) SetThreadAffinityMask(GetCurrentThread(), previous);
+#elif defined(__linux__)
+        if (pinned) pthread_setaffinity_np(pthread_self(), sizeof(previous), &previous);
+#endif
+    }
+
+    CurrentCpuPin(const CurrentCpuPin&) = delete;
+    CurrentCpuPin& operator=(const CurrentCpuPin&) = delete;
+
+private:
+#ifdef _WIN32
+    DWORD_PTR previous = 0;
+#elif defined(__linux__)
+    cpu_set_t previous{};
+    bool pinned = false;
+#endif
+};
+
+}
 
 extern "C" {
 
@@ -391,8 +456,11 @@ static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
 
 static int ReadClock(int clockId, KernelTimespec* tp) {
     if (IsCpuClock(clockId)) {
+        const int id = static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK);
+        const bool process = (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_PROCESS_BIT) != 0;
+        if (process && id == getpid_nid_postfix()) return ReadClock(GUEST_CLOCK_PROCESS_CPUTIME_ID, tp);
         std::uint64_t nanos = 0;
-        if (!GuestThreadCpuNanos(static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK), &nanos)) {
+        if (process || !GuestThreadCpuNanos(id, &nanos)) {
             *__error_nid_postfix() = GUEST_EINVAL;
             return -1;
         }
@@ -501,6 +569,9 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     return 0;
 }
 
+static std::mutex guestTimezoneMutex;
+static KernelTimezone guestTimezone{0, 0};
+
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     KernelTimeval ignoredTime{};
     if (tv == nullptr) tv = &ignoredTime;
@@ -520,8 +591,8 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     tv->tv_usec = static_cast<std::int64_t>(native.tv_usec);
 #endif
     if (tz != nullptr) {
-        tz->tz_minuteswest = 0;
-        tz->tz_dsttime = 0;
+        std::lock_guard lock(guestTimezoneMutex);
+        *tz = guestTimezone;
     }
     return 0;
 }
@@ -611,17 +682,45 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
 }
 
 int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
-    if (tp == nullptr) {
+    KernelTimespec time{};
+    if (tp == nullptr || !ReadGuestTime(&time, tp, sizeof(time))) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (clockId != GUEST_CLOCK_REALTIME || tp->tv_nsec < 0 || tp->tv_nsec >= 1000000000 || tp->tv_sec < 0) {
+    if (clockId != GUEST_CLOCK_REALTIME || time.tv_nsec < 0 || time.tv_nsec >= 1000000000 || time.tv_sec < 0) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
     char requested[48];
-    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(tp->tv_sec), static_cast<long long>(tp->tv_nsec));
+    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_nsec));
     throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+}
+
+int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    KernelTimeval time{};
+    KernelTimezone zone{};
+    if (tv != nullptr && !ReadGuestTime(&time, tv, sizeof(time))) {
+        *__error_nid_postfix() = GUEST_EFAULT;
+        return -1;
+    }
+    if (tz != nullptr && !ReadGuestTime(&zone, tz, sizeof(zone))) {
+        *__error_nid_postfix() = GUEST_EFAULT;
+        return -1;
+    }
+    if (tv != nullptr && (time.tv_usec < 0 || time.tv_usec >= 1000000 || time.tv_sec < 0)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (tv != nullptr) {
+        char requested[48];
+        std::snprintf(requested, sizeof(requested), "%lld.%06lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_usec));
+        throw std::runtime_error(std::string("settimeofday: setting the time to ") + requested + " is not supported, the host clock is not changed");
+    }
+    if (tz != nullptr) {
+        std::lock_guard lock(guestTimezoneMutex);
+        guestTimezone = zone;
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,7 +809,8 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
 
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return SceKernelErrorEfault;
-    *tz = {0, 0};
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    *tz = {static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
     return 0;
 }
 
@@ -722,6 +822,7 @@ uint64_t APS5_VABI sceKernelReadTsc(void) {
 
 uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
     static const std::uint64_t frequency = [] {
+        const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
         const std::uint64_t startTicks = __rdtsc();
         TimedWait::SleepNanos(20000000ULL);
