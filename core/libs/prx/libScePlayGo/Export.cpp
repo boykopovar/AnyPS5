@@ -1,6 +1,7 @@
 #include "prx/libScePlayGo/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <charconv>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
@@ -84,14 +85,12 @@ static bool ReadExplicitChunks(ChunkTable& table) {
     while (start <= value.size()) {
         const auto end = value.find(',', start);
         const auto token = value.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        try {
-            std::size_t consumed = 0;
-            const auto parsed = std::stoul(token, &consumed);
-            if (token.empty() || consumed != token.size() || parsed > 0xFFFF) throw std::invalid_argument("chunk");
-            table.ids.insert(static_cast<uint16_t>(parsed));
-        } catch (const std::exception&) {
+        std::uint32_t parsed = 0;
+        const auto result = std::from_chars(token.data(), token.data() + token.size(), parsed);
+        if (token.empty() || result.ec != std::errc{} || result.ptr != token.data() + token.size() || parsed > 0xFFFF) {
             throw std::runtime_error("scePlayGo: APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list of chunk ids from 0 to 65535, not \"" + value + "\"");
         }
+        table.ids.insert(static_cast<uint16_t>(parsed));
         if (end == std::string::npos) break;
         start = end + 1;
     }
