@@ -620,26 +620,54 @@ int main() {
         ShaderRecompiler::RecompileRequest dynamic{};
         dynamic.shader.stage = ShaderRecompiler::ShaderStage::Vertex;
         dynamic.graphics = ShaderRecompiler::GraphicsCompileContext{};
-        const auto ordinary = serializer.Serialize(dynamic);
-        Require(DecodeBase64(ordinary)[4] == 48u);
-        Require(serializer.Deserialize(ordinary).request.graphics->instanceInputSgpr == -1);
-        for (const auto sgpr : {8, 10, 11, 39}) {
-            dynamic.graphics->instanceInputSgpr = sgpr;
-            const auto encoded = serializer.Serialize(dynamic);
-            auto bytes = DecodeBase64(encoded);
-            Require(bytes[4] == 49u && serializer.Deserialize(encoded).request.graphics->instanceInputSgpr == sgpr);
-            Require(serializer.Serialize(serializer.Deserialize(encoded).request) == encoded);
-            bytes.pop_back();
+        const auto expectRejected = [&](const std::vector<std::uint8_t>& bytes, std::string_view expected) {
             bool rejected = false;
             try {
                 static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
             } catch (const std::runtime_error& error) {
-                rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+                rejected = error.what() == expected;
             }
             Require(rejected);
+        };
+        for (const bool barycentric : {false, true}) {
+            dynamic.target.fragmentBarycentricBuiltins = barycentric;
+            const auto ordinary = serializer.Serialize(dynamic);
+            Require(DecodeBase64(ordinary)[4] == 48u);
+            const auto replay48 = serializer.Deserialize(ordinary);
+            Require(replay48.request.graphics->instanceInputSgpr == -1 && replay48.request.target.fragmentBarycentricBuiltins == barycentric);
+            Require(serializer.Serialize(replay48.request) == ordinary);
+            auto legacy47 = DecodeBase64(ordinary);
+            legacy47[4] = 47u;
+            legacy47.pop_back();
+            const auto replay47 = serializer.Deserialize(EncodeBase64(legacy47));
+            Require(replay47.request.graphics->instanceInputSgpr == -1 && !replay47.request.target.fragmentBarycentricBuiltins);
+            for (const auto sgpr : {8, 10, 11, 39}) {
+                dynamic.graphics->instanceInputSgpr = sgpr;
+                const auto encoded = serializer.Serialize(dynamic);
+                const auto bytes = DecodeBase64(encoded);
+                const auto replay49 = serializer.Deserialize(encoded);
+                Require(bytes[4] == 49u && replay49.request.graphics->instanceInputSgpr == sgpr);
+                Require(replay49.request.target.fragmentBarycentricBuiltins == barycentric);
+                Require(serializer.Serialize(replay49.request) == encoded);
+                for (std::size_t missing = 1; missing <= sizeof(std::int32_t); ++missing) {
+                    auto truncated = bytes;
+                    truncated.resize(truncated.size() - missing);
+                    expectRejected(truncated, "RequestSerializer: truncated data");
+                }
+                auto trailing = bytes;
+                trailing.push_back(0u);
+                expectRejected(trailing, "RequestSerializer: unexpected trailing data");
+            }
+            dynamic.graphics->instanceInputSgpr = -1;
+            Require(serializer.Serialize(dynamic) == ordinary);
+            legacy47.insert(legacy47.end(), {8u, 0u, 0u, 0u});
+            expectRejected(legacy47, "RequestSerializer: unexpected trailing data");
         }
-        dynamic.graphics->instanceInputSgpr = -1;
-        Require(serializer.Serialize(dynamic) == ordinary);
+        ShaderRecompiler::RecompileRequest noGraphics{};
+        auto missingContext = DecodeBase64(serializer.Serialize(noGraphics));
+        missingContext[4] = 49u;
+        missingContext.insert(missingContext.end(), {8u, 0u, 0u, 0u});
+        expectRejected(missingContext, "RequestSerializer: dynamic instance input requires a graphics context");
     }
 
     ShaderRecompiler::RecompileRequest request{};
