@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -9,11 +10,6 @@
 #include <cstdlib>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Library_SetLcdFilter_nid_postfix(GuestLibrary*, std::int32_t);
-int APS5_VABI FT_Library_SetLcdFilterWeights_nid_postfix(GuestLibrary*, unsigned char*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
