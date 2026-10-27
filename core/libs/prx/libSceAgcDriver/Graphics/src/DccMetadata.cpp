@@ -249,7 +249,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
     if (AnyShadowedOverlaps(begin, count)) PublishShadow(begin, count, PublishScope::PartialUnits, PublishReason::Keys);
     // Queued on the open batch and recorded with the batch's other key stores as one run (or before
     // a later command writing the keys; see Recorder::QueueKeyStore).
-    recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
+    recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count, import->address != 0 ? HostImportDeviceAddress(*import, begin) : 0);
     recorder.NotePendingFill(begin, count, 0xff);
     GuestMemory::MarkWritten(begin, count);
     // After the note: an unlocked memo lookup drops an entry the snapshot does not cover yet. The
