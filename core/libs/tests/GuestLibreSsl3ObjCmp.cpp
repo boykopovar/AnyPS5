@@ -1,10 +1,10 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <exception>
 #include <limits>
 #include <stdexcept>
 
-extern "C" int APS5_VABI OBJ_cmp_nid_postfix(const void*, const void*);
 
 namespace {
 struct Object {
